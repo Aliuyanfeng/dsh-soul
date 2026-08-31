@@ -1,0 +1,36 @@
+# ── 依赖（npm install 重新生成）──
+node_modules/
+.pnp/
+.pnp.js
+
+# ── 构建 / 验证产物（由 scripts/verify-render.mjs 生成）──
+out/
+dist/
+build/
+
+# ── 日志 & 临时文件 ──
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.tmp
+*.cache
+
+# ── 本地环境 / 密钥 ──
+.env
+.env.*
+!.env.example
+*.local
+
+# ── 编辑器 & 系统文件 ──
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── npm 凭据（发布用 token，严禁提交）──
+.npmrc
+
+reasonix.toml

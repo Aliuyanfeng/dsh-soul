@@ -1,0 +1,38 @@
+{
+  "name": "dsh-soul",
+  "version": "0.1.1",
+  "description": "为 DeepSeek Harness 添加个性化设置",
+  "type": "module",
+  "main": "index.mjs",
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    }
+  },
+  "exports": {
+    ".": {
+      "default": "./index.mjs"
+    },
+    "./client": "./client/index.mjs",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.mjs",
+    "client",
+    "cordis.patch.yml",
+    "README.md"
+  ]
+}
