@@ -33,6 +33,7 @@
     "index.mjs",
     "client",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "README_EN.md"
   ]
 }
