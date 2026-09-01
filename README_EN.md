@@ -9,12 +9,9 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - Personalization settings page in the Web UI
 - Enable or disable personalization
 - Set a user nickname
-- Reply styles: `professional`, `casual`, `friendly`, `humorous`, `academic`
-- Tones: `neutral`, `formal`, `informal`, `enthusiastic`, `calm`
+- Combined style & tone option: `professional`, `casual`, `humorous`, `roast`, `efficient`
 - Command output language: Chinese or English
 - Custom instructions with ready-to-use example templates
-- Real-time preview of the compiled system prompt
-- Save / apply / delete persona presets
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
 - Configuration persisted to disk
 - Configuration synced to all active agents after every update
@@ -38,28 +35,19 @@ The plugin is registered via `cordis.patch.yml`:
 
 After starting DSH, open the **Personalization** section on the settings page, edit the configuration and click **Save Settings**.
 
-The settings page also provides:
-
-- **Real-time prompt preview**: expand "Show prompt preview" to see the compiled system prompt for the current edits.
-- **Persona presets**: enter a preset name and click **Save** to store the current edits as a preset; saved presets can be **Applied** or **Deleted** with one click.
-
 Slash commands are also available:
 
 ```text
-/soul show                Show current configuration
-/soul reset               Reset configuration
-/soul enable              Enable personalization
-/soul disable             Disable personalization
-/soul Bob                 Set nickname
-/soul save <name>         Save current persona as a preset
-/soul use <name>          Apply a preset
-/soul list                List presets
-/soul delete <name>       Delete a preset
+/soul show       Show current configuration
+/soul reset      Reset configuration
+/soul enable     Enable personalization
+/soul disable    Disable personalization
+/soul Bob        Set nickname
 ```
 
 Once saved, the configuration is synced to all active agents and takes effect on the next request in the current session.
 
-The agent can also use the `set_persona` tool to adjust your persona (nickname, style, tone, custom instructions) during a conversation. The model only invokes this tool when you explicitly ask to change how it addresses or responds to you.
+The agent can also use the `set_persona` tool to adjust your persona (nickname, style & tone, custom instructions) during a conversation. The model only invokes this tool when you explicitly ask to change how it addresses or responds to you.
 
 ## Configuration File
 
@@ -76,7 +64,6 @@ Example:
   "enabled": true,
   "nickname": "Bob",
   "style": "professional",
-  "tone": "neutral",
   "language": "en",
   "customInstructions": "Be concise and lead with the conclusion."
 }
