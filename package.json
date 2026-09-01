@@ -1,7 +1,19 @@
 {
   "name": "dsh-soul",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "为 DeepSeek Harness 添加个性化设置",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "deepseek-harness",
+    "personalization",
+    "persona",
+    "system-prompt",
+    "ai-agent",
+    "ai-assistant",
+    "customization"
+  ],
   "type": "module",
   "main": "index.mjs",
   "license": "MIT",

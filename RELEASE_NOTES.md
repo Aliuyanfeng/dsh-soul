@@ -41,6 +41,11 @@
 
 ## 版本历史
 
+### v0.3.2（2026-09-01）
+
+**变更**
+- `package.json` 新增 `keywords` 字段（`dsh` / `dsh-plugin` / `deepseek` / `deepseek-harness` / `personalization` / `persona` / `system-prompt` / `customization` / `ai-agent` / `ai-assistant`），便于 npm 与 awesome-dsh-plugin 检索
+
 ### v0.3.1（2026-09-01）
 
 **变更**
