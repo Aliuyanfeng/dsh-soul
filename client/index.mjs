@@ -43,6 +43,7 @@ window.__ModuleLoader__.load({
       nickname: '',
       style: 'professional',
       tone: 'neutral',
+      language: 'zh',
       customInstructions: '',
       loading: false,
       saving: false,
@@ -103,6 +104,7 @@ window.__ModuleLoader__.load({
             s.nickname = payload.config.nickname || ''
             s.style = payload.config.style
             s.tone = payload.config.tone
+            s.language = payload.config.language || 'zh'
             s.customInstructions = payload.config.customInstructions
             s.loading = false
           })
@@ -137,6 +139,7 @@ window.__ModuleLoader__.load({
             s.nickname = payload.config.nickname || ''
             s.style = payload.config.style
             s.tone = payload.config.tone
+            s.language = payload.config.language || 'zh'
             s.customInstructions = payload.config.customInstructions
             s.saving = false
           })
@@ -167,6 +170,7 @@ window.__ModuleLoader__.load({
             s.nickname = payload.config.nickname || ''
             s.style = payload.config.style
             s.tone = payload.config.tone
+            s.language = payload.config.language || 'zh'
             s.customInstructions = payload.config.customInstructions
             s.saving = false
           })
@@ -248,6 +252,12 @@ window.__ModuleLoader__.load({
       { value: 'calm', label: '平静沉稳' }
     ]
 
+    // 选项用原生语言显示，两种 UI 语言下均自解释
+    const LANGUAGE_OPTIONS = [
+      { value: 'zh', label: '中文' },
+      { value: 'en', label: 'English' }
+    ]
+
     const EXAMPLES = [
       { label: '专业严谨', value: '你是一个专业严谨的助手，采用学术性的语气，注重逻辑和准确性。' },
       { label: '友好亲切', value: '你是一个友好亲切的助手，采用轻松自然的语气，像朋友一样交流。' },
@@ -258,12 +268,13 @@ window.__ModuleLoader__.load({
     function SoulSettings(props) {
       const { useSoulController, controller } = props
       const state = useSoulController((state) => state)
-      const { enabled, nickname, style, tone, customInstructions, loading, saving, error } = state
+      const { enabled, nickname, style, tone, language, customInstructions, loading, saving, error } = state
       
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
       const [localStyle, setLocalStyle] = React.useState(style)
       const [localTone, setLocalTone] = React.useState(tone)
+      const [localLanguage, setLocalLanguage] = React.useState(language || 'zh')
       const [localInstructions, setLocalInstructions] = React.useState(customInstructions)
       const [showSuccess, setShowSuccess] = React.useState(false)
       const [showResetSuccess, setShowResetSuccess] = React.useState(false)
@@ -274,8 +285,9 @@ window.__ModuleLoader__.load({
         setLocalNickname(nickname || '')
         setLocalStyle(style)
         setLocalTone(tone)
+        setLocalLanguage(language || 'zh')
         setLocalInstructions(customInstructions)
-      }, [enabled, nickname, style, tone, customInstructions])
+      }, [enabled, nickname, style, tone, language, customInstructions])
       
       // 保存成功后显示提示，2秒后自动消失
       React.useEffect(() => {
@@ -300,6 +312,7 @@ window.__ModuleLoader__.load({
           nickname: localNickname,
           style: localStyle,
           tone: localTone,
+          language: localLanguage,
           customInstructions: localInstructions
         })
         setShowSuccess(true)
@@ -359,12 +372,25 @@ window.__ModuleLoader__.load({
               value: localTone,
               onChange: (ev) => setLocalTone(ev.target.value)
             },
-              ...TONE_OPTIONS.map(opt => 
+              ...TONE_OPTIONS.map(opt =>
                 e('option', { key: opt.value, value: opt.value }, opt.label)
               )
             )
           ),
-          
+
+          e('div', { className: 'soul-field' },
+            e('label', { htmlFor: 'soul-language' }, '命令输出语言 / Command language'),
+            e('select', {
+              id: 'soul-language',
+              value: localLanguage,
+              onChange: (ev) => setLocalLanguage(ev.target.value)
+            },
+              ...LANGUAGE_OPTIONS.map(opt =>
+                e('option', { key: opt.value, value: opt.value }, opt.label)
+              )
+            )
+          ),
+
           e('div', { className: 'soul-field' },
             e('label', { htmlFor: 'soul-instructions' }, '自定义指令'),
             e('textarea', {

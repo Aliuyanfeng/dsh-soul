@@ -11,6 +11,7 @@
 - 用户昵称输入，保存后 Agent 在回复中使用该称呼。
 - 回复风格下拉：`professional`（专业严谨）、`casual`（轻松自然）、`friendly`（友好亲切）、`humorous`（幽默风趣）、`academic`（学术性）。
 - 语调下拉：`neutral`（中性客观）、`formal`（正式礼貌）、`informal`（非正式、口语化）、`enthusiastic`（热情积极）、`calm`（平静沉稳）。
+- 命令输出语言下拉：中文 / English。宿主端无 locale 服务（`CommandInvocation` 不携带 UI 语言），`/soul` 命令输出语言跟随配置的 `language` 字段，默认 `zh`。
 - 自定义指令文本域，内置 4 个示例模板（专业严谨 / 友好亲切 / 幽默风趣 / 简洁直接），点击即可填充。
 - 「保存设置」「重置默认」按钮，成功后弹出居中 toast，2 秒自动消失；加载 / 保存期间禁用按钮，避免重复提交。
 - 请求失败时在页面内展示错误条。

@@ -11,6 +11,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - Set a user nickname
 - Reply styles: `professional`, `casual`, `friendly`, `humorous`, `academic`
 - Tones: `neutral`, `formal`, `informal`, `enthusiastic`, `calm`
+- Command output language: Chinese or English
 - Custom instructions with ready-to-use example templates
 - Configuration persisted to disk
 - Configuration synced to all active agents after every update
@@ -62,6 +63,7 @@ Example:
   "nickname": "Bob",
   "style": "professional",
   "tone": "neutral",
+  "language": "en",
   "customInstructions": "Be concise and lead with the conclusion."
 }
 ```

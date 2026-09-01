@@ -11,6 +11,7 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
 - 设置用户昵称
 - 选择回复风格：`professional`、`casual`、`friendly`、`humorous`、`academic`
 - 选择语调：`neutral`、`formal`、`informal`、`enthusiastic`、`calm`
+- 选择命令输出语言：中文 / English
 - 输入自定义指令和使用示例模板
 - 配置持久化保存
 - 配置更新后同步到所有活动 Agent
@@ -62,6 +63,7 @@ soul-config.json
   "nickname": "小明",
   "style": "professional",
   "tone": "neutral",
+  "language": "zh",
   "customInstructions": "请保持简洁，优先给出结论。"
 }
 ```

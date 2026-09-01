@@ -134,6 +134,7 @@ const DEFAULT_CONFIG = {
   nickname: '',
   style: 'professional',
   tone: 'neutral',
+  language: 'zh',
   customInstructions: '',
   examples: [
     { label: '专业严谨', value: '你是一个专业严谨的助手，采用学术性的语气，注重逻辑和准确性。' },
@@ -347,6 +348,51 @@ function registerRoutes(ctx) {
 
 // ==================== 斜杠命令 ====================
 
+// 宿主端无 locale 服务（CommandInvocation 不携带 UI 语言，settings 中亦无语言字段），
+// 命令输出语言跟随 soul 配置的 language 字段，可在设置页切换。
+const COMMAND_MESSAGES = {
+  zh: {
+    showTitle: '🧠 个性化设置',
+    colon: '：',
+    statusLabel: '状态',
+    nicknameLabel: '昵称',
+    styleLabel: '风格',
+    toneLabel: '语调',
+    instructionsLabel: '自定义指令',
+    enabled: '已启用',
+    disabled: '已禁用',
+    notSet: '未设置',
+    help: '使用 /soul show 查看详情\n使用 /soul reset 重置配置\n使用 /soul enable 启用\n使用 /soul disable 禁用\n使用 /soul 昵称xxx 设置昵称',
+    resetDone: '✅ 配置已重置为默认值',
+    enableDone: '✅ 个性化设置已启用',
+    disableDone: '✅ 个性化设置已禁用',
+    nicknameDone: (n) => `✅ 昵称已设置为：${n}`,
+    failed: (e) => `操作失败：${e}`
+  },
+  en: {
+    showTitle: '🧠 Personalization Settings',
+    colon: ': ',
+    statusLabel: 'Status',
+    nicknameLabel: 'Nickname',
+    styleLabel: 'Style',
+    toneLabel: 'Tone',
+    instructionsLabel: 'Custom instructions',
+    enabled: 'enabled',
+    disabled: 'disabled',
+    notSet: 'not set',
+    help: 'Use /soul show to view details\nUse /soul reset to reset\nUse /soul enable to enable\nUse /soul disable to disable\nUse /soul <nickname> to set your nickname',
+    resetDone: '✅ Configuration reset to defaults',
+    enableDone: '✅ Personalization enabled',
+    disableDone: '✅ Personalization disabled',
+    nicknameDone: (n) => `✅ Nickname set to: ${n}`,
+    failed: (e) => `Operation failed: ${e}`
+  }
+}
+
+function commandMessages(config) {
+  return COMMAND_MESSAGES[config.language === 'en' ? 'en' : 'zh']
+}
+
 function registerCommands(ctx) {
   ctx.inject(['commands'], (cmdCtx) => {
     cmdCtx.commands.register({
@@ -360,45 +406,46 @@ function registerCommands(ctx) {
         
         try {
           const config = await loadConfig()
+          const t = commandMessages(config)
           
           if (args === 'show' || args === '') {
-            const status = config.enabled ? '已启用' : '已禁用'
-            const nickname = config.nickname || '未设置'
-            const style = config.style || '未设置'
-            const tone = config.tone || '未设置'
-            const instructions = config.customInstructions || '未设置'
+            const status = config.enabled ? t.enabled : t.disabled
+            const nickname = config.nickname || t.notSet
+            const style = config.style || t.notSet
+            const tone = config.tone || t.notSet
+            const instructions = config.customInstructions || t.notSet
             
             return {
               kind: 'success',
-              text: `🧠 个性化设置\n\n状态：${status}\n昵称：${nickname}\n风格：${style}\n语调：${tone}\n自定义指令：${instructions}\n\n使用 /soul show 查看详情\n使用 /soul reset 重置配置\n使用 /soul enable 启用\n使用 /soul disable 禁用\n使用 /soul 昵称xxx 设置昵称`
+              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.styleLabel}${t.colon}${style}\n${t.toneLabel}${t.colon}${tone}\n${t.instructionsLabel}${t.colon}${instructions}\n\n${t.help}`
             }
           } else if (args === 'reset') {
             const updated = await saveConfig({ ...DEFAULT_CONFIG })
             // 更新系统提示词，并注入所有活动会话
             refreshPromptAndInject(ctx, updated)
-            return { kind: 'success', text: '✅ 配置已重置为默认值' }
+            return { kind: 'success', text: t.resetDone }
           } else if (args === 'enable') {
             config.enabled = true
             const updated = await saveConfig(config)
             // 更新系统提示词，并注入所有活动会话
             refreshPromptAndInject(ctx, updated)
-            return { kind: 'success', text: '✅ 个性化设置已启用' }
+            return { kind: 'success', text: t.enableDone }
           } else if (args === 'disable') {
             config.enabled = false
             const updated = await saveConfig(config)
             // 更新系统提示词，并注入所有活动会话
             refreshPromptAndInject(ctx, updated)
-            return { kind: 'success', text: '✅ 个性化设置已禁用' }
+            return { kind: 'success', text: t.disableDone }
           } else {
             // 设置昵称（保留原始大小写，不做 toLowerCase）
             config.nickname = raw
             const updated = await saveConfig(config)
             // 更新系统提示词，并注入所有活动会话
             refreshPromptAndInject(ctx, updated)
-            return { kind: 'success', text: `✅ 昵称已设置为：${raw}` }
+            return { kind: 'success', text: t.nicknameDone(raw) }
           }
         } catch (err) {
-          return { kind: 'error', text: `操作失败：${err.message}` }
+          return { kind: 'error', text: commandMessages(await loadConfig()).failed(err.message) }
         }
       }
     })
