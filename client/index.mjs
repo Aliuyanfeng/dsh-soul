@@ -2,8 +2,7 @@
 //
 // 在设置页面添加「个性化」栏目：
 //   - 启用/禁用个性化设置
-//   - 选择回复风格
-//   - 选择语调
+//   - 选择回复风格和语调
 //   - 输入自定义指令
 //   - 查看示例
 //
@@ -41,11 +40,10 @@ window.__ModuleLoader__.load({
     const INITIAL = {
       enabled: true,
       nickname: '',
+      // 回复风格和语调（合并为单一选项）
       style: 'professional',
-      tone: 'neutral',
       language: 'zh',
       customInstructions: '',
-      presets: [],
       loading: false,
       saving: false,
       error: null
@@ -104,10 +102,8 @@ window.__ModuleLoader__.load({
             s.enabled = payload.config.enabled
             s.nickname = payload.config.nickname || ''
             s.style = payload.config.style
-            s.tone = payload.config.tone
             s.language = payload.config.language || 'zh'
             s.customInstructions = payload.config.customInstructions
-            s.presets = Array.isArray(payload.config.presets) ? payload.config.presets : []
             s.loading = false
           })
         } catch (error) {
@@ -140,10 +136,8 @@ window.__ModuleLoader__.load({
             s.enabled = payload.config.enabled
             s.nickname = payload.config.nickname || ''
             s.style = payload.config.style
-            s.tone = payload.config.tone
             s.language = payload.config.language || 'zh'
             s.customInstructions = payload.config.customInstructions
-            s.presets = Array.isArray(payload.config.presets) ? payload.config.presets : []
             s.saving = false
           })
         } catch (error) {
@@ -172,10 +166,8 @@ window.__ModuleLoader__.load({
             s.enabled = payload.config.enabled
             s.nickname = payload.config.nickname || ''
             s.style = payload.config.style
-            s.tone = payload.config.tone
             s.language = payload.config.language || 'zh'
             s.customInstructions = payload.config.customInstructions
-            s.presets = Array.isArray(payload.config.presets) ? payload.config.presets : []
             s.saving = false
           })
         } catch (error) {
@@ -189,65 +181,6 @@ window.__ModuleLoader__.load({
 
       async dispose() {
         this.disposed = true
-      }
-
-      // 预览未保存编辑编译出的 system prompt（无副作用，不落盘）
-      async previewPrompt(draft) {
-        if (this.disposed) return
-        try {
-          const url = new URL('/api/soul/prompt/preview', hostBase())
-          const response = await this.fetcher(url, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(draft)
-          })
-          const payload = await response.json().catch(() => ({}))
-          if (!response.ok || payload.ok !== true) {
-            throw new Error(payload.error || `HTTP ${response.status}`)
-          }
-          return payload
-        } catch (error) {
-          return { ok: false, error: messageOf(error) }
-        }
-      }
-
-      // 预设操作：action 为 save（以当前本地编辑为人设）/ apply / delete
-      async presetAction(action, name, draft) {
-        if (this.disposed) return
-        this.store.update(s => { s.saving = true; s.error = null })
-        try {
-          const url = new URL(`/api/soul/presets/${action}`, hostBase())
-          const body = { name }
-          if (action === 'save' && draft) Object.assign(body, draft)
-          const response = await this.fetcher(url, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body)
-          })
-          const payload = await response.json().catch(() => ({}))
-          if (!response.ok || payload.ok !== true) {
-            throw new Error(payload.error || `HTTP ${response.status}`)
-          }
-          // apply 后同步新配置到 store；save/delete 仅更新预设列表
-          this.store.update(s => {
-            s.enabled = payload.config.enabled
-            s.nickname = payload.config.nickname || ''
-            s.style = payload.config.style
-            s.tone = payload.config.tone
-            s.language = payload.config.language || 'zh'
-            s.customInstructions = payload.config.customInstructions
-            s.presets = Array.isArray(payload.config.presets) ? payload.config.presets : []
-            s.saving = false
-          })
-          return { ok: true, action, name: payload.applied || payload.saved || payload.deleted }
-        } catch (error) {
-          if (this.disposed) return
-          this.store.update(s => {
-            s.saving = false
-            s.error = messageOf(error)
-          })
-          return { ok: false, error: messageOf(error) }
-        }
       }
     }
 
@@ -272,20 +205,10 @@ window.__ModuleLoader__.load({
       '.soul-example:hover{background:var(--dsw-alias-interactive-bg-hover)}',
       '.soul-example:last-child{margin-bottom:0}',
       '.soul-error{margin-top:8px;padding:8px 12px;background:var(--dsw-alias-bg-danger);border:1px solid var(--dsw-alias-border-danger);border-radius:6px;color:var(--dsw-alias-label-danger);font-size:12px;width:100%;box-sizing:border-box}',
-      '.soul-presets{margin-top:16px;width:100%}',
-      '.soul-presets h4{margin:0 0 8px 0;font-size:13px;color:var(--dsw-alias-label-secondary)}',
-      '.soul-preset-save{display:flex;gap:8px;margin-bottom:12px}',
-      '.soul-preset-save input{flex:1}',
-      '.soul-preset-empty{padding:12px;color:var(--dsw-alias-label-secondary);font-size:12px;text-align:center;background:var(--dsw-alias-bg-l2);border-radius:6px}',
-      '.soul-preset-item{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;margin-bottom:8px;background:var(--dsw-alias-bg-l2);border-radius:6px}',
-      '.soul-preset-item:last-child{margin-bottom:0}',
-      '.soul-preset-name{font-size:13px;color:var(--dsw-alias-label-primary);font-weight:500}',
-      '.soul-preset-nick{margin-left:6px;font-size:12px;color:var(--dsw-alias-label-secondary);font-weight:400}',
-      '.soul-preset-actions{display:flex;gap:8px}',
-      '.soul-preview{margin-top:16px;width:100%}',
-      '.soul-preview-toggle{background:none;border:none;padding:0;font-size:13px;color:var(--dsw-alias-label-secondary);cursor:pointer}',
-      '.soul-preview-toggle:hover{color:var(--dsw-alias-label-primary)}',
-      '.soul-preview-text{margin:8px 0 0 0;padding:12px;background:var(--dsw-alias-bg-l2);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto}',
+      '.soul-hint{position:relative;display:inline-flex;align-items:center;margin-left:6px;color:var(--dsw-alias-label-secondary);cursor:help;vertical-align:middle}',
+      '.soul-hint:hover{color:var(--dsw-alias-label-primary)}',
+      '.soul-hint-tip{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);padding:8px 10px;background:var(--dsw-alias-bg-l2);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;font-size:12px;font-weight:400;line-height:1.5;color:var(--dsw-alias-label-primary);white-space:normal;width:max-content;max-width:260px;text-align:left;opacity:0;visibility:hidden;transition:opacity .15s ease;pointer-events:none;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,0.12)}',
+      '.soul-hint:hover .soul-hint-tip{opacity:1;visibility:visible}',
       '.soul-status{margin-top:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}',
       '.soul-toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:8px 16px;border-radius:6px;font-size:13px;font-weight:500;z-index:10000;box-shadow:0 2px 8px rgba(0,0,0,0.15);pointer-events:none;text-align:center;min-width:auto;white-space:nowrap}',
       '.soul-toast-success{background:#f6ffed;border:1px solid #b7eb8f;color:#52c41a}',
@@ -313,20 +236,13 @@ window.__ModuleLoader__.load({
     // 组件
     // -------------------------------------------------------------------------
 
-    const STYLE_OPTIONS = [
+    // 回复风格和语调（合并为单一选项）
+    const STYLE_TONE_OPTIONS = [
       { value: 'professional', label: '专业严谨' },
       { value: 'casual', label: '轻松自然' },
-      { value: 'friendly', label: '友好亲切' },
       { value: 'humorous', label: '幽默风趣' },
-      { value: 'academic', label: '学术性' }
-    ]
-
-    const TONE_OPTIONS = [
-      { value: 'neutral', label: '中性客观' },
-      { value: 'formal', label: '正式礼貌' },
-      { value: 'informal', label: '非正式、口语化' },
-      { value: 'enthusiastic', label: '热情积极' },
-      { value: 'calm', label: '平静沉稳' }
+      { value: 'roast', label: '吐槽达人' },
+      { value: 'efficient', label: '高效干练' }
     ]
 
     // 选项用原生语言显示，两种 UI 语言下均自解释
@@ -342,91 +258,49 @@ window.__ModuleLoader__.load({
       { label: '简洁直接', value: '你是一个简洁直接的助手，回答问题直击要点，避免冗余。' }
     ]
 
-    // 预设管理区：保存当前编辑 / 列表（应用 / 删除）
-    function SoulPresets(props) {
-      const { presets, saving, onApply, onDelete, onSave, uiText } = props
-      const [presetName, setPresetName] = React.useState('')
-      const handleSave = async () => {
-        const name = presetName.trim()
-        if (!name) return
-        await onSave(name)
-        setPresetName('')
-      }
-      return e('div', { className: 'soul-presets' },
-        e('h4', null, uiText.title),
-        e('div', { className: 'soul-preset-save' },
-          e('input', {
-            type: 'text',
-            value: presetName,
-            onChange: (ev) => setPresetName(ev.target.value),
-            placeholder: uiText.placeholder,
-            maxLength: 40,
-            onKeyDown: (ev) => { if (ev.key === 'Enter') handleSave() }
-          }),
-          e(ui.Button, { onClick: handleSave, disabled: saving || !presetName.trim() }, uiText.save)
+    // 提示词小图标：hover 展示说明文字
+    function SoulHint(props) {
+      return e('span', { className: 'soul-hint', 'aria-label': props.text },
+        e('svg', {
+          viewBox: '0 0 24 24',
+          width: 14,
+          height: 14,
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 2,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true
+        },
+          e('circle', { cx: 12, cy: 12, r: 10 }),
+          e('line', { x1: 12, y1: 16, x2: 12, y2: 12 }),
+          e('line', { x1: 12, y1: 8, x2: 12.01, y2: 8 })
         ),
-        presets.length === 0
-          ? e('div', { className: 'soul-preset-empty' }, uiText.empty)
-          : presets.map(p =>
-              e('div', { key: p.name, className: 'soul-preset-item' },
-                e('div', { className: 'soul-preset-name' },
-                  p.name,
-                  p.nickname && e('span', { className: 'soul-preset-nick' }, `（${p.nickname}）`)
-                ),
-                e('div', { className: 'soul-preset-actions' },
-                  e(ui.Button, { onClick: () => onApply(p.name), disabled: saving }, uiText.apply),
-                  e(ui.Button, { onClick: () => onDelete(p.name), disabled: saving }, uiText.delete)
-                )
-              )
-            )
+        e('span', { className: 'soul-hint-tip', role: 'tooltip' }, props.text)
       )
     }
 
     function SoulSettings(props) {
       const { useSoulController, controller } = props
       const state = useSoulController((state) => state)
-      const { enabled, nickname, style, tone, language, customInstructions, presets, loading, saving, error } = state
+      const { enabled, nickname, style, language, customInstructions, loading, saving, error } = state
       
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
       const [localStyle, setLocalStyle] = React.useState(style)
-      const [localTone, setLocalTone] = React.useState(tone)
       const [localLanguage, setLocalLanguage] = React.useState(language || 'zh')
       const [localInstructions, setLocalInstructions] = React.useState(customInstructions)
       const [showSuccess, setShowSuccess] = React.useState(false)
       const [showResetSuccess, setShowResetSuccess] = React.useState(false)
-      // 提示词预览：draft 编译出的 system prompt 文本（null = 尚未加载）
-      const [previewText, setPreviewText] = React.useState(null)
-      const [previewLoading, setPreviewLoading] = React.useState(false)
-      const [showPreview, setShowPreview] = React.useState(false)
       
       // 同步状态
       React.useEffect(() => {
         setLocalEnabled(enabled)
         setLocalNickname(nickname || '')
         setLocalStyle(style)
-        setLocalTone(tone)
         setLocalLanguage(language || 'zh')
         setLocalInstructions(customInstructions)
-      }, [enabled, nickname, style, tone, language, customInstructions])
-      
-      // 预览 debounce：本地编辑停止 400ms 后请求预览端点
-      React.useEffect(() => {
-        if (!showPreview) return
-        setPreviewLoading(true)
-        const timer = setTimeout(async () => {
-          const payload = await props.controller.previewPrompt({
-            enabled: localEnabled,
-            nickname: localNickname,
-            style: localStyle,
-            tone: localTone,
-            customInstructions: localInstructions
-          })
-          setPreviewText(payload && payload.ok ? payload.prompt : (payload && payload.error) || 'preview failed')
-          setPreviewLoading(false)
-        }, 400)
-        return () => clearTimeout(timer)
-      }, [showPreview, localEnabled, localNickname, localStyle, localTone, localInstructions])
+      }, [enabled, nickname, style, language, customInstructions])
       
       // 保存成功后显示提示，2秒后自动消失
       React.useEffect(() => {
@@ -450,7 +324,6 @@ window.__ModuleLoader__.load({
           enabled: localEnabled,
           nickname: localNickname,
           style: localStyle,
-          tone: localTone,
           language: localLanguage,
           customInstructions: localInstructions
         })
@@ -465,27 +338,6 @@ window.__ModuleLoader__.load({
       
       const handleExampleClick = (example) => {
         setLocalInstructions(example.value)
-      }
-      
-      const handlePresetSave = async (name) => {
-        const result = await controller.presetAction('save', name, {
-          enabled: localEnabled,
-          nickname: localNickname,
-          style: localStyle,
-          tone: localTone,
-          language: localLanguage,
-          customInstructions: localInstructions
-        })
-        if (result.ok) setShowSuccess(true)
-      }
-      
-      const handlePresetApply = async (name) => {
-        const result = await controller.presetAction('apply', name)
-        if (result.ok) setShowSuccess(true)
-      }
-      
-      const handlePresetDelete = async (name) => {
-        await controller.presetAction('delete', name)
       }
       
       return e('div', { className: 'soul-section' },
@@ -513,26 +365,16 @@ window.__ModuleLoader__.load({
           ),
           
           e('div', { className: 'soul-field' },
-            e('label', { htmlFor: 'soul-style' }, '回复风格'),
+            e('label', { htmlFor: 'soul-style' },
+              '回复风格和语调',
+              e(SoulHint, { text: '设置 Agent 回复你的风格和语调。这不会影响 Agent 的功能。' })
+            ),
             e('select', {
               id: 'soul-style',
               value: localStyle,
               onChange: (ev) => setLocalStyle(ev.target.value)
             },
-              ...STYLE_OPTIONS.map(opt => 
-                e('option', { key: opt.value, value: opt.value }, opt.label)
-              )
-            )
-          ),
-          
-          e('div', { className: 'soul-field' },
-            e('label', { htmlFor: 'soul-tone' }, '语调'),
-            e('select', {
-              id: 'soul-tone',
-              value: localTone,
-              onChange: (ev) => setLocalTone(ev.target.value)
-            },
-              ...TONE_OPTIONS.map(opt =>
+              ...STYLE_TONE_OPTIONS.map(opt =>
                 e('option', { key: opt.value, value: opt.value }, opt.label)
               )
             )
@@ -569,36 +411,6 @@ window.__ModuleLoader__.load({
                 className: 'soul-example',
                 onClick: () => handleExampleClick(example)
               }, `${example.label}：${example.value}`)
-            )
-          ),
-
-          e(SoulPresets, {
-            presets,
-            saving,
-            onSave: handlePresetSave,
-            onApply: handlePresetApply,
-            onDelete: handlePresetDelete,
-            uiText: {
-              title: '💾 人设预设',
-              placeholder: '输入预设名称并保存当前编辑',
-              save: '保存',
-              apply: '应用',
-              delete: '删除',
-              empty: '暂无预设，输入名称保存当前配置'
-            }
-          }),
-
-          e('div', { className: 'soul-preview' },
-            e('button', {
-              type: 'button',
-              className: 'soul-preview-toggle',
-              onClick: () => setShowPreview(!showPreview)
-            }, showPreview ? '▶ 收起提示词预览' : '▶ 展开提示词预览'),
-            showPreview && e(Fragment, null,
-              previewLoading
-                ? e('div', { className: 'soul-status' }, '编译中...')
-                : e('pre', { className: 'soul-preview-text' },
-                    previewText || '（当前配置编译出的 system prompt 为空——请填写昵称或自定义指令）')
             )
           )
         ),
@@ -644,8 +456,7 @@ window.__ModuleLoader__.load({
       'settings.description': '自定义Agent回复的风格和语调',
       'button.save': '保存设置',
       'button.reset': '重置默认',
-      'option.style': '回复风格',
-      'option.tone': '语调',
+      'option.style': '回复风格和语调',
       'option.instructions': '自定义指令',
       'option.enabled': '启用个性化设置',
       'example.title': '💡 示例指令（点击使用）',
@@ -658,8 +469,7 @@ window.__ModuleLoader__.load({
       'settings.description': 'Customize agent response style and tone',
       'button.save': 'Save Settings',
       'button.reset': 'Reset to Default',
-      'option.style': 'Response Style',
-      'option.tone': 'Tone',
+      'option.style': 'Response Style & Tone',
       'option.instructions': 'Custom Instructions',
       'option.enabled': 'Enable Personalization',
       'example.title': '💡 Example Instructions (click to use)',
