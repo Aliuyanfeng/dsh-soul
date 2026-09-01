@@ -80,6 +80,18 @@ const BehaviorLayer = {
     en: '必须使用英语（English）回复'
   },
   
+  // 特质：标题和列表的使用程度
+  headingLists: {
+    more: '采用清晰的格式和列表结构组织回答，善用标题和列表',
+    less: '使用更多段落文本，减少标题和列表的使用'
+  },
+  
+  // 特质：表情符号的使用程度
+  emoji: {
+    more: '在回复中使用较多表情符号',
+    less: '尽量减少使用表情符号'
+  },
+  
   // 构建行为描述
   build(config) {
     const parts = []
@@ -87,6 +99,16 @@ const BehaviorLayer = {
     // 回复风格和语调
     if (config.style && this.styles[config.style]) {
       parts.push(`回复风格和语调：${this.styles[config.style]}`)
+    }
+    
+    // 特质：标题和列表
+    if (config.headingLists && this.headingLists[config.headingLists]) {
+      parts.push(this.headingLists[config.headingLists])
+    }
+    
+    // 特质：表情符号
+    if (config.emoji && this.emoji[config.emoji]) {
+      parts.push(this.emoji[config.emoji])
     }
     
     // 回复语言
@@ -129,12 +151,18 @@ const DEFAULT_CONFIG = {
   nickname: '',
   // 回复风格和语调（v0.2.0 起合并为单一选项）
   style: 'professional',
+  // 特质：标题和列表 / 表情符号（default=默认，more=增强，less=减弱）
+  headingLists: 'default',
+  emoji: 'default',
   language: 'zh',
   customInstructions: ''
 }
 
 // 合法的回复风格和语调取值（供工具参数校验）
 const STYLE_VALUES = ['professional', 'casual', 'humorous', 'roast', 'efficient']
+
+// 特质合法取值
+const TRAIT_VALUES = ['default', 'more', 'less']
 
 // v0.1.x 配置使用 style + tone 两个字段；v0.2.0 起合并为单一 style（回复风格和语调）。
 // 迁移映射：组合命中用组合表，否则退回旧 style 表，再否则用默认值。
@@ -162,6 +190,9 @@ function migrateConfig(raw) {
   delete config.presets
   delete config.tone
   delete config.examples
+  // 特质字段校验：脏数据回退为默认值
+  if (!TRAIT_VALUES.includes(config.headingLists)) config.headingLists = 'default'
+  if (!TRAIT_VALUES.includes(config.emoji)) config.emoji = 'default'
   return config
 }
 
@@ -394,6 +425,14 @@ const COMMAND_MESSAGES = {
       roast: '吐槽达人',
       efficient: '高效干练'
     },
+    traitsLabel: '特质',
+    headingListsLabel: '标题和列表',
+    emojiLabel: '表情符号',
+    traitNames: {
+      default: '默认',
+      more: '增强',
+      less: '减弱'
+    },
     instructionsLabel: '自定义指令',
     enabled: '已启用',
     disabled: '已禁用',
@@ -417,6 +456,14 @@ const COMMAND_MESSAGES = {
       humorous: 'Humorous',
       roast: 'Roast Master',
       efficient: 'Efficient'
+    },
+    traitsLabel: 'Traits',
+    headingListsLabel: 'Headings & lists',
+    emojiLabel: 'Emoji',
+    traitNames: {
+      default: 'Default',
+      more: 'More',
+      less: 'Less'
     },
     instructionsLabel: 'Custom instructions',
     enabled: 'enabled',
@@ -454,11 +501,13 @@ function registerCommands(ctx) {
             const status = config.enabled ? t.enabled : t.disabled
             const nickname = config.nickname || t.notSet
             const styleName = t.styleNames[config.style] || config.style || t.notSet
+            const hlName = t.traitNames[config.headingLists] || config.headingLists
+            const emojiName = t.traitNames[config.emoji] || config.emoji
             const instructions = config.customInstructions || t.notSet
 
             return {
               kind: 'success',
-              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.styleLabel}${t.colon}${styleName}\n${t.instructionsLabel}${t.colon}${instructions}\n\n${t.help}`
+              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.styleLabel}${t.colon}${styleName}\n${t.traitsLabel}${t.colon}${t.headingListsLabel}=${hlName}，${t.emojiLabel}=${emojiName}\n${t.instructionsLabel}${t.colon}${instructions}\n\n${t.help}`
             }
           } else if (args === 'reset') {
             const updated = await saveConfig({ ...DEFAULT_CONFIG })
@@ -567,6 +616,16 @@ function registerTools(ctx) {
             enum: ['zh', 'en'],
             description: '回复语言：zh=简体中文，en=English。'
           },
+          headingLists: {
+            type: 'string',
+            enum: TRAIT_VALUES,
+            description: '特质·标题和列表：default=默认，more=增强（采用清晰格式和列表结构），less=减弱（使用更多段落文本）。'
+          },
+          emoji: {
+            type: 'string',
+            enum: TRAIT_VALUES,
+            description: '特质·表情符号：default=默认，more=增强（使用较多表情符号），less=减弱（尽量减少使用表情符号）。'
+          },
           customInstructions: { type: 'string', description: '额外的自定义指令，用于覆盖或补充当前人设。' },
         },
         output: {
@@ -584,6 +643,8 @@ function registerTools(ctx) {
                   nickname: { type: 'string' },
                   style: { type: 'string' },
                   language: { type: 'string' },
+                  headingLists: { type: 'string' },
+                  emoji: { type: 'string' },
                   customInstructions: { type: 'string' },
                 },
               },
@@ -602,6 +663,12 @@ function registerTools(ctx) {
             }
             if (typeof args.language === 'string' && ['zh', 'en'].includes(args.language) && args.language !== current.language) {
               patch.language = args.language
+            }
+            if (typeof args.headingLists === 'string' && TRAIT_VALUES.includes(args.headingLists) && args.headingLists !== current.headingLists) {
+              patch.headingLists = args.headingLists
+            }
+            if (typeof args.emoji === 'string' && TRAIT_VALUES.includes(args.emoji) && args.emoji !== current.emoji) {
+              patch.emoji = args.emoji
             }
             if (typeof args.customInstructions === 'string' && args.customInstructions !== current.customInstructions) {
               patch.customInstructions = args.customInstructions

@@ -41,6 +41,9 @@ window.__ModuleLoader__.load({
       nickname: '',
       // 回复风格和语调（合并为单一选项）
       style: 'professional',
+      // 特质：标题和列表 / 表情符号
+      headingLists: 'default',
+      emoji: 'default',
       language: 'zh',
       customInstructions: '',
       loading: false,
@@ -101,6 +104,8 @@ window.__ModuleLoader__.load({
             s.enabled = payload.config.enabled
             s.nickname = payload.config.nickname || ''
             s.style = payload.config.style
+            s.headingLists = payload.config.headingLists || 'default'
+            s.emoji = payload.config.emoji || 'default'
             s.language = payload.config.language || 'zh'
             s.customInstructions = payload.config.customInstructions
             s.loading = false
@@ -135,6 +140,8 @@ window.__ModuleLoader__.load({
             s.enabled = payload.config.enabled
             s.nickname = payload.config.nickname || ''
             s.style = payload.config.style
+            s.headingLists = payload.config.headingLists || 'default'
+            s.emoji = payload.config.emoji || 'default'
             s.language = payload.config.language || 'zh'
             s.customInstructions = payload.config.customInstructions
             s.saving = false
@@ -165,6 +172,8 @@ window.__ModuleLoader__.load({
             s.enabled = payload.config.enabled
             s.nickname = payload.config.nickname || ''
             s.style = payload.config.style
+            s.headingLists = payload.config.headingLists || 'default'
+            s.emoji = payload.config.emoji || 'default'
             s.language = payload.config.language || 'zh'
             s.customInstructions = payload.config.customInstructions
             s.saving = false
@@ -239,6 +248,20 @@ window.__ModuleLoader__.load({
       { value: 'efficient', label: '高效干练' }
     ]
 
+    // 特质：标题和列表
+    const HEADING_LISTS_OPTIONS = [
+      { value: 'default', label: '默认' },
+      { value: 'more', label: '增强（采用清晰格式和列表结构）' },
+      { value: 'less', label: '减弱（使用更多段落文本）' }
+    ]
+
+    // 特质：表情符号
+    const EMOJI_OPTIONS = [
+      { value: 'default', label: '默认' },
+      { value: 'more', label: '增强（使用较多表情符号）' },
+      { value: 'less', label: '减弱（尽量减少使用表情符号）' }
+    ]
+
     // 选项用原生语言显示，两种 UI 语言下均自解释
     const LANGUAGE_OPTIONS = [
       { value: 'zh', label: '中文' },
@@ -270,11 +293,13 @@ window.__ModuleLoader__.load({
     function SoulSettings(props) {
       const { useSoulController, controller } = props
       const state = useSoulController((state) => state)
-      const { enabled, nickname, style, language, customInstructions, loading, saving, error } = state
+      const { enabled, nickname, style, headingLists, emoji, language, customInstructions, loading, saving, error } = state
       
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
       const [localStyle, setLocalStyle] = React.useState(style)
+      const [localHeadingLists, setLocalHeadingLists] = React.useState(headingLists)
+      const [localEmoji, setLocalEmoji] = React.useState(emoji)
       const [localLanguage, setLocalLanguage] = React.useState(language || 'zh')
       const [localInstructions, setLocalInstructions] = React.useState(customInstructions)
       const [showSuccess, setShowSuccess] = React.useState(false)
@@ -285,9 +310,11 @@ window.__ModuleLoader__.load({
         setLocalEnabled(enabled)
         setLocalNickname(nickname || '')
         setLocalStyle(style)
+        setLocalHeadingLists(headingLists)
+        setLocalEmoji(emoji)
         setLocalLanguage(language || 'zh')
         setLocalInstructions(customInstructions)
-      }, [enabled, nickname, style, language, customInstructions])
+      }, [enabled, nickname, style, headingLists, emoji, language, customInstructions])
       
       // 保存成功后显示提示，2秒后自动消失
       React.useEffect(() => {
@@ -311,6 +338,8 @@ window.__ModuleLoader__.load({
           enabled: localEnabled,
           nickname: localNickname,
           style: localStyle,
+          headingLists: localHeadingLists,
+          emoji: localEmoji,
           language: localLanguage,
           customInstructions: localInstructions
         })
@@ -358,6 +387,38 @@ window.__ModuleLoader__.load({
               onChange: (ev) => setLocalStyle(ev.target.value)
             },
               ...STYLE_TONE_OPTIONS.map(opt =>
+                e('option', { key: opt.value, value: opt.value }, opt.label)
+              )
+            )
+          ),
+
+          e('div', { className: 'soul-field' },
+            e('label', { htmlFor: 'soul-headingLists' },
+              '特质：标题和列表',
+              e(SoulHint, { text: '在回复风格和语调的基础上选择额外的自定义特质项。控制回答中标题和列表的使用程度。' })
+            ),
+            e('select', {
+              id: 'soul-headingLists',
+              value: localHeadingLists,
+              onChange: (ev) => setLocalHeadingLists(ev.target.value)
+            },
+              ...HEADING_LISTS_OPTIONS.map(opt =>
+                e('option', { key: opt.value, value: opt.value }, opt.label)
+              )
+            )
+          ),
+
+          e('div', { className: 'soul-field' },
+            e('label', { htmlFor: 'soul-emoji' },
+              '特质：表情符号',
+              e(SoulHint, { text: '在回复风格和语调的基础上选择额外的自定义特质项。控制表情符号的使用程度。' })
+            ),
+            e('select', {
+              id: 'soul-emoji',
+              value: localEmoji,
+              onChange: (ev) => setLocalEmoji(ev.target.value)
+            },
+              ...EMOJI_OPTIONS.map(opt =>
                 e('option', { key: opt.value, value: opt.value }, opt.label)
               )
             )
