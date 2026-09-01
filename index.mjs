@@ -220,7 +220,7 @@ function injectPromptToAllAgents(ctx, config) {
     '[dsh-soul 个性化配置已关闭]',
     '从现在开始不要使用 dsh-soul 之前注入的昵称、角色、回复风格或语调配置。',
     '请恢复使用 Agent 的默认行为。'
-  ].join('\\n')
+  ].join('\n')
   const snapshotText = prompt || disabledText
 
   for (const agent of agents.list()) {
@@ -234,7 +234,7 @@ function injectPromptToAllAgents(ctx, config) {
             '从现在开始必须按照此配置回复，不要继续使用旧的昵称、旧的角色或旧的风格。',
             '',
             prompt
-          ].join('\\n') : snapshotText
+          ].join('\n') : snapshotText
         }],
         source: {
           kind: 'plugin',
