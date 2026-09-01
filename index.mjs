@@ -27,7 +27,7 @@ function configPath() {
 
 // ==================== 三层架构 ====================
 
-// Identity 层：身份定义
+// Identity 层：身份定义（Agent 自己的角色）
 const IdentityLayer = {
   // 角色定义
   roles: {
@@ -47,19 +47,23 @@ const IdentityLayer = {
       parts.push(config.customInstructions)
     }
     
-    // 关于你：昵称 / 职业 / 介绍
-    if (config.nickname) {
-      parts.push(`你的用户叫"${config.nickname}"，在回复中使用这个称呼`)
-    }
-    if (config.occupation) {
-      parts.push(`你的用户的职业是${config.occupation}`)
-    }
-    if (config.bio) {
-      parts.push(`关于你的用户的介绍：${config.bio}`)
-    }
-    
     return parts.join('\n')
   }
+}
+
+// 用户背景层：关于对话用户的信息（不属于 Agent 角色设定）
+function buildUserProfile(config) {
+  const lines = []
+  if (config.nickname) {
+    lines.push(`- 昵称：${config.nickname}（回复时使用这个称呼）`)
+  }
+  if (config.occupation) {
+    lines.push(`- 职业：${config.occupation}`)
+  }
+  if (config.bio) {
+    lines.push(`- 用户自述：${config.bio}`)
+  }
+  return lines.join('\n')
 }
 
 // Behavior 层：行为规则
@@ -246,9 +250,10 @@ function compilePrompt(config) {
   const identity = IdentityLayer.build(config)
   const behavior = BehaviorLayer.build(config)
   const style = StyleLayer.build(config)
+  const profile = buildUserProfile(config)
   
   // 如果没有任何配置，返回空
-  if (!identity && !behavior) {
+  if (!identity && !behavior && !profile) {
     return ''
   }
   
@@ -260,13 +265,21 @@ function compilePrompt(config) {
     parts.push(`[角色设定] ${identity}`)
   }
   
+  // 用户背景：明确声明描述的是用户本人，防止模型把用户信息当成自己的身份
+  if (profile) {
+    parts.push([
+      '[用户背景] 以下信息描述的是与你对话的用户本人，不是你的身份；不要把用户的职业、技术背景或自述当成你自己的设定。',
+      profile
+    ].join('\n'))
+  }
+  
   // 行为层
   if (behavior) {
     parts.push(`[回复风格] ${behavior}`)
   }
   
   // 执行规则
-  parts.push(`[执行规则] 你必须在每一条回复中严格遵守以上设定，包括但不限于：代码解释、技术问答、日常闲聊、知识科普等所有场景。违反此规则视为失败。`)
+  parts.push(`[执行规则] 你必须在每一条回复中严格遵守以上角色设定和回复风格；涉及用户背景时，用它来理解用户、贴合用户的需求和水平作答，而不是把它当作你自己的身份。包括但不限于：代码解释、技术问答、日常闲聊、知识科普等所有场景。违反此规则视为失败。`)
   
   return parts.join('\n')
 }
