@@ -34,6 +34,24 @@ dsh --profile web web
       name: dsh-soul
 ```
 
+## 截图
+
+**设置页（关于你 + 特质）**
+
+![设置页上半部分：关于你 与 特质起始](./screenshots/image0.png)
+
+**设置页（特质 + 输出语言 + 自定义指令）**
+
+![设置页下半部分：特质、输出语言与自定义指令](./screenshots/image1.png)
+
+**`/soul` 命令提示**
+
+![`/soul` 命令自动补全提示与输入框](./screenshots/image2.png)
+
+**`/soul` 命令输出（设置昵称、show、enable、disable、reset）**
+
+![`/soul` 多种命令的输出示例](./screenshots/image3.png)
+
 ## 使用
 
 启动 DSH 后，进入设置页面中的「个性化设置」栏目，修改配置并点击「保存设置」。

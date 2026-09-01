@@ -34,6 +34,24 @@ The plugin is registered via `cordis.patch.yml`:
       name: dsh-soul
 ```
 
+## Screenshots
+
+**Settings page (About you + Traits)**
+
+![Settings page (upper part): About you & start of Traits](./screenshots/image0.png)
+
+**Settings page (Traits + Output language + Custom instructions)**
+
+![Settings page (lower part): Traits, Output language & Custom instructions](./screenshots/image1.png)
+
+**`/soul` command prompt**
+
+![`/soul` command autocomplete hint and input box](./screenshots/image2.png)
+
+**`/soul` command output (set nickname, show, enable, disable, reset)**
+
+![Sample outputs of multiple `/soul` commands](./screenshots/image3.png)
+
 ## Usage
 
 After starting DSH, open the **Personalization** section on the settings page, edit the configuration and click **Save Settings**.
