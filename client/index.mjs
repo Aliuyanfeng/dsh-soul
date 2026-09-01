@@ -414,6 +414,7 @@ window.__ModuleLoader__.load({
             })
           ),
 
+          e('div', { className: 'soul-group-title' }, '特质'),
           e('div', { className: 'soul-field' },
             e('label', { htmlFor: 'soul-style' },
               '回复风格和语调',
@@ -430,7 +431,6 @@ window.__ModuleLoader__.load({
             )
           ),
 
-          e('div', { className: 'soul-group-title' }, '特质'),
           e('div', { className: 'soul-field' },
             e('label', { htmlFor: 'soul-headingLists' },
               '标题和列表',
