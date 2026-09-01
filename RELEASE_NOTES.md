@@ -61,6 +61,7 @@
   - 配置文件不再写入 `tone` 字段；旧配置自动迁移（`professional+formal` → `professional`，`casual+neutral` → `casual`，`humorous+informal` → `humorous`，其余组合按旧 style就近映射）。
   - `set_persona` 工具的 `style` 参数随之更新为上述五个取值，`tone` 参数移除。
   - `/soul show` 输出中「风格」「语调」两行合并为「风格语调」一行，并显示本地化标签。
+- **输出语言进入系统提示词**：`language` 字段此前仅影响 `/soul` 命令输出文案，模型感知不到。现编译进 system prompt（Behavior 层），切换语言后 Agent 的回复语言随之生效；`set_persona` 工具新增 `language` 参数（`zh` / `en`）。设置页该字段更名为「输出语言 / Output language」。
 - **选项提示图标**：「回复风格和语调」标签旁新增 ⓘ 小图标，hover 展示说明：「设置 Agent 回复你的风格和语调。这不会影响 Agent 的功能。」
 
 #### 移除

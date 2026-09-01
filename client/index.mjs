@@ -381,7 +381,10 @@ window.__ModuleLoader__.load({
           ),
 
           e('div', { className: 'soul-field' },
-            e('label', { htmlFor: 'soul-language' }, '命令输出语言 / Command language'),
+            e('label', { htmlFor: 'soul-language' },
+              '输出语言 / Output language',
+              e(SoulHint, { text: '设置 Agent 回复你使用的语言，同时影响 /soul 命令的输出语言。' })
+            ),
             e('select', {
               id: 'soul-language',
               value: localLanguage,

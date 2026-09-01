@@ -74,6 +74,12 @@ const BehaviorLayer = {
     '保持角色一致性，不要跳出设定'
   ],
   
+  // 回复语言指令（同时决定 /soul 命令输出语言）
+  languages: {
+    zh: '必须使用简体中文回复',
+    en: '必须使用英语（English）回复'
+  },
+  
   // 构建行为描述
   build(config) {
     const parts = []
@@ -81,6 +87,11 @@ const BehaviorLayer = {
     // 回复风格和语调
     if (config.style && this.styles[config.style]) {
       parts.push(`回复风格和语调：${this.styles[config.style]}`)
+    }
+    
+    // 回复语言
+    if (config.language && this.languages[config.language]) {
+      parts.push(this.languages[config.language])
     }
     
     return parts.join('，')
@@ -555,6 +566,11 @@ function registerTools(ctx) {
             enum: STYLE_VALUES,
             description: '回复风格和语调：professional=专业严谨，casual=轻松自然，humorous=幽默风趣，roast=吐槽达人，efficient=高效干练。'
           },
+          language: {
+            type: 'string',
+            enum: ['zh', 'en'],
+            description: '回复语言：zh=简体中文，en=English。'
+          },
           customInstructions: { type: 'string', description: '额外的自定义指令，用于覆盖或补充当前人设。' },
         },
         output: {
@@ -571,6 +587,7 @@ function registerTools(ctx) {
                 properties: {
                   nickname: { type: 'string' },
                   style: { type: 'string' },
+                  language: { type: 'string' },
                   customInstructions: { type: 'string' },
                 },
               },
@@ -586,6 +603,9 @@ function registerTools(ctx) {
             }
             if (typeof args.style === 'string' && STYLE_VALUES.includes(args.style) && args.style !== current.style) {
               patch.style = args.style
+            }
+            if (typeof args.language === 'string' && ['zh', 'en'].includes(args.language) && args.language !== current.language) {
+              patch.language = args.language
             }
             if (typeof args.customInstructions === 'string' && args.customInstructions !== current.customInstructions) {
               patch.customInstructions = args.customInstructions
