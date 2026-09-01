@@ -136,6 +136,9 @@ const DEFAULT_CONFIG = {
   tone: 'neutral',
   language: 'zh',
   customInstructions: '',
+  // 人设预设：保存/切换完整人格三件套（昵称+风格+语调+自定义指令），
+  // 不含 enabled / language / presets 自身——预设是「内容」，开关与语言是「环境」。
+  presets: [],
   examples: [
     { label: '专业严谨', value: '你是一个专业严谨的助手，采用学术性的语气，注重逻辑和准确性。' },
     { label: '友好亲切', value: '你是一个友好亲切的助手，采用轻松自然的语气，像朋友一样交流。' },
@@ -265,6 +268,9 @@ function refreshPromptAndInject(ctx, config) {
 
 // ==================== HTTP 路由 ====================
 
+// 预设承载的人格字段（宿主端路由与斜杠命令共用）
+const PRESET_FIELDS = ['nickname', 'style', 'tone', 'customInstructions']
+
 function registerRoutes(ctx) {
   ctx.inject(['webServer'], (wsCtx) => {
     // 获取配置
@@ -301,7 +307,7 @@ function registerRoutes(ctx) {
       }
     })
     
-    // 获取系统提示词
+    // 获取系统提示词（当前已保存配置）
     wsCtx.webServer.register({
       kind: 'exact',
       path: '/api/soul/prompt',
@@ -321,6 +327,33 @@ function registerRoutes(ctx) {
       }
     })
     
+    // 预览系统提示词（不落盘、不注入——用于设置页实时预览未保存的编辑）
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/prompt/preview',
+      handler: async (req, res) => {
+        const send = (status, body) => {
+          res.writeHead(status, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(body))
+        }
+        
+        try {
+          if (req.method !== 'POST') {
+            return send(405, { ok: false, error: 'Method not allowed' })
+          }
+          let raw = ''
+          for await (const chunk of req) raw += chunk
+          const draft = JSON.parse(raw || '{}')
+          // 以已保存配置为底，仅用请求体中的字段覆盖，避免预览请求篡改完整配置
+          const current = await loadConfig()
+          const prompt = compilePrompt({ ...current, ...draft })
+          send(200, { ok: true, prompt, enabled: draft.enabled !== undefined ? draft.enabled : current.enabled })
+        } catch (err) {
+          send(500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
+
     // 重置配置
     wsCtx.webServer.register({
       kind: 'exact',
@@ -330,14 +363,87 @@ function registerRoutes(ctx) {
           res.writeHead(status, { 'content-type': 'application/json' })
           res.end(JSON.stringify(body))
         }
-        
+
         try {
           const config = await saveConfig({ ...DEFAULT_CONFIG })
-          
+
           // 配置变化后更新系统提示词，并注入所有活动会话
           refreshPromptAndInject(ctx, config)
-          
+
           send(200, { ok: true, config })
+        } catch (err) {
+          send(500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
+
+    // 预设管理：POST /api/soul/presets/save   { name } 以当前配置为人设存为预设（同名覆盖）
+    //           POST /api/soul/presets/apply  { name } 应用预设到当前配置
+    //           POST /api/soul/presets/delete { name } 删除预设
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/presets',
+      handler: async (req, res) => {
+        const send = (status, body) => {
+          res.writeHead(status, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(body))
+        }
+
+        try {
+          if (req.method !== 'POST') {
+            return send(405, { ok: false, error: 'Method not allowed' })
+          }
+          const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
+          const action = url.searchParams.get('action') || ''
+          const op = url.pathname.split('/').pop() // save | apply | delete（兼容 action 查询参数）
+          const kind = action || op
+          let raw = ''
+          for await (const chunk of req) raw += chunk
+          const body = JSON.parse(raw || '{}')
+          const name = typeof body.name === 'string' ? body.name.trim() : ''
+          if (!name) return send(400, { ok: false, error: 'name is required' })
+          if (name.length > 40) return send(400, { ok: false, error: 'name too long (max 40)' })
+
+          const config = await loadConfig()
+          const presets = Array.isArray(config.presets) ? config.presets : []
+
+          if (kind === 'save') {
+            // 请求体可携带 draft（设置页未保存的编辑）作为预设内容；
+            // 未携带时以当前已保存配置为预设内容（斜杠命令路径）。
+            const preset = { name }
+            for (const f of PRESET_FIELDS) {
+              const v = body[f] !== undefined ? body[f] : config[f]
+              preset[f] = typeof v === 'string' ? v : ''
+            }
+            const idx = presets.findIndex(p => p.name === name)
+            const next = [...presets]
+            if (idx >= 0) next[idx] = preset
+            else next.push(preset)
+            const updated = await saveConfig({ ...config, presets: next })
+            return send(200, { ok: true, config: updated, saved: name })
+          }
+
+          if (kind === 'apply') {
+            const preset = presets.find(p => p.name === name)
+            if (!preset) return send(404, { ok: false, error: `preset not found: ${name}` })
+            const updated = { ...config }
+            for (const f of PRESET_FIELDS) {
+              if (typeof preset[f] === 'string') updated[f] = preset[f]
+            }
+            await saveConfig(updated)
+            // 人设内容变化 → 刷新提示词并注入活动会话
+            refreshPromptAndInject(ctx, updated)
+            return send(200, { ok: true, config: updated, applied: name })
+          }
+
+          if (kind === 'delete') {
+            const next = presets.filter(p => p.name !== name)
+            if (next.length === presets.length) return send(404, { ok: false, error: `preset not found: ${name}` })
+            const updated = await saveConfig({ ...config, presets: next })
+            return send(200, { ok: true, config: updated, deleted: name })
+          }
+
+          return send(400, { ok: false, error: `unknown action: ${kind}` })
         } catch (err) {
           send(500, { ok: false, error: String(err.message || err) })
         }
@@ -362,8 +468,16 @@ const COMMAND_MESSAGES = {
     enabled: '已启用',
     disabled: '已禁用',
     notSet: '未设置',
-    help: '使用 /soul show 查看详情\n使用 /soul reset 重置配置\n使用 /soul enable 启用\n使用 /soul disable 禁用\n使用 /soul 昵称xxx 设置昵称',
+    presetsLabel: '预设',
+    noPresets: '（暂无预设。使用 /soul save <名称> 保存当前人设）',
+    help: '使用 /soul show 查看详情\n使用 /soul reset 重置配置\n使用 /soul enable 启用\n使用 /soul disable 禁用\n使用 /soul 昵称xxx 设置昵称\n使用 /soul save <名称> 保存当前人设为预设\n使用 /soul use <名称> 应用预设\n使用 /soul list 列出预设\n使用 /soul delete <名称> 删除预设',
     resetDone: '✅ 配置已重置为默认值',
+    presetSaved: (n, overwrote) => `✅ 预设「${n}」已保存${overwrote ? '（覆盖同名预设）' : ''}`,
+    presetApplied: (n) => `✅ 预设「${n}」已应用，昵称/风格/语调/自定义指令已更新`,
+    presetDeleted: (n) => `✅ 预设「${n}」已删除`,
+    presetNotFound: (n) => `❌ 未找到预设：${n}`,
+    presetNameRequired: '用法：/soul save|use|delete <名称>',
+    presetListTitle: (count) => `📋 已保存 ${count} 个预设：`,
     enableDone: '✅ 个性化设置已启用',
     disableDone: '✅ 个性化设置已禁用',
     nicknameDone: (n) => `✅ 昵称已设置为：${n}`,
@@ -380,8 +494,16 @@ const COMMAND_MESSAGES = {
     enabled: 'enabled',
     disabled: 'disabled',
     notSet: 'not set',
-    help: 'Use /soul show to view details\nUse /soul reset to reset\nUse /soul enable to enable\nUse /soul disable to disable\nUse /soul <nickname> to set your nickname',
+    presetsLabel: 'Presets',
+    noPresets: '(no presets yet. Use /soul save <name> to save the current persona)',
+    help: 'Use /soul show to view details\nUse /soul reset to reset\nUse /soul enable to enable\nUse /soul disable to disable\nUse /soul <nickname> to set your nickname\nUse /soul save <name> to save the current persona as a preset\nUse /soul use <name> to apply a preset\nUse /soul list to list presets\nUse /soul delete <name> to delete a preset',
     resetDone: '✅ Configuration reset to defaults',
+    presetSaved: (n, overwrote) => `✅ Preset "${n}" saved${overwrote ? ' (overwrote existing)' : ''}`,
+    presetApplied: (n) => `✅ Preset "${n}" applied — nickname/style/tone/custom instructions updated`,
+    presetDeleted: (n) => `✅ Preset "${n}" deleted`,
+    presetNotFound: (n) => `❌ Preset not found: ${n}`,
+    presetNameRequired: 'Usage: /soul save|use|delete <name>',
+    presetListTitle: (count) => `📋 ${count} preset(s) saved:`,
     enableDone: '✅ Personalization enabled',
     disableDone: '✅ Personalization disabled',
     nicknameDone: (n) => `✅ Nickname set to: ${n}`,
@@ -397,27 +519,71 @@ function registerCommands(ctx) {
   ctx.inject(['commands'], (cmdCtx) => {
     cmdCtx.commands.register({
       name: 'soul',
-      description: '查看或管理个性化设置。用法：/soul [show|reset|enable|disable|昵称]',
-      input: { hint: '[show|reset|enable|disable|昵称]' },
+      description: '查看或管理个性化设置。用法：/soul [show|reset|enable|disable|save|use|list|delete|昵称]',
+      input: { hint: '[show|reset|enable|disable|save|use|list|delete|昵称]' },
       async handler(invocation) {
-        // 保留原始大小写用于昵称，仅关键字匹配时忽略大小写
+        // 保留原始大小写用于昵称与预设名，仅关键字匹配时忽略大小写
         const raw = String(invocation.rawInput || '').trim()
         const args = raw.toLowerCase()
-        
+
+        // 预设子命令形如 "save 名字"：切出关键字与名称参数（名称保留大小写）
+        const spaceIdx = raw.indexOf(' ')
+        const keyword = spaceIdx === -1 ? args : args.slice(0, spaceIdx)
+        const nameArg = spaceIdx === -1 ? '' : raw.slice(spaceIdx + 1).trim()
+
         try {
           const config = await loadConfig()
           const t = commandMessages(config)
-          
-          if (args === 'show' || args === '') {
+
+          if (keyword === 'save' || keyword === 'use' || keyword === 'delete') {
+            if (!nameArg) return { kind: 'error', text: t.presetNameRequired }
+            const presets = Array.isArray(config.presets) ? config.presets : []
+            if (keyword === 'save') {
+              const preset = { name: nameArg }
+              for (const f of PRESET_FIELDS) preset[f] = typeof config[f] === 'string' ? config[f] : ''
+              const idx = presets.findIndex(p => p.name === nameArg)
+              const next = [...presets]
+              if (idx >= 0) next[idx] = preset
+              else next.push(preset)
+              await saveConfig({ ...config, presets: next })
+              return { kind: 'success', text: t.presetSaved(nameArg, idx >= 0) }
+            }
+            if (keyword === 'use') {
+              const preset = presets.find(p => p.name === nameArg)
+              if (!preset) return { kind: 'error', text: t.presetNotFound(nameArg) }
+              const updated = { ...config }
+              for (const f of PRESET_FIELDS) {
+                if (typeof preset[f] === 'string') updated[f] = preset[f]
+              }
+              await saveConfig(updated)
+              // 人设内容变化 → 刷新提示词并注入活动会话
+              refreshPromptAndInject(ctx, updated)
+              return { kind: 'success', text: t.presetApplied(nameArg) }
+            }
+            // delete
+            const next = presets.filter(p => p.name !== nameArg)
+            if (next.length === presets.length) return { kind: 'error', text: t.presetNotFound(nameArg) }
+            await saveConfig({ ...config, presets: next })
+            return { kind: 'success', text: t.presetDeleted(nameArg) }
+          } else if (keyword === 'list') {
+            const presets = Array.isArray(config.presets) ? config.presets : []
+            if (presets.length === 0) {
+              return { kind: 'success', text: `${t.presetsLabel}${t.colon}${t.noPresets}` }
+            }
+            const lines = presets.map((p, i) => `${i + 1}. ${p.name}${p.nickname ? `（${p.nickname}）` : ''}`)
+            return { kind: 'success', text: `${t.presetListTitle(presets.length)}\n${lines.join('\n')}` }
+          } else           if (args === 'show' || args === '') {
             const status = config.enabled ? t.enabled : t.disabled
             const nickname = config.nickname || t.notSet
             const style = config.style || t.notSet
             const tone = config.tone || t.notSet
             const instructions = config.customInstructions || t.notSet
-            
+            const presets = Array.isArray(config.presets) ? config.presets : []
+            const presetInfo = presets.length > 0 ? `（${presets.length} 个预设）` : ''
+
             return {
               kind: 'success',
-              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.styleLabel}${t.colon}${style}\n${t.toneLabel}${t.colon}${tone}\n${t.instructionsLabel}${t.colon}${instructions}\n\n${t.help}`
+              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.styleLabel}${t.colon}${style}\n${t.toneLabel}${t.colon}${tone}\n${t.instructionsLabel}${t.colon}${instructions}\n${t.presetsLabel}${t.colon}${presets.length}${presetInfo}\n\n${t.help}`
             }
           } else if (args === 'reset') {
             const updated = await saveConfig({ ...DEFAULT_CONFIG })
@@ -497,6 +663,92 @@ function registerSystemPrompt(ctx) {
   })
 }
 
+// ==================== Agent 可调用工具 ====================
+
+// tools 是可选 host 服务且 ABI 版本敏感（同 dsh-share-page 的守卫）。
+// 动态 import + 守卫：@deepseek-ai/dsh-tools 不可解析或旧 ABI（缺 TOOL_RUNTIME_SCHEDULER
+// symbol）时跳过工具注册——插件照常激活，Web UI / 命令 / 路由不受影响。
+function registerTools(ctx) {
+  ctx.inject(['tools'], (toolsCtx) => {
+    import('@deepseek-ai/dsh-tools').then(({ defineTool, TOOL_RUNTIME_SCHEDULER }) => {
+      if (typeof TOOL_RUNTIME_SCHEDULER !== 'symbol') {
+        throw new Error('dsh-soul: resolved @deepseek-ai/dsh-tools lacks TOOL_RUNTIME_SCHEDULER — requires ^0.1.0-rc.6')
+      }
+      toolsCtx.tools.register(defineTool({
+        name: 'set_persona',
+        description:
+          '调整当前个性化人设（昵称、回复风格、语调、自定义指令）。' +
+          '当用户明确要求改变称呼、语气、风格或角色时使用。' +
+          '只需要传入要修改的字段，未提供的字段保持不变。',
+        parameters: {
+          nickname: { type: 'string', description: '用户昵称，回复时会使用这个称呼。' },
+          style: {
+            type: 'string',
+            enum: ['professional', 'casual', 'friendly', 'humorous', 'academic'],
+            description: '回复风格。'
+          },
+          tone: {
+            type: 'string',
+            enum: ['neutral', 'formal', 'informal', 'enthusiastic', 'calm'],
+            description: '语调。'
+          },
+          customInstructions: { type: 'string', description: '额外的自定义指令，用于覆盖或补充当前人设。' },
+        },
+        output: {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['ok'],
+            properties: {
+              ok: { type: 'boolean' },
+              message: { type: 'string' },
+              changes: {
+                type: 'object',
+                description: '实际发生变化的字段',
+                properties: {
+                  nickname: { type: 'string' },
+                  style: { type: 'string' },
+                  tone: { type: 'string' },
+                  customInstructions: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        async execute(args) {
+          try {
+            const current = await loadConfig()
+            const patch = {}
+            if (typeof args.nickname === 'string' && args.nickname !== current.nickname) {
+              patch.nickname = args.nickname
+            }
+            if (typeof args.style === 'string' && args.style !== current.style) {
+              patch.style = args.style
+            }
+            if (typeof args.tone === 'string' && args.tone !== current.tone) {
+              patch.tone = args.tone
+            }
+            if (typeof args.customInstructions === 'string' && args.customInstructions !== current.customInstructions) {
+              patch.customInstructions = args.customInstructions
+            }
+            if (Object.keys(patch).length === 0) {
+              return { ok: true, message: '没有要更改的设置' }
+            }
+            const updated = { ...current, ...patch }
+            await saveConfig(updated)
+            refreshPromptAndInject(ctx, updated)
+            return { ok: true, message: '已更新个性化设置', changes: patch }
+          } catch (err) {
+            return { ok: false, message: String(err.message || err) }
+          }
+        },
+      }))
+    }).catch((err) => {
+      toolsCtx.logger?.warn?.('[dsh-soul] set_persona tool not registered: ' + String((err && err.message) || err))
+    })
+  })
+}
+
 // ==================== 主入口 ====================
 
 export async function apply(ctx) {
@@ -526,6 +778,7 @@ export async function apply(ctx) {
   registerRoutes(ctx)
   registerCommands(ctx)
   registerSystemPrompt(ctx)
+  registerTools(ctx)
 }
 
 export { name }

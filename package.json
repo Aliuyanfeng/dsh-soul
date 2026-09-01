@@ -1,6 +1,6 @@
 {
   "name": "dsh-soul",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "为 DeepSeek Harness 添加个性化设置",
   "type": "module",
   "main": "index.mjs",
@@ -8,6 +8,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Aliuyanfeng/dsh-soul.git"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
