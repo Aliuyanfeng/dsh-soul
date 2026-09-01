@@ -47,9 +47,15 @@ const IdentityLayer = {
       parts.push(config.customInstructions)
     }
     
-    // 用户昵称
+    // 关于你：昵称 / 职业 / 介绍
     if (config.nickname) {
       parts.push(`你的用户叫"${config.nickname}"，在回复中使用这个称呼`)
+    }
+    if (config.occupation) {
+      parts.push(`你的用户的职业是${config.occupation}`)
+    }
+    if (config.bio) {
+      parts.push(`关于你的用户的介绍：${config.bio}`)
     }
     
     return parts.join('\n')
@@ -149,6 +155,9 @@ const StyleLayer = {
 const DEFAULT_CONFIG = {
   enabled: true,
   nickname: '',
+  // 关于你：用户职业 / 用户介绍
+  occupation: '',
+  bio: '',
   // 回复风格和语调（v0.2.0 起合并为单一选项）
   style: 'professional',
   // 特质：标题和列表 / 表情符号（default=默认，more=增强，less=减弱）
@@ -417,6 +426,8 @@ const COMMAND_MESSAGES = {
     colon: '：',
     statusLabel: '状态',
     nicknameLabel: '昵称',
+    occupationLabel: '职业',
+    bioLabel: '介绍',
     styleLabel: '风格语调',
     styleNames: {
       professional: '专业严谨',
@@ -449,6 +460,8 @@ const COMMAND_MESSAGES = {
     colon: ': ',
     statusLabel: 'Status',
     nicknameLabel: 'Nickname',
+    occupationLabel: 'Occupation',
+    bioLabel: 'Bio',
     styleLabel: 'Style & Tone',
     styleNames: {
       professional: 'Professional',
@@ -500,6 +513,8 @@ function registerCommands(ctx) {
           if (args === 'show' || args === '') {
             const status = config.enabled ? t.enabled : t.disabled
             const nickname = config.nickname || t.notSet
+            const occupation = config.occupation || t.notSet
+            const bio = config.bio || t.notSet
             const styleName = t.styleNames[config.style] || config.style || t.notSet
             const hlName = t.traitNames[config.headingLists] || config.headingLists
             const emojiName = t.traitNames[config.emoji] || config.emoji
@@ -507,7 +522,7 @@ function registerCommands(ctx) {
 
             return {
               kind: 'success',
-              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.styleLabel}${t.colon}${styleName}\n${t.traitsLabel}${t.colon}${t.headingListsLabel}=${hlName}，${t.emojiLabel}=${emojiName}\n${t.instructionsLabel}${t.colon}${instructions}\n\n${t.help}`
+              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.occupationLabel}${t.colon}${occupation}\n${t.bioLabel}${t.colon}${bio}\n${t.styleLabel}${t.colon}${styleName}\n${t.traitsLabel}${t.colon}${t.headingListsLabel}=${hlName}，${t.emojiLabel}=${emojiName}\n${t.instructionsLabel}${t.colon}${instructions}\n\n${t.help}`
             }
           } else if (args === 'reset') {
             const updated = await saveConfig({ ...DEFAULT_CONFIG })
@@ -606,6 +621,8 @@ function registerTools(ctx) {
           '只需要传入要修改的字段，未提供的字段保持不变。',
         parameters: {
           nickname: { type: 'string', description: '用户昵称，回复时会使用这个称呼。' },
+          occupation: { type: 'string', description: '用户的职业。' },
+          bio: { type: 'string', description: '关于用户的介绍。' },
           style: {
             type: 'string',
             enum: STYLE_VALUES,
@@ -641,6 +658,8 @@ function registerTools(ctx) {
                 description: '实际发生变化的字段',
                 properties: {
                   nickname: { type: 'string' },
+                  occupation: { type: 'string' },
+                  bio: { type: 'string' },
                   style: { type: 'string' },
                   language: { type: 'string' },
                   headingLists: { type: 'string' },
@@ -657,6 +676,12 @@ function registerTools(ctx) {
             const patch = {}
             if (typeof args.nickname === 'string' && args.nickname !== current.nickname) {
               patch.nickname = args.nickname
+            }
+            if (typeof args.occupation === 'string' && args.occupation !== current.occupation) {
+              patch.occupation = args.occupation
+            }
+            if (typeof args.bio === 'string' && args.bio !== current.bio) {
+              patch.bio = args.bio
             }
             if (typeof args.style === 'string' && STYLE_VALUES.includes(args.style) && args.style !== current.style) {
               patch.style = args.style

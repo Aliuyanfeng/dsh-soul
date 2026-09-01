@@ -8,7 +8,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 
 - Personalization settings page in the Web UI
 - Enable or disable personalization
-- Set a user nickname
+- "About you": set your nickname, occupation and bio so replies fit your background
 - Combined style & tone option: `professional`, `casual`, `humorous`, `roast`, `efficient`
 - Trait fine-tuning (layered on top of style & tone):
   - Headings & lists: `default`, `more` (clear formatting with headings and lists), `less` (more paragraph text)
@@ -66,6 +66,8 @@ Example:
 {
   "enabled": true,
   "nickname": "Bob",
+  "occupation": "Software Engineer",
+  "bio": "Interested in programming and technology",
   "style": "professional",
   "language": "en",
   "customInstructions": "Be concise and lead with the conclusion."

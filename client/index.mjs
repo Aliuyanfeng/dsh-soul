@@ -39,6 +39,9 @@ window.__ModuleLoader__.load({
     const INITIAL = {
       enabled: true,
       nickname: '',
+      // 关于你：用户职业 / 用户介绍
+      occupation: '',
+      bio: '',
       // 回复风格和语调（合并为单一选项）
       style: 'professional',
       // 特质：标题和列表 / 表情符号
@@ -103,6 +106,8 @@ window.__ModuleLoader__.load({
           this.store.update(s => {
             s.enabled = payload.config.enabled
             s.nickname = payload.config.nickname || ''
+            s.occupation = payload.config.occupation || ''
+            s.bio = payload.config.bio || ''
             s.style = payload.config.style
             s.headingLists = payload.config.headingLists || 'default'
             s.emoji = payload.config.emoji || 'default'
@@ -139,6 +144,8 @@ window.__ModuleLoader__.load({
           this.store.update(s => {
             s.enabled = payload.config.enabled
             s.nickname = payload.config.nickname || ''
+            s.occupation = payload.config.occupation || ''
+            s.bio = payload.config.bio || ''
             s.style = payload.config.style
             s.headingLists = payload.config.headingLists || 'default'
             s.emoji = payload.config.emoji || 'default'
@@ -171,6 +178,8 @@ window.__ModuleLoader__.load({
           this.store.update(s => {
             s.enabled = payload.config.enabled
             s.nickname = payload.config.nickname || ''
+            s.occupation = payload.config.occupation || ''
+            s.bio = payload.config.bio || ''
             s.style = payload.config.style
             s.headingLists = payload.config.headingLists || 'default'
             s.emoji = payload.config.emoji || 'default'
@@ -203,6 +212,8 @@ window.__ModuleLoader__.load({
       '.soul-field label{display:block;margin-bottom:6px;font-size:13px;font-weight:500;color:var(--dsw-alias-label-secondary)}',
       '.soul-field select,.soul-field textarea,.soul-field input[type=text]{width:100%;padding:8px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-l1);color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.5;box-sizing:border-box}',
       '.soul-field textarea{min-height:100px;resize:vertical}',
+      '.soul-field textarea.soul-textarea-sm{min-height:60px}',
+      '.soul-group-title{margin:20px 0 12px 0;padding-bottom:8px;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}',
       '.soul-field select:focus,.soul-field textarea:focus,.soul-field input[type=text]:focus{outline:none;border-color:var(--dsw-alias-border-focus);box-shadow:0 0 0 2px var(--dsw-alias-border-focus-alpha)}',
       '.soul-toggle{display:flex;align-items:center;gap:8px;margin-bottom:16px}',
       '.soul-toggle label{margin:0;font-size:13px;color:var(--dsw-alias-label-primary)}',
@@ -293,10 +304,12 @@ window.__ModuleLoader__.load({
     function SoulSettings(props) {
       const { useSoulController, controller } = props
       const state = useSoulController((state) => state)
-      const { enabled, nickname, style, headingLists, emoji, language, customInstructions, loading, saving, error } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, language, customInstructions, loading, saving, error } = state
       
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
+      const [localOccupation, setLocalOccupation] = React.useState(occupation || '')
+      const [localBio, setLocalBio] = React.useState(bio || '')
       const [localStyle, setLocalStyle] = React.useState(style)
       const [localHeadingLists, setLocalHeadingLists] = React.useState(headingLists)
       const [localEmoji, setLocalEmoji] = React.useState(emoji)
@@ -309,12 +322,14 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         setLocalEnabled(enabled)
         setLocalNickname(nickname || '')
+        setLocalOccupation(occupation || '')
+        setLocalBio(bio || '')
         setLocalStyle(style)
         setLocalHeadingLists(headingLists)
         setLocalEmoji(emoji)
         setLocalLanguage(language || 'zh')
         setLocalInstructions(customInstructions)
-      }, [enabled, nickname, style, headingLists, emoji, language, customInstructions])
+      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, language, customInstructions])
       
       // 保存成功后显示提示，2秒后自动消失
       React.useEffect(() => {
@@ -337,6 +352,8 @@ window.__ModuleLoader__.load({
         await controller.saveConfig({
           enabled: localEnabled,
           nickname: localNickname,
+          occupation: localOccupation,
+          bio: localBio,
           style: localStyle,
           headingLists: localHeadingLists,
           emoji: localEmoji,
@@ -365,6 +382,7 @@ window.__ModuleLoader__.load({
         ),
         
         localEnabled && e(Fragment, null,
+          e('div', { className: 'soul-group-title' }, '关于你'),
           e('div', { className: 'soul-field' },
             e('label', { htmlFor: 'soul-nickname' }, '用户昵称'),
             e('input', {
@@ -375,7 +393,27 @@ window.__ModuleLoader__.load({
               placeholder: '输入你的昵称，回复时会称呼你'
             })
           ),
-          
+          e('div', { className: 'soul-field' },
+            e('label', { htmlFor: 'soul-occupation' }, '用户职业'),
+            e('input', {
+              type: 'text',
+              id: 'soul-occupation',
+              value: localOccupation,
+              onChange: (ev) => setLocalOccupation(ev.target.value),
+              placeholder: '例如：软件工程师、学生、产品经理'
+            })
+          ),
+          e('div', { className: 'soul-field' },
+            e('label', { htmlFor: 'soul-bio' }, '用户介绍'),
+            e('textarea', {
+              id: 'soul-bio',
+              className: 'soul-textarea-sm',
+              value: localBio,
+              onChange: (ev) => setLocalBio(ev.target.value),
+              placeholder: '简单介绍自己，让回复更贴合你的背景'
+            })
+          ),
+
           e('div', { className: 'soul-field' },
             e('label', { htmlFor: 'soul-style' },
               '回复风格和语调',
@@ -392,9 +430,10 @@ window.__ModuleLoader__.load({
             )
           ),
 
+          e('div', { className: 'soul-group-title' }, '特质'),
           e('div', { className: 'soul-field' },
             e('label', { htmlFor: 'soul-headingLists' },
-              '特质：标题和列表',
+              '标题和列表',
               e(SoulHint, { text: '在回复风格和语调的基础上选择额外的自定义特质项。控制回答中标题和列表的使用程度。' })
             ),
             e('select', {
@@ -410,7 +449,7 @@ window.__ModuleLoader__.load({
 
           e('div', { className: 'soul-field' },
             e('label', { htmlFor: 'soul-emoji' },
-              '特质：表情符号',
+              '表情符号',
               e(SoulHint, { text: '在回复风格和语调的基础上选择额外的自定义特质项。控制表情符号的使用程度。' })
             ),
             e('select', {
