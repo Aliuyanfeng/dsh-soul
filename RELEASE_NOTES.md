@@ -41,6 +41,14 @@
 
 ## 版本历史
 
+### v0.3.1（2026-09-01）
+
+**变更**
+- `@deepseek-ai/dsh-tools` 由 `dependencies` 调整为 `peerDependencies`，对齐 awesome-dsh-plugin 收录要求；运行时仍按宿主版本动态 import + 守卫加载，缺失或不兼容时跳过 `set_persona` 工具注册，其余功能不受影响
+
+**文档**
+- README / README_EN 新增「截图」章节（设置页 + `/soul` 命令，共 4 张），托管于 `screenshots/`
+
 ### v0.3.0（2026-09-01）
 
 > v0.2.0 曾规划但未发布，版本号直接跳至此。
