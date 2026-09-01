@@ -276,7 +276,7 @@ function injectPromptToAllAgents(ctx, config) {
   const prompt = compilePrompt(config)
   const disabledText = [
     '[dsh-soul 个性化配置已关闭]',
-    '从现在开始不要使用 dsh-soul 之前注入的昵称、角色、回复风格或语调配置。',
+    '从现在开始不要使用 dsh-soul 之前注入的昵称、角色、回复风格、语调、特质或输出语言配置。',
     '请恢复使用 Agent 的默认行为。'
   ].join('\n')
   const snapshotText = prompt || disabledText
@@ -288,8 +288,8 @@ function injectPromptToAllAgents(ctx, config) {
           type: 'text',
           text: prompt ? [
             '[dsh-soul 个性化配置已更新]',
-            '以下是当前最新的个性化配置快照。',
-            '从现在开始必须按照此配置回复，不要继续使用旧的昵称、旧的角色或旧的风格。',
+            '以下是当前最新的个性化配置快照（含昵称、回复风格和语调、特质、输出语言等）。',
+            '从现在开始必须按照此配置回复，不要继续使用旧的昵称、角色、风格、语调、特质或输出语言。',
             '',
             prompt
           ].join('\n') : snapshotText
