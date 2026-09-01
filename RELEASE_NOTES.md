@@ -15,22 +15,30 @@
 - 自定义指令文本域，内置 4 个示例模板（专业严谨 / 友好亲切 / 幽默风趣 / 简洁直接），点击即可填充。
 - 「保存设置」「重置默认」按钮，成功后弹出居中 toast，2 秒自动消失；加载 / 保存期间禁用按钮，避免重复提交。
 - 请求失败时在页面内展示错误条。
+- **提示词实时预览**：设置页可展开当前编辑编译后的 system prompt，编辑停止 400ms 后自动刷新。
+- **人设预设管理**：在设置页保存 / 应用 / 删除预设；斜杠命令 `/soul save|use|list|delete` 也支持相同操作。
+- **模型可调用工具 `set_persona`**：当用户明确要求改变称呼、语气、风格或角色时，Agent 可直接调用该工具更新个性化设置。
 
 ### 斜杠命令
 
 ```text
-/soul show       查看当前配置
-/soul reset      重置为默认值
-/soul enable     启用个性化设置
-/soul disable    禁用个性化设置
-/soul <昵称>      设置昵称
+/soul show                查看当前配置
+/soul reset               重置为默认值
+/soul enable              启用个性化设置
+/soul disable             禁用个性化设置
+/soul <昵称>               设置昵称
+/soul save <名称>          保存当前人设为预设
+/soul use <名称>           应用预设
+/soul list                列出预设
+/soul delete <名称>        删除预设
 ```
 
 ### 配置与集成
 
 - 配置持久化到 `$DSH_HOME/soul-config.json`（未设置 `DSH_HOME` 时使用 DSH 默认用户数据目录）。
 - 注册 `soulConfig` 服务，供其他插件调用：`getConfig()`、`updateConfig()`、`getSystemPrompt()`、`resetConfig()`。
-- HTTP API：`GET/POST /api/soul/config`、`GET /api/soul/prompt`、`POST /api/soul/config/reset`。
+- HTTP API：`GET/POST /api/soul/config`、`GET /api/soul/prompt`、`POST /api/soul/config/reset`、`POST /api/soul/prompt/preview`、`POST /api/soul/presets`（`save` / `apply` / `delete`）。
+- Agent 工具：`set_persona`，参数包含 `nickname` / `style` / `tone` / `customInstructions`；需要宿主安装 `@deepseek-ai/dsh-tools`（插件已声明依赖，若宿主版本不兼容或缺失则自动跳过，不影响其他功能）。
 
 ## 已知限制
 
@@ -48,7 +56,21 @@
 
 ## 版本历史
 
-> 本仓库的 git 历史始于 2026-08-31，晚于 npm 上 0.1.0 / 0.1.1 的发布时间（2026-08-29），因此仓库内没有 0.1.0 的代码记录。以下版本间的变更通过对比 npm 上 `dsh-soul@0.1.0` 与 `dsh-soul@0.1.1` 两个 tarball 得出。
+### v0.2.0（未发布）
+
+#### 新增
+
+- **提示词实时预览**：设置页新增「展开/收起提示词预览」，编辑字段停止 400ms 后通过 `POST /api/soul/prompt/preview` 请求宿主编译当前 draft，实时展示 system prompt 文本。
+- **人设预设管理**：
+  - 设置页新增「人设预设」区域，可保存当前编辑为人设预设、应用或删除已有预设。
+  - 新增 `POST /api/soul/presets` 端点，支持 `save` / `apply` / `delete` 三种动作；`save` 可接受未保存的 draft，实现「先编辑再存预设」。
+  - `/soul` 斜杠命令扩展：`/soul save <名称>`、`/soul use <名称>`、`/soul list`、`/soul delete <名称>`。
+- **模型可调用工具 `set_persona`**：通过 `@deepseek-ai/dsh-tools` 注册工具，允许 Agent 在对话中直接调整 nickname / style / tone / customInstructions。若宿主缺少或不兼容 `dsh-tools`，插件自动跳过注册，其他功能不受影响。
+
+#### 其他
+
+- 新增 `@deepseek-ai/dsh-tools` 依赖（`^0.1.0-rc.6`）。
+- `README.md` / `README_EN.md` 补充实时预览、预设管理、Agent 工具说明。
 
 ### v0.1.1（2026-08-29）
 
