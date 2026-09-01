@@ -354,7 +354,9 @@ function registerCommands(ctx) {
       description: '查看或管理个性化设置。用法：/soul [show|reset|enable|disable|昵称]',
       input: { hint: '[show|reset|enable|disable|昵称]' },
       async handler(invocation) {
-        const args = String(invocation.rawInput || '').trim().toLowerCase()
+        // 保留原始大小写用于昵称，仅关键字匹配时忽略大小写
+        const raw = String(invocation.rawInput || '').trim()
+        const args = raw.toLowerCase()
         
         try {
           const config = await loadConfig()
@@ -388,12 +390,12 @@ function registerCommands(ctx) {
             refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: '✅ 个性化设置已禁用' }
           } else {
-            // 设置昵称
-            config.nickname = args
+            // 设置昵称（保留原始大小写，不做 toLowerCase）
+            config.nickname = raw
             const updated = await saveConfig(config)
             // 更新系统提示词，并注入所有活动会话
             refreshPromptAndInject(ctx, updated)
-            return { kind: 'success', text: `✅ 昵称已设置为：${args}` }
+            return { kind: 'success', text: `✅ 昵称已设置为：${raw}` }
           }
         } catch (err) {
           return { kind: 'error', text: `操作失败：${err.message}` }
