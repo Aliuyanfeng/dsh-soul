@@ -11,7 +11,7 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
 - 设置用户昵称
 - 选择回复风格和语调（合并为单一选项）：`professional`（专业严谨）、`casual`（轻松自然）、`humorous`（幽默风趣）、`roast`（吐槽达人）、`efficient`（高效干练）
 - 选择输出语言（Agent 回复语言 + `/soul` 命令输出语言）：中文 / English
-- 输入自定义指令和使用示例模板
+- 输入自定义指令
 - Agent 可调用工具 `set_persona`，让模型在对话中直接调整人设
 - 配置持久化保存
 - 配置更新后同步到所有活动 Agent

@@ -4,7 +4,6 @@
 //   - 启用/禁用个性化设置
 //   - 选择回复风格和语调
 //   - 输入自定义指令
-//   - 查看示例
 //
 // 纯 JS + React jsx-runtime 手写（不依赖 JSX 构建），开箱即用。
 // 注意：dsh web 使用 React 17+ 的 jsx-runtime，children 必须放在 props.children
@@ -199,11 +198,6 @@ window.__ModuleLoader__.load({
       '.soul-toggle{display:flex;align-items:center;gap:8px;margin-bottom:16px}',
       '.soul-toggle label{margin:0;font-size:13px;color:var(--dsw-alias-label-primary)}',
       '.soul-buttons{display:flex;gap:8px;margin-top:16px}',
-      '.soul-examples{margin-top:16px;padding:12px;background:var(--dsw-alias-bg-l2);border-radius:6px;width:100%;box-sizing:border-box}',
-      '.soul-examples h4{margin:0 0 8px 0;font-size:13px;color:var(--dsw-alias-label-secondary)}',
-      '.soul-example{padding:8px 12px;margin-bottom:8px;background:var(--dsw-alias-bg-l1);border-radius:4px;cursor:pointer;font-size:12px;color:var(--dsw-alias-label-primary)}',
-      '.soul-example:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.soul-example:last-child{margin-bottom:0}',
       '.soul-error{margin-top:8px;padding:8px 12px;background:var(--dsw-alias-bg-danger);border:1px solid var(--dsw-alias-border-danger);border-radius:6px;color:var(--dsw-alias-label-danger);font-size:12px;width:100%;box-sizing:border-box}',
       '.soul-hint{position:relative;display:inline-flex;align-items:center;margin-left:6px;color:var(--dsw-alias-label-secondary);cursor:help;vertical-align:middle}',
       '.soul-hint:hover{color:var(--dsw-alias-label-primary)}',
@@ -249,13 +243,6 @@ window.__ModuleLoader__.load({
     const LANGUAGE_OPTIONS = [
       { value: 'zh', label: '中文' },
       { value: 'en', label: 'English' }
-    ]
-
-    const EXAMPLES = [
-      { label: '专业严谨', value: '你是一个专业严谨的助手，采用学术性的语气，注重逻辑和准确性。' },
-      { label: '友好亲切', value: '你是一个友好亲切的助手，采用轻松自然的语气，像朋友一样交流。' },
-      { label: '幽默风趣', value: '你是一个幽默风趣的助手，适当使用比喻和玩笑，让对话更有趣。' },
-      { label: '简洁直接', value: '你是一个简洁直接的助手，回答问题直击要点，避免冗余。' }
     ]
 
     // 提示词小图标：hover 展示说明文字
@@ -336,10 +323,6 @@ window.__ModuleLoader__.load({
         setShowResetSuccess(true)
       }
       
-      const handleExampleClick = (example) => {
-        setLocalInstructions(example.value)
-      }
-      
       return e('div', { className: 'soul-section' },
         e('h3', null, '个性化设置'),
         e('div', { className: 'soul-toggle' },
@@ -407,17 +390,6 @@ window.__ModuleLoader__.load({
               onChange: (ev) => setLocalInstructions(ev.target.value),
               placeholder: '输入自定义指令，例如：你是一个求知的人，采用专业的语气...'
             })
-          ),
-          
-          e('div', { className: 'soul-examples' },
-            e('h4', null, '💡 示例指令（点击使用）'),
-            ...EXAMPLES.map((example, index) =>
-              e('div', {
-                key: index,
-                className: 'soul-example',
-                onClick: () => handleExampleClick(example)
-              }, `${example.label}：${example.value}`)
-            )
           )
         ),
         
@@ -465,7 +437,6 @@ window.__ModuleLoader__.load({
       'option.style': '回复风格和语调',
       'option.instructions': '自定义指令',
       'option.enabled': '启用个性化设置',
-      'example.title': '💡 示例指令（点击使用）',
       'status.loading': '加载中...',
       'status.saving': '保存中...'
     }
@@ -478,7 +449,6 @@ window.__ModuleLoader__.load({
       'option.style': 'Response Style & Tone',
       'option.instructions': 'Custom Instructions',
       'option.enabled': 'Enable Personalization',
-      'example.title': '💡 Example Instructions (click to use)',
       'status.loading': 'Loading...',
       'status.saving': 'Saving...'
     }

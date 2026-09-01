@@ -130,13 +130,7 @@ const DEFAULT_CONFIG = {
   // 回复风格和语调（v0.2.0 起合并为单一选项）
   style: 'professional',
   language: 'zh',
-  customInstructions: '',
-  examples: [
-    { label: '专业严谨', value: '你是一个专业严谨的助手，采用学术性的语气，注重逻辑和准确性。' },
-    { label: '友好亲切', value: '你是一个友好亲切的助手，采用轻松自然的语气，像朋友一样交流。' },
-    { label: '幽默风趣', value: '你是一个幽默风趣的助手，适当使用比喻和玩笑，让对话更有趣。' },
-    { label: '简洁直接', value: '你是一个简洁直接的助手，回答问题直击要点，避免冗余。' }
-  ]
+  customInstructions: ''
 }
 
 // 合法的回复风格和语调取值（供工具参数校验）
@@ -164,9 +158,10 @@ function migrateConfig(raw) {
     config.style = LEGACY_STYLE_TONE_MAP[combo] || LEGACY_STYLE_MAP[raw.style] || DEFAULT_CONFIG.style
     delete config.tone
   }
-  // 人设预设功能已在 v0.2.0 移除，丢弃历史残留字段
+  // 人设预设 / 示例指令功能已在 v0.2.0 移除，丢弃历史残留字段
   delete config.presets
   delete config.tone
+  delete config.examples
   return config
 }
 
@@ -190,10 +185,11 @@ async function loadConfig() {
 async function saveConfig(config) {
   const dir = join(configPath(), '..')
   await mkdir(dir, { recursive: true })
-  // 过滤已废弃字段（旧客户端可能仍携带 tone / presets）
+  // 过滤已废弃字段（旧客户端可能仍携带 tone / presets / examples）
   const clean = { ...config }
   delete clean.tone
   delete clean.presets
+  delete clean.examples
   await writeFile(configPath(), JSON.stringify(clean, null, 2), 'utf8')
   configCache = clean
   return clean

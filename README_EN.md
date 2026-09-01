@@ -11,7 +11,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - Set a user nickname
 - Combined style & tone option: `professional`, `casual`, `humorous`, `roast`, `efficient`
 - Output language (agent reply language + `/soul` command output language): Chinese or English
-- Custom instructions with ready-to-use example templates
+- Custom instructions
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
 - Configuration persisted to disk
 - Configuration synced to all active agents after every update
