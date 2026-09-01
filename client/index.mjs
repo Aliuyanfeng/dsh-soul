@@ -488,7 +488,7 @@ window.__ModuleLoader__.load({
               id: 'soul-instructions',
               value: localInstructions,
               onChange: (ev) => setLocalInstructions(ev.target.value),
-              placeholder: '输入自定义指令，例如：你是一个求知的人，采用专业的语气...'
+              placeholder: '输入自定义指令，可以是其他行为、回复风格和语调等偏好设置'
             })
           )
         ),
