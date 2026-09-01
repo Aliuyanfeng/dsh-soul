@@ -1,6 +1,6 @@
 {
   "name": "dsh-soul",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "为 DeepSeek Harness 添加个性化设置",
   "type": "module",
   "main": "index.mjs",
