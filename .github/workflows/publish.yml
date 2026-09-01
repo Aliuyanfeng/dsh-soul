@@ -1,9 +1,8 @@
 name: Publish to npm
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -41,6 +40,15 @@ jobs:
 
       - name: Check package contents
         run: npm pack --dry-run
+
+      # 幂等守卫：同版本重复触发（如删除 Release 后重发）时跳过而不是 403 报错
+      - name: Skip if already published
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if npm view "dsh-soul@$PKG_VERSION" version 2>/dev/null; then
+            echo "::warning::dsh-soul@$PKG_VERSION is already on npm, skipping publish"
+            exit 0
+          fi
 
       # 使用 OIDC 可信发布，无需 NPM_TOKEN。
       # 溯源证明（provenance）在 OIDC 下自动生成，无需 --provenance 参数。

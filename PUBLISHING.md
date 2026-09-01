@@ -31,7 +31,7 @@ npm pack --dry-run
 
 ### 自动发布（推荐）
 
-仓库已配置 `.github/workflows/publish.yml`：推送 `v*` 格式的 tag 时自动发布到 npm。
+仓库已配置 `.github/workflows/publish.yml`：**在 GitHub 上发布 Release 时自动发布到 npm**。tag 由 GitHub 在发布 Release 时自动创建，本地无需手动打 tag。
 
 发布使用 **OIDC 可信发布**（Trusted Publishing），CI 无需保存任何 token。首次使用需在 npmjs.com 配置一次：
 
@@ -39,7 +39,7 @@ npm pack --dry-run
 2. 选择 **GitHub Actions**，填写：
 
    | 字段 | 值 |
-   |---|---|
+   | --- | --- |
    | Organization or user | `Aliuyanfeng` |
    | Repository | `dsh-soul` |
    | Workflow filename | `publish.yml` |
@@ -50,19 +50,36 @@ npm pack --dry-run
 
 > npm 保存时不会校验这些字段，填错只会在真正发布时报 `ENEEDAUTH`。字段名区分大小写，需与仓库完全一致。
 
-之后发布流程：
+#### 发版流程
+
+#### 第一步：本地更新版本号并推送
 
 ```bash
-# 1. 更新版本号（遵循语义化版本）
-npm version patch   # 或 minor / major
+# 1. 更新版本号（遵循语义化版本；--no-git-tag-version 只改 package.json，不 commit 不打 tag）
+npm version patch --no-git-tag-version   # 或 minor / major
 
-# 2. 推送提交和 tag
-git push && git push --tags
+# 2. 提交并推送（版本号 commit 也可以和其他改动合并提交）
+git add package.json
+git commit -m "chore: release v0.2.1"
+git push origin main
 ```
 
-`npm version` 会自动修改 `package.json` 的版本号并创建对应的 git tag。工作流会校验 tag 版本号与 `package.json` 一致，不一致则发布失败。
+#### 第二步：GitHub 网页创建 Release
 
-推送 tag 后可在 GitHub 仓库的 `Actions` 标签页查看发布进度。
+1. 仓库页 → **Releases** → **Draft a new release**。
+2. **Choose a tag** 输入 `v0.2.1`（必须与 `package.json` 版本一致，带 `v` 前缀）→ 选择 **Create new tag on publish**（基于 main 最新 commit）。
+3. Release 标题填 `v0.2.1`；描述从 `RELEASE_NOTES.md` 复制对应版本段落。
+4. 点击 **Publish release** → GitHub 创建 tag 并触发工作流 → 自动发布到 npm。
+
+工作流执行内容：校验 tag 版本号与 `package.json` 一致（不一致直接失败）→ `npm pack --dry-run` 检查包内容 → 幂等检查（npm 上已存在同版本则跳过，避免 403）→ `npm publish`（OIDC，自动生成溯源证明）。
+
+可在仓库 **Actions** 标签页查看发布进度。
+
+> 注意：Draft（草稿）状态的 Release 不会触发发布，必须点击 Publish release。
+
+#### 同步维护 RELEASE_NOTES.md
+
+`RELEASE_NOTES.md` 是发版说明的单一来源：发版前先把该版本的变更写入（或确认已写入）`RELEASE_NOTES.md`，再粘贴到 GitHub Release 描述中，保持两处一致。
 
 ### 手动发布
 
