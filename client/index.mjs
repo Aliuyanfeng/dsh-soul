@@ -397,7 +397,10 @@ window.__ModuleLoader__.load({
           ),
 
           e('div', { className: 'soul-field' },
-            e('label', { htmlFor: 'soul-instructions' }, '自定义指令'),
+            e('label', { htmlFor: 'soul-instructions' },
+              '自定义指令',
+              e(SoulHint, { text: '补充角色、习惯等个性化要求。建议不要重复设置回复风格和语调类似的话术，以免与上方选项冲突。' })
+            ),
             e('textarea', {
               id: 'soul-instructions',
               value: localInstructions,
