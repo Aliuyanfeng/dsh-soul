@@ -14,6 +14,7 @@
 
 ```text
 index.mjs
+lib/config.mjs
 client/index.mjs
 cordis.patch.yml
 README.md

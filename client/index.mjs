@@ -616,13 +616,15 @@ window.__ModuleLoader__.load({
         }
         
         // 延迟执行初始同步，等待设置页面渲染完成
-        const timer = setTimeout(sync, 500)
+        let timer = setTimeout(sync, 500)
         
         // 监听 DOM 变化（只监听子节点添加，不监听所有变化）
         const observer = new MutationObserver(() => {
-          // 防抖：只在停止变化后执行
+          // 防抖：每次变化都重置计时器，停止变化 100ms 后执行
+          // （修复：此前新计时器未赋回 timer，clearTimeout 永远只清除首个 500ms
+          // 计时器，防抖实际失效，每次 DOM 变化都会调度一次 sync）
           clearTimeout(timer)
-          setTimeout(sync, 100)
+          timer = setTimeout(sync, 100)
         })
         
         observer.observe(document.body, {

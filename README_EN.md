@@ -17,6 +17,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - Custom instructions
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
 - Configuration persisted to disk
+- Input validation: field whitelist, types, length limits (nickname/occupation 50, bio 500, custom instructions 2000 chars) and enum checks; invalid or oversized fields reject the whole write
 - Configuration synced to all active agents after every update
 
 ## Installation
@@ -91,6 +92,8 @@ Example:
   "customInstructions": "Be concise and lead with the conclusion."
 }
 ```
+
+Length limits: nickname / occupation 50 chars, bio 500 chars, custom instructions 2000 chars. Unknown fields are dropped; invalid or oversized fields reject the whole write (HTTP returns 400 with per-field error details).
 
 ## How It Works
 

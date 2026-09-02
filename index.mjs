@@ -17,6 +17,14 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import {
+  DEFAULT_CONFIG,
+  STYLE_VALUES,
+  TRAIT_VALUES,
+  LANGUAGE_VALUES,
+  migrateConfig,
+  sanitizeConfig
+} from './lib/config.mjs'
 
 const name = 'soul'
 
@@ -155,59 +163,11 @@ const StyleLayer = {
 
 // ==================== 配置管理 ====================
 
-// 默认配置
-const DEFAULT_CONFIG = {
-  enabled: true,
-  nickname: '',
-  // 关于你：用户职业 / 用户介绍
-  occupation: '',
-  bio: '',
-  // 回复风格和语调（v0.2.0 起合并为单一选项）
-  style: 'professional',
-  // 特质：标题和列表 / 表情符号（default=默认，more=增强，less=减弱）
-  headingLists: 'default',
-  emoji: 'default',
-  language: 'zh',
-  customInstructions: ''
-}
+// 默认配置、合法取值（STYLE_VALUES / TRAIT_VALUES / LANGUAGE_VALUES）、
+// 旧版本迁移（migrateConfig）与输入校验（sanitizeConfig）见 lib/config.mjs。
 
-// 合法的回复风格和语调取值（供工具参数校验）
-const STYLE_VALUES = ['professional', 'casual', 'humorous', 'roast', 'efficient']
-
-// 特质合法取值
-const TRAIT_VALUES = ['default', 'more', 'less']
-
-// v0.1.x 配置使用 style + tone 两个字段；v0.2.0 起合并为单一 style（回复风格和语调）。
-// 迁移映射：组合命中用组合表，否则退回旧 style 表，再否则用默认值。
-const LEGACY_STYLE_TONE_MAP = {
-  'professional+formal': 'professional',
-  'casual+neutral': 'casual',
-  'humorous+informal': 'humorous'
-}
-const LEGACY_STYLE_MAP = {
-  professional: 'professional',
-  casual: 'casual',
-  friendly: 'casual',
-  humorous: 'humorous',
-  academic: 'professional'
-}
-
-function migrateConfig(raw) {
-  const config = { ...DEFAULT_CONFIG, ...raw }
-  if (raw && typeof raw.style === 'string' && typeof raw.tone === 'string') {
-    const combo = `${raw.style}+${raw.tone}`
-    config.style = LEGACY_STYLE_TONE_MAP[combo] || LEGACY_STYLE_MAP[raw.style] || DEFAULT_CONFIG.style
-    delete config.tone
-  }
-  // 人设预设 / 示例指令功能已在 v0.2.0 移除，丢弃历史残留字段
-  delete config.presets
-  delete config.tone
-  delete config.examples
-  // 特质字段校验：脏数据回退为默认值
-  if (!TRAIT_VALUES.includes(config.headingLists)) config.headingLists = 'default'
-  if (!TRAIT_VALUES.includes(config.emoji)) config.emoji = 'default'
-  return config
-}
+// POST /api/soul/config 请求体大小上限：合法配置远小于该值，仅用于拦截异常请求
+const MAX_BODY_BYTES = 64 * 1024
 
 // 内存中的配置缓存
 let configCache = null
@@ -237,6 +197,36 @@ async function saveConfig(config) {
   await writeFile(configPath(), JSON.stringify(clean, null, 2), 'utf8')
   configCache = clean
   return clean
+}
+
+// ==================== 配置写入队列 ====================
+
+// 所有配置写路径（HTTP 保存 / /soul 命令 / set_persona 工具 / soulConfig 服务）
+// 统一经由该队列串行执行「读—改—写」，避免并发写入时各方都基于同一份旧配置合并、
+// 后写覆盖前写（丢更新）。队列按提交顺序执行任务。
+let configWriteQueue = Promise.resolve()
+
+function enqueueConfigWrite(task) {
+  const run = configWriteQueue.then(task)
+  // 队列吞掉单次任务的失败，保证后续写入不会被一次磁盘错误卡死
+  configWriteQueue = run.then(() => {}, () => {})
+  return run
+}
+
+// 在写队列中执行一次配置更新：mutate 收到当前配置的浅拷贝，返回新配置对象。
+// 注意 mutate 必须在队列任务内完成全部读取与合并，不要在队列外提前读取配置。
+async function commitConfig(mutate) {
+  return enqueueConfigWrite(async () => {
+    const next = mutate({ ...(await loadConfig()) })
+    return await saveConfig(next)
+  })
+}
+
+// 将字段级校验错误汇总为一行文本（HTTP 错误信息 / 工具返回消息共用）
+function formatFieldErrors(errors) {
+  return Object.entries(errors)
+    .map(([field, reason]) => `${field}: ${reason}`)
+    .join('；')
 }
 
 // ==================== 提示词编译器 ====================
@@ -361,11 +351,43 @@ function registerRoutes(ctx) {
             const config = await loadConfig()
             send(200, { ok: true, config })
           } else if (req.method === 'POST') {
-            let raw = ''
-            for await (const chunk of req) raw += chunk
-            const newConfig = JSON.parse(raw)
-            const current = await loadConfig()
-            const updated = await saveConfig({ ...current, ...newConfig })
+            // 读取请求体：超过大小上限则丢弃内容但继续读完剩余数据，
+            // 避免连接中残留未读字节污染 keep-alive
+            const chunks = []
+            let size = 0
+            let oversized = false
+            for await (const chunk of req) {
+              size += chunk.length
+              if (size > MAX_BODY_BYTES) {
+                oversized = true
+                chunks.length = 0
+                continue
+              }
+              chunks.push(chunk)
+            }
+            if (oversized) {
+              send(413, { ok: false, error: `请求体超过大小上限 ${MAX_BODY_BYTES} 字节` })
+              return
+            }
+
+            // JSON 解析失败属于客户端错误：返回 400 而非 500
+            let body
+            try {
+              body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+            } catch (err) {
+              send(400, { ok: false, error: '请求体不是合法的 JSON：' + String(err.message || err) })
+              return
+            }
+
+            // 输入校验：字段白名单 + 类型 + 长度上限 + 枚举；存在错误时整单拒绝
+            const { patch, errors } = sanitizeConfig(body)
+            if (Object.keys(errors).length > 0) {
+              send(400, { ok: false, error: '配置校验失败：' + formatFieldErrors(errors), errors })
+              return
+            }
+
+            // 写队列内「读—改—写」，只合并通过校验的字段（未知字段不落盘）
+            const updated = await commitConfig(current => ({ ...current, ...patch }))
             
             // 配置变化后更新系统提示词，并注入所有活动会话
             refreshPromptAndInject(ctx, updated)
@@ -413,7 +435,7 @@ function registerRoutes(ctx) {
         }
 
         try {
-          const config = await saveConfig({ ...DEFAULT_CONFIG })
+          const config = await commitConfig(() => ({ ...DEFAULT_CONFIG }))
 
           // 配置变化后更新系统提示词，并注入所有活动会话
           refreshPromptAndInject(ctx, config)
@@ -538,29 +560,31 @@ function registerCommands(ctx) {
               text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.occupationLabel}${t.colon}${occupation}\n${t.bioLabel}${t.colon}${bio}\n${t.styleLabel}${t.colon}${styleName}\n${t.traitsLabel}${t.colon}${t.headingListsLabel}=${hlName}，${t.emojiLabel}=${emojiName}\n${t.instructionsLabel}${t.colon}${instructions}\n\n${t.help}`
             }
           } else if (args === 'reset') {
-            const updated = await saveConfig({ ...DEFAULT_CONFIG })
+            const updated = await commitConfig(() => ({ ...DEFAULT_CONFIG }))
             // 更新系统提示词，并注入所有活动会话
             refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.resetDone }
           } else if (args === 'enable') {
-            config.enabled = true
-            const updated = await saveConfig(config)
+            // 写队列内「读—改—写」，不在队列外改写内存缓存对象
+            const updated = await commitConfig(c => ({ ...c, enabled: true }))
             // 更新系统提示词，并注入所有活动会话
             refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.enableDone }
           } else if (args === 'disable') {
-            config.enabled = false
-            const updated = await saveConfig(config)
+            const updated = await commitConfig(c => ({ ...c, enabled: false }))
             // 更新系统提示词，并注入所有活动会话
             refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.disableDone }
           } else {
-            // 设置昵称（保留原始大小写，不做 toLowerCase）
-            config.nickname = raw
-            const updated = await saveConfig(config)
+            // 设置昵称（保留原始大小写，不做 toLowerCase）；与 HTTP 保存共用同一套校验
+            const { patch, errors } = sanitizeConfig({ nickname: raw })
+            if (errors.nickname) {
+              return { kind: 'error', text: t.failed(errors.nickname) }
+            }
+            const updated = await commitConfig(c => ({ ...c, nickname: patch.nickname }))
             // 更新系统提示词，并注入所有活动会话
             refreshPromptAndInject(ctx, updated)
-            return { kind: 'success', text: t.nicknameDone(raw) }
+            return { kind: 'success', text: t.nicknameDone(patch.nickname) }
           }
         } catch (err) {
           return { kind: 'error', text: commandMessages(await loadConfig()).failed(err.message) }
@@ -643,7 +667,7 @@ function registerTools(ctx) {
           },
           language: {
             type: 'string',
-            enum: ['zh', 'en'],
+            enum: LANGUAGE_VALUES,
             description: '回复语言：zh=简体中文，en=English。'
           },
           headingLists: {
@@ -685,39 +709,35 @@ function registerTools(ctx) {
         },
         async execute(args) {
           try {
-            const current = await loadConfig()
-            const patch = {}
-            if (typeof args.nickname === 'string' && args.nickname !== current.nickname) {
-              patch.nickname = args.nickname
-            }
-            if (typeof args.occupation === 'string' && args.occupation !== current.occupation) {
-              patch.occupation = args.occupation
-            }
-            if (typeof args.bio === 'string' && args.bio !== current.bio) {
-              patch.bio = args.bio
-            }
-            if (typeof args.style === 'string' && STYLE_VALUES.includes(args.style) && args.style !== current.style) {
-              patch.style = args.style
-            }
-            if (typeof args.language === 'string' && ['zh', 'en'].includes(args.language) && args.language !== current.language) {
-              patch.language = args.language
-            }
-            if (typeof args.headingLists === 'string' && TRAIT_VALUES.includes(args.headingLists) && args.headingLists !== current.headingLists) {
-              patch.headingLists = args.headingLists
-            }
-            if (typeof args.emoji === 'string' && TRAIT_VALUES.includes(args.emoji) && args.emoji !== current.emoji) {
-              patch.emoji = args.emoji
-            }
-            if (typeof args.customInstructions === 'string' && args.customInstructions !== current.customInstructions) {
-              patch.customInstructions = args.customInstructions
+            // 与 HTTP 保存共用同一套校验（白名单 / 类型 / 长度 / 枚举）
+            const { patch, errors } = sanitizeConfig(args)
+            if (Object.keys(errors).length > 0) {
+              return { ok: false, message: '配置校验失败：' + formatFieldErrors(errors) }
             }
             if (Object.keys(patch).length === 0) {
               return { ok: true, message: '没有要更改的设置' }
             }
-            const updated = { ...current, ...patch }
-            await saveConfig(updated)
+
+            // 在写队列内做 diff 与合并，避免与其他写入方（Web UI、/soul 命令）竞态
+            let changes = null
+            const updated = await commitConfig((current) => {
+              const next = { ...current }
+              changes = {}
+              for (const key of Object.keys(patch)) {
+                if (current[key] !== patch[key]) {
+                  next[key] = patch[key]
+                  changes[key] = patch[key]
+                }
+              }
+              return next
+            })
+
+            if (!changes || Object.keys(changes).length === 0) {
+              return { ok: true, message: '没有要更改的设置' }
+            }
+
             refreshPromptAndInject(ctx, updated)
-            return { ok: true, message: '已更新个性化设置', changes: patch }
+            return { ok: true, message: '已更新个性化设置', changes }
           } catch (err) {
             return { ok: false, message: String(err.message || err) }
           }
@@ -741,16 +761,19 @@ export async function apply(ctx) {
       return await loadConfig()
     },
     async updateConfig(newConfig) {
-      const current = await loadConfig()
-      const updated = { ...current, ...newConfig }
-      return await saveConfig(updated)
+      // 与 HTTP 保存共用同一套校验；失败时抛错给服务调用方
+      const { patch, errors } = sanitizeConfig(newConfig)
+      if (Object.keys(errors).length > 0) {
+        throw new Error('配置校验失败：' + formatFieldErrors(errors))
+      }
+      return await commitConfig(current => ({ ...current, ...patch }))
     },
     async getSystemPrompt() {
       const config = await loadConfig()
       return compilePrompt(config)
     },
     async resetConfig() {
-      return await saveConfig({ ...DEFAULT_CONFIG })
+      return await commitConfig(() => ({ ...DEFAULT_CONFIG }))
     }
   })
   
