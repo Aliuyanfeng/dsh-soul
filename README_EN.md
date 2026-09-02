@@ -7,6 +7,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 ## Features
 
 - Personalization settings page in the Web UI
+- Localized settings UI (English/Chinese, follows the interface language), dirty tracking (save disabled when unchanged), save-result toasts, and a read-only "active prompt" viewer
 - Enable or disable personalization
 - "About you": set your nickname, occupation and bio so replies fit your background
 - Combined style & tone option: `professional`, `casual`, `humorous`, `roast`, `efficient`
@@ -14,17 +15,19 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
   - Headings & lists: `default`, `more` (clear formatting with headings and lists), `less` (more paragraph text)
   - Emoji: `default`, `more` (frequent emoji usage), `less` (minimal emoji usage)
 - Output language (agent reply language + `/soul` command output language): Chinese or English
+- The compiled system prompt follows the output language (English descriptions when `language=en`)
 - Custom instructions
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
 - Configuration persisted to disk
 - Input validation: field whitelist, types, length limits (nickname/occupation 50, bio 500, custom instructions 2000 chars) and enum checks; invalid or oversized fields reject the whole write
 - Configuration synced to all active agents after every update
+- Change detection: the prompt is refreshed and sessions injected only when the configuration actually changed — no-op saves inject nothing
 
 ## Installation
 
 ```powershell
 dsh plugin --profile web add dsh-soul
-dsh --profile web web
+dsh plugin --profile web update dsh-soul
 ```
 
 The plugin is registered via `cordis.patch.yml`:

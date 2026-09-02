@@ -7,6 +7,7 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
 ## 功能
 
 - Web UI 个性化设置页面
+- 设置页体验：中英双语文案（随界面语言切换）、dirty 检测（无改动禁用保存）、保存结果提示、「查看当前生效提示词」只读面板
 - 启用或禁用个性化设置
 - 「关于你」：设置用户昵称、职业和介绍，回复时结合你的背景
 - 选择回复风格和语调（合并为单一选项）：`professional`（专业严谨）、`casual`（轻松自然）、`humorous`（幽默风趣）、`roast`（吐槽达人）、`efficient`（高效干练）
@@ -14,17 +15,19 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
   - 标题和列表：`default`（默认）、`more`（增强，采用清晰格式和列表结构）、`less`（减弱，使用更多段落文本）
   - 表情符号：`default`（默认）、`more`（增强，使用较多表情符号）、`less`（减弱，尽量减少使用表情符号）
 - 选择输出语言（Agent 回复语言 + `/soul` 命令输出语言）：中文 / English
+- 提示词随输出语言本地化：`language=en` 时 system prompt 使用英文描述
 - 输入自定义指令
 - Agent 可调用工具 `set_persona`，让模型在对话中直接调整人设
 - 配置持久化保存
 - 配置输入校验：字段白名单、类型、长度上限（昵称/职业 50、介绍 500、自定义指令 2000 字符）与枚举校验，非法或超限字段整单拒绝
 - 配置更新后同步到所有活动 Agent
+- 变更检测：仅在配置实际变化时刷新提示词并注入会话，无变化的保存不产生注入消息
 
 ## 安装
 
 ```powershell
 dsh plugin --profile web add dsh-soul
-dsh --profile web web
+dsh plugin --profile web update dsh-soul
 ```
 
 插件配置由 `cordis.patch.yml` 提供：

@@ -1,9 +1,11 @@
 // index.mjs — dsh-soul host 入口
 //
-// 三层架构：
-//   - Identity（身份）：角色定义、人格特征
-//   - Behavior（行为）：决策逻辑、行为约束
-//   - Style（风格）：语气、表达方式、格式
+// 提示词结构：
+//   - 身份（自定义指令 → [角色设定]）
+//   - 用户背景（「关于你」→ [用户背景]）
+//   - 行为（风格/特质/输出语言 → [回复风格]）
+//   - 执行规则（[执行规则]）
+// 全部固定文案按 config.language 提供中英两套（PROMPT_TEXT 文案表）。
 //
 // 功能：
 //   - 支持自定义 Agent 回复风格和语调
@@ -12,6 +14,7 @@
 //   - 提供 HTTP API 供客户端调用
 //   - 注册斜杠命令 /soul 查看当前配置
 //   - 注入系统提示词到 Agent
+//   - 配置写入统一走写队列，返回 changed 供调用方跳过无变化刷新
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -33,132 +36,125 @@ function configPath() {
   return join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'soul-config.json')
 }
 
-// ==================== 三层架构 ====================
+// ==================== 提示词文案与构建器 ====================
 
-// Identity 层：身份定义（Agent 自己的角色）
-const IdentityLayer = {
-  // 角色定义
-  roles: {
-    'default': '助手',
-    'mentor': '导师',
-    'friend': '朋友',
-    'expert': '专家',
-    'critic': '批评家'
+// 提示词固定文案表：所有进入 system prompt / 会话注入 / 工具返回的文本，
+// 按输出语言（config.language）提供中英两套，键集完全对齐。
+const PROMPT_TEXT = {
+  zh: {
+    roleHeader: '[角色设定]',
+    profileHeader: '[用户背景]',
+    profileDisclaimer: '以下信息描述的是与你对话的用户本人，不是你的身份；不要把用户的职业、技术背景或自述当成你自己的设定。',
+    profileNickname: (n) => `- 昵称：${n}（回复时使用这个称呼）`,
+    profileOccupation: (o) => `- 职业：${o}`,
+    profileBio: (b) => `- 用户自述：${b}`,
+    styleHeader: '[回复风格]',
+    styleLabel: '回复风格和语调：',
+    styles: {
+      professional: '专业严谨、注重逻辑和准确性、正式礼貌',
+      casual: '轻松自然、像朋友一样交流、中性客观',
+      humorous: '幽默风趣、适当使用比喻和玩笑、口语化',
+      roast: '吐槽达人、犀利幽默、爱调侃但无恶意、口语化',
+      efficient: '高效干练、直击要点、简洁明了、不绕弯子'
+    },
+    headingLists: {
+      more: '采用清晰的格式和列表结构组织回答，善用标题和列表',
+      less: '使用更多段落文本，减少标题和列表的使用'
+    },
+    emoji: {
+      more: '在回复中使用较多表情符号',
+      less: '尽量减少使用表情符号'
+    },
+    replyLanguage: {
+      zh: '必须使用简体中文回复',
+      en: '必须使用英语（English）回复'
+    },
+    joiner: '，',
+    rulesHeader: '[执行规则]',
+    rules: '你必须在每一条回复中严格遵守以上角色设定和回复风格；涉及用户背景时，用它来理解用户、贴合用户的需求和水平作答，而不是把它当作你自己的身份。包括但不限于：代码解释、技术问答、日常闲聊、知识科普等所有场景。违反此规则视为失败。',
+    injectUpdatedHeader: '[dsh-soul 个性化配置已更新]',
+    injectUpdatedBody: [
+      '以下是当前最新的个性化配置快照（含昵称、回复风格和语调、特质、输出语言等）。',
+      '从现在开始必须按照此配置回复，不要继续使用旧的昵称、角色、风格、语调、特质或输出语言。'
+    ].join('\n'),
+    injectDisabled: [
+      '[dsh-soul 个性化配置已关闭]',
+      '从现在开始不要使用 dsh-soul 之前注入的昵称、角色、回复风格、语调、特质或输出语言配置。',
+      '请恢复使用 Agent 的默认行为。'
+    ].join('\n'),
+    toolUpdated: '已更新个性化设置',
+    toolNoChanges: '没有要更改的设置',
+    toolValidationFailed: '配置校验失败：'
   },
-  
-  // 构建身份描述
-  build(config) {
-    const parts = []
-    
-    // 用户自定义角色
-    if (config.customInstructions) {
-      parts.push(config.customInstructions)
-    }
-    
-    return parts.join('\n')
+  en: {
+    roleHeader: '[Role]',
+    profileHeader: '[User profile]',
+    profileDisclaimer: 'The information below describes the user you are talking to — it is NOT your own identity; do not treat the user\'s occupation, background or self-description as your persona.',
+    profileNickname: (n) => `- Nickname: ${n} (address the user by this name in replies)`,
+    profileOccupation: (o) => `- Occupation: ${o}`,
+    profileBio: (b) => `- Self-description: ${b}`,
+    styleHeader: '[Reply style]',
+    styleLabel: 'Reply style & tone: ',
+    styles: {
+      professional: 'Rigorous and professional, focused on logic and accuracy, formal and courteous',
+      casual: 'Relaxed and natural, chatting like a friend, neutral and objective',
+      humorous: 'Humorous, apt with analogies and jokes, colloquial',
+      roast: 'Playful roaster, sharp and witty but never mean, colloquial',
+      efficient: 'Efficient and straight to the point, concise, no beating around the bush'
+    },
+    headingLists: {
+      more: 'Organize answers with clear formatting, headings and lists',
+      less: 'Use more paragraph text; minimize headings and lists'
+    },
+    emoji: {
+      more: 'Use emojis fairly often in replies',
+      less: 'Keep emoji usage to a minimum'
+    },
+    replyLanguage: {
+      zh: '必须使用简体中文回复',
+      en: 'You must reply in English.'
+    },
+    joiner: '; ',
+    rulesHeader: '[Execution rules]',
+    rules: 'You must strictly follow the role setup and reply style above in EVERY reply; when user background is involved, use it to understand the user and tailor your answers to their needs and level — never treat it as your own identity. This covers all scenarios including code explanation, technical Q&A, casual chat and knowledge sharing. Violating this rule counts as failure.',
+    injectUpdatedHeader: '[dsh-soul] Personalization config updated',
+    injectUpdatedBody: [
+      'Below is the latest personalization snapshot (nickname, reply style & tone, traits, output language, etc.).',
+      'From now on you must reply according to this config; do not keep using the previous nickname, role, style, tone, traits or output language.'
+    ].join('\n'),
+    injectDisabled: [
+      '[dsh-soul] Personalization config disabled',
+      'Stop using any nickname, role, reply style, tone, traits or output language previously injected by dsh-soul.',
+      'Return to your default behavior.'
+    ].join('\n'),
+    toolUpdated: 'Personalization settings updated',
+    toolNoChanges: 'No settings to change',
+    toolValidationFailed: 'Config validation failed: '
   }
 }
 
-// 用户背景层：关于对话用户的信息（不属于 Agent 角色设定）
-function buildUserProfile(config) {
+// 按配置选择文案表（未知语言回退中文）
+function promptTextOf(config) {
+  return PROMPT_TEXT[config && config.language === 'en' ? 'en' : 'zh']
+}
+
+// 用户背景块（「关于你」）：描述对话用户本人，不属于 Agent 的角色设定
+function buildUserProfile(config, T) {
   const lines = []
-  if (config.nickname) {
-    lines.push(`- 昵称：${config.nickname}（回复时使用这个称呼）`)
-  }
-  if (config.occupation) {
-    lines.push(`- 职业：${config.occupation}`)
-  }
-  if (config.bio) {
-    lines.push(`- 用户自述：${config.bio}`)
-  }
+  if (config.nickname) lines.push(T.profileNickname(config.nickname))
+  if (config.occupation) lines.push(T.profileOccupation(config.occupation))
+  if (config.bio) lines.push(T.profileBio(config.bio))
   return lines.join('\n')
 }
 
-// Behavior 层：行为规则
-const BehaviorLayer = {
-  // 回复风格和语调（v0.2.0 起合并为单一选项）
-  styles: {
-    professional: '专业严谨、注重逻辑和准确性、正式礼貌',
-    casual: '轻松自然、像朋友一样交流、中性客观',
-    humorous: '幽默风趣、适当使用比喻和玩笑、口语化',
-    roast: '吐槽达人、犀利幽默、爱调侃但无恶意、口语化',
-    efficient: '高效干练、直击要点、简洁明了、不绕弯子'
-  },
-  
-  // 行为规则
-  rules: [
-    '在回答任何问题时，都必须体现上述身份特征',
-    '禁止使用标准AI助手的中性语气',
-    '保持角色一致性，不要跳出设定'
-  ],
-  
-  // 回复语言指令（同时决定 /soul 命令输出语言）
-  languages: {
-    zh: '必须使用简体中文回复',
-    en: '必须使用英语（English）回复'
-  },
-  
-  // 特质：标题和列表的使用程度
-  headingLists: {
-    more: '采用清晰的格式和列表结构组织回答，善用标题和列表',
-    less: '使用更多段落文本，减少标题和列表的使用'
-  },
-  
-  // 特质：表情符号的使用程度
-  emoji: {
-    more: '在回复中使用较多表情符号',
-    less: '尽量减少使用表情符号'
-  },
-  
-  // 构建行为描述
-  build(config) {
-    const parts = []
-    
-    // 回复风格和语调
-    if (config.style && this.styles[config.style]) {
-      parts.push(`回复风格和语调：${this.styles[config.style]}`)
-    }
-    
-    // 特质：标题和列表
-    if (config.headingLists && this.headingLists[config.headingLists]) {
-      parts.push(this.headingLists[config.headingLists])
-    }
-    
-    // 特质：表情符号
-    if (config.emoji && this.emoji[config.emoji]) {
-      parts.push(this.emoji[config.emoji])
-    }
-    
-    // 回复语言
-    if (config.language && this.languages[config.language]) {
-      parts.push(this.languages[config.language])
-    }
-    
-    return parts.join('，')
-  }
-}
-
-// Style 层：输出格式
-const StyleLayer = {
-  // 格式模板
-  templates: {
-    default: '{content}',
-    structured: '## {title}\n\n{content}',
-    casual: '{content}~',
-    formal: '尊敬的{nickname}，{content}'
-  },
-  
-  // 构建风格描述
-  build(config) {
-    const parts = []
-    
-    // 根据风格选择格式
-    if (config.style === 'casual') {
-      parts.push('使用轻松的语气')
-    }
-    
-    return parts.join('，')
-  }
+// 行为块：回复风格和语调 + 特质 + 输出语言
+function buildBehavior(config, T) {
+  const parts = []
+  if (config.style && T.styles[config.style]) parts.push(`${T.styleLabel}${T.styles[config.style]}`)
+  if (config.headingLists && T.headingLists[config.headingLists]) parts.push(T.headingLists[config.headingLists])
+  if (config.emoji && T.emoji[config.emoji]) parts.push(T.emoji[config.emoji])
+  if (config.language && T.replyLanguage[config.language]) parts.push(T.replyLanguage[config.language])
+  return parts.join(T.joiner)
 }
 
 // ==================== 配置管理 ====================
@@ -215,11 +211,25 @@ function enqueueConfigWrite(task) {
 
 // 在写队列中执行一次配置更新：mutate 收到当前配置的浅拷贝，返回新配置对象。
 // 注意 mutate 必须在队列任务内完成全部读取与合并，不要在队列外提前读取配置。
+// 返回 { config, changed }：changed 为实际发生变化的字段名数组，
+// 调用方在其为空时应跳过提示词刷新与会话注入（配置没有变化）。
 async function commitConfig(mutate) {
   return enqueueConfigWrite(async () => {
-    const next = mutate({ ...(await loadConfig()) })
-    return await saveConfig(next)
+    const current = await loadConfig()
+    const next = mutate({ ...current })
+    const changed = diffKeys(current, next)
+    const config = await saveConfig(next)
+    return { config, changed }
   })
+}
+
+// 比较两份配置的差异字段名（浅比较；soul 配置为扁平对象）
+function diffKeys(a, b) {
+  const changed = []
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (a[key] !== b[key]) changed.push(key)
+  }
+  return changed
 }
 
 // 将字段级校验错误汇总为一行文本（HTTP 错误信息 / 工具返回消息共用）
@@ -231,46 +241,43 @@ function formatFieldErrors(errors) {
 
 // ==================== 提示词编译器 ====================
 
-// Prompt Compiler：编译三层架构为系统提示词
+// Prompt Compiler：将身份（自定义指令）、用户背景与行为（风格/特质/语言）
+// 按 config.language 对应的文案表编译为 system prompt。
 function compilePrompt(config) {
   if (!config.enabled) {
     return ''
   }
-  
-  const identity = IdentityLayer.build(config)
-  const behavior = BehaviorLayer.build(config)
-  const style = StyleLayer.build(config)
-  const profile = buildUserProfile(config)
-  
+
+  const T = promptTextOf(config)
+  const identity = (config.customInstructions || '').trim()
+  const profile = buildUserProfile(config, T)
+  const behavior = buildBehavior(config, T)
+
   // 如果没有任何配置，返回空
   if (!identity && !behavior && !profile) {
     return ''
   }
-  
-  // 编译提示词
+
   const parts = []
-  
+
   // 身份层
   if (identity) {
-    parts.push(`[角色设定] ${identity}`)
+    parts.push(`${T.roleHeader} ${identity}`)
   }
-  
-  // 用户背景：明确声明描述的是用户本人，防止模型把用户信息当成自己的身份
+
+  // 用户背景块：明确声明描述的是用户本人，防止模型把用户信息当成自己的身份
   if (profile) {
-    parts.push([
-      '[用户背景] 以下信息描述的是与你对话的用户本人，不是你的身份；不要把用户的职业、技术背景或自述当成你自己的设定。',
-      profile
-    ].join('\n'))
+    parts.push(`${T.profileHeader} ${T.profileDisclaimer}\n${profile}`)
   }
-  
+
   // 行为层
   if (behavior) {
-    parts.push(`[回复风格] ${behavior}`)
+    parts.push(`${T.styleHeader} ${behavior}`)
   }
-  
+
   // 执行规则
-  parts.push(`[执行规则] 你必须在每一条回复中严格遵守以上角色设定和回复风格；涉及用户背景时，用它来理解用户、贴合用户的需求和水平作答，而不是把它当作你自己的身份。包括但不限于：代码解释、技术问答、日常闲聊、知识科普等所有场景。违反此规则视为失败。`)
-  
+  parts.push(`${T.rulesHeader} ${T.rules}`)
+
   return parts.join('\n')
 }
 
@@ -285,26 +292,16 @@ function injectPromptToAllAgents(ctx, config) {
     return
   }
 
+  const T = promptTextOf(config)
   const prompt = compilePrompt(config)
-  const disabledText = [
-    '[dsh-soul 个性化配置已关闭]',
-    '从现在开始不要使用 dsh-soul 之前注入的昵称、角色、回复风格、语调、特质或输出语言配置。',
-    '请恢复使用 Agent 的默认行为。'
-  ].join('\n')
-  const snapshotText = prompt || disabledText
+  const snapshotText = prompt || T.injectDisabled
 
   for (const agent of agents.list()) {
     try {
       agent.inject(createUserMessage({
         content: [{
           type: 'text',
-          text: prompt ? [
-            '[dsh-soul 个性化配置已更新]',
-            '以下是当前最新的个性化配置快照（含昵称、回复风格和语调、特质、输出语言等）。',
-            '从现在开始必须按照此配置回复，不要继续使用旧的昵称、角色、风格、语调、特质或输出语言。',
-            '',
-            prompt
-          ].join('\n') : snapshotText
+          text: prompt ? `${T.injectUpdatedHeader}\n${T.injectUpdatedBody}\n\n${prompt}` : snapshotText
         }],
         source: {
           kind: 'plugin',
@@ -387,12 +384,14 @@ function registerRoutes(ctx) {
             }
 
             // 写队列内「读—改—写」，只合并通过校验的字段（未知字段不落盘）
-            const updated = await commitConfig(current => ({ ...current, ...patch }))
-            
-            // 配置变化后更新系统提示词，并注入所有活动会话
-            refreshPromptAndInject(ctx, updated)
-            
-            send(200, { ok: true, config: updated })
+            const { config: updated, changed } = await commitConfig(current => ({ ...current, ...patch }))
+
+            // 配置有实际变化才更新系统提示词并注入会话，避免无变化保存堆积注入消息
+            if (changed.length > 0) {
+              refreshPromptAndInject(ctx, updated)
+            }
+
+            send(200, { ok: true, config: updated, changed })
           } else {
             send(405, { ok: false, error: 'Method not allowed' })
           }
@@ -435,12 +434,14 @@ function registerRoutes(ctx) {
         }
 
         try {
-          const config = await commitConfig(() => ({ ...DEFAULT_CONFIG }))
+          const { config, changed } = await commitConfig(() => ({ ...DEFAULT_CONFIG }))
 
-          // 配置变化后更新系统提示词，并注入所有活动会话
-          refreshPromptAndInject(ctx, config)
+          // 配置有实际变化才更新系统提示词并注入会话
+          if (changed.length > 0) {
+            refreshPromptAndInject(ctx, config)
+          }
 
-          send(200, { ok: true, config })
+          send(200, { ok: true, config, changed })
         } catch (err) {
           send(500, { ok: false, error: String(err.message || err) })
         }
@@ -560,20 +561,17 @@ function registerCommands(ctx) {
               text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.occupationLabel}${t.colon}${occupation}\n${t.bioLabel}${t.colon}${bio}\n${t.styleLabel}${t.colon}${styleName}\n${t.traitsLabel}${t.colon}${t.headingListsLabel}=${hlName}，${t.emojiLabel}=${emojiName}\n${t.instructionsLabel}${t.colon}${instructions}\n\n${t.help}`
             }
           } else if (args === 'reset') {
-            const updated = await commitConfig(() => ({ ...DEFAULT_CONFIG }))
-            // 更新系统提示词，并注入所有活动会话
-            refreshPromptAndInject(ctx, updated)
+            const { config: updated, changed } = await commitConfig(() => ({ ...DEFAULT_CONFIG }))
+            if (changed.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.resetDone }
           } else if (args === 'enable') {
-            // 写队列内「读—改—写」，不在队列外改写内存缓存对象
-            const updated = await commitConfig(c => ({ ...c, enabled: true }))
-            // 更新系统提示词，并注入所有活动会话
-            refreshPromptAndInject(ctx, updated)
+            // 写队列内「读—改—写」，不在队列外改写内存缓存对象；无变化时跳过注入
+            const { config: updated, changed } = await commitConfig(c => ({ ...c, enabled: true }))
+            if (changed.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.enableDone }
           } else if (args === 'disable') {
-            const updated = await commitConfig(c => ({ ...c, enabled: false }))
-            // 更新系统提示词，并注入所有活动会话
-            refreshPromptAndInject(ctx, updated)
+            const { config: updated, changed } = await commitConfig(c => ({ ...c, enabled: false }))
+            if (changed.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.disableDone }
           } else {
             // 设置昵称（保留原始大小写，不做 toLowerCase）；与 HTTP 保存共用同一套校验
@@ -581,9 +579,8 @@ function registerCommands(ctx) {
             if (errors.nickname) {
               return { kind: 'error', text: t.failed(errors.nickname) }
             }
-            const updated = await commitConfig(c => ({ ...c, nickname: patch.nickname }))
-            // 更新系统提示词，并注入所有活动会话
-            refreshPromptAndInject(ctx, updated)
+            const { config: updated, changed } = await commitConfig(c => ({ ...c, nickname: patch.nickname }))
+            if (changed.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.nicknameDone(patch.nickname) }
           }
         } catch (err) {
@@ -712,32 +709,34 @@ function registerTools(ctx) {
             // 与 HTTP 保存共用同一套校验（白名单 / 类型 / 长度 / 枚举）
             const { patch, errors } = sanitizeConfig(args)
             if (Object.keys(errors).length > 0) {
-              return { ok: false, message: '配置校验失败：' + formatFieldErrors(errors) }
+              const T0 = promptTextOf(await loadConfig())
+              return { ok: false, message: T0.toolValidationFailed + formatFieldErrors(errors) }
             }
             if (Object.keys(patch).length === 0) {
-              return { ok: true, message: '没有要更改的设置' }
+              const T0 = promptTextOf(await loadConfig())
+              return { ok: true, message: T0.toolNoChanges }
             }
 
-            // 在写队列内做 diff 与合并，避免与其他写入方（Web UI、/soul 命令）竞态
-            let changes = null
-            const updated = await commitConfig((current) => {
+            // 写队列内合并，避免与其他写入方（Web UI、/soul 命令）竞态；
+            // changed 由队列任务统一 diff 得出
+            const { config: updated, changed } = await commitConfig((current) => {
               const next = { ...current }
-              changes = {}
               for (const key of Object.keys(patch)) {
-                if (current[key] !== patch[key]) {
-                  next[key] = patch[key]
-                  changes[key] = patch[key]
-                }
+                next[key] = patch[key]
               }
               return next
             })
 
-            if (!changes || Object.keys(changes).length === 0) {
-              return { ok: true, message: '没有要更改的设置' }
+            if (changed.length === 0) {
+              return { ok: true, message: promptTextOf(updated).toolNoChanges }
             }
 
             refreshPromptAndInject(ctx, updated)
-            return { ok: true, message: '已更新个性化设置', changes }
+            return {
+              ok: true,
+              message: promptTextOf(updated).toolUpdated,
+              changes: Object.fromEntries(changed.map(key => [key, updated[key]]))
+            }
           } catch (err) {
             return { ok: false, message: String(err.message || err) }
           }
@@ -761,19 +760,21 @@ export async function apply(ctx) {
       return await loadConfig()
     },
     async updateConfig(newConfig) {
-      // 与 HTTP 保存共用同一套校验；失败时抛错给服务调用方
+      // 与 HTTP 保存共用同一套校验；失败时抛错给服务调用方；返回更新后的配置
       const { patch, errors } = sanitizeConfig(newConfig)
       if (Object.keys(errors).length > 0) {
         throw new Error('配置校验失败：' + formatFieldErrors(errors))
       }
-      return await commitConfig(current => ({ ...current, ...patch }))
+      const { config } = await commitConfig(current => ({ ...current, ...patch }))
+      return config
     },
     async getSystemPrompt() {
       const config = await loadConfig()
       return compilePrompt(config)
     },
     async resetConfig() {
-      return await commitConfig(() => ({ ...DEFAULT_CONFIG }))
+      const { config } = await commitConfig(() => ({ ...DEFAULT_CONFIG }))
+      return config
     }
   })
   
