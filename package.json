@@ -1,6 +1,6 @@
 {
   "name": "dsh-soul",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "为 DeepSeek Harness 添加个性化设置",
   "keywords": [
     "dsh",
@@ -16,6 +16,9 @@
   ],
   "type": "module",
   "main": "index.mjs",
+  "scripts": {
+    "verify": "node scripts/verify-config.mjs"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -48,8 +51,10 @@
   },
   "files": [
     "index.mjs",
+    "lib",
     "client",
     "cordis.patch.yml",
+    "scripts",
     "README.md",
     "README_EN.md"
   ]
