@@ -18,6 +18,9 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
 - 提示词随输出语言本地化：`language=en` 时 system prompt 使用英文描述
 - 输入自定义指令
 - Agent 可调用工具 `set_persona`，让模型在对话中直接调整人设
+- 人设预设：多套命名人设一键切换（保存 / 使用 / 列表 / 删除，Web UI 与命令双入口）
+- `set_persona` 确认模式（`requireToolConfirmation`）：Agent 的人设修改需经 `/soul confirm` 确认后才生效
+- `/soul set` 键值方式修改配置项
 - 配置持久化保存
 - 配置输入校验：字段白名单、类型、长度上限（昵称/职业 50、介绍 500、自定义指令 2000 字符）与枚举校验，非法或超限字段整单拒绝
 - 配置更新后同步到所有活动 Agent
@@ -63,16 +66,23 @@ dsh plugin --profile web update dsh-soul
 也可以使用斜杠命令：
 
 ```text
-/soul show       查看当前配置
-/soul reset      重置配置
-/soul enable     启用个性化设置
-/soul disable    禁用个性化设置
-/soul 小明       设置昵称
+/soul show        查看当前配置（含确认模式与预设数量）
+/soul set k=v     修改配置项（如 /soul set style=humorous language=en）
+/soul save <名>   保存当前配置为人设预设
+/soul use <名>    应用人设预设
+/soul list        查看人设预设（✔ 标记当前匹配项）
+/soul del <名>    删除人设预设（delete / rm 别名）
+/soul confirm     应用待确认的人设变更（确认模式）
+/soul reject      拒绝待确认的人设变更
+/soul reset       重置配置（保留人设预设库）
+/soul enable      启用个性化设置
+/soul disable     禁用个性化设置
+/soul 小明        设置昵称
 ```
 
-配置保存后会同步到所有活动 Agent，当前会话下一次请求即可使用最新配置。
+配置保存后会同步到所有活动 Agent，当前会话下一次请求即可使用最新配置；无实际变化的保存不产生注入消息。
 
-Agent 也可以通过工具 `set_persona` 在对话中直接调整你的人设（昵称、回复风格和语调、特质、回复语言、自定义指令）。模型只会在明确请求改变称呼、语气、风格或语言时调用该工具。
+Agent 也可以通过工具 `set_persona` 在对话中直接调整你的人设（昵称、回复风格和语调、特质、回复语言、自定义指令）。模型只会在明确请求改变称呼、语气、风格或语言时调用该工具。开启「人设变更需确认」（`requireToolConfirmation`）后，该工具的修改会以待确认提议返回，需使用 `/soul confirm` 确认或 `/soul reject` 拒绝后才会生效。
 
 ## 配置文件
 
@@ -92,9 +102,12 @@ soul-config.json
   "bio": "对编程和技术感兴趣",
   "style": "professional",
   "language": "zh",
-  "customInstructions": "请保持简洁，优先给出结论。"
+  "customInstructions": "请保持简洁，优先给出结论。",
+  "requireToolConfirmation": false
 }
 ```
+
+人设预设保存在同一文件的 `personas` 字段：名称 → 人设字段快照（昵称/职业/介绍/风格/特质/语言/自定义指令）+ `updatedAt`；预设库变更不影响活动配置，使用预设时才应用到配置并同步会话。
 
 字段长度上限：昵称 / 职业 50 字符，介绍 500 字符，自定义指令 2000 字符；未知字段会被丢弃，非法或超限字段整单拒绝（HTTP 返回 400 与字段级错误明细）。
 

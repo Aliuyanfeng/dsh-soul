@@ -10,7 +10,9 @@ import {
   DEFAULT_CONFIG,
   FIELD_LIMITS,
   migrateConfig,
-  sanitizeConfig
+  normalizePersonas,
+  sanitizeConfig,
+  sanitizePersonaName
 } from '../lib/config.mjs'
 
 let passed = 0
@@ -137,6 +139,42 @@ check('非对象输入整体拒绝', () => {
   assert.ok(sanitizeConfig([1, 2]).errors._)
   assert.ok(sanitizeConfig('x').errors._)
   assert.ok(sanitizeConfig(null).errors._)
+})
+
+console.log('requireToolConfirmation / 人设预设')
+
+check('sanitizeConfig：requireToolConfirmation 布尔校验', () => {
+  const { patch, errors } = sanitizeConfig({ requireToolConfirmation: true })
+  assert.deepEqual(errors, {})
+  assert.equal(patch.requireToolConfirmation, true)
+  assert.ok(sanitizeConfig({ requireToolConfirmation: 'yes' }).errors.requireToolConfirmation)
+})
+
+check('sanitizePersonaName：trim、长度与保留键拒绝', () => {
+  assert.equal(sanitizePersonaName('  工作模式 '), '工作模式')
+  assert.equal(sanitizePersonaName(''), null)
+  assert.equal(sanitizePersonaName('   '), null)
+  assert.equal(sanitizePersonaName('x'.repeat(31)), null)
+  assert.equal(sanitizePersonaName('__proto__'), null)
+  assert.equal(sanitizePersonaName(123), null)
+  assert.equal(sanitizePersonaName(null), null)
+})
+
+check('normalizePersonas：剔除保留键与非对象条目', () => {
+  const raw = JSON.parse('{"__proto__":{"a":1},"work":{"style":"roast"},"bad":1}')
+  const out = normalizePersonas(raw)
+  assert.deepEqual(Object.keys(out).sort(), ['work'])
+  assert.deepEqual(normalizePersonas(null), {})
+  assert.deepEqual(normalizePersonas([1, 2]), {})
+})
+
+check('migrateConfig：personas 归一化透传，缺省时保持缺席；确认模式脏数据回退', () => {
+  const config = migrateConfig({ personas: { work: { style: 'roast' } } })
+  assert.deepEqual(config.personas, { work: { style: 'roast' } })
+  const clean = migrateConfig({ nickname: 'x' })
+  assert.equal('personas' in clean, false)
+  const dirty = migrateConfig({ requireToolConfirmation: 'yes' })
+  assert.equal(dirty.requireToolConfirmation, false)
 })
 
 console.log(`\n全部通过：${passed} 项检查`)

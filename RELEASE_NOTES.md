@@ -6,6 +6,8 @@
 
 **设置页**
 - 启用开关、「关于你」（昵称 / 职业 / 介绍）、「特质」（回复风格和语调 / 标题和列表 / 表情符号）、输出语言、自定义指令
+- 人设预设分组：保存当前为预设、一键使用（★ 标记当前匹配项）、删除（二次确认）
+- Agent 工具分组：`set_persona` 确认模式开关
 - 关键字段带 ⓘ 提示图标；保存 / 重置按钮带 toast；失败时页面内展示错误条
 - 中英双语文案（跟随界面语言）；dirty 检测（无改动禁用保存 + 未保存提示）；保存结果区分「已保存 / 无变化」
 - 「查看当前生效提示词」折叠区：展示当前已保存配置编译出的 system prompt 与字符数（只读）
@@ -13,19 +15,26 @@
 **斜杠命令**（输出语言跟随配置 `language`，中英文案）
 
 ```text
-/soul show       查看当前配置
-/soul reset      重置默认值
-/soul enable     启用
-/soul disable    禁用
+/soul show        查看当前配置（含确认模式与预设数量）
+/soul set k=v     修改配置项（如 /soul set style=humorous language=en）
+/soul save <名>   保存当前配置为人设预设
+/soul use <名>    应用人设预设
+/soul list        查看人设预设（✔ 标记当前匹配项）
+/soul del <名>    删除人设预设（delete / rm 别名）
+/soul confirm     应用待确认的人设变更（确认模式）
+/soul reject      拒绝待确认的人设变更
+/soul reset       重置默认值（保留人设预设库）
+/soul enable      启用
+/soul disable     禁用
 /soul <昵称>      设置昵称（保留原始大小写）
 ```
 
 **配置与集成**
-- 持久化：`$DSH_HOME/soul-config.json`
+- 持久化：`$DSH_HOME/soul-config.json`（人设预设存于同文件 `personas` 字段）
 - 服务：`soulConfig`（`getConfig` / `updateConfig` / `getSystemPrompt` / `resetConfig`）
-- HTTP API：`/api/soul/config`（GET/POST）、`/api/soul/prompt`、`/api/soul/config/reset`
+- HTTP API：`/api/soul/config`（GET/POST）、`/api/soul/prompt`、`/api/soul/config/reset`、`/api/soul/personas`（GET）、`/api/soul/personas/save|use|delete`（POST）
 - 输入校验：字段白名单、类型、长度上限与枚举校验，HTTP 保存 / `/soul` 命令 / `set_persona` 工具 / `soulConfig` 服务共用；非法或超限字段整单拒绝
-- Agent 工具：`set_persona`（需宿主安装 `@deepseek-ai/dsh-tools`；缺失或不兼容时自动跳过，其余功能不受影响）
+- Agent 工具：`set_persona`（需宿主安装 `@deepseek-ai/dsh-tools`；缺失或不兼容时自动跳过，其余功能不受影响；确认模式下返回 `pending` 提议）
 
 ## 已知限制
 
@@ -43,6 +52,21 @@
 ---
 
 ## 版本历史
+
+### v0.5.0（2026-09-02）
+
+**修复**
+- 暗色主题下「特质」等 `<select>` 原生下拉弹层白底白字（除选中项外选项不可读）：利用宿主主题呈现器投影的 `body[data-ds-dark-theme]` 暗色标志，以纯 CSS 属性选择器把 `color-scheme` 应用到设置栏目容器与 `select`（原生弹层、滚动条随主题切换，无需 JS 监听）；选项文字用主题变量 `--dsw-alias-label-primary` 着色（不再给 option 设 `background-color`，避免在 Chromium 上让弹层画布脱离 `color-scheme` 控制）
+- 顺带修正在客户端 CSS 中误用的几个 DSW 主题变量名：`--dsw-alias-bg-l1`（实际应为 `--dsw-alias-bg-layer-1`，导致设置栏、select/textarea/input 关闭态、提示词面板背景在暗色下退化为 UA 默认色）、以及 `.soul-error` / `.soul-persona-danger` / `:focus` 中的若干杜撰 token（`bg-danger` / `border-danger` / `label-danger` / `border-focus` / `border-focus-alpha`），改为已核实的 `--dsw-alias-bg-layer-1` / `--dsw-alias-label-error` / `--dsw-alias-brand-primary`（外环用 `color-mix` 叠 25% 透明）
+
+**新增**
+- 人设预设：多套命名人设一键切换，覆盖昵称/职业/介绍/回复风格/特质/输出语言/自定义指令 8 个字段（`enabled` 全局开关不进入预设）
+  - 斜杠命令：`/soul save <名称>`、`/soul use <名称>`、`/soul list`（✔ 标记当前匹配项）、`/soul del <名称>`（`delete` / `rm` 别名）
+  - HTTP API：`GET /api/soul/personas`、`POST /api/soul/personas/save|use|delete`（名称 1-30 字符，拒绝保留键防原型污染）
+  - 持久化于 `soul-config.json` 的 `personas` 字段；预设库增删改不触发会话注入；`/soul reset` 与「重置默认」保留预设库
+- `/soul set`：键值方式修改配置项（如 `/soul set style=humorous language=en`、`/soul set enabled=true`；不含 `=` 的 token 追加到上一个值，支持含空格的文本值）
+- `set_persona` 确认模式：新增配置项 `requireToolConfirmation`——开启后 Agent 的人设修改返回待确认提议（工具输出新增 `pending` 字段）而不落盘，用户以 `/soul confirm` 应用、`/soul reject` 拒绝；`/soul show` 显示确认模式状态、预设数量与待确认提示
+- `readJsonBody` 请求体读取统一助手（413 / 400 语义）复用于全部 POST 端点；`verify-config.mjs` 新增人设预设与确认模式用例
 
 ### v0.4.0（2026-09-02）
 

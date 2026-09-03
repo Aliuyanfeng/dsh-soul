@@ -3,7 +3,9 @@
 // 在设置页面添加「个性化」栏目：
 //   - 启用/禁用个性化设置
 //   - 「关于你」（昵称/职业/介绍）、回复风格和语调、特质、输出语言、自定义指令
-//   - dirty 检测（无改动禁用保存）、保存结果提示（已保存 / 无变化）
+//   - 人设预设：保存当前为预设、一键使用（★ 标记当前匹配项）、删除
+//   - Agent 工具：set_persona 确认模式开关
+//   - dirty 检测（无改动禁用保存）、统一 toast 提示
 //   - 查看当前生效提示词（只读）与字符数
 //
 // 纯 JS + React jsx-runtime 手写（不依赖 JSX 构建），开箱即用。
@@ -51,10 +53,15 @@ window.__ModuleLoader__.load({
       emoji: 'default',
       language: 'zh',
       customInstructions: '',
+      // set_persona 确认模式（v0.5.0）
+      requireToolConfirmation: false,
+      // 人设预设库与当前匹配项（GET /api/soul/personas 带回）
+      personas: null,
+      activePersona: null,
       loading: false,
       saving: false,
       error: null,
-      // 最近一次保存实际变化的字段名数组（来自 POST /api/soul/config 的 changed）
+      // 最近一次保存实际变化的字段名数组（来自写路径的 changed）
       lastChanged: null
     }
 
@@ -94,29 +101,28 @@ window.__ModuleLoader__.load({
         this.disposed = false
       }
 
+      // 把服务端返回的完整配置映射进 store
+      applyConfig(s, config) {
+        s.enabled = config.enabled
+        s.nickname = config.nickname || ''
+        s.occupation = config.occupation || ''
+        s.bio = config.bio || ''
+        s.style = config.style
+        s.headingLists = config.headingLists || 'default'
+        s.emoji = config.emoji || 'default'
+        s.language = config.language || 'zh'
+        s.customInstructions = config.customInstructions
+        s.requireToolConfirmation = config.requireToolConfirmation === true
+      }
+
       async loadConfig() {
         if (this.disposed) return
         this.store.update(s => { s.loading = true; s.error = null })
 
         try {
-          const url = new URL('/api/soul/config', hostBase())
-          const response = await this.fetcher(url)
-          const payload = await response.json().catch(() => ({}))
-
-          if (!response.ok || payload.ok !== true) {
-            throw new Error(payload.error || `HTTP ${response.status}`)
-          }
-
+          const payload = await this.postJSON('/api/soul/config', null, { method: 'GET' })
           this.store.update(s => {
-            s.enabled = payload.config.enabled
-            s.nickname = payload.config.nickname || ''
-            s.occupation = payload.config.occupation || ''
-            s.bio = payload.config.bio || ''
-            s.style = payload.config.style
-            s.headingLists = payload.config.headingLists || 'default'
-            s.emoji = payload.config.emoji || 'default'
-            s.language = payload.config.language || 'zh'
-            s.customInstructions = payload.config.customInstructions
+            this.applyConfig(s, payload.config)
             s.loading = false
           })
         } catch (error) {
@@ -133,31 +139,13 @@ window.__ModuleLoader__.load({
         this.store.update(s => { s.saving = true; s.error = null })
 
         try {
-          const url = new URL('/api/soul/config', hostBase())
-          const response = await this.fetcher(url, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(config)
-          })
-          const payload = await response.json().catch(() => ({}))
-
-          if (!response.ok || payload.ok !== true) {
-            throw new Error(payload.error || `HTTP ${response.status}`)
-          }
-
+          const payload = await this.postJSON('/api/soul/config', config)
           this.store.update(s => {
-            s.enabled = payload.config.enabled
-            s.nickname = payload.config.nickname || ''
-            s.occupation = payload.config.occupation || ''
-            s.bio = payload.config.bio || ''
-            s.style = payload.config.style
-            s.headingLists = payload.config.headingLists || 'default'
-            s.emoji = payload.config.emoji || 'default'
-            s.language = payload.config.language || 'zh'
-            s.customInstructions = payload.config.customInstructions
+            this.applyConfig(s, payload.config)
             s.lastChanged = Array.isArray(payload.changed) ? payload.changed : []
             s.saving = false
           })
+          return payload
         } catch (error) {
           if (this.disposed) return
           this.store.update(s => {
@@ -172,27 +160,13 @@ window.__ModuleLoader__.load({
         this.store.update(s => { s.saving = true; s.error = null })
 
         try {
-          const url = new URL('/api/soul/config/reset', hostBase())
-          const response = await this.fetcher(url, { method: 'POST' })
-          const payload = await response.json().catch(() => ({}))
-
-          if (!response.ok || payload.ok !== true) {
-            throw new Error(payload.error || `HTTP ${response.status}`)
-          }
-
+          const payload = await this.postJSON('/api/soul/config/reset')
           this.store.update(s => {
-            s.enabled = payload.config.enabled
-            s.nickname = payload.config.nickname || ''
-            s.occupation = payload.config.occupation || ''
-            s.bio = payload.config.bio || ''
-            s.style = payload.config.style
-            s.headingLists = payload.config.headingLists || 'default'
-            s.emoji = payload.config.emoji || 'default'
-            s.language = payload.config.language || 'zh'
-            s.customInstructions = payload.config.customInstructions
+            this.applyConfig(s, payload.config)
             s.lastChanged = Array.isArray(payload.changed) ? payload.changed : []
             s.saving = false
           })
+          return payload
         } catch (error) {
           if (this.disposed) return
           this.store.update(s => {
@@ -202,14 +176,49 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // 读取当前生效（已保存）的提示词：{ ok, prompt, enabled }
-      async fetchPrompt() {
-        const url = new URL('/api/soul/prompt', hostBase())
-        const response = await this.fetcher(url)
+      // 人设预设：列表 / 保存 / 使用 / 删除
+      async fetchPersonas() {
+        return await this.postJSON('/api/soul/personas', null, { method: 'GET' })
+      }
+
+      async savePersona(name) {
+        return await this.postJSON('/api/soul/personas/save', { name })
+      }
+
+      async usePersona(name) {
+        const payload = await this.postJSON('/api/soul/personas/use', { name })
+        if (!this.disposed) {
+          this.store.update(s => {
+            this.applyConfig(s, payload.config)
+            s.lastChanged = Array.isArray(payload.changed) ? payload.changed : []
+          })
+        }
+        return payload
+      }
+
+      async deletePersona(name) {
+        return await this.postJSON('/api/soul/personas/delete', { name })
+      }
+
+      // 统一请求：body 为 null 时不携带请求体（GET 用）
+      async postJSON(path, body, overrides = {}) {
+        const url = new URL(path, hostBase())
+        const init = { method: overrides.method || 'POST', ...overrides }
+        if (body !== null && body !== undefined) {
+          init.headers = { 'content-type': 'application/json' }
+          init.body = JSON.stringify(body)
+        }
+        const response = await this.fetcher(url, init)
         const payload = await response.json().catch(() => ({}))
         if (!response.ok || payload.ok !== true) {
           throw new Error(payload.error || `HTTP ${response.status}`)
         }
+        return payload
+      }
+
+      // 读取当前生效（已保存）的提示词：{ ok, prompt, enabled }
+      async fetchPrompt() {
+        const payload = await this.postJSON('/api/soul/prompt', null, { method: 'GET' })
         return payload
       }
 
@@ -223,31 +232,44 @@ window.__ModuleLoader__.load({
     // -------------------------------------------------------------------------
 
     const css = [
-      '.soul-section{margin:24px 0;padding:20px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-l1)}',
+      '.soul-section{margin:24px 0;padding:20px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}',
       '.soul-section h3{margin:0 0 16px 0;font-size:16px;font-weight:600;color:var(--dsw-alias-label-primary)}',
       '.soul-field{margin-bottom:16px;width:100%}',
       '.soul-field label{display:block;margin-bottom:6px;font-size:13px;font-weight:500;color:var(--dsw-alias-label-secondary)}',
-      '.soul-field select,.soul-field textarea,.soul-field input[type=text]{width:100%;padding:8px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-l1);color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.5;box-sizing:border-box}',
+      '.soul-field select,.soul-field textarea,.soul-field input[type=text]{width:100%;padding:8px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.5;box-sizing:border-box}',
+      '.soul-field select option{color:var(--dsw-alias-label-primary)}',
+      '.soul-section{color-scheme:light}',
+      'body[data-ds-dark-theme] .soul-section{color-scheme:dark}',
+      '.soul-field select{color-scheme:light}',
+      'body[data-ds-dark-theme] .soul-field select{color-scheme:dark}',
       '.soul-field textarea{min-height:100px;resize:vertical}',
       '.soul-field textarea.soul-textarea-sm{min-height:60px}',
       '.soul-group-title{margin:20px 0 12px 0;padding-bottom:8px;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}',
-      '.soul-field select:focus,.soul-field textarea:focus,.soul-field input[type=text]:focus{outline:none;border-color:var(--dsw-alias-border-focus);box-shadow:0 0 0 2px var(--dsw-alias-border-focus-alpha)}',
+      '.soul-field select:focus,.soul-field textarea:focus,.soul-field input[type=text]:focus{outline:none;border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 25%, transparent)}',
       '.soul-toggle{display:flex;align-items:center;gap:8px;margin-bottom:16px}',
       '.soul-toggle label{margin:0;font-size:13px;color:var(--dsw-alias-label-primary)}',
       '.soul-buttons{display:flex;gap:8px;margin-top:16px}',
-      '.soul-error{margin-top:8px;padding:8px 12px;background:var(--dsw-alias-bg-danger);border:1px solid var(--dsw-alias-border-danger);border-radius:6px;color:var(--dsw-alias-label-danger);font-size:12px;width:100%;box-sizing:border-box}',
+      '.soul-error{margin-top:8px;padding:8px 12px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-label-error);border-radius:6px;color:var(--dsw-alias-label-error);font-size:12px;width:100%;box-sizing:border-box}',
       '.soul-hint{position:relative;display:inline-flex;align-items:center;margin-left:6px;color:var(--dsw-alias-label-secondary);cursor:help;vertical-align:middle}',
       '.soul-hint:hover{color:var(--dsw-alias-label-primary)}',
       '.soul-hint-tip{position:absolute;bottom:calc(100% + 8px);left:0;padding:8px 10px;background:#ffffff;border:1px solid rgba(0,0,0,0.1);border-radius:6px;font-size:12px;font-weight:400;line-height:1.5;color:rgba(0,0,0,0.85);white-space:normal;width:max-content;max-width:260px;text-align:left;opacity:0;visibility:hidden;transition:opacity .15s ease;pointer-events:none;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.15)}',
       '.soul-hint:hover .soul-hint-tip{opacity:1;visibility:visible}',
       '.soul-status{margin-top:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}',
       '.soul-dirty{color:#d46b08}',
+      '.soul-persona-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed var(--dsw-alias-border-l2);font-size:12px}',
+      '.soul-persona-name{color:var(--dsw-alias-label-primary);font-weight:500;white-space:nowrap}',
+      '.soul-persona-meta{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary)}',
+      '.soul-persona-actions{display:flex;gap:10px;white-space:nowrap}',
+      '.soul-persona-save{display:flex;gap:8px}',
+      '.soul-persona-save input[type=text]{flex:1}',
       '.soul-prompt-toggle{margin-top:8px}',
       '.soul-prompt-link{background:none;border:none;padding:0;font-size:12px;color:var(--dsw-alias-label-secondary);cursor:pointer;text-decoration:underline}',
       '.soul-prompt-link:hover{color:var(--dsw-alias-label-primary)}',
-      '.soul-prompt-pre{margin:8px 0 0 0;padding:12px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-l1);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;font-family:Consolas,Menlo,monospace;text-align:left;width:100%;box-sizing:border-box}',
+      '.soul-persona-danger{color:var(--dsw-alias-label-error)}',
+      '.soul-prompt-pre{margin:8px 0 0 0;padding:12px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;font-family:Consolas,Menlo,monospace;text-align:left;width:100%;box-sizing:border-box}',
       '.soul-toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:8px 16px;border-radius:6px;font-size:13px;font-weight:500;z-index:10000;box-shadow:0 2px 8px rgba(0,0,0,0.15);pointer-events:none;text-align:center;min-width:auto;white-space:nowrap}',
       '.soul-toast-success{background:#f6ffed;border:1px solid #b7eb8f;color:#52c41a}',
+      '.soul-toast-error{background:#fff1f0;border:1px solid #ffa39e;color:#f5222d}',
       '@keyframes fadeInOut{0%{opacity:0;transform:translate(-50%,-50%) scale(0.9)}15%{opacity:1;transform:translate(-50%,-50%) scale(1)}85%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-50%) scale(0.9)}}'
     ].join('')
 
@@ -295,6 +317,13 @@ window.__ModuleLoader__.load({
       'field.instructions': '自定义指令',
       'hint.instructions': '补充角色、习惯等个性化要求。建议不要重复设置回复风格和语调类似的话术，以免与上方选项冲突。',
       'field.instructionsPlaceholder': '输入自定义指令，可以是其他行为、回复风格和语调等偏好设置',
+      'group.personas': '人设预设',
+      'personas.save': '保存当前为预设',
+      'personas.savePlaceholder': '预设名称（1-30 字符）',
+      'personas.use': '使用',
+      'personas.delete': '删除',
+      'personas.confirmDelete': '确定删除预设「{name}」？',
+      'personas.empty': '暂无人设预设，保存当前配置后可一键切换',
       'style.professional': '专业严谨',
       'style.casual': '轻松自然',
       'style.humorous': '幽默风趣',
@@ -306,6 +335,9 @@ window.__ModuleLoader__.load({
       'trait.emoji.default': '默认',
       'trait.emoji.more': '增强（使用较多表情符号）',
       'trait.emoji.less': '减弱（尽量减少使用表情符号）',
+      'group.tool': 'Agent 工具',
+      'field.toolConfirm': '人设变更需确认',
+      'hint.toolConfirm': '开启后，Agent 通过 set_persona 工具做出的修改不会立即生效，需在会话中使用 /soul confirm 确认或 /soul reject 拒绝。',
       'button.save': '保存设置',
       'button.saving': '保存中...',
       'button.reset': '重置默认',
@@ -314,6 +346,10 @@ window.__ModuleLoader__.load({
       'toast.saved': '✅ 设置已保存',
       'toast.noChanges': '✅ 配置无变化',
       'toast.reset': '✅ 已重置为默认值',
+      'toast.personaSaved': '✅ 预设已保存',
+      'toast.personaUsed': '✅ 预设已应用',
+      'toast.personaUnchanged': 'ℹ 预设与当前配置一致',
+      'toast.personaDeleted': '✅ 预设已删除',
       'prompt.view': '查看当前生效提示词',
       'prompt.hide': '收起提示词',
       'prompt.loading': '提示词加载中...',
@@ -344,6 +380,13 @@ window.__ModuleLoader__.load({
       'field.instructions': 'Custom instructions',
       'hint.instructions': 'Extra persona or habit requirements. Avoid repeating wording similar to the style & tone option above to prevent conflicts.',
       'field.instructionsPlaceholder': 'Custom instructions — other behaviors, style or tone preferences',
+      'group.personas': 'Personas',
+      'personas.save': 'Save current as persona',
+      'personas.savePlaceholder': 'Persona name (1-30 chars)',
+      'personas.use': 'Use',
+      'personas.delete': 'Delete',
+      'personas.confirmDelete': 'Delete persona "{name}"?',
+      'personas.empty': 'No personas yet — save the current config to switch with one click',
       'style.professional': 'Professional',
       'style.casual': 'Casual',
       'style.humorous': 'Humorous',
@@ -355,6 +398,9 @@ window.__ModuleLoader__.load({
       'trait.emoji.default': 'Default',
       'trait.emoji.more': 'More (frequent emoji usage)',
       'trait.emoji.less': 'Less (minimal emoji usage)',
+      'group.tool': 'Agent tools',
+      'field.toolConfirm': 'Require confirmation for persona changes',
+      'hint.toolConfirm': 'When enabled, changes made by the agent through the set_persona tool do not apply immediately — confirm with /soul confirm or reject with /soul reject in the conversation.',
       'button.save': 'Save Settings',
       'button.saving': 'Saving...',
       'button.reset': 'Reset to Default',
@@ -363,6 +409,10 @@ window.__ModuleLoader__.load({
       'toast.saved': '✅ Settings saved',
       'toast.noChanges': '✅ No changes to save',
       'toast.reset': '✅ Reset to defaults',
+      'toast.personaSaved': '✅ Persona saved',
+      'toast.personaUsed': '✅ Persona applied',
+      'toast.personaUnchanged': 'ℹ Persona matches current config',
+      'toast.personaDeleted': '✅ Persona deleted',
       'prompt.view': 'View the active system prompt',
       'prompt.hide': 'Hide the prompt',
       'prompt.loading': 'Loading prompt...',
@@ -401,7 +451,7 @@ window.__ModuleLoader__.load({
     ]
 
     // 表单字段与 store 字段的一一对应（dirty 检测与保存载荷共用）
-    const FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'language', 'customInstructions']
+    const FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'language', 'customInstructions', 'requireToolConfirmation']
 
     // 提示词小图标：hover 展示说明文字
     function SoulHint(props) {
@@ -430,7 +480,7 @@ window.__ModuleLoader__.load({
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      const { enabled, nickname, occupation, bio, style, headingLists, emoji, language, customInstructions, loading, saving, error, lastChanged } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, language, customInstructions, requireToolConfirmation, personas, activePersona, loading, saving, error } = state
 
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
@@ -441,8 +491,9 @@ window.__ModuleLoader__.load({
       const [localEmoji, setLocalEmoji] = React.useState(emoji)
       const [localLanguage, setLocalLanguage] = React.useState(language || 'zh')
       const [localInstructions, setLocalInstructions] = React.useState(customInstructions)
-      const [showSuccess, setShowSuccess] = React.useState(false)
-      const [showResetSuccess, setShowResetSuccess] = React.useState(false)
+      const [localToolConfirm, setLocalToolConfirm] = React.useState(requireToolConfirmation === true)
+      const [personaName, setPersonaName] = React.useState('')
+      const [toast, setToast] = React.useState(null)
       const [showPrompt, setShowPrompt] = React.useState(false)
       const [promptText, setPromptText] = React.useState('')
       const [promptLoading, setPromptLoading] = React.useState(false)
@@ -459,27 +510,20 @@ window.__ModuleLoader__.load({
         setLocalEmoji(emoji)
         setLocalLanguage(language || 'zh')
         setLocalInstructions(customInstructions)
-      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, language, customInstructions])
+        setLocalToolConfirm(requireToolConfirmation === true)
+      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, language, customInstructions, requireToolConfirmation])
 
-      // 保存成功后显示提示，2秒后自动消失
+      // toast 自动消失
       React.useEffect(() => {
-        if (showSuccess) {
-          const timer = setTimeout(() => setShowSuccess(false), 2000)
+        if (toast) {
+          const timer = setTimeout(() => setToast(null), 2000)
           return () => clearTimeout(timer)
         }
-      }, [showSuccess])
-
-      // 重置成功后显示提示，2秒后自动消失
-      React.useEffect(() => {
-        if (showResetSuccess) {
-          const timer = setTimeout(() => setShowResetSuccess(false), 2000)
-          return () => clearTimeout(timer)
-        }
-      }, [showResetSuccess])
+      }, [toast])
 
       // dirty 检测：本地表单与已保存配置逐字段比较
-      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, language, customInstructions }
-      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, language: localLanguage, customInstructions: localInstructions }
+      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, language, customInstructions, requireToolConfirmation }
+      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm }
       const dirty = FIELD_KEYS.some((key) => savedMap[key] !== localMap[key])
 
       const loadPrompt = async () => {
@@ -501,22 +545,80 @@ window.__ModuleLoader__.load({
         if (next) await loadPrompt()
       }
 
+      const loadPersonas = async () => {
+        try {
+          const payload = await controller.fetchPersonas()
+          controller.store.update((s) => {
+            s.personas = payload.personas
+            s.activePersona = payload.activeName
+          })
+        } catch {
+          // 预设列表加载失败不打断主配置界面
+        }
+      }
+
+      // 首次渲染拉取预设列表
+      React.useEffect(() => { loadPersonas() }, [])
+
       const handleSave = async () => {
-        await controller.saveConfig(localMap)
-        setShowSuccess(true)
+        const payload = await controller.saveConfig(localMap)
+        setToast({ text: payload && Array.isArray(payload.changed) && payload.changed.length > 0 ? t('toast.saved') : t('toast.noChanges'), kind: 'success' })
         if (showPrompt) await loadPrompt()
       }
 
       const handleReset = async () => {
         await controller.resetConfig()
-        setShowResetSuccess(true)
+        setToast({ text: t('toast.reset'), kind: 'success' })
         if (showPrompt) await loadPrompt()
+      }
+
+      const handleSavePersona = async () => {
+        const name = personaName.trim()
+        if (!name) return
+        try {
+          await controller.savePersona(name)
+          setPersonaName('')
+          await loadPersonas()
+          setToast({ text: t('toast.personaSaved'), kind: 'success' })
+        } catch (err) {
+          setToast({ text: messageOf(err), kind: 'error' })
+        }
+      }
+
+      const handleUsePersona = async (name) => {
+        try {
+          const payload = await controller.usePersona(name)
+          await loadPersonas()
+          setToast({ text: payload && payload.unchanged ? t('toast.personaUnchanged') : t('toast.personaUsed'), kind: 'success' })
+          if (showPrompt) await loadPrompt()
+        } catch (err) {
+          setToast({ text: messageOf(err), kind: 'error' })
+        }
+      }
+
+      const handleDeletePersona = async (name) => {
+        if (typeof globalThis.confirm === 'function' && !globalThis.confirm(t('personas.confirmDelete', { name }))) return
+        try {
+          await controller.deletePersona(name)
+          await loadPersonas()
+          setToast({ text: t('toast.personaDeleted'), kind: 'success' })
+        } catch (err) {
+          setToast({ text: messageOf(err), kind: 'error' })
+        }
       }
 
       const styleOptions = STYLE_VALUES.map((value) => ({ value, label: t(`style.${value}`) }))
       const headingListsOptions = TRAIT_VALUES.map((value) => ({ value, label: t(`trait.headingLists.${value}`) }))
       const emojiOptions = TRAIT_VALUES.map((value) => ({ value, label: t(`trait.emoji.${value}`) }))
-      const savedToastText = Array.isArray(lastChanged) && lastChanged.length > 0 ? t('toast.saved') : t('toast.noChanges')
+      const personaNames = personas ? Object.keys(personas).sort() : null
+
+      const personaRowMeta = (entry) => {
+        const parts = []
+        if (entry && STYLE_VALUES.includes(entry.style)) parts.push(t(`style.${entry.style}`))
+        else if (entry && entry.style) parts.push(entry.style)
+        if (entry && entry.nickname) parts.push(entry.nickname)
+        return parts.join(' · ')
+      }
 
       return e('div', { className: 'soul-section' },
         e('h3', null, t('settings.title')),
@@ -639,6 +741,52 @@ window.__ModuleLoader__.load({
               onChange: (ev) => setLocalInstructions(ev.target.value),
               placeholder: t('field.instructionsPlaceholder')
             })
+          ),
+
+          e('div', { className: 'soul-group-title' }, t('group.personas')),
+          e('div', { className: 'soul-field' },
+            personaNames === null
+              ? e('div', { className: 'soul-status' }, t('status.loading'))
+              : (personaNames.length === 0
+                ? e('div', { className: 'soul-status' }, t('personas.empty'))
+                : e(Fragment, null,
+                  ...personaNames.map((name) => {
+                    const entry = personas[name] || {}
+                    return e('div', { className: 'soul-persona-row', key: name },
+                      e('span', { className: 'soul-persona-name' }, name === activePersona ? `★ ${name}` : name),
+                      e('span', { className: 'soul-persona-meta' }, personaRowMeta(entry)),
+                      e('span', { className: 'soul-persona-actions' },
+                        e('button', { type: 'button', className: 'soul-prompt-link', onClick: () => handleUsePersona(name) }, t('personas.use')),
+                        e('button', { type: 'button', className: 'soul-prompt-link soul-persona-danger', onClick: () => handleDeletePersona(name) }, t('personas.delete'))
+                      )
+                    )
+                  })
+                ))
+          ),
+          e('div', { className: 'soul-field soul-persona-save' },
+            e('input', {
+              type: 'text',
+              value: personaName,
+              maxLength: 30,
+              onChange: (ev) => setPersonaName(ev.target.value),
+              placeholder: t('personas.savePlaceholder')
+            }),
+            e(ui.Button, {
+              onClick: handleSavePersona,
+              disabled: saving || !personaName.trim()
+            }, t('personas.save'))
+          ),
+
+          e('div', { className: 'soul-group-title' }, t('group.tool')),
+          e('div', { className: 'soul-toggle' },
+            e('input', {
+              type: 'checkbox',
+              id: 'soul-toolConfirm',
+              checked: localToolConfirm,
+              onChange: (ev) => setLocalToolConfirm(ev.target.checked)
+            }),
+            e('label', { htmlFor: 'soul-toolConfirm' }, t('field.toolConfirm')),
+            e(SoulHint, { text: t('hint.toolConfirm') })
           )
         ),
 
@@ -678,19 +826,12 @@ window.__ModuleLoader__.load({
 
         loading && e('div', { className: 'soul-status' }, t('status.loading')),
 
-        showSuccess && e('div', {
-          className: 'soul-toast soul-toast-success',
+        toast && e('div', {
+          className: `soul-toast ${toast.kind === 'error' ? 'soul-toast-error' : 'soul-toast-success'}`,
           style: {
             animation: 'fadeInOut 2s ease-in-out'
           }
-        }, savedToastText),
-
-        showResetSuccess && e('div', {
-          className: 'soul-toast soul-toast-success',
-          style: {
-            animation: 'fadeInOut 2s ease-in-out'
-          }
-        }, t('toast.reset'))
+        }, toast.text)
       )
     }
 
@@ -707,6 +848,11 @@ window.__ModuleLoader__.load({
         controller.dispose()
       }, 'dsh-soul: browser lifecycle')
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-soul: dictionaries')
+
+      // 暗色适配说明：原生 <select> 的弹出选项列表由浏览器按 color-scheme 渲染。
+      // 宿主主题呈现器会把 html 的 color-scheme 与 body[data-ds-dark-theme] 随主题
+      // 投影到 document（见 dsh-client-ui-layout ThemePresenter），因此这里用纯 CSS
+      // 属性选择器跟随即可，无需 JS 监听；选项行另用主题变量显式着色兜底。
 
       // 导航 label / 图标替换用的翻译函数（bind 返回的函数在调用时读取当前语言）
       const navT = ctx.locale.bind(NS)

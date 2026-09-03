@@ -18,6 +18,9 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - The compiled system prompt follows the output language (English descriptions when `language=en`)
 - Custom instructions
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
+- Named personas: save the current config under a name and switch with one click (save / use / list / delete, in both the Web UI and slash commands)
+- `set_persona` confirmation mode (`requireToolConfirmation`): agent persona changes take effect only after `/soul confirm`
+- `/soul set` key=value field updates
 - Configuration persisted to disk
 - Input validation: field whitelist, types, length limits (nickname/occupation 50, bio 500, custom instructions 2000 chars) and enum checks; invalid or oversized fields reject the whole write
 - Configuration synced to all active agents after every update
@@ -63,16 +66,23 @@ After starting DSH, open the **Personalization** section on the settings page, e
 Slash commands are also available:
 
 ```text
-/soul show       Show current configuration
-/soul reset      Reset configuration
-/soul enable     Enable personalization
-/soul disable    Disable personalization
-/soul Bob        Set nickname
+/soul show        Show current configuration (confirmation mode & persona count)
+/soul set k=v     Change config fields (e.g. /soul set style=humorous language=en)
+/soul save <name> Save the current config as a persona
+/soul use <name>  Apply a persona
+/soul list        List personas (✔ marks the active match)
+/soul del <name>  Delete a persona (delete / rm aliases)
+/soul confirm     Apply the pending persona proposal (confirmation mode)
+/soul reject      Discard the pending persona proposal
+/soul reset       Reset configuration (keeps the persona library)
+/soul enable      Enable personalization
+/soul disable     Disable personalization
+/soul Bob         Set nickname
 ```
 
-Once saved, the configuration is synced to all active agents and takes effect on the next request in the current session.
+Once saved, the configuration is synced to all active agents and takes effect on the next request in the current session; no-op saves inject nothing.
 
-The agent can also use the `set_persona` tool to adjust your persona (nickname, style & tone, traits, reply language, custom instructions) during a conversation. The model only invokes this tool when you explicitly ask to change how it addresses or responds to you.
+The agent can also use the `set_persona` tool to adjust your persona (nickname, style & tone, traits, reply language, custom instructions). The model only invokes this tool when you explicitly ask to change how it addresses or responds to you. With **Require confirmation for persona changes** (`requireToolConfirmation`) enabled, tool changes come back as a pending proposal and take effect only after `/soul confirm` (or are discarded by `/soul reject`).
 
 ## Configuration File
 
@@ -92,9 +102,12 @@ Example:
   "bio": "Interested in programming and technology",
   "style": "professional",
   "language": "en",
-  "customInstructions": "Be concise and lead with the conclusion."
+  "customInstructions": "Be concise and lead with the conclusion.",
+  "requireToolConfirmation": false
 }
 ```
+
+Personas are stored in the same file under the `personas` field: name → persona field snapshot (nickname / occupation / bio / style / traits / language / custom instructions) + `updatedAt`. Persona library changes never touch the active config; a persona is applied to the config (and synced to sessions) only when used.
 
 Length limits: nickname / occupation 50 chars, bio 500 chars, custom instructions 2000 chars. Unknown fields are dropped; invalid or oversized fields reject the whole write (HTTP returns 400 with per-field error details).
 
