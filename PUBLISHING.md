@@ -68,11 +68,15 @@ git push origin main
 #### 第二步：GitHub 网页创建 Release
 
 1. 仓库页 → **Releases** → **Draft a new release**。
-2. **Choose a tag** 输入 `v0.2.1`（必须与 `package.json` 版本一致，带 `v` 前缀）→ 选择 **Create new tag on publish**（基于 main 最新 commit）。
-3. Release 标题填 `v0.2.1`；描述从 `RELEASE_NOTES.md` 复制对应版本段落。
+2. **Choose a tag** 输入 `0.2.1`（与 `package.json` 版本一致，**不带 `v` 前缀**）→ 选择 **Create new tag on publish**（基于 main 最新 commit）。
+3. Release 标题填 `v0.2.1`（标题惯例带 `v`，与 tag 名不同，这是仓库既有实践）；描述从 `RELEASE_NOTES.md` 复制对应版本段落。
 4. 点击 **Publish release** → GitHub 创建 tag 并触发工作流 → 自动发布到 npm。
 
+> **tag 命名约定**：仓库全部历史 tag 均为不带 `v` 的形式（`0.1.1`、`0.3.0` … `0.6.0`），而 Release **标题**惯例带 `v`。工作流用 `TAG_VERSION="${GITHUB_REF_NAME#v}"` 校验，所以两种写法都能通过校验，但混用会造成 tag 命名不一致，不建议。
+
 工作流执行内容：校验 tag 版本号与 `package.json` 一致（不一致直接失败，仅 Release 触发时执行）→ `npm pack --dry-run` 检查包内容 → 幂等检查（npm 上已存在同版本则置 `already=true`）→ `npm publish`（由 `if` 门控，已发布时整步跳过，避免 403；OIDC，自动生成溯源证明）。
+
+> **工作流文件取自 tag 所指向的 commit**，而不是默认分支的最新版本。因此若 tag 指向的 commit 早于某次工作流修复，该次发布仍会执行旧版工作流。发版前请确认 tag 基于最新 main 创建（选择 *Create new tag on publish* 且目标为 `main`）。
 
 > 幂等检查依赖**步骤输出**而非 `exit 0`：`run` 中的 `exit 0` 只结束当前步骤，无法阻止后续步骤执行，必须将结果写入 `$GITHUB_OUTPUT`，再由 `Publish` 步骤用 `if:` 判断。
 
