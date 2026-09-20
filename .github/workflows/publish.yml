@@ -27,7 +27,10 @@ jobs:
       - name: Upgrade npm
         run: npm install -g npm@latest
 
+      # 仅在 release 事件下校验：workflow_dispatch 手动触发时 GITHUB_REF_NAME
+      # 是分支名（如 main），与版本号必然不等，会导致手动触发 100% 失败。
       - name: Verify tag matches package.json version
+        if: github.event_name == 'release'
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           PKG_VERSION="$(node -p "require('./package.json').version")"
@@ -41,16 +44,23 @@ jobs:
       - name: Check package contents
         run: npm pack --dry-run
 
-      # 幂等守卫：同版本重复触发（如删除 Release 后重发）时跳过而不是 403 报错
-      - name: Skip if already published
+      # 幂等守卫：同版本重复触发（如删除 Release 后重发）时跳过而不是 403 报错。
+      # 注意：run 里的 exit 0 只结束当前步骤，无法跳过后续步骤，
+      # 因此必须把结果写入 $GITHUB_OUTPUT，由 Publish 步骤用 if 判断。
+      - name: Check if already published
+        id: guard
         run: |
           PKG_VERSION="$(node -p "require('./package.json').version")"
-          if npm view "dsh-soul@$PKG_VERSION" version 2>/dev/null; then
+          PUBLISHED="$(npm view "dsh-soul@$PKG_VERSION" version 2>/dev/null || true)"
+          if [ -n "$PUBLISHED" ]; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
             echo "::warning::dsh-soul@$PKG_VERSION is already on npm, skipping publish"
-            exit 0
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
           fi
 
       # 使用 OIDC 可信发布，无需 NPM_TOKEN。
       # 溯源证明（provenance）在 OIDC 下自动生成，无需 --provenance 参数。
       - name: Publish
+        if: steps.guard.outputs.already == 'false'
         run: npm publish --access public

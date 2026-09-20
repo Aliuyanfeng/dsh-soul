@@ -72,11 +72,24 @@ git push origin main
 3. Release 标题填 `v0.2.1`；描述从 `RELEASE_NOTES.md` 复制对应版本段落。
 4. 点击 **Publish release** → GitHub 创建 tag 并触发工作流 → 自动发布到 npm。
 
-工作流执行内容：校验 tag 版本号与 `package.json` 一致（不一致直接失败）→ `npm pack --dry-run` 检查包内容 → 幂等检查（npm 上已存在同版本则跳过，避免 403）→ `npm publish`（OIDC，自动生成溯源证明）。
+工作流执行内容：校验 tag 版本号与 `package.json` 一致（不一致直接失败，仅 Release 触发时执行）→ `npm pack --dry-run` 检查包内容 → 幂等检查（npm 上已存在同版本则置 `already=true`）→ `npm publish`（由 `if` 门控，已发布时整步跳过，避免 403；OIDC，自动生成溯源证明）。
+
+> 幂等检查依赖**步骤输出**而非 `exit 0`：`run` 中的 `exit 0` 只结束当前步骤，无法阻止后续步骤执行，必须将结果写入 `$GITHUB_OUTPUT`，再由 `Publish` 步骤用 `if:` 判断。
 
 可在仓库 **Actions** 标签页查看发布进度。
 
 > 注意：Draft（草稿）状态的 Release 不会触发发布，必须点击 Publish release。
+
+#### 手动触发（workflow_dispatch）
+
+工作流同时支持 `workflow_dispatch`：仓库 → **Actions** → 左侧选 **Publish to npm** → **Run workflow**，选择分支后运行。
+
+此时不存在 tag，因此 **tag 校验步骤会被跳过**，发布版本直接取当前分支 `package.json` 的 `version`，幂等检查照常生效。适用于补发、或在 Release 流程出问题时的应急发布。
+
+```text
+release 事件      : tag 校验 -> 包内容检查 -> 幂等检查 -> (未发布时) publish
+workflow_dispatch : 跳过     -> 包内容检查 -> 幂等检查 -> (未发布时) publish
+```
 
 #### 同步维护 RELEASE_NOTES.md
 
