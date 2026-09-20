@@ -177,4 +177,59 @@ check('migrateConfig：personas 归一化透传，缺省时保持缺席；确认
   assert.equal(dirty.requireToolConfirmation, false)
 })
 
+console.log('输入框光轨')
+
+check('DEFAULT_CONFIG 含光轨默认值', () => {
+  assert.equal(DEFAULT_CONFIG.trailEnabled, true)
+  assert.equal(DEFAULT_CONFIG.trailColor, '#679EFE')
+  assert.equal(DEFAULT_CONFIG.trailSpeed, 'slow')
+  assert.equal(DEFAULT_CONFIG.trailWidth, 'thin')
+})
+
+check('sanitizeConfig：光轨字段全部通过，颜色归一化为大写', () => {
+  const { patch, errors } = sanitizeConfig({
+    trailEnabled: false,
+    trailColor: '#679efe',
+    trailSpeed: 'fast',
+    trailWidth: 'thick'
+  })
+  assert.deepEqual(errors, {})
+  assert.equal(patch.trailEnabled, false)
+  assert.equal(patch.trailColor, '#679EFE')
+  assert.equal(patch.trailSpeed, 'fast')
+  assert.equal(patch.trailWidth, 'thick')
+})
+
+check('sanitizeConfig：非法颜色被拒绝（缺 # / 位数不符 / 关键字 / 非字符串 / 空串）', () => {
+  assert.ok(sanitizeConfig({ trailColor: '679EFE' }).errors.trailColor)
+  assert.ok(sanitizeConfig({ trailColor: '#679EF' }).errors.trailColor)
+  assert.ok(sanitizeConfig({ trailColor: '#679EFFF' }).errors.trailColor)
+  assert.ok(sanitizeConfig({ trailColor: 'red' }).errors.trailColor)
+  assert.ok(sanitizeConfig({ trailColor: 123 }).errors.trailColor)
+  assert.ok(sanitizeConfig({ trailColor: '' }).errors.trailColor)
+  assert.equal('trailColor' in sanitizeConfig({ trailColor: 'bad' }).patch, false)
+})
+
+check('sanitizeConfig：trailEnabled 非布尔、速度与粗细非法枚举被拒绝', () => {
+  assert.ok(sanitizeConfig({ trailEnabled: 'yes' }).errors.trailEnabled)
+  assert.ok(sanitizeConfig({ trailSpeed: 'turbo' }).errors.trailSpeed)
+  assert.ok(sanitizeConfig({ trailWidth: 'huge' }).errors.trailWidth)
+})
+
+check('migrateConfig：光轨脏数据回退为默认值', () => {
+  const dirty = migrateConfig({ trailEnabled: 'yes', trailColor: 'blue', trailSpeed: 'turbo', trailWidth: 9 })
+  assert.equal(dirty.trailEnabled, true)
+  assert.equal(dirty.trailColor, '#679EFE')
+  assert.equal(dirty.trailSpeed, 'slow')
+  assert.equal(dirty.trailWidth, 'thin')
+})
+
+check('migrateConfig：合法光轨配置保留，颜色转大写', () => {
+  const config = migrateConfig({ trailEnabled: false, trailColor: '#aabbcc', trailSpeed: 'fast', trailWidth: 'thick' })
+  assert.equal(config.trailEnabled, false)
+  assert.equal(config.trailColor, '#AABBCC')
+  assert.equal(config.trailSpeed, 'fast')
+  assert.equal(config.trailWidth, 'thick')
+})
+
 console.log(`\n全部通过：${passed} 项检查`)

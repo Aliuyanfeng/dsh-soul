@@ -14,7 +14,7 @@
 //   - 提供 HTTP API 供客户端调用
 //   - 注册斜杠命令 /soul 查看当前配置
 //   - 注入系统提示词到 Agent
-//   - 配置写入统一走写队列，返回 changed 供调用方跳过无变化刷新
+//   - 配置写入统一走写队列，返回 changed（有无实际变更）与 promptChanged（是否需要刷新提示词并注入会话）
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -216,17 +216,23 @@ function enqueueConfigWrite(task) {
   return run
 }
 
+// 纯客户端外观字段：变更它们不需要刷新系统提示词，也不需要向活动会话注入快照；
+// 但它们仍是实际配置变更，必须计入 changed（供调用方判断「已保存 / 无变化」并驱动前端 dirty）。
+const NON_PROMPT_FIELDS = new Set(['trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth'])
+
 // 在写队列中执行一次配置更新：mutate 收到当前配置的浅拷贝，返回新配置对象。
 // 注意 mutate 必须在队列任务内完成全部读取与合并，不要在队列外提前读取配置。
-// 返回 { config, changed }：changed 为实际发生变化的字段名数组，
-// 调用方在其为空时应跳过提示词刷新与会话注入（配置没有变化）。
+// 返回 { config, changed, promptChanged }：
+//   - changed：实际发生变化的字段名数组（不含 personas 预设库），供调用方判断有无变更
+//   - promptChanged：changed 中会影响 Agent 行为的子集；为空时应跳过提示词刷新与会话注入
 async function commitConfig(mutate) {
   return enqueueConfigWrite(async () => {
     const current = await loadConfig()
     const next = mutate({ ...current })
     const changed = diffKeys(current, next)
+    const promptChanged = changed.filter((key) => !NON_PROMPT_FIELDS.has(key))
     const config = await saveConfig(next)
-    return { config, changed }
+    return { config, changed, promptChanged }
   })
 }
 
@@ -403,10 +409,11 @@ function registerRoutes(ctx) {
             }
 
             // 写队列内「读—改—写」，只合并通过校验的字段（未知字段不落盘）
-            const { config: updated, changed } = await commitConfig(current => ({ ...current, ...patch }))
+            const { config: updated, changed, promptChanged } = await commitConfig(current => ({ ...current, ...patch }))
 
-            // 配置有实际变化才更新系统提示词并注入会话，避免无变化保存堆积注入消息
-            if (changed.length > 0) {
+            // 仅影响 Agent 行为的字段变化才刷新提示词并注入会话；
+            // 光轨等纯外观字段只更新配置，不向会话堆积注入快照
+            if (promptChanged.length > 0) {
               refreshPromptAndInject(ctx, updated)
             }
 
@@ -453,10 +460,10 @@ function registerRoutes(ctx) {
         }
 
         try {
-          const { config, changed } = await commitConfig(current => defaultConfigPreservingPersonas(current))
+          const { config, changed, promptChanged } = await commitConfig(current => defaultConfigPreservingPersonas(current))
 
-          // 配置有实际变化才更新系统提示词并注入会话
-          if (changed.length > 0) {
+          // 仅影响 Agent 行为的字段变化才刷新提示词并注入会话
+          if (promptChanged.length > 0) {
             refreshPromptAndInject(ctx, config)
           }
 
@@ -515,7 +522,7 @@ function findActivePersonaName(config) {
 
 // 人设预设 HTTP 路由：列表 / 保存 / 使用 / 删除。
 // 保存与删除仅变更 personas 库（diffKeys 跳过该字段），不会触发会话注入；
-// 使用会变更活动配置字段，走常规 changed 门控注入。
+// 使用会变更活动配置字段，走常规 promptChanged 门控注入。
 function registerPersonaRoutes(ctx) {
   ctx.inject(['webServer'], (wsCtx) => {
     const send = (res, status, body) => {
@@ -573,7 +580,7 @@ function registerPersonaRoutes(ctx) {
       }
     })
 
-    // 使用预设：将预设字段应用到活动配置（走 changed 门控注入）
+    // 使用预设：将预设字段应用到活动配置（走 promptChanged 门控注入）
     wsCtx.webServer.register({
       kind: 'exact',
       path: '/api/soul/personas/use',
@@ -596,8 +603,8 @@ function registerPersonaRoutes(ctx) {
           }
           // 预设值保存时已校验；此处再过一遍白名单，防御手改文件等异常数据
           const { patch } = sanitizeConfig(pickPersonaValues(current.personas[personaName]))
-          const { config: updated, changed } = await commitConfig(c => ({ ...c, ...patch }))
-          if (changed.length > 0) {
+          const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
+          if (promptChanged.length > 0) {
             refreshPromptAndInject(ctx, updated)
           }
           send(res, 200, { ok: true, config: updated, changed, unchanged: changed.length === 0 })
@@ -670,6 +677,18 @@ const COMMAND_MESSAGES = {
       more: '增强',
       less: '减弱'
     },
+    trailLabel: '输入框光轨',
+    trailLine: (status, color, speedName, widthName) => `${status}（${color} / ${speedName} / ${widthName}）`,
+    trailSpeedNames: {
+      slow: '慢',
+      normal: '中',
+      fast: '快'
+    },
+    trailWidthNames: {
+      thin: '细',
+      normal: '中',
+      thick: '粗'
+    },
     instructionsLabel: '自定义指令',
     enabled: '已启用',
     disabled: '已禁用',
@@ -692,9 +711,9 @@ const COMMAND_MESSAGES = {
     saveUsage: '用法：/soul save <名称>（1-30 个字符）',
     useUsage: '用法：/soul use <名称>',
     delUsage: '用法：/soul del <名称>',
-    setUsage: '用法：/soul set key=value ...（可用字段：enabled / style / headingLists / emoji / language / nickname / occupation / bio / customInstructions）',
+    setUsage: '用法：/soul set key=value ...（可用字段：enabled / style / headingLists / emoji / language / nickname / occupation / bio / customInstructions / trailEnabled / trailColor / trailSpeed / trailWidth）',
     unknownField: '未知配置项',
-    invalidEnabled: 'enabled 取值必须为 true / false',
+    invalidBoolean: (key) => `${key} 取值必须为 true / false`,
     setNoChanges: '配置无变化，未做修改',
     setDone: (keys) => `✅ 已更新：${keys.join('、')}`,
     help: '使用 /soul show 查看详情\n使用 /soul set style=humorous 修改配置项\n使用 /soul save <名称> 保存预设；/soul use <名称> 应用；/soul list 查看；/soul del <名称> 删除\n使用 /soul confirm 或 /soul reject 处理待确认的人设变更\n使用 /soul reset 重置配置\n使用 /soul enable 启用；/soul disable 禁用\n使用 /soul 昵称xxx 设置昵称',
@@ -727,6 +746,18 @@ const COMMAND_MESSAGES = {
       more: 'More',
       less: 'Less'
     },
+    trailLabel: 'Composer light trail',
+    trailLine: (status, color, speedName, widthName) => `${status} (${color} / ${speedName} / ${widthName})`,
+    trailSpeedNames: {
+      slow: 'Slow',
+      normal: 'Normal',
+      fast: 'Fast'
+    },
+    trailWidthNames: {
+      thin: 'Thin',
+      normal: 'Normal',
+      thick: 'Thick'
+    },
     instructionsLabel: 'Custom instructions',
     enabled: 'enabled',
     disabled: 'disabled',
@@ -749,9 +780,9 @@ const COMMAND_MESSAGES = {
     saveUsage: 'Usage: /soul save <name> (1-30 chars)',
     useUsage: 'Usage: /soul use <name>',
     delUsage: 'Usage: /soul del <name>',
-    setUsage: 'Usage: /soul set key=value ... (fields: enabled / style / headingLists / emoji / language / nickname / occupation / bio / customInstructions)',
+    setUsage: 'Usage: /soul set key=value ... (fields: enabled / style / headingLists / emoji / language / nickname / occupation / bio / customInstructions / trailEnabled / trailColor / trailSpeed / trailWidth)',
     unknownField: 'Unknown field',
-    invalidEnabled: 'enabled must be true or false',
+    invalidBoolean: (key) => `${key} must be true or false`,
     setNoChanges: 'No config changes to apply',
     setDone: (keys) => `✅ Updated: ${keys.join(', ')}`,
     help: 'Use /soul show for details\nUse /soul set style=humorous to change fields\nUse /soul save <name> / use <name> / list / del <name> for personas\nUse /soul confirm or /soul reject for pending persona proposals\nUse /soul reset to reset\nUse /soul enable / disable to toggle\nUse /soul <nickname> to set your nickname',
@@ -769,6 +800,9 @@ function commandMessages(config) {
 
 // /soul 子命令关键字（命中走子命令；否则整体视为昵称）
 const COMMAND_KEYWORDS = new Set(['show', 'reset', 'enable', 'disable', 'save', 'use', 'list', 'del', 'delete', 'rm', 'set', 'confirm', 'reject'])
+
+// /soul set 中按布尔解析的键；其余键以原始字符串交给 sanitizeConfig 校验
+const COMMAND_BOOLEAN_KEYS = new Set(['enabled', 'trailEnabled'])
 
 // 解析 /soul set 的键值参数：key=value 对；不含 = 的 token 追加到上一个值
 // （支持含空格的文本值，如：/soul set bio=写代码 多年 经验）
@@ -807,8 +841,8 @@ function registerCommands(ctx) {
             if (errors.nickname) {
               return { kind: 'error', text: t.failed(errors.nickname) }
             }
-            const { config: updated, changed } = await commitConfig(c => ({ ...c, nickname: patch.nickname }))
-            if (changed.length > 0) refreshPromptAndInject(ctx, updated)
+            const { config: updated, promptChanged } = await commitConfig(c => ({ ...c, nickname: patch.nickname }))
+            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.nicknameDone(patch.nickname) }
           }
 
@@ -823,30 +857,36 @@ function registerCommands(ctx) {
             const instructions = config.customInstructions || t.notSet
             const personaCount = Object.keys(config.personas || {}).length
             const pendingLine = pendingPersonaProposal ? `\n${t.pendingHint}` : ''
+            const trailText = t.trailLine(
+              config.trailEnabled ? t.enabled : t.disabled,
+              config.trailColor,
+              t.trailSpeedNames[config.trailSpeed] || config.trailSpeed,
+              t.trailWidthNames[config.trailWidth] || config.trailWidth
+            )
 
             return {
               kind: 'success',
-              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.occupationLabel}${t.colon}${occupation}\n${t.bioLabel}${t.colon}${bio}\n${t.styleLabel}${t.colon}${styleName}\n${t.traitsLabel}${t.colon}${t.headingListsLabel}=${hlName}，${t.emojiLabel}=${emojiName}\n${t.instructionsLabel}${t.colon}${instructions}\n${t.toolConfirmLabel}${t.colon}${config.requireToolConfirmation ? t.onLabel : t.offLabel}\n${t.personasLabel}${t.colon}${personaCount}${pendingLine}\n\n${t.help}`
+              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.occupationLabel}${t.colon}${occupation}\n${t.bioLabel}${t.colon}${bio}\n${t.styleLabel}${t.colon}${styleName}\n${t.traitsLabel}${t.colon}${t.headingListsLabel}=${hlName}，${t.emojiLabel}=${emojiName}\n${t.trailLabel}${t.colon}${trailText}\n${t.instructionsLabel}${t.colon}${instructions}\n${t.toolConfirmLabel}${t.colon}${config.requireToolConfirmation ? t.onLabel : t.offLabel}\n${t.personasLabel}${t.colon}${personaCount}${pendingLine}\n\n${t.help}`
             }
           }
 
           if (first === 'reset') {
             // 重置活动配置，但保留人设预设库
-            const { config: updated, changed } = await commitConfig(current => defaultConfigPreservingPersonas(current))
-            if (changed.length > 0) refreshPromptAndInject(ctx, updated)
+            const { config: updated, promptChanged } = await commitConfig(current => defaultConfigPreservingPersonas(current))
+            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.resetDone }
           }
 
           if (first === 'enable') {
             // 写队列内「读—改—写」，不在队列外改写内存缓存对象；无变化时跳过注入
-            const { config: updated, changed } = await commitConfig(c => ({ ...c, enabled: true }))
-            if (changed.length > 0) refreshPromptAndInject(ctx, updated)
+            const { config: updated, promptChanged } = await commitConfig(c => ({ ...c, enabled: true }))
+            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.enableDone }
           }
 
           if (first === 'disable') {
-            const { config: updated, changed } = await commitConfig(c => ({ ...c, enabled: false }))
-            if (changed.length > 0) refreshPromptAndInject(ctx, updated)
+            const { config: updated, promptChanged } = await commitConfig(c => ({ ...c, enabled: false }))
+            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.disableDone }
           }
 
@@ -869,11 +909,11 @@ function registerCommands(ctx) {
             }
             // 预设值保存时已校验；此处再过一遍白名单，防御手改文件等异常数据
             const { patch } = sanitizeConfig(pickPersonaValues(config.personas[personaName]))
-            const { config: updated, changed } = await commitConfig(c => ({ ...c, ...patch }))
+            const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
             if (changed.length === 0) {
               return { kind: 'success', text: t.useUnchanged(personaName) }
             }
-            refreshPromptAndInject(ctx, updated)
+            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.useDone(personaName) }
           }
 
@@ -912,11 +952,11 @@ function registerCommands(ctx) {
             if (!pairs || pairs.length === 0) return { kind: 'error', text: t.setUsage }
             const rawPatch = {}
             for (const [key, value] of pairs) {
-              if (key === 'enabled') {
+              if (COMMAND_BOOLEAN_KEYS.has(key)) {
                 const flag = value.toLowerCase()
-                if (['true', '1', 'on', 'yes'].includes(flag)) rawPatch.enabled = true
-                else if (['false', '0', 'off', 'no'].includes(flag)) rawPatch.enabled = false
-                else return { kind: 'error', text: t.failed(t.invalidEnabled) }
+                if (['true', '1', 'on', 'yes'].includes(flag)) rawPatch[key] = true
+                else if (['false', '0', 'off', 'no'].includes(flag)) rawPatch[key] = false
+                else return { kind: 'error', text: t.failed(t.invalidBoolean(key)) }
               } else {
                 rawPatch[key] = value
               }
@@ -930,8 +970,8 @@ function registerCommands(ctx) {
             if (Object.keys(patch).length === 0) {
               return { kind: 'error', text: t.failed(droppedKeys.length > 0 ? `${t.unknownField}: ${droppedKeys.join(', ')}` : t.setUsage) }
             }
-            const { config: updated, changed } = await commitConfig(c => ({ ...c, ...patch }))
-            if (changed.length > 0) refreshPromptAndInject(ctx, updated)
+            const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
+            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: changed.length > 0 ? t.setDone(changed) : t.setNoChanges }
           }
 
@@ -939,8 +979,8 @@ function registerCommands(ctx) {
             if (!pendingPersonaProposal) return { kind: 'error', text: t.noPending }
             const proposal = pendingPersonaProposal
             pendingPersonaProposal = null
-            const { config: updated, changed } = await commitConfig(c => ({ ...c, ...proposal.patch }))
-            if (changed.length > 0) refreshPromptAndInject(ctx, updated)
+            const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...proposal.patch }))
+            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             const detail = Object.keys(proposal.patch).map((key) => `${key}=${JSON.stringify(proposal.patch[key])}`).join(', ')
             return { kind: 'success', text: t.confirmDone(detail) }
           }
@@ -1112,7 +1152,7 @@ function registerTools(ctx) {
 
             // 写队列内合并，避免与其他写入方（Web UI、/soul 命令）竞态；
             // changed 由队列任务统一 diff 得出
-            const { config: updated, changed } = await commitConfig((current) => {
+            const { config: updated, changed, promptChanged } = await commitConfig((current) => {
               const next = { ...current }
               for (const key of Object.keys(patch)) {
                 next[key] = patch[key]
@@ -1124,7 +1164,7 @@ function registerTools(ctx) {
               return { ok: true, message: promptTextOf(updated).toolNoChanges }
             }
 
-            refreshPromptAndInject(ctx, updated)
+            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return {
               ok: true,
               message: promptTextOf(updated).toolUpdated,

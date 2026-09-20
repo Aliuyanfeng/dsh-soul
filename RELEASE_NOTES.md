@@ -8,6 +8,7 @@
 - 启用开关、「关于你」（昵称 / 职业 / 介绍）、「特质」（回复风格和语调 / 标题和列表 / 表情符号）、输出语言、自定义指令
 - 人设预设分组：保存当前为预设、一键使用（★ 标记当前匹配项）、删除（二次确认）
 - Agent 工具分组：`set_persona` 确认模式开关
+- 输入框光轨：Agent 回复中时输入框边框的流光动效——开关、预设色板 + 取色器 + 十六进制输入、流动速度（慢 / 中 / 快）、光带粗细（细 / 中 / 粗），以及随配置实时联动的效果示例
 - 关键字段带 ⓘ 提示图标；保存 / 重置按钮带 toast；失败时页面内展示错误条
 - 中英双语文案（跟随界面语言）；dirty 检测（无改动禁用保存 + 未保存提示）；保存结果区分「已保存 / 无变化」
 - 「查看当前生效提示词」折叠区：展示当前已保存配置编译出的 system prompt 与字符数（只读）
@@ -16,7 +17,7 @@
 
 ```text
 /soul show        查看当前配置（含确认模式与预设数量）
-/soul set k=v     修改配置项（如 /soul set style=humorous language=en）
+/soul set k=v     修改配置项（如 /soul set style=humorous language=en；光轨字段：trailColor / trailSpeed / trailWidth / trailEnabled）
 /soul save <名>   保存当前配置为人设预设
 /soul use <名>    应用人设预设
 /soul list        查看人设预设（✔ 标记当前匹配项）
@@ -52,6 +53,29 @@
 ---
 
 ## 版本历史
+
+### v0.6.0（2026-09-20）
+
+**新增**
+- 输入框光轨：Agent 回复中时，输入框（composer）边框显示沿边循环流动的光轨
+  - 触发条件：当前会话 `running === true`（DSH `SessionSnapshot.running`）且 `trailEnabled === true`
+  - 实现：注册到 `conversation.input.overlay` 槽位，在输入框卡片（`[data-composer-card]`）上挂一层 SVG 圆角矩形；`pathLength` 归一化 + `stroke-dashoffset` 线性动画，按弧长匀速推进（旋转 `conic-gradient` 角速度恒定但周长线速度不均，故不采用）
+  - 渐隐拖尾：8 层等长 dash 依次错位叠加、透明度递减——头部最亮、向后渐隐；各层共用同一时长，整体仍严格匀速
+  - 与边框重合：`stroke` 中心线落在卡片边框盒边缘，且光轨开启时把宿主自身细边框置为透明（覆盖 `--dsw-elevation-stroke-color`），边界上只保留一条线
+  - 可配置：颜色（预设色板 / 取色器 / 十六进制，默认 `#679EFE`）、流动速度（`slow` / `normal` / `fast`，默认 `slow`，对应 4.8s / 3.6s / 2.4s）、光带粗细（`thin` / `normal` / `thick`，默认 `thin`，对应 1.5 / 2.5 / 4 px）
+  - 设置页「Agent 工具」分组内置实时效果示例，随颜色 / 速度 / 粗细联动
+  - 尺寸同步：`ResizeObserver` 跟随输入框高度变化，不随内容增高变形；`prefers-reduced-motion` 下停用动画
+  - 无障碍：光轨为纯装饰层，`pointer-events: none` + `aria-hidden`，不参与交互与读屏
+- 新增配置项 `trailEnabled` / `trailColor` / `trailSpeed` / `trailWidth`；`/soul show` 展示光轨状态，`/soul set` 支持写入（布尔字段接受 true / false / on / off / 1 / 0 / yes / no）
+
+**变更**
+- 设置页折叠面板：标题行改为始终带底色（`--dsw-alias-interactive-bg-active`，悬停时加深一档），并与内容区之间保留 1px 分隔线；展开时标题行下沿改直角，形成清晰的水平交界。原因是浅色主题下 `bg-layer-1/2/3` 全为纯白，标题与内容同为一片白、展开后分不清哪块是标题
+- `commitConfig` 返回值新增 `promptChanged`：`changed` 仍为全部实际变更（用于「已保存 / 无变化」判断与前端 dirty），`promptChanged` 为其中影响 Agent 行为的子集；光轨等纯外观字段只更新配置，不再刷新系统提示词、不再向活动会话注入快照
+- 设置页保存失败（如颜色格式非法被服务端拒绝）改为提示「保存失败」，不再误报「配置无变化」
+- 颜色归一化为大写（`#RRGGBB`），与默认值 `#679EFE` 及调色板取值一致，保证变更比对稳定
+
+**测试**
+- `scripts/verify-config.mjs` 新增光轨字段用例（默认值、大写归一化、非法颜色 / 枚举拒绝、迁移脏数据回退）
 
 ### v0.5.0（2026-09-02）
 

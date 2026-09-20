@@ -20,11 +20,16 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
 - Agent 可调用工具 `set_persona`，让模型在对话中直接调整人设
 - 人设预设：多套命名人设一键切换（保存 / 使用 / 列表 / 删除，Web UI 与命令双入口）
 - `set_persona` 确认模式（`requireToolConfirmation`）：Agent 的人设修改需经 `/soul confirm` 确认后才生效
+- 输入框光轨：Agent 回复中时，输入框边框显示沿边循环流动的光轨（默认颜色 `#679EFE`）
+  - 颜色：预设色板、取色器或十六进制输入（如 `#679EFE`）
+  - 流动速度：慢 / 中 / 快；光带粗细：细 / 中 / 粗
+  - 光轨起点、终点沿边框匀速推进，带渐隐拖尾；与输入框边框完全重合，不出现双线
+  - 设置页内置实时效果示例，随颜色 / 速度 / 粗细联动；系统开启「减少动态效果」时自动停用
 - `/soul set` 键值方式修改配置项
 - 配置持久化保存
-- 配置输入校验：字段白名单、类型、长度上限（昵称/职业 50、介绍 500、自定义指令 2000 字符）与枚举校验，非法或超限字段整单拒绝
+- 配置输入校验：字段白名单、类型、长度上限（昵称/职业 50、介绍 500、自定义指令 2000 字符）、枚举与十六进制颜色校验，非法或超限字段整单拒绝
 - 配置更新后同步到所有活动 Agent
-- 变更检测：仅在配置实际变化时刷新提示词并注入会话，无变化的保存不产生注入消息
+- 变更检测：仅在影响 Agent 行为的配置实际变化时刷新提示词并注入会话；纯外观配置（输入框光轨）只落盘，不产生注入消息
 
 ## 安装
 
@@ -67,7 +72,7 @@ dsh plugin --profile web update dsh-soul
 
 ```text
 /soul show        查看当前配置（含确认模式与预设数量）
-/soul set k=v     修改配置项（如 /soul set style=humorous language=en）
+/soul set k=v     修改配置项（如 /soul set style=humorous language=en；光轨：trailColor=#679EFE trailSpeed=fast trailWidth=thick）
 /soul save <名>   保存当前配置为人设预设
 /soul use <名>    应用人设预设
 /soul list        查看人设预设（✔ 标记当前匹配项）
@@ -103,13 +108,19 @@ soul-config.json
   "style": "professional",
   "language": "zh",
   "customInstructions": "请保持简洁，优先给出结论。",
-  "requireToolConfirmation": false
+  "requireToolConfirmation": false,
+  "trailEnabled": true,
+  "trailColor": "#679EFE",
+  "trailSpeed": "slow",
+  "trailWidth": "thin"
 }
 ```
 
 人设预设保存在同一文件的 `personas` 字段：名称 → 人设字段快照（昵称/职业/介绍/风格/特质/语言/自定义指令）+ `updatedAt`；预设库变更不影响活动配置，使用预设时才应用到配置并同步会话。
 
-字段长度上限：昵称 / 职业 50 字符，介绍 500 字符，自定义指令 2000 字符；未知字段会被丢弃，非法或超限字段整单拒绝（HTTP 返回 400 与字段级错误明细）。
+输入框光轨字段：`trailEnabled`（是否启用，默认 `true`）、`trailColor`（6 位十六进制颜色，统一大写存储，默认 `#679EFE`）、`trailSpeed`（`slow` / `normal` / `fast`，默认 `slow`）、`trailWidth`（`thin` / `normal` / `thick`，默认 `thin`）。这四个字段属纯外观配置，只落盘、不进入 system prompt、不触发会话注入。
+
+字段长度上限：昵称 / 职业 50 字符，介绍 500 字符，自定义指令 2000 字符；颜色必须为 `#rrggbb` 形式。未知字段会被丢弃，非法或超限字段整单拒绝（HTTP 返回 400 与字段级错误明细）。
 
 ## 实现原理
 

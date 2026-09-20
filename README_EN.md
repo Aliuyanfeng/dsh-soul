@@ -20,11 +20,16 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
 - Named personas: save the current config under a name and switch with one click (save / use / list / delete, in both the Web UI and slash commands)
 - `set_persona` confirmation mode (`requireToolConfirmation`): agent persona changes take effect only after `/soul confirm`
+- Composer light trail: while the agent is replying, a light trail loops around the composer border (default color `#679EFE`)
+  - Color: preset swatches, a color picker, or a hex input (e.g. `#679EFE`)
+  - Flow speed: slow / normal / fast (default slow, 4.8s / 3.6s / 2.4s); trail thickness: thin / normal / thick (default thin, 1.5 / 2.5 / 4 px)
+  - The trail advances at constant speed along the border and fades into a tail; it sits exactly on the composer border, never producing a double line
+  - The settings page shows a live preview that follows color / speed / thickness; automatically disabled under "reduce motion"
 - `/soul set` key=value field updates
 - Configuration persisted to disk
-- Input validation: field whitelist, types, length limits (nickname/occupation 50, bio 500, custom instructions 2000 chars) and enum checks; invalid or oversized fields reject the whole write
+- Input validation: field whitelist, types, length limits (nickname/occupation 50, bio 500, custom instructions 2000 chars), enum and hex-color checks; invalid or oversized fields reject the whole write
 - Configuration synced to all active agents after every update
-- Change detection: the prompt is refreshed and sessions injected only when the configuration actually changed — no-op saves inject nothing
+- Change detection: the prompt is refreshed and sessions injected only when a behavior-affecting field actually changed — appearance-only config (composer light trail) is persisted without injecting anything
 
 ## Installation
 
@@ -67,7 +72,7 @@ Slash commands are also available:
 
 ```text
 /soul show        Show current configuration (confirmation mode & persona count)
-/soul set k=v     Change config fields (e.g. /soul set style=humorous language=en)
+/soul set k=v     Change config fields (e.g. /soul set style=humorous language=en; trail: trailColor=#679EFE trailSpeed=fast trailWidth=thick)
 /soul save <name> Save the current config as a persona
 /soul use <name>  Apply a persona
 /soul list        List personas (✔ marks the active match)
@@ -103,13 +108,19 @@ Example:
   "style": "professional",
   "language": "en",
   "customInstructions": "Be concise and lead with the conclusion.",
-  "requireToolConfirmation": false
+  "requireToolConfirmation": false,
+  "trailEnabled": true,
+  "trailColor": "#679EFE",
+  "trailSpeed": "slow",
+  "trailWidth": "thin"
 }
 ```
 
 Personas are stored in the same file under the `personas` field: name → persona field snapshot (nickname / occupation / bio / style / traits / language / custom instructions) + `updatedAt`. Persona library changes never touch the active config; a persona is applied to the config (and synced to sessions) only when used.
 
-Length limits: nickname / occupation 50 chars, bio 500 chars, custom instructions 2000 chars. Unknown fields are dropped; invalid or oversized fields reject the whole write (HTTP returns 400 with per-field error details).
+Composer light trail fields: `trailEnabled` (on/off, default `true`), `trailColor` (6-digit hex, stored uppercase, default `#679EFE`), `trailSpeed` (`slow` / `normal` / `fast`, default `slow`), `trailWidth` (`thin` / `normal` / `thick`, default `thin`). These are appearance-only: they are persisted but never enter the system prompt and never trigger a session injection.
+
+Length limits: nickname / occupation 50 chars, bio 500 chars, custom instructions 2000 chars; the color must be `#rrggbb`. Unknown fields are dropped; invalid or oversized fields reject the whole write (HTTP returns 400 with per-field error details).
 
 ## How It Works
 
