@@ -1,0 +1,18 @@
+# 统一以 LF 入库并在工作区保持 LF。
+#
+# 背景：Windows 上 git 默认 core.autocrlf=true，会把 checkout 出来的文件
+# 转成 CRLF。对 YAML 本身无害，但 .github/workflows/*.yml 里内嵌的是
+# shell 脚本 —— 一旦 CRLF 进入 runner，bash 会把行尾的 \r 当成命令的一部分，
+# 报出难以定位的 `\r: command not found`（或变量取值带上 \r）。
+# 显式固定为 LF，可消除对该机器 git 配置的隐式依赖。
+* text=auto eol=lf
+
+# 二进制文件不做行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.tgz binary
+*.woff binary
+*.woff2 binary
