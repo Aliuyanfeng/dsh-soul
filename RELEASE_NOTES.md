@@ -46,13 +46,34 @@
 
 ## 兼容性
 
-- `@deepseek-ai/cordis` `^4.0.1`
-- `@deepseek-ai/dsh-llm` `^0.1.1-rc.2`
-- `@deepseek-ai/dsh-tools` `^0.1.0-rc.6`
+peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行时版本**，即 `@deepseek-ai/dsh-app-boot` 的 version）：
+
+| 包 | 范围 | DSH 是否校验 |
+| --- | --- | --- |
+| `@deepseek-ai/dsh-llm` | `>=0.1.1-rc.2 <0.3.0-0` | 是 |
+| `@deepseek-ai/dsh-tools` | `>=0.1.0-rc.6 <0.3.0-0` | 是 |
+| `@deepseek-ai/cordis` | `^4.0.1 \|\| ^4.0.5-alpha.1` | 否（名称不以 `@deepseek-ai/dsh-` 开头，不参与判定） |
+
+即支持 DSH **0.1.x 与 0.2.x**（含 prerelease）。DSH 进入 0.3.x 线后需重新评估再放宽，流程见 `PUBLISHING.md`。
+
+用 `npm run verify:compat` 可在升级 DSH 后一条命令确认声明是否仍然成立（见 `DEBUGGING.md` 第四节）。
 
 ---
 
 ## 版本历史
+
+### v0.6.1（2026-10-04）
+
+**修复**
+- **与 DSH 0.2.x 的兼容性声明**：`peerDependencies` 由 `^0.1.x` 放宽为覆盖 0.1 / 0.2 两条线，修复在 DSH 0.2.0-rc.2 及以上被拒绝装载的问题（插件管理器报「dsh-soul@0.6.0 与 DSH 0.2.0-rc.2 不兼容（要求 @deepseek-ai/dsh-llm ^0.1.1-rc.2, @deepseek-ai/dsh-tools ^0.1.0-rc.6）」）
+  - 根因：DSH 以 `semver.satisfies(运行时版本, peer范围, { includePrerelease: true })` 判定，被比较的一方是 **DSH 运行时版本**而非插件实际 import 到的包版本；`^0.1.1-rc.2` 的隐含上界是 `<0.2.0-0`，因此挡住了整条 0.2.x 线
+  - 新范围：`@deepseek-ai/dsh-llm` `>=0.1.1-rc.2 <0.3.0-0`、`@deepseek-ai/dsh-tools` `>=0.1.0-rc.6 <0.3.0-0`——覆盖 0.1.x 与 0.2.x 全部 prerelease
+  - `@deepseek-ai/cordis` 由 `^4.0.1` 放宽为 `^4.0.1 || ^4.0.5-alpha.1`（DSH 不校验该 peer，改动只为声明准确）
+  - **插件代码无需改动**：`createUserMessage`（dsh-llm）、`defineTool` 与 `TOOL_RUNTIME_SCHEDULER`（dsh-tools）、`SessionSnapshot.running`、以及 `conversation.input.left` / `conversation.input.overlay` / `settings.section` 三个槽位在新版 DSH 中均已逐项核实存在
+
+**新增**
+- `scripts/verify-compat.mjs`：DSH 兼容性自检脚本。自动定位本机 DSH 运行时，复现 DSH 的判定规则（能取到宿主时直接调用其导出的 `evaluatePluginCompatibility`），并额外抽查运行时符号与客户端 `inject` 包是否仍在；不兼容时以退出码 1 失败。支持 `--dsh <目录>` 与 `--runtime <版本>`，无法定位运行时则跳过
+- `npm run verify` 现在串联配置层与兼容性两套校验；单独运行用 `npm run verify:compat`
 
 ### v0.6.0（2026-09-20）
 

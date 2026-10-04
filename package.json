@@ -1,6 +1,6 @@
 {
   "name": "dsh-soul",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "为 DeepSeek Harness 添加个性化设置",
   "keywords": [
     "dsh",
@@ -17,7 +17,8 @@
   "type": "module",
   "main": "index.mjs",
   "scripts": {
-    "verify": "node scripts/verify-config.mjs"
+    "verify": "node scripts/verify-config.mjs && node scripts/verify-compat.mjs",
+    "verify:compat": "node scripts/verify-compat.mjs"
   },
   "license": "MIT",
   "repository": {
@@ -25,9 +26,9 @@
     "url": "git+https://github.com/Aliuyanfeng/dsh-soul.git"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+    "@deepseek-ai/cordis": "^4.0.1 || ^4.0.5-alpha.1",
+    "@deepseek-ai/dsh-llm": ">=0.1.1-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6 <0.3.0-0"
   },
   "dsh": {
     "bundle": {

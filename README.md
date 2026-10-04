@@ -46,6 +46,24 @@ dsh plugin --profile web update dsh-soul
       name: dsh-soul
 ```
 
+## 兼容性
+
+插件不打包 DSH 运行时包，全部由宿主提供。DSH 会在装载前校验 `peerDependencies`，**比较对象是 DSH 运行时版本**（`@deepseek-ai/dsh-app-boot` 的 version），而不是这些包各自的版本：
+
+| 包 | 范围 |
+| --- | --- |
+| `@deepseek-ai/dsh-llm` | `>=0.1.1-rc.2 <0.3.0-0` |
+| `@deepseek-ai/dsh-tools` | `>=0.1.0-rc.6 <0.3.0-0` |
+| `@deepseek-ai/cordis` | `^4.0.1 \|\| ^4.0.5-alpha.1` |
+
+即支持 DSH **0.1.x 与 0.2.x**（含 prerelease 版本）。可用 `npm run verify:compat` 在当前环境确认声明是否成立。
+
+若 DSH 提示「dsh-soul@x.y.z 与 DSH a.b.c 不兼容」，说明插件版本早于该 DSH 版本，升级插件即可：
+
+```powershell
+dsh plugin --profile web update dsh-soul
+```
+
 ## 截图
 
 **设置页（关于你 + 特质）**

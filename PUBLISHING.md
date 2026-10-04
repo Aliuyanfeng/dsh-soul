@@ -118,11 +118,55 @@ npm publish --access public
 
 > npm 已于 2025 年 11 月移除 Classic Token（含原 Automation 类型），目前只能创建 Granular Access Token，且最长有效期 90 天，需定期轮换。CI 中请优先使用上面的 OIDC 可信发布，避免轮换负担。
 
-## 依赖
+## 依赖与 DSH 兼容性
 
-插件运行需要宿主环境提供兼容版本的：
+插件不打包任何 DSH 运行时包，全部声明为 `peerDependencies` 交由宿主提供：
 
-- `@deepseek-ai/cordis`
-- `@deepseek-ai/dsh-llm`
+| 包 | 范围 | DSH 是否校验 |
+| --- | --- | --- |
+| `@deepseek-ai/dsh-llm` | `>=0.1.1-rc.2 <0.3.0-0` | 是 |
+| `@deepseek-ai/dsh-tools` | `>=0.1.0-rc.6 <0.3.0-0` | 是 |
+| `@deepseek-ai/cordis` | `^4.0.1 \|\| ^4.0.5-alpha.1` | 否 |
+
+### DSH 如何判定（决定范围该怎么写）
+
+`@deepseek-ai/dsh-app-boot` 的 `evaluatePluginCompatibility` 是唯一权威实现，规则有三条：
+
+1. **只校验**名字为 `@deepseek-ai/dsh`、或以 `@deepseek-ai/dsh-` 开头的 peer；其余（如 `@deepseek-ai/cordis`）不参与判定；
+2. 被比较的一方是 **DSH 运行时版本**（`dsh-app-boot/package.json` 的 `version`），**不是**该 peer 包自己的版本；
+3. 判定式为 `semver.satisfies(runtimeVersion, range, { includePrerelease: true })`。
+
+第 3 点有两个容易踩的后果：
+
+- `^0.1.1-rc.2` 的隐含上界是 `<0.2.0-0`，因此**挡不住** 0.2.x 线——这正是 v0.6.0 在 DSH 0.2.x 上被拒绝装载的原因；
+- 当运行时是 prerelease 时，range 必须**显式覆盖它的 `major.minor.patch`**：`>=0.1.1-rc.2 <0.3.0-0` 能匹配 `0.2.0-rc.2` 与 `0.2.1-alpha.1`，而 `>=0.1.1-rc.2` 不能匹配 `0.2.0-rc.2`。
+
+因此推荐写成 `>=<最低支持版本> <下一条线>-0`：既覆盖当前全部 prerelease，又在下一条线到来时主动失败、提醒重新评估。
+
+### DSH 升级后的维护流程
+
+```bash
+npm run verify:compat
+# 或指定版本 / 安装目录
+node scripts/verify-compat.mjs --runtime 0.2.0-rc.2
+node scripts/verify-compat.mjs --dsh "<DSH 安装目录>"
+```
+
+- **通过** → 无需改动；
+- **不通过** → 放宽上界（或按实际支持的范围重写）、升 `version`，再按正常流程发版。
+
+脚本在能定位到宿主时，会直接调用 DSH 导出的 `evaluatePluginCompatibility`，判定与宿主逐字一致；此外还会抽查 `createUserMessage` / `defineTool` / `TOOL_RUNTIME_SCHEDULER` 等运行时符号与客户端 `inject` 包是否仍在——**peer 检查覆盖不到这一层**，若报符号缺失，说明不只是声明过期，插件代码也需要适配。
+
+### 应急：临时版本豁免
+
+用户侧若要在插件发新版前强行装载，DSH 提供按「精确包版本 + 精确 DSH 版本」的豁免（写入 profile 的 `compatibility.json`，需显式接受风险）：
+
+```bash
+dsh plugin --profile web allow-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2 --accept-risk
+dsh plugin --profile web version-exemptions
+dsh plugin --profile web revoke-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2
+```
+
+> 豁免只对写明的那个组合生效，任一侧升级后即失效。
 
 不要在源码、文档或发布包中包含 token、密钥、个人配置或本地路径。

@@ -109,7 +109,7 @@ dsh --profile web --dump-config
 (Get-Item "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-soul").Target
 ```
 
-`package.json` 的 `version`、`client/index.mjs` 的 `VERSION` 常量、`RELEASE_NOTES.md` 三处应一致（本版均为 `0.6.0`）。
+`package.json` 的 `version`、`client/index.mjs` 的 `VERSION` 常量、`RELEASE_NOTES.md` 三处应一致（本版均为 `0.6.1`）。
 
 ### 3) 客户端产物（确认浏览器拿到新代码）
 
@@ -146,6 +146,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 | 报错 / 症状 | 原因 | 解决 |
 | --- | --- | --- |
+| `dsh-soul@x.y.z 与 DSH a.b.c 不兼容（要求 …）` | 插件声明的 peer 范围不含当前 DSH 运行时版本 | 见下方 4.1 |
 | `Cannot find package 'dsh-soul' imported from …\profiles\web\` | 配置树里有插件行，但包没进 `node_modules` | 先 `dsh plugin add`，再启动 |
 | 插件目录存在但为空 | `link:` 在无开发者模式的 Windows 上静默退化成空目录 | 改用 `mklink /J` 联接 |
 | 设置栏目不显示 | 插件没装进当前 profile / DSH 未完全重启 / 页面没刷新 | 重装 → 重启 → 硬刷新 |
@@ -153,6 +154,53 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | 改源码后无反应 | 装的是复制副本 | 见第二节方案 C |
 | `dsh web --patch ./x.yml` 报 `web takes none of …` | `web` 别名命令不接受全局选项 | 写全称 `dsh --profile web --patch …` |
 | 配置保存了但 Agent 行为没变 | `agent.inject()` 只在下一次模型请求生效 | 先发一条新消息再观察 |
+
+### 4.1 插件与 DSH 版本不兼容
+
+**症状**：DSH 升级后，插件管理器（或 `dsh plugin` 输出）报
+
+```text
+dsh-soul@0.6.0 与 DSH 0.2.0-rc.2 不兼容（要求 @deepseek-ai/dsh-llm ^0.1.1-rc.2, @deepseek-ai/dsh-tools ^0.1.0-rc.6），
+运行它可能导致崩溃或数据丢失。
+```
+
+**判定规则**（权威实现：`@deepseek-ai/dsh-app-boot` 的 `evaluatePluginCompatibility`）：
+
+1. 只校验名字为 `@deepseek-ai/dsh` 或以 `@deepseek-ai/dsh-` 开头的 peer；**`@deepseek-ai/cordis` 不参与判定**（所以报错只列 dsh-llm 与 dsh-tools）；
+2. 被比较的一方是 **DSH 运行时版本**（`dsh-app-boot/package.json` 的 version），不是这两个包各自的版本；
+3. 判定式 `semver.satisfies(runtimeVersion, range, { includePrerelease: true })`。`^0.1.1-rc.2` 的隐含上界是 `<0.2.0-0`，所以它会挡住整条 0.2.x 线。
+
+**先确认是不是纯声明问题**：
+
+```bash
+npm run verify:compat                 # 自动定位本机 DSH
+node scripts/verify-compat.mjs --dsh "<DSH 安装目录>"
+node scripts/verify-compat.mjs --runtime 0.2.0-rc.2
+```
+
+输出会逐条给出「通过 / 不通过」，并标注判定方式（能取到宿主时会直接调用 DSH 的原生函数）。脚本末尾还会抽查 `createUserMessage` / `defineTool` / `TOOL_RUNTIME_SCHEDULER` 与客户端 `inject` 包——这一层 DSH 不校验：
+
+- 只有 peer 不通过、符号齐备 → 属**声明过期**，升级插件即可；
+- 同时报符号缺失 → **代码也需要适配**，不能只改版本范围。
+
+**三种处理方式**：
+
+| 方式 | 做法 | 适用 |
+| --- | --- | --- |
+| 升级插件（推荐） | `dsh plugin --profile web update dsh-soul` | 上游已发布声明兼容的版本 |
+| 临时豁免 | `dsh plugin --profile web allow-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2 --accept-risk` | 上游尚未发版，需先跑起来 |
+| 参与修复 | 放宽 `peerDependencies` 上界并升版本发版 | 你是维护者（见 `PUBLISHING.md`） |
+
+豁免查询与撤销：
+
+```bash
+dsh plugin --profile web version-exemptions
+dsh plugin --profile web revoke-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2
+```
+
+豁免写入 profile 目录下的 `compatibility.json`，且**只对写明的「包版本 + DSH 版本」组合生效**——升级任一侧都会重新触发校验。
+
+> 豁免意味着 DSH 明确告知过「可能导致崩溃或数据丢失」。它适合临时验证，不适合长期使用；优先等插件发新版。
 
 ## 五、配置文件与日志
 

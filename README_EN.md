@@ -46,6 +46,24 @@ The plugin is registered via `cordis.patch.yml`:
       name: dsh-soul
 ```
 
+## Compatibility
+
+The plugin ships no DSH runtime packages; the host provides them all. DSH validates `peerDependencies` before loading, comparing against the **DSH runtime version** (the version of `@deepseek-ai/dsh-app-boot`), not the individual packages' versions:
+
+| Package | Range |
+| --- | --- |
+| `@deepseek-ai/dsh-llm` | `>=0.1.1-rc.2 <0.3.0-0` |
+| `@deepseek-ai/dsh-tools` | `>=0.1.0-rc.6 <0.3.0-0` |
+| `@deepseek-ai/cordis` | `^4.0.1 \|\| ^4.0.5-alpha.1` |
+
+So DSH **0.1.x and 0.2.x** are supported, prereleases included. Run `npm run verify:compat` to check the declaration against your environment.
+
+If DSH reports "dsh-soul@x.y.z is incompatible with DSH a.b.c", the plugin predates that DSH version — updating it is enough:
+
+```powershell
+dsh plugin --profile web update dsh-soul
+```
+
 ## Screenshots
 
 **Settings page (About you + Traits)**
