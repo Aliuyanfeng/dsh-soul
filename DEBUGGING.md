@@ -47,9 +47,37 @@ $DSH_HOME/soul-config.json      # 未设置 DSH_HOME 时在 ~/.dsh/ 下
 
 | 方案 | 命令 | 改源码后 | 代价 |
 | --- | --- | --- | --- |
-| A. 每次重装副本 | `dsh plugin --profile web add file:<绝对路径>` | 需**重新执行 add** + 重启宿主 + 硬刷新 | 最稳，但每次改动都要重来 |
+| A. 每次重装副本 | `dsh plugin --profile web remove dsh-soul` → `add file:<绝对路径>` | 需**先 remove 再 add** + 重启宿主 + 硬刷新 | 最稳，但每次改动都要重来；**只 `add` 不会更新**，见下方 2.1 |
 | B. `link:` 协议 | `dsh plugin --profile web add link:<绝对路径>` | 软链直指源码，预期即时生效 | **Windows 上不可靠，见下方警告** |
 | C. 目录联接 | 用 `mklink /J` 手工替换 `node_modules/dsh-soul` | 即时生效 | 绕过 pnpm，后续 install 可能清理掉联接 |
+
+### 2.1 为什么只 `add` 不会更新（实测）
+
+`file:` 依赖在 pnpm 的 lockfile 里**按路径登记**，pnpm 不比对目录内容。源码改了、路径没变 ⇒ 直接判定"已是最新"，副本**原地不动**。
+
+实测（副本停在 0.6.0、源码已到 0.6.2）：
+
+```text
+dsh plugin --profile web add file:<绝对路径>
+→ Already up to date        # 没有任何报错，也没有任何警告提示你没装上
+→ node_modules/dsh-soul 仍是 0.6.0
+→ 并且继续按旧 package.json 报 peer 不兼容
+```
+
+**正确做法是「先移除、再安装」**——输出里出现 `Packages: +1` 才是真的装了：
+
+```bash
+dsh plugin --profile web remove dsh-soul
+dsh plugin --profile web add file:<绝对路径>
+```
+
+装完务必核对副本版本，这是最容易踩空的一步：
+
+```powershell
+(Get-Content "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-soul\package.json" | ConvertFrom-Json).version
+```
+
+或者直接选方案 C 的联接，从根上绕开复制语义：改源码即时生效，不存在"忘了重装"。
 
 ### ⚠️ 关于方案 B（`link:`）的 Windows 警告
 
