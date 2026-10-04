@@ -1,8 +1,8 @@
 # 过期 issue 自动标记与关闭
 #
 # 两段独立计时：
-#   静默 90 天  → 打上 stale 标签 + 留言（issue 仍然打开，只是提醒）
-#   再静默 30 天 → 自动关闭
+#   静默 14 天  → 打上 stale 标签 + 留言（issue 仍然打开，只是提醒）
+#   再静默 14 天 → 自动关闭
 # 期间任何活动（评论 / 改标题 / 加标签）都会撤销标签并让计时归零。
 #
 # ⚠️ 定时工作流在「仓库连续 60 天没有任何 commit」时会被 GitHub 自动禁用，
@@ -35,13 +35,13 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-          days-before-issue-stale: 90
-          days-before-issue-close: 30
+          days-before-issue-stale: 14
+          days-before-issue-close: 14
           stale-issue-label: "stale"
           remove-stale-when-updated: true
           stale-issue-message: >
-            这个 issue 已 90 天没有新活动，先标记为 stale。
-            如果 30 天内没有回复，它会被自动关闭；
+            这个 issue 已 14 天没有新活动，先标记为 stale。
+            如果 14 天内没有回复，它会被自动关闭；
             补充信息，或回复一句「问题仍然存在」，即可保留。
           close-issue-message: >
             因长时间无活动，这个 issue 已被自动关闭。
