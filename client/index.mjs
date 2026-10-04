@@ -113,9 +113,22 @@ window.__ModuleLoader__.load({
     // （旋转 conic-gradient 的角速度恒定，但周长线速度会随位置变化，故不采用）。
     // 渐隐拖尾：8 层等长 dash 依次错位叠加、透明度递减 —— 头部各层重叠最亮，
     // 向后剩余层数递减形成拖尾；所有层共用同一时长，整体仍严格匀速。
-    // 与边框重合：stroke 中心线落在容器边框盒边缘（rect 即 0,0,w,h），
-    // 并靠 overflow:visible 让外半圈可见；光轨开启时隐藏宿主自身细边框，
+    // 与边框重合：stroke 中心线落在宿主边框盒边缘；外半圈由「外扩盒」容纳
+    // （见 TRAIL_PAD），不再依赖 overflow:visible；光轨开启时隐藏宿主自身细边框，
     // 保证边界上只有一条线。
+    //
+    // ⚠️ 隔离不变量（v0.6.1 修复 issue #2 的尺寸正反馈环）：
+    // 环是「写在宿主内部、尺寸随宿主变化」的绝对定位元素。一旦它进入宿主布局流
+    // （例如类规则里的 position:absolute 被第三方皮肤/主题的更具体选择器或
+    // !important 覆盖），就会闭合成环：卡片变高 → ResizeObserver → 按新尺寸改写
+    // SVG → 元素自身再变高 → 卡片再变高 → …（实测 60 次 sync 即可把 134px 撑到 9202px）。
+    // 故本实现用三层独立手段保证它绝不参与宿主的任何尺寸测量：
+    //   1) 挂载点优先选卡片内那个 `position:absolute;height:0` 的 overlay 锚点 ——
+    //      锚点高度写死为 0，环即使退回常规流也撑不动卡片；
+    //   2) 关键几何（position/left/top/width/height/contain）全部内联 ——
+    //      内联样式只可能被 !important 击败，比单类选择器可靠得多；
+    //   3) contain:strict（含 size/layout/paint）+ 墨迹全部收进自身盒内，
+    //      尺寸、布局、绘制都与外部彻底隔离。
 
     const TRAIL_DASH = 12
     const TRAIL_LAYERS = 8
@@ -126,6 +139,13 @@ window.__ModuleLoader__.load({
     const TRAIL_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
     const TRAIL_SPEED_VALUES = ['slow', 'normal', 'fast']
     const TRAIL_WIDTH_VALUES = ['thin', 'normal', 'thick']
+    // 最粗描边（4px）的一半：环的外盒比宿主边框盒每边外扩这么多，
+    // 好让描边的外半圈也落在 SVG 自己的盒内（contain:paint 会按盒裁切）。
+    // 这样就不需要 overflow:visible —— 墨迹不再外溢，不可能被祖先的 scrollHeight 计入。
+    const TRAIL_PAD = 2
+    // 失控熔断：输入框卡片不可能达到这个量级；命中即停止同步并隐藏，防止未知宿主
+    // 测高逻辑把环拖进任何残余的正反馈（正常路径下永不触发）。
+    const TRAIL_MAX_SIDE = 20000
 
     // 颜色容错：输入中途（如只打了 #6）回退到默认色，避免示例与提示丢失；
     // 统一大写，与宿主归一化结果及调色板取值一致
@@ -157,39 +177,146 @@ window.__ModuleLoader__.load({
       return svg
     }
 
-    // 让环与容器像素尺寸一致（viewBox 用像素），圆角半径与宿主输入框卡片一致
-    function sizeTrailSvg(svg, width, height) {
-      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
-      if (svg.dataset.trailWidth === String(width) && svg.dataset.trailHeight === String(height)) return
-      svg.dataset.trailWidth = String(width)
-      svg.dataset.trailHeight = String(height)
-      svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
+    // 环外盒相对挂载锚点的偏移。锚点的 padding box 原点与宿主的 padding box 原点重合，
+    // 因此左/上各再减「宿主边框宽度 + TRAIL_PAD」，才能把外盒对到宿主边框盒上。
+    function trailBoxOffset(host) {
+      let borderLeft = 0
+      let borderTop = 0
+      try {
+        const style = typeof globalThis.getComputedStyle === 'function' ? globalThis.getComputedStyle(host) : null
+        if (style) {
+          borderLeft = parseFloat(style.borderLeftWidth) || 0
+          borderTop = parseFloat(style.borderTopWidth) || 0
+        }
+      } catch {
+        // 取不到计算样式就按无边框处理（DSH 输入框卡片 border:0）
+      }
+      return { left: -borderLeft - TRAIL_PAD, top: -borderTop - TRAIL_PAD }
+    }
+
+    // 让环与宿主「边框盒」逐像素对齐：外盒 = 宿主边框盒 + TRAIL_PAD×2，
+    // viewBox 以像素为单位，描边中心线因此正好压在宿主边框盒边缘；
+    // 圆角半径与宿主输入框卡片一致。尺寸未变时不重复写（避免多余样式写入）。
+    function sizeTrailSvg(svg, host, width, height) {
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false
+      const boxWidth = width + TRAIL_PAD * 2
+      const boxHeight = height + TRAIL_PAD * 2
+      const offset = trailBoxOffset(host)
+      const key = `${width}x${height}@${offset.left},${offset.top}`
+      if (svg.dataset.trailKey === key) return false
+      svg.dataset.trailKey = key
+      svg.style.left = `${offset.left}px`
+      svg.style.top = `${offset.top}px`
+      svg.style.width = `${boxWidth}px`
+      svg.style.height = `${boxHeight}px`
+      svg.setAttribute('viewBox', `0 0 ${boxWidth} ${boxHeight}`)
       for (const rect of svg.querySelectorAll('.soul-trail-layer')) {
-        rect.setAttribute('x', '0')
-        rect.setAttribute('y', '0')
+        rect.setAttribute('x', String(TRAIL_PAD))
+        rect.setAttribute('y', String(TRAIL_PAD))
         rect.setAttribute('width', String(width))
         rect.setAttribute('height', String(height))
         rect.setAttribute('rx', String(TRAIL_RADIUS))
       }
+      return true
     }
 
-    // 把环挂到宿主元素上并跟随其尺寸变化（输入框随内容增高时环不变形）；返回卸载函数
-    function mountTrailRing(host) {
+    // 在卡片内挑一个「零高度、绝对定位」的容器来挂环（DSH 的 .overlayAnchor 即如此），
+    // 找不到就退回卡片本身 —— 前者的高度写死为 0，即便环退回常规流也撑不动卡片。
+    function resolveTrailMountPoint(card, anchor) {
+      const parent = anchor && anchor.parentElement
+      if (!parent) return card
+      let node = parent
+      while (node !== card && node.parentElement && node.parentElement !== card) node = node.parentElement
+      if (node !== card && node !== anchor && node.parentElement === card) return node
+      return card
+    }
+
+    // 把环挂到宿主卡片（内部锚点）上并跟随宿主尺寸变化；返回 { svg, setVisible, unmount }
+    function mountTrailRing(host, anchor) {
       const svg = buildTrailSvg()
-      host.appendChild(svg)
-      const sync = () => sizeTrailSvg(svg, host.clientWidth, host.clientHeight)
-      sync()
+      // 关键几何内联：position 若被样式表覆盖，环会退回常规流并触发尺寸正反馈环，
+      // 后果是整页布局被撑爆，因此不能只依赖类规则（见渲染层「隔离不变量」注释）
+      svg.style.cssText = [
+        'position:absolute',
+        'display:none',
+        'pointer-events:none',
+        'contain:strict',
+        'overflow:hidden',
+        'margin:0',
+        'padding:0',
+        'border:0',
+        'transform:none',
+        'animation:none',
+        'max-width:none',
+        'max-height:none'
+      ].join(';')
+      ;(anchor || host).appendChild(svg)
+
+      let stopped = false
       let observer = null
+      let geometryChecked = false
+
+      // 停用并留下线索：与其画出巨大错位的图形或拖垮布局，不如安静退出
+      const disable = (reason) => {
+        stopped = true
+        svg.style.display = 'none'
+        if (observer) observer.disconnect()
+        if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+          console.warn(`[dsh-soul] 已停用输入框光轨：${reason}`)
+        }
+      }
+
+      const sync = () => {
+        if (stopped) return
+        // 用 offsetWidth/Height（边框盒）而非 clientWidth/Height（内边距盒），
+        // 环才能与宿主边框盒对齐
+        const width = host.offsetWidth
+        const height = host.offsetHeight
+        if (width > TRAIL_MAX_SIDE || height > TRAIL_MAX_SIDE) {
+          disable('输入框尺寸异常（疑似尺寸正反馈）')
+          return
+        }
+        if (!sizeTrailSvg(svg, host, width, height)) return
+        if (geometryChecked) return
+        geometryChecked = true
+        // 自检：样式表若用更具体的选择器或 !important 把 position 改回常规流，
+        // 环就会重新参与宿主排版（这正是 issue #2 的成因），此时主动停用
+        if (typeof globalThis.getComputedStyle !== 'function') return
+        let position = 'absolute'
+        try {
+          position = globalThis.getComputedStyle(svg).position
+        } catch {
+          return
+        }
+        if (position !== 'absolute') disable(`光轨样式被第三方样式表覆盖（position: ${position}）`)
+      }
+
+      sync()
       if (typeof ResizeObserver === 'function') {
         observer = new ResizeObserver(sync)
         observer.observe(host)
       } else if (typeof globalThis.addEventListener === 'function') {
         globalThis.addEventListener('resize', sync)
       }
-      return () => {
-        if (observer) observer.disconnect()
-        else if (typeof globalThis.removeEventListener === 'function') globalThis.removeEventListener('resize', sync)
-        svg.remove()
+      // 首帧同步就可能已判定停用（尺寸异常 / 样式被覆盖），此时不必再观察
+      if (stopped && observer) observer.disconnect()
+
+      // 显隐也走内联：不只依赖 `[data-soul-trail="off"]` 类规则，
+      // 样式表被覆盖时不至于把环留在页面上
+      const setVisible = (visible) => {
+        if (stopped) return
+        svg.style.display = visible ? 'block' : 'none'
+      }
+
+      return {
+        svg,
+        setVisible,
+        unmount: () => {
+          stopped = true
+          if (observer) observer.disconnect()
+          else if (typeof globalThis.removeEventListener === 'function') globalThis.removeEventListener('resize', sync)
+          svg.remove()
+        }
       }
     }
 
@@ -403,8 +530,11 @@ window.__ModuleLoader__.load({
       '.soul-toast-error{background:#fff1f0;border:1px solid #ffa39e;color:#f5222d}',
       '@keyframes fadeInOut{0%{opacity:0;transform:translate(-50%,-50%) scale(0.9)}15%{opacity:1;transform:translate(-50%,-50%) scale(1)}85%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-50%) scale(0.9)}}',
       // —— 输入框光轨 ——
-      // 环挂在卡片上：stroke 中心线即卡片边缘，外半圈靠 overflow:visible 显示
-      '.soul-trail-svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}',
+      // 几何规则（position/尺寸/contain）同时内联在元素上，见 mountTrailRing；
+      // 这里保留一份等价声明作为兜底，并让样式可读、可被第三方主题安全覆盖（仅颜色/速度/粗细）
+      '.soul-trail-svg{position:absolute;display:block;pointer-events:none;contain:strict;overflow:hidden;margin:0;padding:0;border:0}',
+      // 设置页示例用的零高度挂载锚点：只定位占坑，不参与任何尺寸计算
+      '.soul-trail-anchor{position:absolute;inset:0 0 auto;height:0;pointer-events:none}',
       // 速度档位（整体比首版慢一档）：normal 3.6s / slow 4.8s / fast 2.4s
       '.soul-trail-layer{fill:none;stroke:var(--soul-trail-color,#679EFE);stroke-width:2.5;stroke-linecap:butt;animation-name:soul-trail-run-0;animation-duration:3.6s;animation-timing-function:linear;animation-iteration-count:infinite}',
       '.soul-trail-layer[data-layer="0"]{opacity:1;stroke-linecap:round}',
@@ -427,6 +557,7 @@ window.__ModuleLoader__.load({
       '[data-soul-trail-speed="fast"] .soul-trail-layer{animation-duration:2.4s}',
       '[data-soul-trail-width="thin"] .soul-trail-layer{stroke-width:1.5}',
       '[data-soul-trail-width="thick"] .soul-trail-layer{stroke-width:4}',
+      // 显隐的兜底规则（主路径由 mountTrailRing 的 setVisible 写内联 display）
       '[data-soul-trail="off"] .soul-trail-svg{display:none}',
       // 光轨开启时隐藏宿主输入框自身的细边框（保留 1px 占位，避免布局跳动），
       // 使边界上只存在光轨一条线
@@ -1271,12 +1402,24 @@ window.__ModuleLoader__.load({
     function SoulTrailPreview(props) {
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const hostRef = React.useRef(null)
+      const anchorRef = React.useRef(null)
+      const mountedRef = React.useRef(null)
 
       React.useEffect(() => {
         const host = hostRef.current
         if (!host) return undefined
-        return mountTrailRing(host)
+        const mounted = mountTrailRing(host, anchorRef.current)
+        mountedRef.current = mounted
+        return () => {
+          mountedRef.current = null
+          mounted.unmount()
+        }
       }, [])
+
+      React.useEffect(() => {
+        const mounted = mountedRef.current
+        if (mounted) mounted.setVisible(props.enabled !== false)
+      }, [props.enabled])
 
       return e('div', {
         ref: hostRef,
@@ -1286,6 +1429,7 @@ window.__ModuleLoader__.load({
         'data-soul-trail-width': props.width || 'thin',
         style: { '--soul-trail-color': safeTrailColor(props.color) }
       },
+        e('div', { ref: anchorRef, className: 'soul-trail-anchor', 'aria-hidden': 'true' }),
         e('span', { className: 'soul-trail-preview-text' }, t('trail.previewText'))
       )
     }
@@ -1307,36 +1451,44 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const anchor = anchorRef.current
         // 组件位于卡片内的 overlay 锚点中，closest 定位可避免全局查询误命中
-        const host = anchor && typeof anchor.closest === 'function'
+        const card = anchor && typeof anchor.closest === 'function'
           ? anchor.closest('[data-composer-card]')
           : null
-        if (!host) return undefined
+        if (!card) return undefined
 
-        mountedRef.current = { host, unmount: mountTrailRing(host) }
-        // 先置为隐藏：效果在首帧绘制后执行，先写 off 可避免挂载瞬间闪出一帧光轨
-        host.setAttribute('data-soul-trail', 'off')
+        // 环挂到卡片内那个零高度的 overlay 锚点上（锚点高度写死为 0，环退回常规流
+        // 也撑不动卡片）；退回卡片本身时仍由内联 position/contain 兜底，
+        // 见渲染层「隔离不变量」注释
+        const mountPoint = resolveTrailMountPoint(card, anchor)
+        const mounted = mountTrailRing(card, mountPoint)
+        mountedRef.current = { card, mounted }
+        // 先置为隐藏：效果在首帧绘制后执行，先隐藏可避免挂载瞬间闪出一帧光轨
+        card.setAttribute('data-soul-trail', 'off')
+        mounted.setVisible(false)
         return () => {
-          const mounted = mountedRef.current
+          const current = mountedRef.current
           mountedRef.current = null
-          if (!mounted) return
-          mounted.unmount()
-          mounted.host.removeAttribute('data-soul-trail')
-          mounted.host.removeAttribute('data-soul-trail-speed')
-          mounted.host.removeAttribute('data-soul-trail-width')
-          mounted.host.style.removeProperty('--soul-trail-color')
+          if (!current) return
+          current.mounted.unmount()
+          current.card.removeAttribute('data-soul-trail')
+          current.card.removeAttribute('data-soul-trail-speed')
+          current.card.removeAttribute('data-soul-trail-width')
+          current.card.style.removeProperty('--soul-trail-color')
         }
       }, [])
 
       // 显隐与外观同步：仅「Agent 回复中 + 光轨开关开启」时显示
       React.useEffect(() => {
-        const mounted = mountedRef.current
-        if (!mounted) return
-        const { host } = mounted
+        const current = mountedRef.current
+        if (!current) return
+        const { card, mounted } = current
         const enabled = state !== null && state.trailEnabled === true
-        host.setAttribute('data-soul-trail', running && enabled ? 'on' : 'off')
-        host.setAttribute('data-soul-trail-speed', (state && state.trailSpeed) || 'slow')
-        host.setAttribute('data-soul-trail-width', (state && state.trailWidth) || 'thin')
-        host.style.setProperty('--soul-trail-color', safeTrailColor(state && state.trailColor))
+        const visible = running && enabled
+        card.setAttribute('data-soul-trail', visible ? 'on' : 'off')
+        card.setAttribute('data-soul-trail-speed', (state && state.trailSpeed) || 'slow')
+        card.setAttribute('data-soul-trail-width', (state && state.trailWidth) || 'thin')
+        card.style.setProperty('--soul-trail-color', safeTrailColor(state && state.trailColor))
+        mounted.setVisible(visible)
       }, [running, state])
 
       return e('span', { ref: anchorRef, hidden: true, 'aria-hidden': true })

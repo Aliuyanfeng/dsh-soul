@@ -16,18 +16,23 @@
  * 不通过时 DSH 会拒绝装载，并在插件管理器里给出
  * 「{插件} 与 DSH {版本} 不兼容（要求 {peer}）」。因此 DSH 升级后应重跑本脚本。
  *
+ * 除 peer 范围外，本脚本还验证**注入来源契约**：DSH 0.1.7（会话格式 v4）起拒绝共享的
+ * `kind: 'plugin'`，要求生产者自持 kind——未适配时 agent.inject() 会让每一轮失败
+ * （issue #1）。判定直接用已安装 DSH 的准入校验器，并先证明它对废弃形态确有判断力。
+ *
  * 用法：
  *   node scripts/verify-compat.mjs                   # 自动定位 DSH
  *   node scripts/verify-compat.mjs --dsh <目录>      # 指定 DSH 安装目录（含 @deepseek-ai 或 @deepseek-ai/dsh）
  *   node scripts/verify-compat.mjs --runtime <版本>  # 直接指定运行时版本，跳过定位
  *
- * 退出码：0 = 兼容，或无法定位运行时（跳过）；1 = 存在不兼容的 peer。
+ * 退出码：0 = 兼容，或无法定位运行时（跳过）；1 = 存在不兼容的 peer 或来源契约不满足。
  */
 import { createRequire } from 'node:module'
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
+import { createInjectionSource } from '../lib/injection.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -262,18 +267,96 @@ async function main() {
     console.log(`  ${hit ? '✓' : '–'} ${spec}：${hit ? '已解析' : '未解析到，跳过'}`)
   }
 
+  // ---- 注入来源契约 ----
+  // 用生产代码同一个构造函数取来源，再交给已安装 DSH 的准入校验器判定；
+  // 判定前先确认校验器确实会拒绝已废弃形态，否则本次判定没有判断力。
   console.log('')
-  if (failures.length === 0) {
+  console.log('注入来源契约（会话格式 v4）')
+  const source = createInjectionSource('dsh-soul self-check snapshot')
+
+  let contractFailures = 0
+  const shapeIssues = []
+  if (typeof source.kind !== 'string' || source.kind.length === 0) shapeIssues.push('kind 必须为非空字符串')
+  else if (source.kind === 'plugin') shapeIssues.push("kind 不得为已废弃的 'plugin'")
+  if ('plugin' in source) shapeIssues.push('source 不应再携带 plugin 字段（v4 迁移会丢弃它）')
+  if (source.form !== 'snapshot') shapeIssues.push("form 必须为 'snapshot'")
+  if (!Array.isArray(source.sections) || source.sections.length === 0) shapeIssues.push('snapshot 必须携带非空 sections')
+  for (const [index, section] of (Array.isArray(source.sections) ? source.sections : []).entries()) {
+    if (typeof section?.name !== 'string' || section.name === '' || typeof section?.text !== 'string') {
+      shapeIssues.push(`sections[${index}] 需要非空 name 与字符串 text`)
+    }
+  }
+  for (const issue of shapeIssues) console.log(`  ✗ 形状：${issue}`)
+  contractFailures += shapeIssues.length
+  if (shapeIssues.length === 0) {
+    console.log(`  ✓ 形状：kind=${source.kind} / form=${source.form} / sections=${source.sections.length}`)
+  }
+
+  const FORMAT_PKG = '@deepseek-ai/dsh-session-format-v3-to-v4'
+  const formatHit = await loadModule(searchAnchors, FORMAT_PKG)
+  const admit = formatHit && typeof formatHit.mod.assertV4RowAdmission === 'function'
+    ? formatHit.mod.assertV4RowAdmission
+    : null
+
+  // 先用本机 dsh-llm 真实构造注入消息（而不是只测形状字面量），让判定贴近生产路径
+  const llmHit = await loadModule(searchAnchors, '@deepseek-ai/dsh-llm')
+  let realMessage = null
+  if (llmHit && typeof llmHit.mod.createUserMessage === 'function') {
+    try {
+      realMessage = llmHit.mod.createUserMessage({
+        content: [{ type: 'text', text: 'dsh-soul self-check' }],
+        source
+      })
+      console.log('  ✓ 构造：已用本机 dsh-llm 的 createUserMessage 生成真实注入消息')
+    } catch (err) {
+      contractFailures += 1
+      console.log(`  ✗ 构造：createUserMessage 拒绝了当前 source：${String((err && err.message) || err)}`)
+    }
+  } else {
+    console.log('  – 构造：本机未解析到 @deepseek-ai/dsh-llm，改用形状字面量判定')
+  }
+
+  if (admit === null) {
+    console.log(`  – ${FORMAT_PKG}：准入校验器不可用，跳过运行时判定（仅检查形状）`)
+  } else {
+    // 有真实消息就用它，否则退回形状字面量
+    const currentRow = realMessage === null
+      ? { type: 'user/message', data: { source } }
+      : { type: 'user/message', data: realMessage }
+    const retired = { kind: 'plugin', plugin: 'dsh-soul', form: 'snapshot', sections: source.sections }
+    let guardLive = false
+    try {
+      admit({ type: 'user/message', data: { source: retired } }, new Set(['user/message']))
+    } catch {
+      guardLive = true
+    }
+    if (!guardLive) {
+      console.log('  – 校验器未拒绝已废弃形态，本次判定不可信，跳过运行时判定')
+    } else {
+      console.log("  ✓ 校验器有效：已废弃的 kind:'plugin' 确实被拒绝（issue #1 的复现条件）")
+      try {
+        admit(currentRow, new Set(['user/message']))
+        console.log(`  ✓ 通过   ${source.kind}：当前注入来源可被本运行时接纳`)
+      } catch (err) {
+        contractFailures += 1
+        console.log(`  ✗ 不通过 ${source.kind}：${String((err && err.message) || err)}`)
+      }
+    }
+  }
+
+  console.log('')
+  if (failures.length === 0 && contractFailures === 0) {
     console.log('结果：兼容。')
     if (symbolMissing > 0) console.log(`注意：仍有 ${symbolMissing} 个运行时符号缺失，需同步适配代码。`)
     process.exit(0)
   }
-  console.log(`结果：不兼容 —— DSH ${runtimeVersion} 不落在以下 peer 范围内：`)
-  for (const [name, range] of failures) console.log(`  ${name} ${range}`)
+  console.log('结果：不兼容')
+  for (const [name, range] of failures) console.log(`  peer 范围未覆盖 ${runtimeVersion}：${name} ${range}`)
+  if (contractFailures > 0) console.log(`  注入来源契约不满足：${contractFailures} 项（见上方 ✗ 行）`)
   console.log('')
   console.log('处理方式：')
-  console.log('  1. 放宽 package.json 的 peer 范围使其覆盖该运行时版本，然后升版本重新发布；')
-  console.log('  2. 或让用户升级插件到已声明支持该 DSH 版本的版本。')
+  console.log('  1. 修正代码或 peer 声明使其满足上面的约束，然后升版本重新发布；')
+  console.log('  2. 或让用户升级插件到已适配该 DSH 版本的版本。')
   if (symbolMissing > 0) console.log(`  另：抽查到 ${symbolMissing} 个运行时符号缺失，说明不只是声明过期，代码也需适配。`)
   process.exit(1)
 }

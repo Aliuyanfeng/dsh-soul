@@ -31,6 +31,7 @@ import {
   sanitizeConfig,
   sanitizePersonaName
 } from './lib/config.mjs'
+import { createInjectionSource } from './lib/injection.mjs'
 
 const name = 'soul'
 
@@ -350,15 +351,9 @@ function injectPromptToAllAgents(ctx, config) {
           type: 'text',
           text: prompt ? `${T.injectUpdatedHeader}\n${T.injectUpdatedBody}\n\n${prompt}` : snapshotText
         }],
-        source: {
-          kind: 'plugin',
-          plugin: 'dsh-soul',
-          form: 'snapshot',
-          sections: [{
-            name: 'soul:persona',
-            text: snapshotText
-          }]
-        }
+        // 会话格式 v4 要求生产者自持 kind；旧的 `kind: 'plugin'` + `plugin` 组合
+        // 会让每一轮在 step 开始前失败（issue #1，构造与校验见 lib/injection.mjs）
+        source: createInjectionSource(snapshotText)
       }))
       // console.log(`[dsh-soul] 已向 Agent ${agent.id} 注入最新配置`)
     } catch (err) {

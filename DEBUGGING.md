@@ -151,6 +151,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | 插件目录存在但为空 | `link:` 在无开发者模式的 Windows 上静默退化成空目录 | 改用 `mklink /J` 联接 |
 | 设置栏目不显示 | 插件没装进当前 profile / DSH 未完全重启 / 页面没刷新 | 重装 → 重启 → 硬刷新 |
 | 动效完全不出现 | 开关关闭 / Agent 未处于回复中 / `prefers-reduced-motion` 生效 | 逐项核对 |
+| 输入框卡片高度不断变大、聊天区出现巨大空白（开着光轨时） | 光轨的 SVG 退回了常规流，形成尺寸正反馈 | 见下方 4.2；0.6.1 起已内置三层隔离与熔断 |
 | 改源码后无反应 | 装的是复制副本 | 见第二节方案 C |
 | `dsh web --patch ./x.yml` 报 `web takes none of …` | `web` 别名命令不接受全局选项 | 写全称 `dsh --profile web --patch …` |
 | 配置保存了但 Agent 行为没变 | `agent.inject()` 只在下一次模型请求生效 | 先发一条新消息再观察 |
@@ -201,6 +202,50 @@ dsh plugin --profile web revoke-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2
 豁免写入 profile 目录下的 `compatibility.json`，且**只对写明的「包版本 + DSH 版本」组合生效**——升级任一侧都会重新触发校验。
 
 > 豁免意味着 DSH 明确告知过「可能导致崩溃或数据丢失」。它适合临时验证，不适合长期使用；优先等插件发新版。
+
+### 4.2 输入框卡片高度无界增长（尺寸正反馈）
+
+**症状**（[issue #2](https://github.com/Aliuyanfeng/dsh-soul/issues/2)）：开启光轨后在长对话里连续读 `document.querySelector('[data-composer-card]').clientHeight`，数值单调增长（报告者实测 87 720 → 312 712 → 416 263 → 503 361 px），聊天区出现巨大空白面板、Agent 回复被顶出视口；**关掉光轨开关立即恢复**。
+
+**机理**：光轨是一层「写在输入框卡片内部、尺寸随卡片变化」的绝对定位 SVG。若它的 `position:absolute` 未生效（被第三方皮肤 / 主题用更具体的选择器覆盖，或样式表没加载），它就会退回常规流、成为卡片 flex 列的一个子项；而它的高度由 `viewBox` 宽高比反推 ≈ 卡片自身高度，于是闭合成环：
+
+```text
+卡片变高 → ResizeObserver 触发 sync() → 按新尺寸改写 SVG 的 viewBox / rect
+        → SVG 作为在流元素再变高 → 卡片再变高 → …
+```
+
+**自检**：光轨此时会在控制台打印
+
+```text
+[dsh-soul] 已停用输入框光轨：光轨样式被第三方样式表覆盖（position: static）
+[dsh-soul] 已停用输入框光轨：输入框尺寸异常（疑似尺寸正反馈）
+```
+
+**定位命令**（在 DevTools Console 中执行）：
+
+```js
+const svg = document.querySelector('.soul-trail-svg')
+getComputedStyle(svg).position   // 正常应为 "absolute"；若为 static/relative 即为根因
+svg.getBoundingClientRect().height  // 正常应 ≈ 输入框卡片高度（+4px）
+```
+
+若 `position` 不是 `absolute`，把责任样式找出来（同一 Console）：
+
+```js
+[...document.styleSheets].flatMap((s) => { try { return [...s.cssRules] } catch { return [] } })
+  .filter((r) => r.selectorText && r.style && r.style.position &&
+                 (svg.matches(r.selectorText) || (svg.closest(r.selectorText.replace(/[^,]+$/, '*')) )))
+```
+
+**处理**：
+
+| 情形 | 做法 |
+| --- | --- |
+| 0.6.1 及以上 | 已内置三层隔离（零高度锚点 / 内联几何 / `contain:strict` + 墨迹内收）与两道熔断，最多表现为「光轨不显示 + 一条 console 警告」，不会再撑大布局 |
+| 0.6.0 | 升级到 0.6.1+；临时规避可先关掉光轨开关 |
+| 确认是某皮肤 / 主题覆盖 | 该皮肤把 `position` 施加到了插件的 `svg` 上，属皮肤作用域过宽；插件侧已用内联样式兜住，无需你改皮肤 |
+
+> 复现与验证方法（离线、不需要跑 DSH）：用 DSH 真实的 `InputBar.module.css` + 真实卡片 DOM 起一个静态页，注入插件真实的渲染层代码，然后**重复调用尺寸同步**并比较前后 `offsetHeight`。样式齐全时 60/60 次同步均为空操作；仅移除几何规则后 60 次同步就把 134px 撑到 9 202px。
 
 ## 五、配置文件与日志
 

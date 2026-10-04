@@ -65,6 +65,18 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 ### v0.6.1（2026-10-04）
 
 **修复**
+- **输入框卡片高度无界增长（composer 尺寸正反馈）**：修复 [#2](https://github.com/Aliuyanfeng/dsh-soul/issues/2)。开启光轨后，长对话中 `[data-composer-card]` 的高度会单调增长（报告者实测 87 720px → 312 712px → 503 361px），聊天区出现巨大空白、Agent 回复被顶出视口；关闭开关即恢复
+  - 根因：环是「写在宿主内部、尺寸随宿主变化」的绝对定位元素。一旦类规则里的 `position:absolute` 未生效（被第三方皮肤 / 主题更具体的选择器覆盖，或样式表未加载），环就退回常规流、成为卡片 flex 列的一个子项，而它的高度由 `viewBox` 宽高比反推 ≈ 卡片自身高度，于是闭合成环：卡片变高 → `ResizeObserver` → 按新尺寸改写 SVG → 元素再变高 → 卡片再变高
+  - 复现（离线隔离环境，DSH 真实 InputBar CSS + DSH 真实卡片 DOM）：**仅移除该几何规则，60 次尺寸同步就把 134px 的卡片撑到 9 202px**（`syncNoop 0/60`）；样式齐全时同一实验 60/60 次同步均为空操作——这解释了为何问题只在特定环境出现
+  - 修复分三层，任一层单独即足以阻断：
+    1. **挂载点改为卡片内那个 `position:absolute;height:0` 的 overlay 锚点**——锚点高度写死为 0，环即使在极端情况下退回常规流也撑不动卡片（实测：用 `!important` 把几何强制改回 `position:static` + `contain:none` 后，卡片仍 60/60 次同步不变）
+    2. **关键几何全部内联**（`position` / `left` / `top` / `width` / `height` / `contain` / `overflow`）：内联样式只可能被 `!important` 击败，而单类选择器会被任何更具体的选择器击败
+    3. **`contain:strict` + 墨迹收进自身盒内**（外盒每边外扩 2px，`stroke` 中心线仍压在宿主边框盒上）：尺寸、布局、绘制与外部彻底隔离，不再需要 `overflow:visible`
+  - 附带加固
+    - 尺寸同步改用边框盒（`offsetWidth` / `offsetHeight`，原为 `clientWidth` / `clientHeight`），环与卡片**边框盒**逐像素对齐（实测描边中心线与卡片边框盒四边偏差均为 0.0px）
+    - 显隐改由**内联 `display`** 控制（原仅依赖样式表），样式表被覆盖时不会把环留在页面上
+    - 新增两道熔断：卡片尺寸超过 20 000px、或首帧自检发现 `position` 被第三方样式表改掉，均停用光轨并 `console.warn` 留下线索——不再继续撑大布局，也不再画出巨大错位的图形
+  - 设置页实时示例同样受益：环改挂到示例内部同样形态的零高度锚点，并与示例**边框盒**对齐（此前画在 `padding` 内侧 16px 处，与边框不重合）
 - **与 DSH 0.2.x 的兼容性声明**：`peerDependencies` 由 `^0.1.x` 放宽为覆盖 0.1 / 0.2 两条线，修复在 DSH 0.2.0-rc.2 及以上被拒绝装载的问题（插件管理器报「dsh-soul@0.6.0 与 DSH 0.2.0-rc.2 不兼容（要求 @deepseek-ai/dsh-llm ^0.1.1-rc.2, @deepseek-ai/dsh-tools ^0.1.0-rc.6）」）
   - 根因：DSH 以 `semver.satisfies(运行时版本, peer范围, { includePrerelease: true })` 判定，被比较的一方是 **DSH 运行时版本**而非插件实际 import 到的包版本；`^0.1.1-rc.2` 的隐含上界是 `<0.2.0-0`，因此挡住了整条 0.2.x 线
   - 新范围：`@deepseek-ai/dsh-llm` `>=0.1.1-rc.2 <0.3.0-0`、`@deepseek-ai/dsh-tools` `>=0.1.0-rc.6 <0.3.0-0`——覆盖 0.1.x 与 0.2.x 全部 prerelease
