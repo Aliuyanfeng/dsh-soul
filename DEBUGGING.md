@@ -109,7 +109,7 @@ dsh --profile web --dump-config
 (Get-Item "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-soul").Target
 ```
 
-`package.json` 的 `version`、`client/index.mjs` 的 `VERSION` 常量、`RELEASE_NOTES.md` 三处应一致（本版均为 `0.6.1`）。
+`package.json` 的 `version`、`client/index.mjs` 的 `VERSION` 常量、`RELEASE_NOTES.md` 三处应一致（本版均为 `0.6.2`）。
 
 ### 3) 客户端产物（确认浏览器拿到新代码）
 
@@ -151,7 +151,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | 插件目录存在但为空 | `link:` 在无开发者模式的 Windows 上静默退化成空目录 | 改用 `mklink /J` 联接 |
 | 设置栏目不显示 | 插件没装进当前 profile / DSH 未完全重启 / 页面没刷新 | 重装 → 重启 → 硬刷新 |
 | 动效完全不出现 | 开关关闭 / Agent 未处于回复中 / `prefers-reduced-motion` 生效 | 逐项核对 |
-| 输入框卡片高度不断变大、聊天区出现巨大空白（开着光轨时） | 光轨的 SVG 退回了常规流，形成尺寸正反馈 | 见下方 4.2；0.6.1 起已内置三层隔离与熔断 |
+| 输入框卡片高度不断变大、聊天区出现巨大空白（开着光轨时） | 光轨的 SVG 退回了常规流，形成尺寸正反馈 | 见下方 4.2；0.6.2 起已内置三层隔离与熔断 |
 | 改源码后无反应 | 装的是复制副本 | 见第二节方案 C |
 | `dsh web --patch ./x.yml` 报 `web takes none of …` | `web` 别名命令不接受全局选项 | 写全称 `dsh --profile web --patch …` |
 | 配置保存了但 Agent 行为没变 | `agent.inject()` 只在下一次模型请求生效 | 先发一条新消息再观察 |
@@ -241,11 +241,11 @@ svg.getBoundingClientRect().height  // 正常应 ≈ 输入框卡片高度（+4p
 
 | 情形 | 做法 |
 | --- | --- |
-| 0.6.1 及以上 | 已内置三层隔离（零高度锚点 / 内联几何 / `contain:strict` + 墨迹内收）与两道熔断，最多表现为「光轨不显示 + 一条 console 警告」，不会再撑大布局 |
-| 0.6.0 | 升级到 0.6.1+；临时规避可先关掉光轨开关 |
+| 0.6.2 及以上 | 已内置三层隔离（零高度锚点 / 内联几何 / `contain:strict` + 墨迹内收）与两道熔断，最多表现为「光轨不显示 + 一条 console 警告」，不会再撑大布局。`npm run verify:trail` 可在离线环境回归这套隔离 |
+| 0.6.0 / 0.6.1 | 升级到 0.6.2+；临时规避可先关掉光轨开关 |
 | 确认是某皮肤 / 主题覆盖 | 该皮肤把 `position` 施加到了插件的 `svg` 上，属皮肤作用域过宽；插件侧已用内联样式兜住，无需你改皮肤 |
 
-> 复现与验证方法（离线、不需要跑 DSH）：用 DSH 真实的 `InputBar.module.css` + 真实卡片 DOM 起一个静态页，注入插件真实的渲染层代码，然后**重复调用尺寸同步**并比较前后 `offsetHeight`。样式齐全时 60/60 次同步均为空操作；仅移除几何规则后 60 次同步就把 134px 撑到 9 202px。
+> 复现与验证方法（离线、不需要跑 DSH）已固化为 `npm run verify:trail`：从 `client/index.mjs` 原样抽出渲染层，注入静态页，在无头浏览器里跑一组确定性模型——正常条件必须空操作（60/60 次同步）、几何被 `!important` 打回常规流后必须不撑大卡片、屏蔽熔断后**挂锚点仍稳定而挂卡片必现正反馈**（判断力对照，实测 272px → 8 912px）。它需要 Chrome / Edge，起不来时自动跳过；受限环境可用 `--emit <页面>` + 手动 dump-dom + `--dump <文件>` 两段式跑。
 
 ## 五、配置文件与日志
 

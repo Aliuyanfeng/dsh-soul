@@ -47,7 +47,7 @@ window.__ModuleLoader__.load({
     // -------------------------------------------------------------------------
 
     const NS = 'soul'
-    const VERSION = '0.6.1'
+    const VERSION = '0.6.2'
     const INITIAL = {
       enabled: true,
       nickname: '',
@@ -117,7 +117,7 @@ window.__ModuleLoader__.load({
     // （见 TRAIL_PAD），不再依赖 overflow:visible；光轨开启时隐藏宿主自身细边框，
     // 保证边界上只有一条线。
     //
-    // ⚠️ 隔离不变量（v0.6.1 修复 issue #2 的尺寸正反馈环）：
+    // ⚠️ 隔离不变量（v0.6.2 修复 issue #2 的尺寸正反馈环）：
     // 环是「写在宿主内部、尺寸随宿主变化」的绝对定位元素。一旦它进入宿主布局流
     // （例如类规则里的 position:absolute 被第三方皮肤/主题的更具体选择器或
     // !important 覆盖），就会闭合成环：卡片变高 → ResizeObserver → 按新尺寸改写
@@ -220,14 +220,24 @@ window.__ModuleLoader__.load({
       return true
     }
 
-    // 在卡片内挑一个「零高度、绝对定位」的容器来挂环（DSH 的 .overlayAnchor 即如此），
-    // 找不到就退回卡片本身 —— 前者的高度写死为 0，即便环退回常规流也撑不动卡片。
+    // 在卡片内解析环的挂载点：必须是卡片内一个「零高度容器」——DSH composer 的
+    // .overlayAnchor 与设置页示例的 .soul-trail-anchor 都是这个形态。零高度容器
+    // 即便环退回常规流也撑不动卡片（issue #2 的第一层隔离），且其 padding box 原点
+    // 与卡片的 padding box 原点重合，环才能与卡片边框盒对齐。
+    // 两种落点：
+    //   1) anchor 本身就是卡片的直接子元素（设置页示例）→ 就是它；
+    //   2) anchor 渲染在卡片内的某个容器里（线上：conversation.input.overlay 槽位
+    //      把组件挂在 DSH 的 .overlayAnchor 内）→ 取「anchor 的、作为卡片直接子元素的祖先」。
+    // 判据只看 DOM 结构、不看计算样式：样式表失效恰恰是最需要零高挂载点的时刻，
+    // 那种场景下 anchor 的计算样式反而不可信。两者都不满足时退回卡片本身，
+    // 由内联 position/contain 兜底。
     function resolveTrailMountPoint(card, anchor) {
+      if (anchor && anchor.parentElement === card) return anchor
       const parent = anchor && anchor.parentElement
       if (!parent) return card
       let node = parent
       while (node !== card && node.parentElement && node.parentElement !== card) node = node.parentElement
-      if (node !== card && node !== anchor && node.parentElement === card) return node
+      if (node !== card && node.parentElement === card) return node
       return card
     }
 
@@ -1397,8 +1407,8 @@ window.__ModuleLoader__.load({
     // 输入框光轨：组件
     // -------------------------------------------------------------------------
 
-    // 设置页内的实时示例：与线上光轨共用同一渲染层与 CSS，
-    // 因此「示例所见」即「回复时所得」；颜色/速度/粗细随表单实时联动。
+    // 设置页内的实时示例：与线上光轨共用同一渲染层、同一挂载点解析（resolveTrailMountPoint）
+    // 与同一份 CSS，因此「示例所见」即「回复时所得」；颜色/速度/粗细随表单实时联动。
     function SoulTrailPreview(props) {
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const hostRef = React.useRef(null)
@@ -1408,7 +1418,8 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const host = hostRef.current
         if (!host) return undefined
-        const mounted = mountTrailRing(host, anchorRef.current)
+        // 与线上 SoulTrail 同一条路径：解析出的挂载点即示例内的零高度锚点 .soul-trail-anchor
+        const mounted = mountTrailRing(host, resolveTrailMountPoint(host, anchorRef.current))
         mountedRef.current = mounted
         return () => {
           mountedRef.current = null
@@ -1429,6 +1440,7 @@ window.__ModuleLoader__.load({
         'data-soul-trail-width': props.width || 'thin',
         style: { '--soul-trail-color': safeTrailColor(props.color) }
       },
+        // 零高度挂载锚点（与 DSH composer 的 .overlayAnchor 同形态）：环挂在这里，见 resolveTrailMountPoint
         e('div', { ref: anchorRef, className: 'soul-trail-anchor', 'aria-hidden': 'true' }),
         e('span', { className: 'soul-trail-preview-text' }, t('trail.previewText'))
       )

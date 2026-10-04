@@ -62,9 +62,15 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 
 ## 版本历史
 
-### v0.6.1（2026-10-04）
+### v0.6.2（2026-10-04）
 
 **修复**
+- **会话注入在 DSH 会话格式 v4 下每轮失败**：修复 [#1](https://github.com/Aliuyanfeng/dsh-soul/issues/1)（报告者 [@Tony-tjsn](https://github.com/Tony-tjsn)，环境 dsh 0.1.7-rc.2 + dsh-soul 0.6.0）。任意会话里发任意内容都立刻失败，界面显示「本轮运行失败 / format v4 message requires a producer-owned source kind」，会话日志里 `turn/start` 之后再无任何事件——失败发生在 step 开始之前
+  - 根因：DSH 0.1.7 把会话格式升到 v4，**废弃了共享的 `kind: 'plugin'` + `plugin` 字段组合**，改为要求每个生产者声明自持 kind 并显式拒绝字面量 `'plugin'`。dsh-soul 的注入消息发往**所有活动会话**、并在下一次 step 被读取，因此每一轮都命中，整轮直接失败
+  - 修复：新增 `lib/injection.mjs`，注入来源统一由 `createInjectionSource()` 构造——`kind: 'plugin:dsh-soul'` + `form: 'snapshot'` + 命名区块 `soul:persona`，且**不再携带 `plugin` 字段**（v4 迁移会主动丢弃它，保留只会在日志里留下一份易混淆的重复归属）
+  - kind 取 `plugin:dsh-soul` 而非裸名：与 DSH 自带 v3→v4 迁移对第三方插件生成的 `plugin:${plugin}` 保持同一形态，使升级前后的历史事件与新增事件归属同一生产者，而不是在同一会话里出现两个身份
+  - 回归验证：`verify-compat.mjs` 新增「注入来源契约」检查——用生产代码同一个构造函数取来源，交给**实际安装的** `@deepseek-ai/dsh-session-format-v3-to-v4` 准入校验器判定，并用本机 `dsh-llm` 的 `createUserMessage` 真实构造注入消息（而不是只测形状字面量）；判定前先确认该校验器确实会拒绝已废弃形态，否则本次判定没有判断力
+  - issue 中「补 `engines.dsh` 字段」的建议未采纳：DSH 的装载前判定只读 `peerDependencies`（`@deepseek-ai/dsh-app-boot` 的 `evaluatePluginCompatibility()`，`engines` 字段完全不参与），兼容范围写在 peer 上才生效，见下方「与 DSH 0.2.x 的兼容性声明」
 - **输入框卡片高度无界增长（composer 尺寸正反馈）**：修复 [#2](https://github.com/Aliuyanfeng/dsh-soul/issues/2)。开启光轨后，长对话中 `[data-composer-card]` 的高度会单调增长（报告者实测 87 720px → 312 712px → 503 361px），聊天区出现巨大空白、Agent 回复被顶出视口；关闭开关即恢复
   - 根因：环是「写在宿主内部、尺寸随宿主变化」的绝对定位元素。一旦类规则里的 `position:absolute` 未生效（被第三方皮肤 / 主题更具体的选择器覆盖，或样式表未加载），环就退回常规流、成为卡片 flex 列的一个子项，而它的高度由 `viewBox` 宽高比反推 ≈ 卡片自身高度，于是闭合成环：卡片变高 → `ResizeObserver` → 按新尺寸改写 SVG → 元素再变高 → 卡片再变高
   - 复现（离线隔离环境，DSH 真实 InputBar CSS + DSH 真实卡片 DOM）：**仅移除该几何规则，60 次尺寸同步就把 134px 的卡片撑到 9 202px**（`syncNoop 0/60`）；样式齐全时同一实验 60/60 次同步均为空操作——这解释了为何问题只在特定环境出现
@@ -76,7 +82,16 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
     - 尺寸同步改用边框盒（`offsetWidth` / `offsetHeight`，原为 `clientWidth` / `clientHeight`），环与卡片**边框盒**逐像素对齐（实测描边中心线与卡片边框盒四边偏差均为 0.0px）
     - 显隐改由**内联 `display`** 控制（原仅依赖样式表），样式表被覆盖时不会把环留在页面上
     - 新增两道熔断：卡片尺寸超过 20 000px、或首帧自检发现 `position` 被第三方样式表改掉，均停用光轨并 `console.warn` 留下线索——不再继续撑大布局，也不再画出巨大错位的图形
-  - 设置页实时示例同样受益：环改挂到示例内部同样形态的零高度锚点，并与示例**边框盒**对齐（此前画在 `padding` 内侧 16px 处，与边框不重合）
+  - 设置页实时示例同样受益：环挂到示例内的零高度锚点（`.soul-trail-anchor`，与 DSH composer 的 `.overlayAnchor` 同形态），并与示例**边框盒**对齐（此前画在 `padding` 内侧 16px 处，与边框不重合）
+  - 挂载点解析统一：`resolveTrailMountPoint` 新增「anchor 本身就是卡片直接子元素」这一落点，示例与线上从此共用同一条解析路径；此前示例靠直接传参挂到锚点、线上走解析函数，两条路径并存，且该函数对示例结构返回的是宿主本身
+
+**新增**
+- `scripts/verify-trail.mjs`：输入框光轨的**离线回归**（`npm run verify:trail`）。把 `client/index.mjs` 里那段纯 DOM 渲染层原样抽出、注入静态页，在无头浏览器里跑一组确定性模型——正常条件必须空操作且与宿主边框盒逐像素对齐；几何被 `!important` 打回常规流后必须不撑大卡片（熔断 + 零高锚点各测一次）；把环挂到卡片本身时必须复现出正反馈（作为「本实验有判断力」的对照，实测 272px → 8 912px，×32.76）；尺寸熔断；三种挂载点解析落点。抽取按标记切片并**断言补丁生效**，代码结构一变就报错退出，不会悄悄退化成永不失败的检查。需要 Chrome / Edge（可用 `CHROME_PATH` 或 `--chrome` 指定），起不来时优雅跳过（退出码 0）；另支持 `--emit` / `--dump` 两段式，便于在无法由脚本启动浏览器的受限环境里跑
+- `npm run verify` 现在串联三套校验（配置层 / DSH 兼容性 / 光轨回归）；单独运行用 `npm run verify:trail`
+
+### v0.6.1（2026-10-04）
+
+**修复**
 - **与 DSH 0.2.x 的兼容性声明**：`peerDependencies` 由 `^0.1.x` 放宽为覆盖 0.1 / 0.2 两条线，修复在 DSH 0.2.0-rc.2 及以上被拒绝装载的问题（插件管理器报「dsh-soul@0.6.0 与 DSH 0.2.0-rc.2 不兼容（要求 @deepseek-ai/dsh-llm ^0.1.1-rc.2, @deepseek-ai/dsh-tools ^0.1.0-rc.6）」）
   - 根因：DSH 以 `semver.satisfies(运行时版本, peer范围, { includePrerelease: true })` 判定，被比较的一方是 **DSH 运行时版本**而非插件实际 import 到的包版本；`^0.1.1-rc.2` 的隐含上界是 `<0.2.0-0`，因此挡住了整条 0.2.x 线
   - 新范围：`@deepseek-ai/dsh-llm` `>=0.1.1-rc.2 <0.3.0-0`、`@deepseek-ai/dsh-tools` `>=0.1.0-rc.6 <0.3.0-0`——覆盖 0.1.x 与 0.2.x 全部 prerelease
@@ -85,7 +100,7 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 
 **新增**
 - `scripts/verify-compat.mjs`：DSH 兼容性自检脚本。自动定位本机 DSH 运行时，复现 DSH 的判定规则（能取到宿主时直接调用其导出的 `evaluatePluginCompatibility`），并额外抽查运行时符号与客户端 `inject` 包是否仍在；不兼容时以退出码 1 失败。支持 `--dsh <目录>` 与 `--runtime <版本>`，无法定位运行时则跳过
-- `npm run verify` 现在串联配置层与兼容性两套校验；单独运行用 `npm run verify:compat`
+- `npm run verify` 串联配置层与兼容性两套校验；单独运行用 `npm run verify:compat`（v0.6.2 起又并入了光轨回归）
 
 ### v0.6.0（2026-09-20）
 
