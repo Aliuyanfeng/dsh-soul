@@ -91,6 +91,16 @@ dsh plugin --profile web add file:<绝对路径>
 
 执行 `link:` 之前先确认「设置 → 系统 → 开发者选项 → 开发者模式」是否已开启；开启后 `link:` 才可信。
 
+> **补充（实测：同一台机器上两种结果并存）**：`web` profile 用 `file:`（复制，需 remove + add 才更新，见 2.1）；`desktop` profile 用 `link:` 且**工作正常** —— `node_modules/dsh-soul` 下能看到 `DEBUGGING.md`、`.gitignore`、`.github/`、`screenshots/` 等**不在 `files` 白名单**里的文件，内容随源码即时更新。可见链接权限是否可用取决于当前机器/账号状态，不能一概而论。
+>
+> **判别链接到底生没生效**（最可靠的一条，不需要任何工具）——看 `node_modules/<包名>` 里有没有 `files` 白名单**之外**的文件（`DEBUGGING.md`、`.gitignore`、`.github/`）：
+>
+> | 目录内容 | 结论 | 改源码后 |
+> | --- | --- | --- |
+> | 有白名单外的文件 | 直连源码的真实链接 | 即时生效 |
+> | 只有白名单内的文件 | 复制副本 | **不生效**（需 remove + add） |
+> | 空目录 / 零星条目 | `link:` 已退化成空目录 | 插件加载失败 |
+
 ### 方案 C：目录联接（本机推荐）
 
 ```powershell
