@@ -33,6 +33,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - Configuration synced to all active agents after every update
 - Change detection: the prompt is refreshed and sessions injected only when a behavior-affecting field actually changed — appearance-only config (composer light trail) is persisted without injecting anything
 - Plugin icon: a dedicated icon in the plugin manager list and the sidebar entry (`assets/icon.svg`, 36×36, shipped with the npm package)
+- Settings nav icon: the "Personalization" entry in the settings panel draws the same geometry as the plugin icon — same trail and spark, but coloured and weighted like its neighbours (monochrome `currentColor`). DSH hardcodes nav glyphs by section id and offers no way for a plugin to declare one, so the client swaps the glyph in the DOM
 
 ## Installation
 

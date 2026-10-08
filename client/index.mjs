@@ -1586,10 +1586,78 @@ window.__ModuleLoader__.load({
       // 导航 label / 图标替换用的翻译函数（bind 返回的函数在调用时读取当前语言）
       const navT = ctx.locale.bind(NS)
 
-      // DSH 0.1.x 不支持 settings.section 的 icon 字段
-      // 使用 DOM 操作动态替换图标（类似 dsh-better-sidebar 的方案）
+      // DSH 的设置导航图标是壳层硬编码的 id → 图标映射（见 ui-settings-general 的
+      // navIcon()：account/models/agent-presets/plugins/archived-sessions，其余一律
+      // 回退成设置齿轮），插件无法通过槽位声明自己的图标（settings.section 的选项
+      // 只有 id / order / label）。因此改用 DOM 替换，把齿轮换成与插件图标同一套
+      // 几何的「灵魂火花 + 光轨」（类似 dsh-better-sidebar 的方案）。
       const SOUL_NAV_MARKER = 'data-soul-settings-nav'
       const SOUL_ICON_MARKER = 'data-soul-icon-replaced'
+
+      // 与 assets/icon.svg（插件图标）同源几何：同一条光轨与火花路径。
+      // 客户端读不到文件系统，只能内联一份；verify-nav-icon.mjs 有断言核对二者的
+      // 路径数据逐字一致，防止漂移。
+      //
+      // 与插件图标有两处**有意差异**，都是为了与设置导航里的兄弟栏目看齐：
+      //   1) 颜色——插件图标是彩色渐变，而导航栏那一排图标全是单色线描（壳层
+      //      navIcon() 生成的宿主机图标用 stroke="currentColor"）。这里同样用
+      //      currentColor：既与邻居统一，又能自动跟随主题、选中态与禁用态，
+      //      不必自己判断暗色模式。
+      //   2) 显示窗口——icon.svg 用 `0 0 36 36`（图形含描边占 26.8 单位，留白适合
+      //      列表里的大图标）。导航栏旁的宿主图标实测几乎满格——16px 下墨迹跨度
+      //      14.25px（占 89%），所以沿用 36 网格会让这个小图标显得又小又轻。这里把
+      //      窗口收紧到「同一个中心 (18,18)、边长 28.4」，让墨迹跨度落到 ~14px。
+      //      数值是量出来的：预览探针把两种图标渲染到 canvas 逐像素统计。
+      const NAV_ICON_VIEW_BOX = '3.8 3.8 28.4 28.4'
+      const NAV_ICON_TRAIL_D = 'M18 6A12 12 0 1 1 6.72 22.1'
+      const NAV_ICON_SPARK_D = 'M18 11.6C18.52 15.15 20.85 17.48 24.4 18C20.85 18.52 18.52 20.85 18 24.4C17.48 20.85 15.15 18.52 11.6 18C15.15 17.48 17.48 15.15 18 11.6Z'
+      // 线宽按**显示后的像素**与邻居对齐：宿主图标是 16 网格 + 1.3 线宽，而我们
+      // 的窗口是 28.4 单位宽、显示成 16px（缩放 16 ÷ 28.4 ≈ 0.5634），所以取
+      // 1.3 ÷ 0.5634 ≈ 2.3。照搬 icon.svg 的 2.8 会让弧线比邻居粗一圈。
+      const NAV_ICON_STROKE_WIDTH = '2.3'
+      // 宿主按 size=16 渲染，宽高是 svg 的属性（不是 CSS）。万一将来改由 CSS 控制尺寸，
+      // 我们也补一个 16——否则 svg 会退回 300×150 的默认尺寸，把导航栏撑坏。
+      const NAV_ICON_FALLBACK_SIZE = '16'
+      const SVG_NS = 'http://www.w3.org/2000/svg'
+
+      /** 建一个 SVG 元素并铺上属性（避免 innerHTML，无需解析）。 */
+      const svgNode = (name, attributes) => {
+        const node = document.createElementNS(SVG_NS, name)
+        for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value)
+        return node
+      }
+
+      /**
+       * 把导航按钮里宿主生成的齿轮图标改画成插件图标（单色版）。
+       *
+       * 只替换 <svg> 的内容与 viewBox，保留节点本身——宿主的 className
+       * （…navIcon，flex:none）、width/height（size=16）与 aria-hidden 因此
+       * 原样生效，不必自己复刻一套尺寸规则；只有宿主将来不给宽高时才补默认值。
+       *
+       * 宿主 svg 上挂着 fill="none" 与 stroke-width（medium 为 1.3），这两条会
+       * 向下继承，所以每条 path 都写全自身样式：光轨只要描边，火花只要填充。
+       * 颜色一律 currentColor，取到的是按钮文字色——与旁边几个图标同一个值。
+       */
+      const paintSoulNavIcon = (svg) => {
+        svg.setAttribute('viewBox', NAV_ICON_VIEW_BOX)
+        if (!svg.getAttribute('width')) svg.setAttribute('width', NAV_ICON_FALLBACK_SIZE)
+        if (!svg.getAttribute('height')) svg.setAttribute('height', NAV_ICON_FALLBACK_SIZE)
+
+        const trail = svgNode('path', {
+          d: NAV_ICON_TRAIL_D,
+          fill: 'none',
+          stroke: 'currentColor',
+          'stroke-width': NAV_ICON_STROKE_WIDTH,
+          'stroke-linecap': 'round'
+        })
+        const spark = svgNode('path', {
+          d: NAV_ICON_SPARK_D,
+          fill: 'currentColor',
+          stroke: 'none'
+        })
+
+        svg.replaceChildren(trail, spark)
+      }
 
       const registerSettingsNavIcon = () => {
         let disposed = false
@@ -1606,28 +1674,12 @@ window.__ModuleLoader__.load({
               // 检查是否已经替换过图标
               if (button.hasAttribute(SOUL_ICON_MARKER)) continue
 
-              // 查找并替换图标
+              // 把宿主给未知 id 用的设置齿轮，改画成插件自身的图标
               const existingIcon = button.querySelector('svg')
               if (existingIcon) {
-                // 标记已替换
+                // 标记已替换；React 重建按钮时标记随之消失，会重新画一次
                 button.setAttribute(SOUL_ICON_MARKER, 'true')
-
-                // 创建星形图标（跟随主题色）
-                const starSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-                starSvg.setAttribute('viewBox', '0 0 24 24')
-                starSvg.setAttribute('fill', 'none')
-                starSvg.setAttribute('stroke', 'currentColor')
-                starSvg.setAttribute('stroke-width', '2')
-                starSvg.setAttribute('stroke-linecap', 'round')
-                starSvg.setAttribute('stroke-linejoin', 'round')
-                starSvg.style.width = '16px'
-                starSvg.style.height = '16px'
-
-                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-                path.setAttribute('d', 'M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z')
-                starSvg.appendChild(path)
-
-                existingIcon.replaceWith(starSvg)
+                paintSoulNavIcon(existingIcon)
               }
             } else {
               button.removeAttribute(SOUL_NAV_MARKER)
