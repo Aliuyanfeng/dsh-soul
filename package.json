@@ -1,7 +1,8 @@
 {
   "name": "dsh-soul",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "为 DeepSeek Harness 添加个性化设置",
+  "icon": "./assets/icon.svg",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -55,6 +56,7 @@
     "index.mjs",
     "lib",
     "client",
+    "assets",
     "cordis.patch.yml",
     "scripts",
     "README.md",

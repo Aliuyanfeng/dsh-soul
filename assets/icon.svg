@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none" role="img" aria-label="dsh-soul">
+  <defs>
+    <!-- 光轨：头部明亮，尾端渐隐 -->
+    <linearGradient id="soulTrail" x1="18" y1="6" x2="8.6" y2="23.4" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ADD3FF"/>
+      <stop offset="0.3" stop-color="#679EFE"/>
+      <stop offset="0.72" stop-color="#679EFE" stop-opacity="0.38"/>
+      <stop offset="1" stop-color="#679EFE" stop-opacity="0"/>
+    </linearGradient>
+    <!-- 灵魂火花：上浅下深，深浅主题下都不塌成一块 -->
+    <linearGradient id="soulSpark" x1="18" y1="11.6" x2="18" y2="24.4" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#B6DBFF"/>
+      <stop offset="0.5" stop-color="#679EFE"/>
+      <stop offset="1" stop-color="#4560D6"/>
+    </linearGradient>
+  </defs>
+  <!-- 光轨：绕行约 250°，左上留口，尾端渐隐 -->
+  <path d="M18 6A12 12 0 1 1 6.72 22.1" stroke="url(#soulTrail)" stroke-width="2.8" stroke-linecap="round"/>
+  <!-- 灵魂火花 -->
+  <path d="M18 11.6C18.52 15.15 20.85 17.48 24.4 18C20.85 18.52 18.52 20.85 18 24.4C17.48 20.85 15.15 18.52 11.6 18C15.15 17.48 17.48 15.15 18 11.6Z" fill="url(#soulSpark)"/>
+</svg>

@@ -3,10 +3,13 @@
 // 覆盖 lib/config.mjs 的 migrateConfig / sanitizeConfig：
 //   - 旧版本 style+tone 迁移、废弃字段清理、特质脏数据回退
 //   - 白名单 / 类型 / 长度 / 枚举校验的接受与拒绝路径
+// 另含清单契约自检：插件图标（DSH 在 app-boot 的 iconOf 中判定）。
 // 零依赖，直接 `node scripts/verify-config.mjs` 运行。
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
+import { extname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_CONFIG,
   FIELD_LIMITS,
@@ -298,6 +301,83 @@ check('migrateConfig：合法光轨配置保留，颜色转大写', () => {
   assert.equal(config.trailColor, '#AABBCC')
   assert.equal(config.trailSpeed, 'fast')
   assert.equal(config.trailWidth, 'thick')
+})
+
+console.log('插件清单与图标')
+
+// DSH 读取 package.json 的 icon 字段（app-boot 的 readPluginMeta / iconOf），
+// 在插件管理列表与侧栏入口渲染。图标缺失只是回退默认插图，但路径写错、
+// 或没进 files 白名单，就会出现「仓库里有、装完没有」的静默失败，故固化为检查。
+const manifestPath = fileURLToPath(new URL('../package.json', import.meta.url))
+const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+const packageRoot = resolve(manifestPath, '..')
+const iconRef = typeof manifest.icon === 'string' ? manifest.icon : ''
+const iconPath = iconRef ? resolve(packageRoot, iconRef) : ''
+const iconRelative = iconRef ? relative(packageRoot, iconPath) : ''
+
+check('清单：icon 为包内相对路径，且指向真实文件', () => {
+  assert.ok(iconRef, 'package.json 缺少 icon 字段')
+  // 宿主的判定（dsh-app-boot 的 iconOf）：
+  //   1) 绝对路径、Windows 盘符、以及任何带 URL scheme 的值直接抛错
+  //   2) 以 manifest 所在目录的 realpath 为根，relative(root, realpath(target)) 不得为 ..
+  assert.equal(isAbsolute(iconRef), false, 'icon 必须是相对路径（会随包一起发布）')
+  assert.equal(/^[A-Za-z][A-Za-z\d+.-]*:/.test(iconRef), false, 'icon 不能是带 scheme 的 URL（宿主只接受相对路径）')
+  assert.equal(statSync(iconPath).isFile(), true, `icon 指向的不是文件：${iconRef}`)
+  const outside = relative(realpathSync(packageRoot), realpathSync(iconPath))
+  assert.equal(
+    outside === '..' || outside.startsWith(`..${sep}`) || isAbsolute(outside),
+    false,
+    'icon 不能通过符号链接逃出包目录'
+  )
+})
+
+check('清单：icon 扩展名在宿主白名单内（SVG / PNG / JPEG / WebP）', () => {
+  assert.ok(
+    ['.svg', '.png', '.jpg', '.jpeg', '.webp'].includes(extname(iconPath).toLowerCase()),
+    `宿主只接受 SVG / PNG / JPEG / WebP，当前为 ${extname(iconPath) || '（无扩展名）'}`
+  )
+})
+
+check('清单：icon 体积不超过 256 KiB（宿主上限，超出会拒绝装载）', () => {
+  const { size } = statSync(iconPath)
+  assert.ok(size > 0, 'icon 不应为空文件')
+  assert.ok(size <= 256 * 1024, `icon 为 ${size} 字节，超过宿主上限 262144 字节`)
+})
+
+check('清单：icon 落在 files 白名单内（会随 npm 包一起发布）', () => {
+  assert.ok(Array.isArray(manifest.files) && manifest.files.length > 0, 'package.json 缺少 files 白名单')
+  const topLevel = iconRelative.split(sep)[0]
+  assert.ok(manifest.files.includes(topLevel), `files 白名单应包含 ${topLevel}，否则图标不会进发布包`)
+})
+
+const iconSvg = iconRef ? readFileSync(iconPath, 'utf8') : ''
+
+check('图标：SVG 自带命名空间，且 viewBox 为正方形', () => {
+  assert.match(iconSvg, /<svg[\s>]/, 'icon 不是 SVG 文档')
+  assert.match(iconSvg, /xmlns="http:\/\/www\.w3\.org\/2000\/svg"/, 'SVG 缺少 xmlns，脱离独立文档渲染时会失败')
+  const viewBox = iconSvg.match(/viewBox="([\d.\-\s]+)"/)
+  assert.ok(viewBox, 'SVG 缺少 viewBox，无法按容器尺寸缩放')
+  const parts = viewBox[1].trim().split(/\s+/).map(Number)
+  assert.equal(parts.length, 4, 'viewBox 应为 4 个数字')
+  assert.equal(parts[2], parts[3], 'viewBox 应为正方形（图标显示区是方的，非方会被拉伸或留白）')
+})
+
+check('图标：不含脚本、位图与外部引用（发布物第一方自足）', () => {
+  assert.equal(/<script/i.test(iconSvg), false, 'SVG 不应内嵌脚本')
+  assert.equal(/<image[\s>]/i.test(iconSvg), false, 'SVG 不应内嵌位图')
+  assert.equal(/<foreignObject/i.test(iconSvg), false, 'SVG 不应使用 foreignObject')
+  assert.equal(/(?:href|xlink:href)\s*=/i.test(iconSvg), false, 'SVG 不应包含任何链接引用')
+  const withoutXmlns = iconSvg.replace(/xmlns="http:\/\/www\.w3\.org\/2000\/svg"/g, '')
+  assert.equal(/https?:\/\//i.test(withoutXmlns), false, 'SVG 不应引用外部资源（xmlns 除外）')
+})
+
+check('图标：渐变引用都能解析到已定义的 id', () => {
+  const defined = new Set([...iconSvg.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]))
+  const refs = [...iconSvg.matchAll(/url\(#([^)]+)\)/g)].map((m) => m[1])
+  assert.ok(refs.length > 0, '图标应使用渐变填充，以适配浅色 / 深色主题')
+  for (const ref of refs) {
+    assert.ok(defined.has(ref), `引用了未定义的 id：${ref}`)
+  }
 })
 
 console.log(`\n全部通过：${passed} 项检查`)

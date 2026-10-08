@@ -36,6 +36,7 @@
 - HTTP API：`/api/soul/config`（GET/POST）、`/api/soul/prompt`、`/api/soul/config/reset`、`/api/soul/personas`（GET）、`/api/soul/personas/save|use|delete`（POST）
 - 输入校验：字段白名单、类型、长度上限与枚举校验，HTTP 保存 / `/soul` 命令 / `set_persona` 工具 / `soulConfig` 服务共用；非法或超限字段整单拒绝
 - Agent 工具：`set_persona`（需宿主安装 `@deepseek-ai/dsh-tools`；缺失或不兼容时自动跳过，其余功能不受影响；确认模式下返回 `pending` 提议）
+- 插件图标：`package.json` 的 `icon` 指向 `assets/icon.svg`（36×36 viewBox，随 npm 包发布）
 
 ## 已知限制
 
@@ -68,6 +69,12 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 - 特质新增**表格**维度（`tables`）：`default`（默认，不额外约束）、`more`（增强，呈现对比、多字段或结构化信息时优先使用表格）、`less`（减弱，避免表格、改用列表或段落）。与「标题和列表」「表情符号」同档，设置页下拉 / `/soul set` / `set_persona` 工具 / 人设预设四处入口齐备
 - 新增**回复长度偏好**（`replyLength`）：`concise`（简洁，只讲要点、不展开）、`normal`（适中，不额外约束，**默认**）、`detailed`（详尽，充分展开背景、步骤与推理）
 - 两个维度均进入 `PERSONA_FIELDS`，因此人设预设会一并保存与还原；`/soul show` 的特质行也一并展示
+- **插件图标**：新增 `assets/icon.svg` 并在 `package.json` 声明 `icon` 字段，插件管理列表与侧栏入口不再显示默认插图
+  - 图形沿用插件自身的视觉语汇：一枚「灵魂火花」（四芒星，上浅下深渐变）加一段绕行约 250° 的光轨（尾端渐隐），与输入框光轨同色系（`#679EFE`）
+  - 36×36 viewBox，与 DSH 自带插画同尺寸；两处渐变让图形在浅色 / 深色主题下都保留体积感，不会塌成一块
+  - 宿主一侧由 `dsh-app-boot` 的 `readPluginMeta` / `iconOf` 消费，规则比想象中严格：只接受**相对路径**（绝对路径、Windows 盘符、任何带 scheme 的 URL 一律报错），realpath 解析后必须仍在声明它的目录内，扩展名限 SVG / PNG / JPEG / WebP，体积不超过 256 KiB，最终**内联为 `data:` URL** 交给客户端。正因如此图标里的渐变 / 引用必须自足，不能依赖外部资源
+  - 图标解析失败只丢图标，用 `package.json` 的 `name` / `description` 兜底，不会导致插件装载失败——所以「图标没生效」是一类不会报错的静默失败
+  - `assets/` 已加入 `files` 白名单（发布包 11 → 12 个文件）；漏加会表现为「仓库里有、装完没有」
 
 **兼容性**
 - **现有用户零行为变化**：`tables=default` 与 `replyLength=normal` 在提示词文案表中**没有对应键**，`buildBehavior` 仅在命中时才 `push`，因此不会输出任何文本。实测「不含这两个字段」与「两字段取默认档」编译出的 system prompt **逐字节相同**，提示词长度与内容都不变
@@ -76,6 +83,9 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 **验证**
 - `verify-config` 新增 7 项（默认值 / 合法值通过 / 非法枚举拒绝 / 脏数据回退 / `PERSONA_FIELDS` 覆盖 / 提示词文案结构 / 默认档无文案），总数 24 → **31 项**
 - 其中「提示词文案结构」直接读 `index.mjs` 源文本按缩进切片，断言 `tables` 与 `replyLength` 的文案块**恰好 2 个**（zh / en），且 `default` / `normal` **不得出现**在文案表中——把「默认档零行为变更」这个不变量固化成了回归项，同时该断言的判断力已用「注入假键后必须失败」双向验证
+- 图标部分另加 7 项清单契约（路径形态 / 目录逃逸 / 扩展名白名单 / 体积上限 / `files` 白名单覆盖 / SVG 命名空间与方形 viewBox / 无脚本·位图·外部引用 / 渐变引用可解析），总数 31 → **38 项**。其中「路径形态」「目录逃逸」「体积上限」「扩展名」四条是按宿主 `iconOf` 的实际判据对齐的，不是自拟标准
+- 上述图标断言的判断力用 13 组对照验证：只改坏一个条件（指向不存在的文件、指向包外、绝对路径、目录不在白名单、删掉 `icon` 字段、去掉 `xmlns`、去掉 `viewBox`、viewBox 非正方形、内嵌 `<script>`、内嵌 `<image>`、引用外部资源、渐变引用未定义的 id）时**必须失败**，未改动时必须通过——13/13 符合预期
+- 另用宿主自己的 `readPluginMeta('dsh-soul', <profile 目录>)` 做端到端实证：本机桌面 profile 以符号链接直连源码，因此读到的就是本仓库的清单，返回 `{ title, description, icon }` 且 `icon` 为 `data:image/svg+xml;base64,…`（解码 1270 字节，与源文件逐字节相同）；作为对照，web profile 里那份 0.6.2 旧副本（无 `icon` 字段）同一调用只返回 `{ title, description }`——说明上面那次成功确实来自本次新增的字段
 
 ### v0.6.2（2026-10-04）
 
