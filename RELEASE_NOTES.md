@@ -1,11 +1,11 @@
 # dsh-soul Release Notes
 
-`dsh-soul` 为 DeepSeek Harness（DSH）提供「个性化设置」能力：通过 Web 设置页或斜杠命令配置「关于你」（昵称、职业、介绍）、回复风格和语调、特质、输出语言与自定义指令，配置实时编译为 system prompt 并同步到所有活动会话。
+`dsh-soul` 为 DeepSeek Harness（DSH）提供「个性化设置」能力：通过 Web 设置页或斜杠命令配置「关于你」（昵称、职业、介绍）、回复风格和语调、特质（标题和列表 / 表情符号 / 表格）、回复长度偏好、输出语言与自定义指令，配置实时编译为 system prompt 并同步到所有活动会话。
 
 ## 功能
 
 **设置页**
-- 启用开关、「关于你」（昵称 / 职业 / 介绍）、「特质」（回复风格和语调 / 标题和列表 / 表情符号）、输出语言、自定义指令
+- 启用开关、「关于你」（昵称 / 职业 / 介绍）、「特质」（回复风格和语调 / 标题和列表 / 表情符号 / 表格 / 回复长度）、输出语言、自定义指令
 - 人设预设分组：保存当前为预设、一键使用（★ 标记当前匹配项）、删除（二次确认）
 - Agent 工具分组：`set_persona` 确认模式开关
 - 输入框光轨：Agent 回复中时输入框边框的流光动效——开关、预设色板 + 取色器 + 十六进制输入、流动速度（慢 / 中 / 快）、光带粗细（细 / 中 / 粗），以及随配置实时联动的效果示例
@@ -17,7 +17,7 @@
 
 ```text
 /soul show        查看当前配置（含确认模式与预设数量）
-/soul set k=v     修改配置项（如 /soul set style=humorous language=en；光轨字段：trailColor / trailSpeed / trailWidth / trailEnabled）
+/soul set k=v     修改配置项（如 /soul set style=humorous language=en；特质：tables=more replyLength=concise；光轨字段：trailColor / trailSpeed / trailWidth / trailEnabled）
 /soul save <名>   保存当前配置为人设预设
 /soul use <名>    应用人设预设
 /soul list        查看人设预设（✔ 标记当前匹配项）
@@ -61,6 +61,21 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 ---
 
 ## 版本历史
+
+### v0.7.0（2026-10-08）
+
+**新增**
+- 特质新增**表格**维度（`tables`）：`default`（默认，不额外约束）、`more`（增强，呈现对比、多字段或结构化信息时优先使用表格）、`less`（减弱，避免表格、改用列表或段落）。与「标题和列表」「表情符号」同档，设置页下拉 / `/soul set` / `set_persona` 工具 / 人设预设四处入口齐备
+- 新增**回复长度偏好**（`replyLength`）：`concise`（简洁，只讲要点、不展开）、`normal`（适中，不额外约束，**默认**）、`detailed`（详尽，充分展开背景、步骤与推理）
+- 两个维度均进入 `PERSONA_FIELDS`，因此人设预设会一并保存与还原；`/soul show` 的特质行也一并展示
+
+**兼容性**
+- **现有用户零行为变化**：`tables=default` 与 `replyLength=normal` 在提示词文案表中**没有对应键**，`buildBehavior` 仅在命中时才 `push`，因此不会输出任何文本。实测「不含这两个字段」与「两字段取默认档」编译出的 system prompt **逐字节相同**，提示词长度与内容都不变
+- 旧配置文件（无这两个字段）由 `migrateConfig` 自动补齐默认值；两字段的脏数据（非法枚举 / 非字符串）同样回退默认值，不会让插件拒绝启动
+
+**验证**
+- `verify-config` 新增 7 项（默认值 / 合法值通过 / 非法枚举拒绝 / 脏数据回退 / `PERSONA_FIELDS` 覆盖 / 提示词文案结构 / 默认档无文案），总数 24 → **31 项**
+- 其中「提示词文案结构」直接读 `index.mjs` 源文本按缩进切片，断言 `tables` 与 `replyLength` 的文案块**恰好 2 个**（zh / en），且 `default` / `normal` **不得出现**在文案表中——把「默认档零行为变更」这个不变量固化成了回归项，同时该断言的判断力已用「注入假键后必须失败」双向验证
 
 ### v0.6.2（2026-10-04）
 

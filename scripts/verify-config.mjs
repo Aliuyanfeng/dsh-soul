@@ -6,9 +6,11 @@
 // 零依赖，直接 `node scripts/verify-config.mjs` 运行。
 
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   DEFAULT_CONFIG,
   FIELD_LIMITS,
+  PERSONA_FIELDS,
   migrateConfig,
   normalizePersonas,
   sanitizeConfig,
@@ -175,6 +177,72 @@ check('migrateConfig：personas 归一化透传，缺省时保持缺席；确认
   assert.equal('personas' in clean, false)
   const dirty = migrateConfig({ requireToolConfirmation: 'yes' })
   assert.equal(dirty.requireToolConfirmation, false)
+})
+
+console.log('特质：表格 / 回复长度')
+
+const indexSource = readFileSync(new URL('../index.mjs', import.meta.url), 'utf8')
+
+// 从 index.mjs 的 PROMPT_TEXT 中按缩进切片取出某个文案子表（zh / en 各一处）。
+// 用「块数量必须为 2」做结构断言：文案表若被重构或改名，这里会直接失败而不是静默放过。
+function promptTextBlocks(key) {
+  const re = new RegExp(`\\n    ${key}: \\{\\n([\\s\\S]*?)\\n    \\\},`, 'g')
+  return [...indexSource.matchAll(re)].map((m) => m[1])
+}
+
+check('DEFAULT_CONFIG 含表格与回复长度的默认值', () => {
+  assert.equal(DEFAULT_CONFIG.tables, 'default')
+  assert.equal(DEFAULT_CONFIG.replyLength, 'normal')
+})
+
+check('sanitizeConfig：表格与回复长度合法值通过', () => {
+  const { patch, errors } = sanitizeConfig({ tables: 'more', replyLength: 'detailed' })
+  assert.deepEqual(errors, {})
+  assert.equal(patch.tables, 'more')
+  assert.equal(patch.replyLength, 'detailed')
+})
+
+check('sanitizeConfig：表格与回复长度非法枚举被拒绝', () => {
+  assert.ok(sanitizeConfig({ tables: 'always' }).errors.tables)
+  assert.ok(sanitizeConfig({ replyLength: 'verbose' }).errors.replyLength)
+  assert.equal('tables' in sanitizeConfig({ tables: 'x' }).patch, false)
+  assert.equal('replyLength' in sanitizeConfig({ replyLength: 'x' }).patch, false)
+})
+
+check('migrateConfig：表格与回复长度脏数据回退为默认值', () => {
+  const dirty = migrateConfig({ tables: 'max', replyLength: 3 })
+  assert.equal(dirty.tables, 'default')
+  assert.equal(dirty.replyLength, 'normal')
+})
+
+check('PERSONA_FIELDS 覆盖新增的两个维度（人设预设可保存与还原）', () => {
+  assert.ok(PERSONA_FIELDS.includes('tables'))
+  assert.ok(PERSONA_FIELDS.includes('replyLength'))
+})
+
+check('提示词文案：zh / en 均含表格与回复长度，且块数量恰为 2', () => {
+  for (const key of ['tables', 'replyLength']) {
+    const blocks = promptTextBlocks(key)
+    assert.equal(blocks.length, 2, `${key} 文案块数量应为 2（zh / en）`)
+    for (const block of blocks) {
+      assert.match(block, /.{20,}/, `${key} 文案块不应为空`)
+    }
+  }
+  const tables = promptTextBlocks('tables')
+  for (const block of tables) {
+    assert.ok(block.includes('more:') && block.includes('less:'), 'tables 文案应含 more / less')
+    assert.equal(block.includes('default:'), false, 'tables=default 不应产生提示词文案')
+  }
+})
+
+check('提示词文案：replyLength 的 normal（适中）不产生任何文案', () => {
+  // 这是「新增维度不改变现有用户行为」的核心不变量：
+  // buildBehavior 仅在文案表命中时 push，所以 normal 必须没有对应键。
+  const blocks = promptTextBlocks('replyLength')
+  for (const block of blocks) {
+    assert.ok(block.includes('concise:') && block.includes('detailed:'), 'replyLength 文案应含 concise / detailed')
+    assert.equal(block.includes('normal:'), false, 'replyLength=normal 不应产生提示词文案')
+  }
 })
 
 console.log('输入框光轨')

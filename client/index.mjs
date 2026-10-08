@@ -47,7 +47,7 @@ window.__ModuleLoader__.load({
     // -------------------------------------------------------------------------
 
     const NS = 'soul'
-    const VERSION = '0.6.2'
+    const VERSION = '0.7.0'
     const INITIAL = {
       enabled: true,
       nickname: '',
@@ -56,6 +56,8 @@ window.__ModuleLoader__.load({
       style: 'professional',
       headingLists: 'default',
       emoji: 'default',
+      tables: 'default',
+      replyLength: 'normal',
       language: 'zh',
       customInstructions: '',
       // set_persona 确认模式（v0.5.0）
@@ -346,6 +348,8 @@ window.__ModuleLoader__.load({
         s.style = config.style
         s.headingLists = config.headingLists || 'default'
         s.emoji = config.emoji || 'default'
+        s.tables = config.tables || 'default'
+        s.replyLength = config.replyLength || 'normal'
         s.language = config.language || 'zh'
         s.customInstructions = config.customInstructions
         s.requireToolConfirmation = config.requireToolConfirmation === true
@@ -632,6 +636,10 @@ window.__ModuleLoader__.load({
       'hint.headingLists': '在回复风格和语调的基础上选择额外的自定义特质项。控制回答中标题和列表的使用程度。',
       'field.emoji': '表情符号',
       'hint.emoji': '在回复风格和语调的基础上选择额外的自定义特质项。控制表情符号的使用程度。',
+      'field.tables': '表格',
+      'hint.tables': '在回复风格和语调的基础上选择额外的自定义特质项。控制回答中表格的使用程度。',
+      'field.replyLength': '回复长度',
+      'hint.replyLength': '控制回答的篇幅。选「适中」时不额外约束，由 Agent 自行判断。',
       'field.language': '输出语言',
       'hint.language': '设置 Agent 回复你使用的语言，同时影响 /soul 命令的输出语言。',
       'field.instructions': '自定义指令',
@@ -655,6 +663,12 @@ window.__ModuleLoader__.load({
       'trait.emoji.default': '默认',
       'trait.emoji.more': '增强（使用较多表情符号）',
       'trait.emoji.less': '减弱（尽量减少使用表情符号）',
+      'trait.tables.default': '默认',
+      'trait.tables.more': '增强（优先用表格呈现对比与多字段信息）',
+      'trait.tables.less': '减弱（避免使用表格，改用列表或段落）',
+      'trait.replyLength.concise': '简洁（只讲要点，不展开）',
+      'trait.replyLength.normal': '适中（不额外约束）',
+      'trait.replyLength.detailed': '详尽（充分展开背景与推理）',
       'group.tool': 'Agent 工具',
       'field.toolConfirm': '人设变更需确认',
       'hint.toolConfirm': '开启后，Agent 通过 set_persona 工具做出的修改不会立即生效，需在会话中使用 /soul confirm 确认或 /soul reject 拒绝。',
@@ -723,6 +737,10 @@ window.__ModuleLoader__.load({
       'hint.headingLists': 'An extra trait layered on top of style & tone. Controls how much answers rely on headings and lists.',
       'field.emoji': 'Emoji',
       'hint.emoji': 'An extra trait layered on top of style & tone. Controls how many emojis answers use.',
+      'field.tables': 'Tables',
+      'hint.tables': 'An extra trait layered on top of style & tone. Controls how much answers rely on tables.',
+      'field.replyLength': 'Reply length',
+      'hint.replyLength': 'Controls how long answers are. "Balanced" adds no constraint and lets the agent decide.',
       'field.language': 'Output language',
       'hint.language': 'Sets the language the agent replies in; also affects the /soul command output.',
       'field.instructions': 'Custom instructions',
@@ -746,6 +764,12 @@ window.__ModuleLoader__.load({
       'trait.emoji.default': 'Default',
       'trait.emoji.more': 'More (frequent emoji usage)',
       'trait.emoji.less': 'Less (minimal emoji usage)',
+      'trait.tables.default': 'Default',
+      'trait.tables.more': 'More (prefer tables for comparisons and multi-field data)',
+      'trait.tables.less': 'Less (avoid tables; use lists or paragraphs)',
+      'trait.replyLength.concise': 'Concise (key points only)',
+      'trait.replyLength.normal': 'Balanced (no extra constraint)',
+      'trait.replyLength.detailed': 'Detailed (expand background and reasoning)',
       'group.tool': 'Agent tools',
       'field.toolConfirm': 'Require confirmation for persona changes',
       'hint.toolConfirm': 'When enabled, changes made by the agent through the set_persona tool do not apply immediately — confirm with /soul confirm or reject with /soul reject in the conversation.',
@@ -811,6 +835,8 @@ window.__ModuleLoader__.load({
     // 选项取值（label 走词典；取值与 lib/config.mjs 的合法值保持一致）
     const STYLE_VALUES = ['professional', 'casual', 'humorous', 'roast', 'efficient']
     const TRAIT_VALUES = ['default', 'more', 'less']
+    // 回复长度偏好（与宿主 lib/config.mjs 的 REPLY_LENGTH_VALUES 对齐）
+    const REPLY_LENGTH_VALUES = ['concise', 'normal', 'detailed']
     // 输出语言选项（两种 UI 语言下均自解释，不进词典）
     const LANGUAGE_OPTIONS = [
       { value: 'zh', label: '中文' },
@@ -818,7 +844,7 @@ window.__ModuleLoader__.load({
     ]
 
     // 表单字段与 store 字段的一一对应（dirty 检测与保存载荷共用）
-    const FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+    const FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
 
     // 提示词小图标：hover 展示说明文字
     function SoulHint(props) {
@@ -894,7 +920,7 @@ window.__ModuleLoader__.load({
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      const { enabled, nickname, occupation, bio, style, headingLists, emoji, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, personas, activePersona, loading, saving, error } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, personas, activePersona, loading, saving, error } = state
 
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
@@ -903,6 +929,8 @@ window.__ModuleLoader__.load({
       const [localStyle, setLocalStyle] = React.useState(style)
       const [localHeadingLists, setLocalHeadingLists] = React.useState(headingLists)
       const [localEmoji, setLocalEmoji] = React.useState(emoji)
+      const [localTables, setLocalTables] = React.useState(tables)
+      const [localReplyLength, setLocalReplyLength] = React.useState(replyLength)
       const [localLanguage, setLocalLanguage] = React.useState(language || 'zh')
       const [localInstructions, setLocalInstructions] = React.useState(customInstructions)
       const [localToolConfirm, setLocalToolConfirm] = React.useState(requireToolConfirmation === true)
@@ -942,6 +970,8 @@ window.__ModuleLoader__.load({
         setLocalStyle(style)
         setLocalHeadingLists(headingLists)
         setLocalEmoji(emoji)
+        setLocalTables(tables)
+        setLocalReplyLength(replyLength)
         setLocalLanguage(language || 'zh')
         setLocalInstructions(customInstructions)
         setLocalToolConfirm(requireToolConfirmation === true)
@@ -949,7 +979,7 @@ window.__ModuleLoader__.load({
         setLocalTrailColor(trailColor || TRAIL_COLOR_FALLBACK)
         setLocalTrailSpeed(trailSpeed || 'slow')
         setLocalTrailWidth(trailWidth || 'thin')
-      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth])
+      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth])
 
       // toast 自动消失
       React.useEffect(() => {
@@ -960,8 +990,8 @@ window.__ModuleLoader__.load({
       }, [toast])
 
       // dirty 检测：本地表单与已保存配置逐字段比较
-      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth }
-      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth }
+      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
       const dirty = FIELD_KEYS.some((key) => savedMap[key] !== localMap[key])
 
       const loadPrompt = async () => {
@@ -1075,6 +1105,8 @@ window.__ModuleLoader__.load({
       const styleOptions = STYLE_VALUES.map((value) => ({ value, label: t(`style.${value}`) }))
       const headingListsOptions = TRAIT_VALUES.map((value) => ({ value, label: t(`trait.headingLists.${value}`) }))
       const emojiOptions = TRAIT_VALUES.map((value) => ({ value, label: t(`trait.emoji.${value}`) }))
+      const tablesOptions = TRAIT_VALUES.map((value) => ({ value, label: t(`trait.tables.${value}`) }))
+      const replyLengthOptions = REPLY_LENGTH_VALUES.map((value) => ({ value, label: t(`trait.replyLength.${value}`) }))
       const personaNames = personas ? Object.keys(personas).sort() : null
       const aboutFilled = [localNickname, localOccupation, localBio].filter(Boolean).length
       const aboutSummary = aboutFilled > 0 ? `${aboutFilled}/3 ${t('accordion.filled')}` : t('accordion.empty')
@@ -1195,6 +1227,32 @@ window.__ModuleLoader__.load({
                 onChange: (ev) => setLocalEmoji(ev.target.value)
               },
                 ...emojiOptions.map(opt => e('option', { key: opt.value, value: opt.value }, opt.label))
+              )
+            ),
+            e('div', { className: 'soul-field' },
+              e('label', { htmlFor: 'soul-tables' },
+                t('field.tables'),
+                e(SoulHint, { text: t('hint.tables') })
+              ),
+              e('select', {
+                id: 'soul-tables',
+                value: localTables,
+                onChange: (ev) => setLocalTables(ev.target.value)
+              },
+                ...tablesOptions.map(opt => e('option', { key: opt.value, value: opt.value }, opt.label))
+              )
+            ),
+            e('div', { className: 'soul-field' },
+              e('label', { htmlFor: 'soul-replyLength' },
+                t('field.replyLength'),
+                e(SoulHint, { text: t('hint.replyLength') })
+              ),
+              e('select', {
+                id: 'soul-replyLength',
+                value: localReplyLength,
+                onChange: (ev) => setLocalReplyLength(ev.target.value)
+              },
+                ...replyLengthOptions.map(opt => e('option', { key: opt.value, value: opt.value }, opt.label))
               )
             ),
             e('div', { className: 'soul-field' },

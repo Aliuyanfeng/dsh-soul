@@ -14,6 +14,8 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - Trait fine-tuning (layered on top of style & tone):
   - Headings & lists: `default`, `more` (clear formatting with headings and lists), `less` (more paragraph text)
   - Emoji: `default`, `more` (frequent emoji usage), `less` (minimal emoji usage)
+  - Tables: `default`, `more` (prefer tables for comparisons and multi-field data), `less` (avoid tables; use lists or paragraphs)
+- Reply length preference: `concise` (key points only), `normal` (no extra constraint, default), `detailed` (expand background, steps and reasoning)
 - Output language (agent reply language + `/soul` command output language): Chinese or English
 - The compiled system prompt follows the output language (English descriptions when `language=en`)
 - Custom instructions
@@ -134,7 +136,7 @@ Example:
 }
 ```
 
-Personas are stored in the same file under the `personas` field: name → persona field snapshot (nickname / occupation / bio / style / traits / language / custom instructions) + `updatedAt`. Persona library changes never touch the active config; a persona is applied to the config (and synced to sessions) only when used.
+Personas are stored in the same file under the `personas` field: name → persona field snapshot (nickname / occupation / bio / style / traits / reply length / language / custom instructions) + `updatedAt`. Persona library changes never touch the active config; a persona is applied to the config (and synced to sessions) only when used.
 
 Composer light trail fields: `trailEnabled` (on/off, default `true`), `trailColor` (6-digit hex, stored uppercase, default `#679EFE`), `trailSpeed` (`slow` / `normal` / `fast`, default `slow`), `trailWidth` (`thin` / `normal` / `thick`, default `thin`). These are appearance-only: they are persisted but never enter the system prompt and never trigger a session injection.
 

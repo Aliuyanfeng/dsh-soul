@@ -24,6 +24,7 @@ import {
   DEFAULT_CONFIG,
   STYLE_VALUES,
   TRAIT_VALUES,
+  REPLY_LENGTH_VALUES,
   LANGUAGE_VALUES,
   PERSONA_FIELDS,
   PERSONA_NAME_MAX,
@@ -68,6 +69,14 @@ const PROMPT_TEXT = {
     emoji: {
       more: '在回复中使用较多表情符号',
       less: '尽量减少使用表情符号'
+    },
+    tables: {
+      more: '在呈现对比、多字段信息或结构化内容时优先使用表格',
+      less: '避免使用表格，改用列表或段落文本呈现'
+    },
+    replyLength: {
+      concise: '回答尽量简洁，直击要点，不展开无关内容',
+      detailed: '回答尽量详尽，充分展开背景、步骤与推理过程'
     },
     replyLanguage: {
       zh: '必须使用简体中文回复',
@@ -116,6 +125,14 @@ const PROMPT_TEXT = {
       more: 'Use emojis fairly often in replies',
       less: 'Keep emoji usage to a minimum'
     },
+    tables: {
+      more: 'Prefer tables when presenting comparisons, multi-field or structured information',
+      less: 'Avoid tables; use lists or paragraph text instead'
+    },
+    replyLength: {
+      concise: 'Keep answers concise: hit the key points and skip unrelated elaboration',
+      detailed: 'Give detailed answers: fully expand on background, steps and reasoning'
+    },
     replyLanguage: {
       zh: '必须使用简体中文回复',
       en: 'You must reply in English.'
@@ -155,12 +172,16 @@ function buildUserProfile(config, T) {
   return lines.join('\n')
 }
 
-// 行为块：回复风格和语调 + 特质 + 输出语言
+// 行为块：回复风格和语调 + 特质（标题和列表 / 表情符号 / 表格）+ 回复长度 + 输出语言。
+// 缺项（如 tables=default、replyLength=normal）在文案表中没有对应键，直接跳过、不产生文本，
+// 因此默认配置编译出的提示词与新增这两个维度之前完全一致。
 function buildBehavior(config, T) {
   const parts = []
   if (config.style && T.styles[config.style]) parts.push(`${T.styleLabel}${T.styles[config.style]}`)
   if (config.headingLists && T.headingLists[config.headingLists]) parts.push(T.headingLists[config.headingLists])
   if (config.emoji && T.emoji[config.emoji]) parts.push(T.emoji[config.emoji])
+  if (config.tables && T.tables[config.tables]) parts.push(T.tables[config.tables])
+  if (config.replyLength && T.replyLength[config.replyLength]) parts.push(T.replyLength[config.replyLength])
   if (config.language && T.replyLanguage[config.language]) parts.push(T.replyLanguage[config.language])
   return parts.join(T.joiner)
 }
@@ -667,11 +688,19 @@ const COMMAND_MESSAGES = {
     traitsLabel: '特质',
     headingListsLabel: '标题和列表',
     emojiLabel: '表情符号',
+    tablesLabel: '表格',
+    replyLengthLabel: '回复长度',
     traitNames: {
       default: '默认',
       more: '增强',
       less: '减弱'
     },
+    replyLengthNames: {
+      concise: '简洁',
+      normal: '适中',
+      detailed: '详尽'
+    },
+    listSep: '，',
     trailLabel: '输入框光轨',
     trailLine: (status, color, speedName, widthName) => `${status}（${color} / ${speedName} / ${widthName}）`,
     trailSpeedNames: {
@@ -706,7 +735,7 @@ const COMMAND_MESSAGES = {
     saveUsage: '用法：/soul save <名称>（1-30 个字符）',
     useUsage: '用法：/soul use <名称>',
     delUsage: '用法：/soul del <名称>',
-    setUsage: '用法：/soul set key=value ...（可用字段：enabled / style / headingLists / emoji / language / nickname / occupation / bio / customInstructions / trailEnabled / trailColor / trailSpeed / trailWidth）',
+    setUsage: '用法：/soul set key=value ...（可用字段：enabled / style / headingLists / emoji / tables / replyLength / language / nickname / occupation / bio / customInstructions / trailEnabled / trailColor / trailSpeed / trailWidth）',
     unknownField: '未知配置项',
     invalidBoolean: (key) => `${key} 取值必须为 true / false`,
     setNoChanges: '配置无变化，未做修改',
@@ -736,11 +765,19 @@ const COMMAND_MESSAGES = {
     traitsLabel: 'Traits',
     headingListsLabel: 'Headings & lists',
     emojiLabel: 'Emoji',
+    tablesLabel: 'Tables',
+    replyLengthLabel: 'Reply length',
     traitNames: {
       default: 'Default',
       more: 'More',
       less: 'Less'
     },
+    replyLengthNames: {
+      concise: 'Concise',
+      normal: 'Balanced',
+      detailed: 'Detailed'
+    },
+    listSep: ', ',
     trailLabel: 'Composer light trail',
     trailLine: (status, color, speedName, widthName) => `${status} (${color} / ${speedName} / ${widthName})`,
     trailSpeedNames: {
@@ -775,7 +812,7 @@ const COMMAND_MESSAGES = {
     saveUsage: 'Usage: /soul save <name> (1-30 chars)',
     useUsage: 'Usage: /soul use <name>',
     delUsage: 'Usage: /soul del <name>',
-    setUsage: 'Usage: /soul set key=value ... (fields: enabled / style / headingLists / emoji / language / nickname / occupation / bio / customInstructions / trailEnabled / trailColor / trailSpeed / trailWidth)',
+    setUsage: 'Usage: /soul set key=value ... (fields: enabled / style / headingLists / emoji / tables / replyLength / language / nickname / occupation / bio / customInstructions / trailEnabled / trailColor / trailSpeed / trailWidth)',
     unknownField: 'Unknown field',
     invalidBoolean: (key) => `${key} must be true or false`,
     setNoChanges: 'No config changes to apply',
@@ -847,8 +884,12 @@ function registerCommands(ctx) {
             const occupation = config.occupation || t.notSet
             const bio = config.bio || t.notSet
             const styleName = t.styleNames[config.style] || config.style || t.notSet
-            const hlName = t.traitNames[config.headingLists] || config.headingLists
-            const emojiName = t.traitNames[config.emoji] || config.emoji
+            const traitsLine = [
+              `${t.headingListsLabel}=${t.traitNames[config.headingLists] || config.headingLists}`,
+              `${t.emojiLabel}=${t.traitNames[config.emoji] || config.emoji}`,
+              `${t.tablesLabel}=${t.traitNames[config.tables] || config.tables}`,
+              `${t.replyLengthLabel}=${t.replyLengthNames[config.replyLength] || config.replyLength}`
+            ].join(t.listSep)
             const instructions = config.customInstructions || t.notSet
             const personaCount = Object.keys(config.personas || {}).length
             const pendingLine = pendingPersonaProposal ? `\n${t.pendingHint}` : ''
@@ -861,7 +902,7 @@ function registerCommands(ctx) {
 
             return {
               kind: 'success',
-              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.occupationLabel}${t.colon}${occupation}\n${t.bioLabel}${t.colon}${bio}\n${t.styleLabel}${t.colon}${styleName}\n${t.traitsLabel}${t.colon}${t.headingListsLabel}=${hlName}，${t.emojiLabel}=${emojiName}\n${t.trailLabel}${t.colon}${trailText}\n${t.instructionsLabel}${t.colon}${instructions}\n${t.toolConfirmLabel}${t.colon}${config.requireToolConfirmation ? t.onLabel : t.offLabel}\n${t.personasLabel}${t.colon}${personaCount}${pendingLine}\n\n${t.help}`
+              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.occupationLabel}${t.colon}${occupation}\n${t.bioLabel}${t.colon}${bio}\n${t.styleLabel}${t.colon}${styleName}\n${t.traitsLabel}${t.colon}${traitsLine}\n${t.trailLabel}${t.colon}${trailText}\n${t.instructionsLabel}${t.colon}${instructions}\n${t.toolConfirmLabel}${t.colon}${config.requireToolConfirmation ? t.onLabel : t.offLabel}\n${t.personasLabel}${t.colon}${personaCount}${pendingLine}\n\n${t.help}`
             }
           }
 
@@ -1082,6 +1123,16 @@ function registerTools(ctx) {
             enum: TRAIT_VALUES,
             description: '特质·表情符号：default=默认，more=增强（使用较多表情符号），less=减弱（尽量减少使用表情符号）。'
           },
+          tables: {
+            type: 'string',
+            enum: TRAIT_VALUES,
+            description: '特质·表格：default=默认，more=增强（呈现对比、多字段或结构化信息时优先使用表格），less=减弱（避免表格，改用列表或段落文本）。'
+          },
+          replyLength: {
+            type: 'string',
+            enum: REPLY_LENGTH_VALUES,
+            description: '回复长度偏好：concise=简洁（直击要点、不展开），normal=适中（不额外约束），detailed=详尽（充分展开背景、步骤与推理）。'
+          },
           customInstructions: { type: 'string', description: '额外的自定义指令，用于覆盖或补充当前人设。' },
         },
         output: {
@@ -1107,6 +1158,8 @@ function registerTools(ctx) {
                   language: { type: 'string' },
                   headingLists: { type: 'string' },
                   emoji: { type: 'string' },
+                  tables: { type: 'string' },
+                  replyLength: { type: 'string' },
                   customInstructions: { type: 'string' },
                 },
               },
