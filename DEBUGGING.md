@@ -147,7 +147,7 @@ dsh --profile web --dump-config
 (Get-Item "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-soul").Target
 ```
 
-`package.json` 的 `version`、`client/index.mjs` 的 `VERSION` 常量、`RELEASE_NOTES.md` 三处应一致（本版均为 `0.7.0`）。
+`package.json` 的 `version`、`client/index.mjs` 的 `VERSION` 常量、`RELEASE_NOTES.md` 三处应一致（本版均为 `0.7.1`）。
 
 ### 3) 客户端产物（确认浏览器拿到新代码）
 
