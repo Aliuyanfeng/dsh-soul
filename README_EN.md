@@ -20,7 +20,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - The compiled system prompt follows the output language (English descriptions when `language=en`)
 - Custom instructions
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
-- Named personas: 6 built-in personas (Socratic Questioner / Minimalist / Senior Architect / Teaching Explainer / Strict Code Reviewer / Brainstorm Partner — shipped with the plugin, cannot be deleted) plus your own named personas, switched with one click (save / use / list / delete, in both the Web UI and slash commands); each row summarises the style and every dimension that differs from its default
+- Named personas: 7 built-in personas (Socratic Questioner / Minimalist / Senior Architect / Teaching Explainer / Strict Code Reviewer / Brainstorm Partner / Self-Driven Collaborator — shipped with the plugin, cannot be deleted) plus your own named personas, switched with one click (save / use / list / delete, in both the Web UI and slash commands); each row summarises the style and every dimension that differs from its default
 - `set_persona` confirmation mode (`requireToolConfirmation`): agent persona changes take effect only after `/soul confirm`
 - Composer light trail: while the agent is replying, a light trail loops around the composer border (default color `#679EFE`)
   - Color: preset swatches, a color picker, or a hex input (e.g. `#679EFE`)
