@@ -20,7 +20,7 @@ dsh plugin --profile <profile> add dsh-soul
 | 特质 | 标题和列表、表情符号、表格（各：默认 / 增强 / 减弱）、回复长度（简洁 / 适中 / 详尽） |
 | 输出语言 | 简体中文 / English（同时决定 `/soul` 命令的输出语言） |
 | 自定义指令 | 补充角色、习惯等个性化要求 |
-| 人设预设 | 7 个内置预设（随插件提供、不可删除）+ 保存当前配置为自己的预设（★ 标记当前匹配项） |
+| 人设预设 | 7 个内置预设（随插件提供、不可删除）+ 保存当前人设为自己的预设（★ 标记当前匹配项）。**预设只管 Agent 的人格**（风格 / 特质 / 回复长度 / 输出语言 / 自定义指令），不含「关于你」——切换预设不会改你的昵称职业 |
 | Agent 工具 | `set_persona` 的确认模式开关 |
 | 输入框光轨 | 开关、颜色（预设色板 / 取色器 / 十六进制）、流动速度、光带粗细 |
 
@@ -34,7 +34,7 @@ dsh plugin --profile <profile> add dsh-soul
 /soul set k=v         修改配置项，如 /soul set style=humorous language=en
                       特质：headingLists=more emoji=less tables=more replyLength=concise
                       光轨：trailEnabled / trailColor / trailSpeed / trailWidth
-/soul save <名>       保存当前配置为人设预设（内置名不可占用）
+/soul save <名>       保存当前人设为预设（不含「关于你」；内置名不可占用）
 /soul use <名>        应用人设预设（内置预设同样可用）
 /soul list            查看人设预设（✔ 当前匹配项；内置项带 [内置] 标记）
 /soul del <名>        删除人设预设（别名 delete / rm；内置预设不可删）

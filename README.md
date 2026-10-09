@@ -21,6 +21,7 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
 - 输入自定义指令
 - Agent 可调用工具 `set_persona`，让模型在对话中直接调整人设
 - 人设预设：7 个内置人设（苏格拉底式提问者 / 极简主义者 / 资深架构师 / 教学型讲解者 / 严格代码审阅者 / 头脑风暴伙伴 / 自驱型协作者，随插件提供、不可删除）+ 多套自建人设一键切换（保存 / 使用 / 列表 / 删除，Web UI 与命令双入口）；每行摘要显示风格与偏离默认的维度
+- 预设只管 Agent 的人格：**切换预设不会动「关于你」**（昵称 / 职业 / 介绍是你本人的资料，与「Agent 怎么说话」是两码事）。内置与自建一视同仁——保存预设时只快照风格 / 特质 / 回复长度 / 输出语言 / 自定义指令，不包含身份字段；早期版本存下的完整快照会在读取时自动剥离
 - `set_persona` 确认模式（`requireToolConfirmation`）：Agent 的人设修改需经 `/soul confirm` 确认后才生效
 - 输入框光轨：Agent 回复中时，输入框边框显示沿边循环流动的光轨（默认颜色 `#679EFE`）
   - 颜色：预设色板、取色器或十六进制输入（如 `#679EFE`）
@@ -100,7 +101,7 @@ dsh plugin --profile <profile> update dsh-soul
 ```text
 /soul show        查看当前配置（含确认模式、预设数量与送达状态）
 /soul set k=v     修改配置项（如 /soul set style=humorous language=en；光轨：trailColor=#679EFE trailSpeed=fast trailWidth=thick）
-/soul save <名>   保存当前配置为人设预设（内置名不可占用）
+/soul save <名>   保存当前人设为预设（只含人格维度，不含「关于你」；内置名不可占用）
 /soul use <名>    应用人设预设（内置预设同样可用）
 /soul list        查看人设预设（✔ 标记当前匹配项；内置项带 [内置] 标记）
 /soul del <名>    删除人设预设（delete / rm 别名；内置预设不可删）
@@ -143,7 +144,7 @@ soul-config.json
 }
 ```
 
-自建人设预设保存在同一文件的 `personas` 字段：名称 → 人设字段快照（昵称/职业/介绍/风格/特质/回复长度/语言/自定义指令）+ `updatedAt`；预设库变更不影响活动配置，使用预设时才应用到配置并同步会话。内置人设不落盘（见 `lib/personas.mjs`），列表 / 使用 / ★ 匹配统一走「内置 + 自建」的合并视图，同名以内置为准，内置名既不可保存占用也不可删除。
+自建人设预设保存在同一文件的 `personas` 字段：名称 → 人设字段快照（风格 / 特质 / 回复长度 / 输出语言 / 自定义指令）+ `updatedAt`。**预设不含「关于你」**（昵称 / 职业 / 介绍）——那是使用者本人的资料，切换预设只换 Agent 的说话方式；这条由 `PROFILE_FIELDS` 与 `PERSONA_FIELDS`（`lib/config.mjs`）结构性保证：保存快照、应用取键、★ 匹配判据、磁盘归一化四条路径都按 `PERSONA_FIELDS` 白名单走，所以内置与自建行为一致。预设库变更不影响活动配置，使用预设时才应用到配置并同步会话。内置人设不落盘（见 `lib/personas.mjs`），列表 / 使用 / ★ 匹配统一走「内置 + 自建」的合并视图，同名以内置为准，内置名既不可保存占用也不可删除。
 
 输入框光轨字段：`trailEnabled`（是否启用，默认 `true`）、`trailColor`（6 位十六进制颜色，统一大写存储，默认 `#679EFE`）、`trailSpeed`（`slow` / `normal` / `fast`，默认 `slow`）、`trailWidth`（`thin` / `normal` / `thick`，默认 `thin`）。这四个字段属纯外观配置，只落盘、不进入 system prompt、不触发会话注入。
 

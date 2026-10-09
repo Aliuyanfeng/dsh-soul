@@ -21,6 +21,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - Custom instructions
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
 - Named personas: 7 built-in personas (Socratic Questioner / Minimalist / Senior Architect / Teaching Explainer / Strict Code Reviewer / Brainstorm Partner / Self-Driven Collaborator — shipped with the plugin, cannot be deleted) plus your own named personas, switched with one click (save / use / list / delete, in both the Web UI and slash commands); each row summarises the style and every dimension that differs from its default
+- Personas cover the **agent's personality only**: switching a persona never touches **"About you"** (nickname / occupation / bio describe *you*, not how the agent talks). Built-in and self-saved personas behave identically — saving a persona snapshots style / traits / reply length / reply language / custom instructions, never the identity fields; full-config snapshots written by earlier versions are stripped on read
 - `set_persona` confirmation mode (`requireToolConfirmation`): agent persona changes take effect only after `/soul confirm`
 - Composer light trail: while the agent is replying, a light trail loops around the composer border (default color `#679EFE`)
   - Color: preset swatches, a color picker, or a hex input (e.g. `#679EFE`)
@@ -102,7 +103,7 @@ Slash commands are also available:
 ```text
 /soul show        Show current configuration (confirmation mode, persona count & delivery status)
 /soul set k=v     Change config fields (e.g. /soul set style=humorous language=en; trail: trailColor=#679EFE trailSpeed=fast trailWidth=thick)
-/soul save <name> Save the current config as a persona (built-in names are reserved)
+/soul save <name> Save the current persona as a preset (personality fields only, never "About you"; built-in names are reserved)
 /soul use <name>  Apply a persona (built-in personas work the same way)
 /soul list        List personas (✔ marks the active match; built-ins carry a [built-in] tag)
 /soul del <name>  Delete a persona (delete / rm aliases; built-in personas cannot be deleted)
@@ -145,7 +146,7 @@ Example:
 }
 ```
 
-Your own personas are stored in the same file under the `personas` field: name → persona field snapshot (nickname / occupation / bio / style / traits / reply length / language / custom instructions) + `updatedAt`. Persona library changes never touch the active config; a persona is applied to the config (and synced to sessions) only when used. Built-in personas are not persisted — they live in `lib/personas.mjs` — and listing / applying / match detection all go through the merged view of built-ins plus your own; on a name collision the built-in wins, and a built-in name can neither be saved over nor deleted.
+Your own personas are stored in the same file under the `personas` field: name → persona field snapshot (style / traits / reply length / reply language / custom instructions) + `updatedAt`. **A persona never contains "About you"** (nickname / occupation / bio) — those describe you, and switching a persona only changes how the agent talks. This is enforced structurally by `PROFILE_FIELDS` and `PERSONA_FIELDS` in `lib/config.mjs`: snapshotting, applying, ★ matching and on-disk normalisation all go through the `PERSONA_FIELDS` allow-list, so built-in and self-saved personas behave the same way. Persona library changes never touch the active config; a persona is applied to the config (and synced to sessions) only when used. Built-in personas are not persisted — they live in `lib/personas.mjs` — and listing / applying / match detection all go through the merged view of built-ins plus your own; on a name collision the built-in wins, and a built-in name can neither be saved over nor deleted.
 
 Composer light trail fields: `trailEnabled` (on/off, default `true`), `trailColor` (6-digit hex, stored uppercase, default `#679EFE`), `trailSpeed` (`slow` / `normal` / `fast`, default `slow`), `trailWidth` (`thin` / `normal` / `thick`, default `thin`). These are appearance-only: they are persisted but never enter the system prompt and never trigger a session injection.
 
