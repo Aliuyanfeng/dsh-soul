@@ -33,6 +33,7 @@ import {
   sanitizePersonaName
 } from './lib/config.mjs'
 import { createInjectionSource } from './lib/injection.mjs'
+import { isBuiltinPersona, mergePersonas, personaMatches, resolvePersona } from './lib/personas.mjs'
 
 const name = 'soul'
 
@@ -526,14 +527,19 @@ function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key)
 }
 
-// 计算与当前活动配置完全一致的预设名（多个命中时取名称排序最前）
+// 计算与当前活动配置匹配的预设名（多个命中时取名称排序最前）。
+// 匹配语义是「部分覆盖」而非全字段相等，理由见 lib/personas.mjs 的 personaMatches。
 function findActivePersonaName(config) {
-  const personas = config.personas || {}
-  for (const personaName of Object.keys(personas).sort()) {
-    const entry = personas[personaName]
-    if (PERSONA_FIELDS.every((key) => entry[key] === config[key])) return personaName
+  const view = mergePersonas(config.personas)
+  for (const personaName of Object.keys(view).sort()) {
+    if (personaMatches(view[personaName], config)) return personaName
   }
   return null
+}
+
+// 预设库的对外视图（内置 + 用户）与当前命中项，供三个路由的响应复用。
+function personaLibrary(config) {
+  return { personas: mergePersonas(config.personas), activeName: findActivePersonaName(config) }
 }
 
 // 人设预设 HTTP 路由：列表 / 保存 / 使用 / 删除。
@@ -557,7 +563,7 @@ function registerPersonaRoutes(ctx) {
             return
           }
           const config = await loadConfig()
-          send(res, 200, { ok: true, personas: config.personas || {}, activeName: findActivePersonaName(config) })
+          send(res, 200, { ok: true, ...personaLibrary(config) })
         } catch (err) {
           send(res, 500, { ok: false, error: String(err.message || err) })
         }
@@ -584,12 +590,18 @@ function registerPersonaRoutes(ctx) {
             send(res, 400, { ok: false, error: `预设名称无效（1-${PERSONA_NAME_MAX} 个字符）` })
             return
           }
+          // 内置名一律不可写入：内置预设只存在于代码里，若允许同名落盘，合并视图会
+          // 遮蔽它，用户就会得到一个「保存了却看不见、也删不掉」的幽灵条目。
+          if (isBuiltinPersona(personaName)) {
+            send(res, 400, { ok: false, error: `「${personaName}」是内置预设，请换一个名称` })
+            return
+          }
           const { config: updated } = await commitConfig((current) => {
             const personas = clonePersonas(current.personas)
             personas[personaName] = { ...personaSnapshotOf(current), updatedAt: new Date().toISOString() }
             return { ...current, personas }
           })
-          send(res, 200, { ok: true, personas: updated.personas || {}, activeName: findActivePersonaName(updated) })
+          send(res, 200, { ok: true, ...personaLibrary(updated) })
         } catch (err) {
           send(res, 500, { ok: false, error: String(err.message || err) })
         }
@@ -613,12 +625,15 @@ function registerPersonaRoutes(ctx) {
           }
           const personaName = sanitizePersonaName(parsed.body && parsed.body.name)
           const current = await loadConfig()
-          if (!personaName || !hasOwn(current.personas || {}, personaName)) {
+          // 内置与用户预设共用同一条应用路径（resolvePersona 先内置后用户）
+          const entry = personaName ? resolvePersona(personaName, current.personas) : null
+          if (!entry) {
             send(res, 400, { ok: false, error: `预设不存在：${personaName || '(空)'}` })
             return
           }
-          // 预设值保存时已校验；此处再过一遍白名单，防御手改文件等异常数据
-          const { patch } = sanitizeConfig(pickPersonaValues(current.personas[personaName]))
+          // 内置预设已在代码里写过一遍；用户预设保存时也校验过。此处统一再过一遍
+          // 白名单，防御手改 config.json 注入的异常数据。
+          const { patch } = sanitizeConfig(pickPersonaValues(entry))
           const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
           if (promptChanged.length > 0) {
             refreshPromptAndInject(ctx, updated)
@@ -646,6 +661,13 @@ function registerPersonaRoutes(ctx) {
             return
           }
           const personaName = sanitizePersonaName(parsed.body && parsed.body.name)
+          // 内置预设不可删除。这一层必须挡在「磁盘库是否存在」之前：内置项本来就不在
+          // 磁盘库里，但手改文件可能留下同名残留，那种条目已被合并视图遮蔽、删它没有
+          // 意义，而调用方真正想删的是内置项——直接拒绝，语义才唯一。
+          if (personaName && isBuiltinPersona(personaName)) {
+            send(res, 400, { ok: false, error: `「${personaName}」是内置预设，无法删除` })
+            return
+          }
           const current = await loadConfig()
           if (!personaName || !hasOwn(current.personas || {}, personaName)) {
             send(res, 400, { ok: false, error: `预设不存在：${personaName || '(空)'}` })
@@ -656,7 +678,7 @@ function registerPersonaRoutes(ctx) {
             delete personas[personaName]
             return { ...c, personas }
           })
-          send(res, 200, { ok: true, personas: updated.personas || {}, activeName: findActivePersonaName(updated) })
+          send(res, 200, { ok: true, ...personaLibrary(updated) })
         } catch (err) {
           send(res, 500, { ok: false, error: String(err.message || err) })
         }
@@ -726,6 +748,10 @@ const COMMAND_MESSAGES = {
     confirmDone: (detail) => `✅ 已应用人设变更：${detail}`,
     rejectDone: '✅ 已拒绝待确认的人设变更',
     saveDone: (name) => `✅ 已保存预设「${name}」`,
+    // 内置预设（随插件发布、不落盘）：不可用同名保存，也不可删除
+    builtinName: '内置',
+    builtinSaveBlocked: (name) => `「${name}」是内置预设，请换一个名称`,
+    builtinDeleteBlocked: (name) => `「${name}」是内置预设，无法删除`,
     useDone: (name) => `✅ 已应用预设「${name}」`,
     useUnchanged: (name) => `ℹ 预设「${name}」与当前配置一致，无需变更`,
     personaMissing: (name) => `预设「${name}」不存在`,
@@ -803,6 +829,9 @@ const COMMAND_MESSAGES = {
     confirmDone: (detail) => `✅ Persona changes applied: ${detail}`,
     rejectDone: '✅ Pending persona proposal discarded',
     saveDone: (name) => `✅ Persona "${name}" saved`,
+    builtinName: 'built-in',
+    builtinSaveBlocked: (name) => `"${name}" is a built-in persona — pick another name`,
+    builtinDeleteBlocked: (name) => `"${name}" is a built-in persona and cannot be deleted`,
     useDone: (name) => `✅ Persona "${name}" applied`,
     useUnchanged: (name) => `ℹ Persona "${name}" matches the current config`,
     personaMissing: (name) => `Persona "${name}" does not exist`,
@@ -929,6 +958,9 @@ function registerCommands(ctx) {
           if (first === 'save') {
             const personaName = sanitizePersonaName(rest)
             if (!personaName) return { kind: 'error', text: t.saveUsage }
+            if (isBuiltinPersona(personaName)) {
+              return { kind: 'error', text: t.builtinSaveBlocked(personaName) }
+            }
             await commitConfig((current) => {
               const personas = clonePersonas(current.personas)
               personas[personaName] = { ...personaSnapshotOf(current), updatedAt: new Date().toISOString() }
@@ -940,11 +972,13 @@ function registerCommands(ctx) {
           if (first === 'use') {
             const personaName = sanitizePersonaName(rest)
             if (!personaName) return { kind: 'error', text: t.useUsage }
-            if (!hasOwn(config.personas || {}, personaName)) {
+            // 内置与用户预设共用同一条应用路径（resolvePersona 先内置后用户）
+            const entry = resolvePersona(personaName, config.personas)
+            if (!entry) {
               return { kind: 'error', text: t.personaMissing(personaName) }
             }
             // 预设值保存时已校验；此处再过一遍白名单，防御手改文件等异常数据
-            const { patch } = sanitizeConfig(pickPersonaValues(config.personas[personaName]))
+            const { patch } = sanitizeConfig(pickPersonaValues(entry))
             const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
             if (changed.length === 0) {
               return { kind: 'success', text: t.useUnchanged(personaName) }
@@ -954,17 +988,19 @@ function registerCommands(ctx) {
           }
 
           if (first === 'list') {
-            const personas = config.personas || {}
-            const names = Object.keys(personas).sort()
+            // 与 Web UI 一致：列出合并视图（内置 + 用户），并标出内置项
+            const view = mergePersonas(config.personas)
+            const names = Object.keys(view).sort()
             if (names.length === 0) {
               return { kind: 'success', text: `${t.listTitle}\n${t.listEmpty}` }
             }
             const activeName = findActivePersonaName(config)
             const lines = names.map((personaName) => {
-              const entry = personas[personaName]
+              const entry = view[personaName]
               const styleText = STYLE_VALUES.includes(entry.style) ? (t.styleNames[entry.style] || entry.style) : (entry.style || '-')
               const nickText = entry.nickname || '-'
-              return `${personaName === activeName ? '✔ ' : '• '}${personaName} ｜ ${t.styleLabel}=${styleText} ｜ ${t.nicknameLabel}=${nickText}`
+              const mark = entry.builtin ? ` [${t.builtinName}]` : ''
+              return `${personaName === activeName ? '✔ ' : '• '}${personaName}${mark} ｜ ${t.styleLabel}=${styleText} ｜ ${t.nicknameLabel}=${nickText}`
             })
             return { kind: 'success', text: `${t.listTitle} [${names.length}]\n${lines.join('\n')}` }
           }
@@ -972,6 +1008,9 @@ function registerCommands(ctx) {
           if (first === 'del' || first === 'delete' || first === 'rm') {
             const personaName = sanitizePersonaName(rest)
             if (!personaName) return { kind: 'error', text: t.delUsage }
+            if (isBuiltinPersona(personaName)) {
+              return { kind: 'error', text: t.builtinDeleteBlocked(personaName) }
+            }
             if (!hasOwn(config.personas || {}, personaName)) {
               return { kind: 'error', text: t.personaMissing(personaName) }
             }

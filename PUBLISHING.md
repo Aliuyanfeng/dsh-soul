@@ -15,6 +15,8 @@
 ```text
 index.mjs
 lib/config.mjs
+lib/injection.mjs
+lib/personas.mjs
 client/index.mjs
 cordis.patch.yml
 README.md

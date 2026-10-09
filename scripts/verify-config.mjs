@@ -3,7 +3,8 @@
 // 覆盖 lib/config.mjs 的 migrateConfig / sanitizeConfig：
 //   - 旧版本 style+tone 迁移、废弃字段清理、特质脏数据回退
 //   - 白名单 / 类型 / 长度 / 枚举校验的接受与拒绝路径
-// 另含清单契约自检：插件图标（DSH 在 app-boot 的 iconOf 中判定）。
+// 覆盖 lib/personas.mjs 的内置人设与合并 / 匹配语义（含「应用后必须命中自己」闭环）。
+// 另含清单契约自检：插件图标（DSH 在 app-boot 的 iconOf 中判定）、前后端契约一致性。
 // 零依赖，直接 `node scripts/verify-config.mjs` 运行。
 
 import assert from 'node:assert/strict'
@@ -14,11 +15,24 @@ import {
   DEFAULT_CONFIG,
   FIELD_LIMITS,
   PERSONA_FIELDS,
+  PERSONA_NAME_MAX,
+  REPLY_LENGTH_VALUES,
+  STYLE_VALUES,
+  TRAIT_VALUES,
   migrateConfig,
   normalizePersonas,
   sanitizeConfig,
   sanitizePersonaName
 } from '../lib/config.mjs'
+import {
+  BUILTIN_PERSONAS,
+  builtinPersonaNames,
+  declaredPersonaKeys,
+  isBuiltinPersona,
+  mergePersonas,
+  personaMatches,
+  resolvePersona
+} from '../lib/personas.mjs'
 
 let passed = 0
 function check(name, fn) {
@@ -378,6 +392,205 @@ check('图标：渐变引用都能解析到已定义的 id', () => {
   for (const ref of refs) {
     assert.ok(defined.has(ref), `引用了未定义的 id：${ref}`)
   }
+})
+
+// ==================== 内置人设预设 ====================
+
+console.log('\n内置人设预设')
+
+check('内置人设非空，名称合法且不超上限', () => {
+  const names = builtinPersonaNames()
+  assert.ok(names.length >= 4, `内置人设过少：${names.length}`)
+  for (const name of names) {
+    assert.equal(sanitizePersonaName(name), name, `内置名不合法：${name}`)
+    assert.ok(name.length <= PERSONA_NAME_MAX, `内置名超长：${name}`)
+    assert.ok(name.trim() === name, `内置名含首尾空白：${name}`)
+  }
+})
+
+check('内置人设只声明 PERSONA_FIELDS 内的键', () => {
+  for (const name of builtinPersonaNames()) {
+    for (const key of Object.keys(BUILTIN_PERSONAS[name])) {
+      assert.ok(PERSONA_FIELDS.includes(key), `${name} 含非人设字段：${key}`)
+    }
+  }
+})
+
+check('内置人设不声明用户自有信息、输出语言与总开关', () => {
+  // nickname / occupation / bio 是「关于你」的用户资料，预设去写它们等于把用户
+  // 的昵称职业清空；language 属于用户偏好，写死会让另一种语言的用户被强行切回；
+  // enabled 是总开关，预设不该能替你关掉个性化。
+  for (const name of builtinPersonaNames()) {
+    for (const key of ['nickname', 'occupation', 'bio', 'language', 'enabled']) {
+      assert.equal(key in BUILTIN_PERSONAS[name], false, `${name} 不应声明 ${key}`)
+    }
+  }
+})
+
+check('内置人设的枚举值与文本长度合法，且都有自定义指令', () => {
+  const enums = {
+    style: STYLE_VALUES,
+    headingLists: TRAIT_VALUES,
+    emoji: TRAIT_VALUES,
+    tables: TRAIT_VALUES,
+    replyLength: REPLY_LENGTH_VALUES
+  }
+  for (const name of builtinPersonaNames()) {
+    const entry = BUILTIN_PERSONAS[name]
+    for (const [field, allowed] of Object.entries(enums)) {
+      if (!(field in entry)) continue
+      assert.ok(allowed.includes(entry[field]), `${name}.${field} 非法取值：${entry[field]}`)
+    }
+    // customInstructions 是人格差异的主要载体：枚举字段只能表达「更啰嗦 / 更简洁」
+    // 这类粗粒度倾向，所以内置预设必须有它。
+    assert.equal(typeof entry.customInstructions, 'string', `${name} 缺少 customInstructions`)
+    assert.ok(entry.customInstructions.length > 0, `${name} 的 customInstructions 为空`)
+    assert.ok(
+      entry.customInstructions.length <= FIELD_LIMITS.customInstructions,
+      `${name} 的 customInstructions 超长（${entry.customInstructions.length} > ${FIELD_LIMITS.customInstructions}）`
+    )
+  }
+})
+
+check('内置人设都能通过 sanitizeConfig（数据本身合法）', () => {
+  for (const name of builtinPersonaNames()) {
+    const { errors } = sanitizeConfig(resolvePersona(name, {}))
+    assert.deepEqual(errors, {}, `${name} 未通过校验：${JSON.stringify(errors)}`)
+  }
+})
+
+check('mergePersonas：内置优先并带 builtin 标记，用户条目不受影响', () => {
+  const names = builtinPersonaNames()
+  const merged = mergePersonas({ '极简主义者': { style: 'roast' }, 我的预设: { style: 'casual' } })
+  assert.equal(Object.keys(merged).length, names.length + 1, '同名用户条目应被内置遮蔽而非并存')
+  assert.equal(merged['极简主义者'].style, BUILTIN_PERSONAS['极简主义者'].style, '同名时应取内置内容')
+  assert.equal(merged['极简主义者'].builtin, true)
+  assert.equal(merged['我的预设'].builtin, undefined, '用户预设不应带 builtin 标记')
+  assert.deepEqual(merged['我的预设'], { style: 'casual' })
+  for (const name of names) assert.equal(merged[name].builtin, true, `${name} 应带 builtin 标记`)
+  // 非对象输入不应抛错
+  assert.equal(Object.keys(mergePersonas(null)).length, names.length)
+  assert.equal(Object.keys(mergePersonas('x')).length, names.length)
+})
+
+check('isBuiltinPersona / resolvePersona 的判定与优先级', () => {
+  const names = builtinPersonaNames()
+  assert.equal(isBuiltinPersona(names[0]), true)
+  assert.equal(isBuiltinPersona('不存在的名字'), false)
+  assert.equal(isBuiltinPersona(123), false)
+  assert.equal(isBuiltinPersona(null), false)
+  assert.deepEqual(resolvePersona(names[0], {}), BUILTIN_PERSONAS[names[0]])
+  // 内置名即使磁盘上有同名条目也应解析到内置内容
+  assert.deepEqual(resolvePersona(names[0], { [names[0]]: { style: 'roast' } }), BUILTIN_PERSONAS[names[0]])
+  assert.deepEqual(resolvePersona('我的预设', { '我的预设': { style: 'casual' } }), { style: 'casual' })
+  assert.equal(resolvePersona('不存在', { '我的预设': { style: 'casual' } }), null)
+  assert.equal(resolvePersona(undefined, {}), null)
+})
+
+check('应用内置预设后能命中它自己（★ 标记闭环）', () => {
+  // 这条是「预设能用」的最小闭环：应用 → 表单回读 → 列表应显示 ★。
+  // 若匹配语义写成全字段相等，apply 会失败而这条会立刻报出来。
+  for (const name of builtinPersonaNames()) {
+    const entry = resolvePersona(name, {})
+    const { patch } = sanitizeConfig(entry)
+    const applied = { ...DEFAULT_CONFIG, ...patch }
+    assert.equal(personaMatches(entry, applied), true, `${name} 应用后匹配不上自己`)
+  }
+})
+
+check('匹配是部分覆盖语义：已声明字段敏感、未声明字段免疫', () => {
+  const entry = resolvePersona('极简主义者', {})
+  const applied = { ...DEFAULT_CONFIG, ...sanitizeConfig(entry).patch }
+  assert.equal(personaMatches(entry, DEFAULT_CONFIG), false, '未应用时不应匹配')
+  assert.equal(personaMatches(entry, { ...applied, style: 'casual' }), false, '改动已声明字段后不应匹配')
+  assert.equal(
+    personaMatches(entry, { ...applied, customInstructions: `${applied.customInstructions}x` }),
+    false,
+    '自定义指令变化后不应匹配'
+  )
+  assert.equal(personaMatches(entry, { ...applied, language: 'en' }), true, '预设未声明 language，语言变化不应影响匹配')
+  assert.equal(personaMatches(entry, { ...applied, nickname: '小明' }), true, '预设未声明 nickname，改昵称不应影响匹配')
+})
+
+check('未声明任何字段的条目不匹配（避免匹配一切）', () => {
+  assert.equal(personaMatches({}, DEFAULT_CONFIG), false)
+  assert.equal(personaMatches({ updatedAt: 'x', builtin: true }, DEFAULT_CONFIG), false)
+  assert.equal(personaMatches(null, DEFAULT_CONFIG), false)
+  assert.deepEqual(declaredPersonaKeys({ style: 'casual', updatedAt: 'x', builtin: true, extra: 1 }), ['style'])
+})
+
+// ==================== 前后端契约一致性 ====================
+
+console.log('\n前后端契约一致性')
+
+const clientSource = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+
+check('客户端摘要的默认值表与宿主 DEFAULT_CONFIG 逐项一致', () => {
+  const block = clientSource.match(/const META_FIELD_DEFAULTS = \{([\s\S]*?)\}/)
+  assert.ok(block, '客户端缺少 META_FIELD_DEFAULTS')
+  const pairs = [...block[1].matchAll(/(\w+):\s*'([^']*)'/g)].map((m) => [m[1], m[2]])
+  assert.ok(pairs.length >= 5, `默认值表条目过少：${pairs.length}`)
+  for (const [field, value] of pairs) {
+    assert.equal(
+      value,
+      String(DEFAULT_CONFIG[field]),
+      `客户端 ${field} 默认值 ${value} 与宿主 DEFAULT_CONFIG 的 ${DEFAULT_CONFIG[field]} 不一致（摘要会显示相反的结果）`
+    )
+  }
+})
+
+check('客户端摘要覆盖的字段集合固定', () => {
+  const block = clientSource.match(/const META_FIELD_VALUES = \{([\s\S]*?)\}/)
+  assert.ok(block, '客户端缺少 META_FIELD_VALUES')
+  const fields = [...block[1].matchAll(/(\w+):/g)].map((m) => m[1]).sort()
+  assert.deepEqual(fields, ['emoji', 'headingLists', 'language', 'replyLength', 'tables'])
+})
+
+check('客户端为内置预设提供中英双语文案键', () => {
+  const keys = [
+    'personas.builtin',
+    'personas.hint',
+    'meta.replyLength.concise',
+    'meta.replyLength.detailed',
+    'meta.headingLists.more',
+    'meta.headingLists.less',
+    'meta.emoji.more',
+    'meta.emoji.less',
+    'meta.tables.more',
+    'meta.tables.less',
+    'meta.language.zh',
+    'meta.language.en'
+  ]
+  for (const key of keys) {
+    const hits = clientSource.split(`'${key}':`).length - 1
+    assert.equal(hits, 2, `${key} 应在 zh / en 各出现一次，实际 ${hits} 次`)
+  }
+})
+
+check('客户端内置预设行不渲染删除按钮，改为「内置」标记', () => {
+  assert.ok(
+    /builtin && e\('span', \{ className: 'soul-persona-badge' \}/.test(clientSource),
+    '内置标记未渲染'
+  )
+  assert.ok(/!builtin && e\('button'/.test(clientSource), '删除按钮未被 builtin 条件包裹')
+})
+
+check('服务端四条写路径都拒绝内置名，读取路径都走合并库', () => {
+  // HTTP 保存 / 删除各一处，/soul 命令的 save / del 各一处
+  const rejections = indexSource.split('isBuiltinPersona(personaName)').length - 1
+  assert.equal(rejections, 4, `内置名拒绝点应为 4 处（HTTP 与命令层各 2），实际 ${rejections} 处`)
+  assert.ok(indexSource.split('mergePersonas(').length - 1 >= 3, '预设库读取应统一走 mergePersonas')
+  assert.ok(/resolvePersona\(personaName, config\.personas\)/.test(indexSource), '命令层 use 未走 resolvePersona')
+  assert.ok(/resolvePersona\(personaName, current\.personas\)/.test(indexSource), 'HTTP use 未走 resolvePersona')
+})
+
+check('匹配逻辑只在纯模块实现一份（不留本地重复实现）', () => {
+  assert.equal(
+    indexSource.includes('function declaredPersonaKeys'),
+    false,
+    'index.mjs 不应自带 declaredPersonaKeys——已下沉到 lib/personas.mjs，两份实现会漂移'
+  )
+  assert.ok(/personaMatches\(/.test(indexSource), 'index.mjs 应调用 personaMatches 做 ★ 判定')
 })
 
 console.log(`\n全部通过：${passed} 项检查`)

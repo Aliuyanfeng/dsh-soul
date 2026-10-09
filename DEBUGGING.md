@@ -123,7 +123,7 @@ cmd /c mklink /J "$web\node_modules\dsh-soul" "$src"
 
 | 改动位置 | 需要做什么 |
 | --- | --- |
-| 宿主端 `index.mjs` / `lib/config.mjs` | **完全重启 DSH**（Node 进程需重新 import） |
+| 宿主端 `index.mjs` / `lib/*.mjs`（含 `personas.mjs`） | **完全重启 DSH**（Node 进程需重新 import） |
 | 客户端 `client/index.mjs` | 硬刷新浏览器 `Ctrl+Shift+R` |
 | `cordis.patch.yml` / `package.json` | 重装 + 重启 |
 

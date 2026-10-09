@@ -3,7 +3,7 @@
 // 在设置页面添加「个性化」栏目：
 //   - 启用/禁用个性化设置
 //   - 「关于你」（昵称/职业/介绍）、回复风格和语调、特质、输出语言、自定义指令
-//   - 人设预设：保存当前为预设、一键使用（★ 标记当前匹配项）、删除
+//   - 人设预设：6 个内置人设（随插件提供、不可删除，行尾标「内置」）+ 保存当前为预设、一键使用（★ 标记当前匹配项）、删除
 //   - Agent 工具：set_persona 确认模式开关
 //   - 输入框光轨：Agent 回复中时输入框边框的流光动效（颜色 / 速度 / 粗细 + 实时示例）
 //   - dirty 检测（无改动禁用保存）、统一 toast 提示
@@ -532,7 +532,8 @@ window.__ModuleLoader__.load({
       '.soul-persona-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed var(--dsw-alias-border-l2);font-size:12px}',
       '.soul-persona-name{color:var(--dsw-alias-label-primary);font-weight:500;white-space:nowrap}',
       '.soul-persona-meta{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary)}',
-      '.soul-persona-actions{display:flex;gap:10px;white-space:nowrap}',
+      '.soul-persona-actions{display:flex;gap:10px;white-space:nowrap;align-items:center}',
+      '.soul-persona-badge{font-size:11px;line-height:16px;padding:0 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-secondary);white-space:nowrap}',
       '.soul-persona-save{display:flex;gap:8px}',
       '.soul-persona-save input[type=text]{flex:1}',
       '.soul-prompt-link{background:none;border:none;padding:0;font-size:12px;color:var(--dsw-alias-label-secondary);cursor:pointer;text-decoration:underline}',
@@ -652,6 +653,8 @@ window.__ModuleLoader__.load({
       'personas.delete': '删除',
       'personas.confirmDelete': '确定删除预设「{name}」？',
       'personas.empty': '暂无人设预设，保存当前配置后可一键切换',
+      'personas.builtin': '内置',
+      'personas.hint': '内置预设随插件提供，不可删除；保存当前配置可创建自己的预设',
       'style.professional': '专业严谨',
       'style.casual': '轻松自然',
       'style.humorous': '幽默风趣',
@@ -669,6 +672,17 @@ window.__ModuleLoader__.load({
       'trait.replyLength.concise': '简洁（只讲要点，不展开）',
       'trait.replyLength.normal': '适中（不额外约束）',
       'trait.replyLength.detailed': '详尽（充分展开背景与推理）',
+      // 预设行摘要用的短标签（trait.* 的完整说明太长，一行放不下）
+      'meta.replyLength.concise': '简洁',
+      'meta.replyLength.detailed': '详尽',
+      'meta.headingLists.more': '多列表',
+      'meta.headingLists.less': '少列表',
+      'meta.emoji.more': '多表情',
+      'meta.emoji.less': '少表情',
+      'meta.tables.more': '多用表格',
+      'meta.tables.less': '少用表格',
+      'meta.language.zh': '中文',
+      'meta.language.en': '英文',
       'group.tool': 'Agent 工具',
       'field.toolConfirm': '人设变更需确认',
       'hint.toolConfirm': '开启后，Agent 通过 set_persona 工具做出的修改不会立即生效，需在会话中使用 /soul confirm 确认或 /soul reject 拒绝。',
@@ -753,6 +767,8 @@ window.__ModuleLoader__.load({
       'personas.delete': 'Delete',
       'personas.confirmDelete': 'Delete persona "{name}"?',
       'personas.empty': 'No personas yet — save the current config to switch with one click',
+      'personas.builtin': 'Built-in',
+      'personas.hint': 'Built-in personas ship with the plugin and cannot be deleted; save the current config to create your own',
       'style.professional': 'Professional',
       'style.casual': 'Casual',
       'style.humorous': 'Humorous',
@@ -770,6 +786,17 @@ window.__ModuleLoader__.load({
       'trait.replyLength.concise': 'Concise (key points only)',
       'trait.replyLength.normal': 'Balanced (no extra constraint)',
       'trait.replyLength.detailed': 'Detailed (expand background and reasoning)',
+      // Short labels for the persona row summary (trait.* full text is too long)
+      'meta.replyLength.concise': 'Concise',
+      'meta.replyLength.detailed': 'Detailed',
+      'meta.headingLists.more': 'More lists',
+      'meta.headingLists.less': 'Fewer lists',
+      'meta.emoji.more': 'More emoji',
+      'meta.emoji.less': 'Less emoji',
+      'meta.tables.more': 'More tables',
+      'meta.tables.less': 'Fewer tables',
+      'meta.language.zh': 'Chinese',
+      'meta.language.en': 'English',
       'group.tool': 'Agent tools',
       'field.toolConfirm': 'Require confirmation for persona changes',
       'hint.toolConfirm': 'When enabled, changes made by the agent through the set_persona tool do not apply immediately — confirm with /soul confirm or reject with /soul reject in the conversation.',
@@ -837,6 +864,26 @@ window.__ModuleLoader__.load({
     const TRAIT_VALUES = ['default', 'more', 'less']
     // 回复长度偏好（与宿主 lib/config.mjs 的 REPLY_LENGTH_VALUES 对齐）
     const REPLY_LENGTH_VALUES = ['concise', 'normal', 'detailed']
+    // 输出语言（与宿主 lib/config.mjs 的 LANGUAGE_VALUES 对齐）
+    const LANGUAGE_VALUES = ['zh', 'en']
+
+    // 预设行摘要只显示「与默认值不同」的字段——若把 10 个字段全列出来，每行都是
+    // 一长串「默认 / 适中」，反而看不出两个预设到底差在哪。默认值须与宿主
+    // lib/config.mjs 的 DEFAULT_CONFIG 保持一致。
+    const META_FIELD_VALUES = {
+      replyLength: REPLY_LENGTH_VALUES,
+      headingLists: TRAIT_VALUES,
+      emoji: TRAIT_VALUES,
+      tables: TRAIT_VALUES,
+      language: LANGUAGE_VALUES
+    }
+    const META_FIELD_DEFAULTS = {
+      replyLength: 'normal',
+      headingLists: 'default',
+      emoji: 'default',
+      tables: 'default',
+      language: 'zh'
+    }
     // 输出语言选项（两种 UI 语言下均自解释，不进词典）
     const LANGUAGE_OPTIONS = [
       { value: 'zh', label: '中文' },
@@ -1107,7 +1154,15 @@ window.__ModuleLoader__.load({
       const emojiOptions = TRAIT_VALUES.map((value) => ({ value, label: t(`trait.emoji.${value}`) }))
       const tablesOptions = TRAIT_VALUES.map((value) => ({ value, label: t(`trait.tables.${value}`) }))
       const replyLengthOptions = REPLY_LENGTH_VALUES.map((value) => ({ value, label: t(`trait.replyLength.${value}`) }))
-      const personaNames = personas ? Object.keys(personas).sort() : null
+      // 内置预设排在前面（沿用宿主返回的定义顺序，便于发现），用户预设紧随其后。
+      // Array.prototype.sort 自 ES2019 起保证稳定，同类项因此维持原有插入顺序。
+      const personaNames = personas
+        ? Object.keys(personas).sort((a, b) => {
+          const aBuiltin = personas[a] && personas[a].builtin ? 0 : 1
+          const bBuiltin = personas[b] && personas[b].builtin ? 0 : 1
+          return aBuiltin - bBuiltin
+        })
+        : null
       const aboutFilled = [localNickname, localOccupation, localBio].filter(Boolean).length
       const aboutSummary = aboutFilled > 0 ? `${aboutFilled}/3 ${t('accordion.filled')}` : t('accordion.empty')
       const traitsSummary = t(`style.${localStyle}`)
@@ -1120,11 +1175,21 @@ window.__ModuleLoader__.load({
         setOpenSection(current => current === section ? null : section)
       }
 
+      // 预设行摘要：风格 + 昵称 + 所有「偏离默认值」的维度。
+      // 内置预设刻意不声明昵称等用户自有信息，所以它们只显示风格与维度差异——
+      // 这恰好也是比较两个预设时最需要看到的信息。
       const personaRowMeta = (entry) => {
+        const row = entry || {}
         const parts = []
-        if (entry && STYLE_VALUES.includes(entry.style)) parts.push(t(`style.${entry.style}`))
-        else if (entry && entry.style) parts.push(entry.style)
-        if (entry && entry.nickname) parts.push(entry.nickname)
+        if (STYLE_VALUES.includes(row.style)) parts.push(t(`style.${row.style}`))
+        else if (row.style) parts.push(row.style)
+        if (row.nickname) parts.push(row.nickname)
+        for (const [field, allowed] of Object.entries(META_FIELD_VALUES)) {
+          const value = row[field]
+          if (!value || value === META_FIELD_DEFAULTS[field]) continue
+          if (!allowed.includes(value)) continue
+          parts.push(t(`meta.${field}.${value}`))
+        }
         return parts.join(' · ')
       }
 
@@ -1297,12 +1362,16 @@ window.__ModuleLoader__.load({
                   : e(Fragment, null,
                     ...personaNames.map((name) => {
                       const entry = personas[name] || {}
+                      // 内置预设不提供删除（后端也会拒绝），在 actions 区原删除按钮的
+                      // 位置显示「内置」标记，行宽因此不会跳动。
+                      const builtin = !!entry.builtin
                       return e('div', { className: 'soul-persona-row', key: name },
                         e('span', { className: 'soul-persona-name' }, name === activePersona ? `★ ${name}` : name),
                         e('span', { className: 'soul-persona-meta' }, personaRowMeta(entry)),
                         e('span', { className: 'soul-persona-actions' },
+                          builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
                           e('button', { type: 'button', className: 'soul-prompt-link', onClick: () => handleUsePersona(name) }, t('personas.use')),
-                          e('button', { type: 'button', className: 'soul-prompt-link soul-persona-danger', onClick: () => handleDeletePersona(name) }, t('personas.delete'))
+                          !builtin && e('button', { type: 'button', className: 'soul-prompt-link soul-persona-danger', onClick: () => handleDeletePersona(name) }, t('personas.delete'))
                         )
                       )
                     })
@@ -1320,7 +1389,8 @@ window.__ModuleLoader__.load({
                 onClick: handleSavePersona,
                 disabled: saving || !personaName.trim()
               }, t('personas.save'))
-            )
+            ),
+            e('div', { className: 'soul-status' }, t('personas.hint'))
           ),
 
           e(SoulAccordion, {
