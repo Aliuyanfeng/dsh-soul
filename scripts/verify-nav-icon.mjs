@@ -52,9 +52,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { assertCount, skipExit } from './lib/skip-report.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
+
+// 本脚本要跑多少项断言（含 6 项判断力自检）。跳过的提示与 --strict 依赖它，
+// 由 report() 在真正跑完时校验。
+const EXPECTED_ASSERTIONS = 16
 const CLIENT_FILE = path.join(ROOT, 'client', 'index.mjs')
 const ICON_FILE = path.join(ROOT, 'assets', 'icon.svg')
 
@@ -387,6 +392,7 @@ function report(result) {
   for (const item of result.items) {
     if (!item.ok) console.log(`  ✗ ${item.name}${item.detail ? ' — ' + item.detail : ''}`)
   }
+  if (!assertCount('verify-nav-icon', result.total, EXPECTED_ASSERTIONS)) return 1
   if (result.failed === 0) {
     console.log(`\n全部通过：${result.total} 项检查`)
     return 0
@@ -415,9 +421,12 @@ function main() {
 
   const browser = findBrowser(opts.chrome)
   if (!browser) {
-    console.log('未找到可用的 Chrome / Edge，跳过导航图标回归。')
-    console.log('可指定浏览器：node scripts/verify-nav-icon.mjs --chrome <可执行文件>')
-    return 0
+    skipExit(
+      'verify-nav-icon（设置导航图标回归）',
+      EXPECTED_ASSERTIONS,
+      '未找到 Chrome / Edge',
+      '--chrome <可执行文件> 指定浏览器；或两段式：--emit <页面> → 手动 --dump-dom → --dump <文件>'
+    )
   }
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-soul-nav-icon-'))
@@ -437,9 +446,12 @@ function main() {
   try {
     if (result.error || result.status !== 0 || !result.stdout) {
       const reason = result.error ? result.error.code || result.error.message : `退出码 ${result.status}`
-      console.log(`无头浏览器未能运行（${reason}）。`)
-      console.log('可改用两段式：--emit 产出页面 → 手动跑浏览器 --dump-dom → --dump 解析')
-      return 0
+      skipExit(
+        'verify-nav-icon（设置导航图标回归）',
+        EXPECTED_ASSERTIONS,
+        `无头浏览器未能运行（${reason}）`,
+        '两段式：--emit <页面> → 手动 --dump-dom → --dump <文件>'
+      )
     }
     return report(parseDump(result.stdout))
   } finally {

@@ -30,11 +30,17 @@
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
+import { assertCount, skipExit } from './lib/skip-report.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
+
+// 本脚本要跑多少项断言（A 层 6 + A 判断力 2 + B 层 6 + B 判断力 3 + C 层 3）。跳过的
+// 提示与 --strict 都依赖它；B 层若因宿主实现变化而跳过，末尾的校验会让本次运行失败 ——
+// 「宿主改了实现」正是这条链路最需要被通知的事，不该安静地少跑几项还报通过。
+const EXPECTED_ASSERTIONS = 20
 
 const argv = process.argv.slice(2)
 const argValue = (flag) => {
@@ -44,18 +50,56 @@ const argValue = (flag) => {
 
 // ==================== 定位 DSH ====================
 
+// 锚点顺序决定「这一跑到底验证了哪一份宿主」——此前它是隐式的、且以 process.cwd() 开头，
+// 而 createRequire 会从锚点**向上逐级找 node_modules**：换个目录跑就可能解析到另一份 DSH
+// 安装（本机同时存在 D:\ 下的 0.2.1-alpha.1 与用户主目录 pnpm store 里的 0.1.0-rc.8，
+// 后者不支持 section 的 interpolate 选项）。同一份插件因此在不同目录跑出不同结论 ——
+// 对一份「护栏」脚本来说，这本身就是缺陷。
+//
+// 现在的顺序：显式指定 > 装了本插件的 profile（真正会加载这份代码的运行时）
+// > 其它 profile > 插件自身 node_modules > cwd（最后兜底）。
+function profilesDir() {
+  return join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'profiles')
+}
+
 function anchors() {
-  const list = [process.cwd(), PKG_DIR, join(PKG_DIR, 'node_modules')]
-  const explicit = argValue('--dsh') || process.env.DSH_INSTALL_DIR
+  const list = [join(PKG_DIR, 'node_modules'), PKG_DIR]
+  const explicit = explicitDshDir()
   if (explicit) list.unshift(resolve(explicit))
-  const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh')
-  const profiles = join(dshHome, 'profiles')
+
+  const profiles = profilesDir()
   if (existsSync(profiles)) {
+    let names = []
     try {
-      for (const p of readdirSync(profiles)) list.push(join(profiles, p))
-    } catch { /* 忽略 */ }
+      names = readdirSync(profiles)
+    } catch {
+      /* 读不到就只用其它锚点 */
+    }
+    // 装了 dsh-soul 的 profile 排前面：那份运行时才是这份代码真正的去处
+    const hosts = names.filter((p) => existsSync(join(profiles, p, 'node_modules', 'dsh-soul')))
+    const others = names.filter((p) => !hosts.includes(p))
+    for (const p of [...hosts, ...others]) list.push(join(profiles, p))
   }
+
+  list.push(process.cwd())
   return list
+}
+
+function explicitDshDir() {
+  return argValue('--dsh') || process.env.DSH_INSTALL_DIR || null
+}
+
+/** 显式指定的目录是否真的指向一份 DSH 安装（接受三种常见形状）。 */
+function looksLikeDshInstall(dir) {
+  if (!existsSync(dir)) return false
+  if (existsSync(join(dir, 'node_modules', '@deepseek-ai', 'dsh'))) return true
+  const manifest = join(dir, 'package.json')
+  if (!existsSync(manifest)) return false
+  try {
+    return JSON.parse(readFileSync(manifest, 'utf8')).name === '@deepseek-ai/dsh'
+  } catch {
+    return false
+  }
 }
 
 function resolveFrom(anchor, spec) {
@@ -75,6 +119,28 @@ function hostAnchors() {
     list.unshift(join(dshDir, 'node_modules', '@deepseek-ai', 'dsh'), join(dshDir, 'node_modules'), dshDir)
   }
   return list
+}
+
+/**
+ * 列出所有能解析出宿主子包的**不同** DSH 副本。
+ * 多于一份时必须打印出来：报告要说清验证的是哪一份实现，否则结论无法复核。
+ */
+function hostCandidates() {
+  const seen = new Map()
+  for (const anchor of hostAnchors()) {
+    const hit = resolveFrom(anchor, '@deepseek-ai/dsh-system-prompt')
+    if (!hit) continue
+    const entry = realDshEntry(hit)
+    if (!seen.has(entry)) seen.set(entry, { entry, anchor })
+  }
+  return [...seen.values()]
+}
+
+/** 从 dsh-system-prompt 的入口回推到所属 DSH 安装根（pnpm store 里的副本也算）。 */
+function realDshEntry(spEntry) {
+  const marker = `${sep}@deepseek-ai${sep}dsh-system-prompt${sep}`
+  const at = spEntry.indexOf(marker)
+  return at === -1 ? spEntry : spEntry.slice(0, at)
 }
 
 // ==================== 极简断言台 ====================
@@ -247,6 +313,19 @@ async function main() {
   console.log('dsh-soul — 宿主实现层等价性回归（改配置 → 下一轮生效）')
   console.log('')
 
+  // 显式指定的目录必须真的是一份 DSH 安装：若悄悄退回自动定位，用户以为验证了 A、
+  // 实际验证了 B —— 这正是本脚本最不能出的错。
+  const explicit = explicitDshDir()
+  if (explicit) {
+    const dir = resolve(explicit)
+    if (!looksLikeDshInstall(dir)) {
+      console.log(`✗ --dsh 指定的目录不是一份 DSH 安装：${dir}`)
+      console.log('  该目录下既没有 node_modules/@deepseek-ai/dsh，其 package.json 的 name 也不是 @deepseek-ai/dsh。')
+      console.log('  本脚本不会退回自动定位（否则验证的会是另一份宿主）。')
+      process.exit(1)
+    }
+  }
+
   const ha = hostAnchors()
   const spEntry = ha.map((a) => resolveFrom(a, '@deepseek-ai/dsh-system-prompt')).find(Boolean)
   const cordisEntry = ha.map((a) => resolveFrom(a, '@deepseek-ai/cordis')).find(Boolean)
@@ -254,11 +333,21 @@ async function main() {
   const loopEntry = ha.map((a) => resolveFrom(a, '@deepseek-ai/dsh-agent-loop')).find(Boolean)
 
   if (!spEntry || !cordisEntry) {
-    console.log('跳过：未定位到 DSH 的 @deepseek-ai/dsh-system-prompt / cordis。')
-    console.log('可用 --dsh <目录> 指定 DSH 安装目录（含 node_modules/@deepseek-ai/dsh）。')
-    process.exit(0)
+    skipExit(
+      'verify-live-prompt（宿主等价性回归）',
+      EXPECTED_ASSERTIONS,
+      '未定位到 DSH 的 @deepseek-ai/dsh-system-prompt / cordis',
+      '--dsh <目录> 指定 DSH 安装目录（含 node_modules/@deepseek-ai/dsh）'
+    )
   }
 
+  // 本机常常装着不止一份 DSH。报告必须说明验证的是哪一份，否则结论没法复核。
+  const candidates = hostCandidates()
+  if (candidates.length > 1) {
+    console.log(`注意：本机解析到 ${candidates.length} 份 DSH 副本，本脚本验证的是第一份（其余仅供对照）：`)
+    for (const [i, c] of candidates.entries()) console.log(`  ${i === 0 ? '→' : ' '} ${c.entry}`)
+    console.log('')
+  }
   console.log(`宿主模块：${spEntry}`)
   console.log('')
 
@@ -288,12 +377,12 @@ async function main() {
   console.log('B 切片 SystemPromptProjection（dsh-agent-loop）')
   let baseB = null
   if (!loopEntry) {
-    console.log('  – 未定位到 @deepseek-ai/dsh-agent-loop，跳过 B 层')
+    console.log('  ⚠ 未定位到 @deepseek-ai/dsh-agent-loop，B 层跳过 —— 本次运行将因断言数不足被判为不可信')
   } else {
     const loopSource = readFileSync(loopEntry, 'utf8')
     const src = sliceProjection(loopSource)
     if (!src) {
-      console.log('  – 未能在宿主源码中定位 SystemPromptProjection（宿主实现已变），跳过 B 层')
+      console.log('  ⚠ 未能在宿主源码中定位 SystemPromptProjection（宿主实现已变），B 层跳过 —— 本次运行将因断言数不足被判为不可信')
     } else {
       baseB = partB(() => src)
       for (const r of baseB) record(r.name, r.ok, r.detail)
@@ -341,6 +430,7 @@ async function main() {
 
   console.log('')
   if (failures.length === 0) {
+    if (!assertCount('verify-live-prompt', passed, EXPECTED_ASSERTIONS)) process.exit(1)
     console.log(`全部通过：${passed} 项检查`)
     process.exit(0)
   }

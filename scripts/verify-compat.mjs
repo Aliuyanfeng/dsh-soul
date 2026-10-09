@@ -33,6 +33,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { createInjectionSource } from '../lib/injection.mjs'
+import { skipExit } from './lib/skip-report.mjs'
+
+// 定位到 DSH 时本脚本会跑出的检查数（peer 范围判定 + 运行时符号抽查 + 注入来源契约）。
+// 各环境解析到的子包数量可能略有出入，因此这里只用于「跳过时如实说明少跑了多少」，
+// 不做严格相等校验。
+const NOMINAL_ASSERTIONS = 10
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -211,9 +217,12 @@ async function main() {
   }
 
   if (!runtimeVersion) {
-    console.log('跳过：未能定位 DSH 运行时。')
-    console.log('可用 --dsh <目录> 指定 DSH 安装目录，或用 --runtime <版本> 直接给出运行时版本。')
-    process.exit(0)
+    skipExit(
+      'verify-compat（兼容性判定）',
+      NOMINAL_ASSERTIONS,
+      '未能定位 DSH 运行时',
+      '--dsh <目录> 指定 DSH 安装目录，或用 --runtime <版本> 直接给出运行时版本'
+    )
   }
 
   console.log(`DSH 运行时版本：${runtimeVersion}`)

@@ -33,11 +33,16 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { assertCount, skipExit } from './lib/skip-report.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const CLIENT_FILE = path.join(ROOT, 'client', 'index.mjs')
 const TRIALS = 60
+
+// 本脚本要跑多少项断言。跳过的提示与 --strict 的判定都依赖它，
+// 由 report() 在真正跑完时校验（改了模型列表忘改这里 → 跑得起来的那次会失败）。
+const EXPECTED_ASSERTIONS = 11
 
 function parseArgs(argv) {
   const opts = { chrome: null, keep: false, emit: null, dump: null }
@@ -306,6 +311,7 @@ function report(checks) {
     if (check.detail) console.log(`      ${check.detail}`)
   }
   console.log('')
+  if (!assertCount('verify-trail', checks.length, EXPECTED_ASSERTIONS)) process.exit(1)
   if (failed === 0) {
     console.log(`结果：通过（${checks.length} 项）。`)
     process.exit(0)
@@ -338,9 +344,12 @@ function main() {
 
   const browser = findBrowser(opts.chrome)
   if (!browser) {
-    console.log('  – 未找到 Chrome / Edge，跳过（可用 --chrome <路径> 或 CHROME_PATH 指定）')
-    console.log('结果：跳过。')
-    process.exit(0)
+    skipExit(
+      'verify-trail（输入框光轨回归）',
+      EXPECTED_ASSERTIONS,
+      '未找到 Chrome / Edge',
+      '--chrome <路径> 或 CHROME_PATH 指定浏览器；或两段式：--emit <页面> → 手动 dump-dom → --dump <文件>'
+    )
   }
   console.log(`  浏览器：${browser}`)
   console.log('')
@@ -381,10 +390,12 @@ function main() {
   }
 
   if (skip) {
-    console.log(`  – ${skip}，跳过`)
-    console.log('  提示：可用「--emit <页面>」产出页面，手动 dump-dom 后再以「--dump <文件>」交回本脚本判定')
-    console.log('结果：跳过。')
-    process.exit(0)
+    skipExit(
+      'verify-trail（输入框光轨回归）',
+      EXPECTED_ASSERTIONS,
+      skip,
+      '两段式：--emit <页面> 产出页面 → 手动 dump-dom → --dump <文件> 交回本脚本判定'
+    )
   }
 
   const match = stdout.match(/<pre id="RESULT"[^>]*>([\s\S]*?)<\/pre>/)
