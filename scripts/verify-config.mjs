@@ -593,4 +593,81 @@ check('匹配逻辑只在纯模块实现一份（不留本地重复实现）', (
   assert.ok(/personaMatches\(/.test(indexSource), 'index.mjs 应调用 personaMatches 做 ★ 判定')
 })
 
+// ---------- 提示词预览（草稿编译）----------
+
+// 抽出参与提示词编译的全部函数源码：compilePrompt 及其两个子构建器。
+// 只扫部分函数会漏掉字段，故三者一起扫。
+function promptCompilerSource() {
+  const chunks = []
+  for (const name of ['buildUserProfile', 'buildBehavior', 'compilePrompt']) {
+    const matched = indexSource.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}`))
+    assert.ok(matched, `index.mjs 中找不到函数 ${name}`)
+    chunks.push(matched[0])
+  }
+  return chunks.join('\n')
+}
+
+check('草稿预览端点复用保存路径的校验与编译，且不落盘、不注入', () => {
+  const matched = indexSource.match(/path: '\/api\/soul\/prompt\/preview'[\s\S]*?\n    \}\)/)
+  assert.ok(matched, '缺少 /api/soul/prompt/preview 端点')
+  const body = matched[0]
+  assert.ok(/sanitizeConfig\(parsed\.body\)/.test(body), '草稿预览未复用 sanitizeConfig（未校验的草稿会编出误导性提示词）')
+  assert.ok(/compilePrompt\(draft\)/.test(body), '草稿预览未调用 compilePrompt')
+  assert.ok(/req\.method !== 'POST'/.test(body), '草稿预览应限制为 POST')
+  assert.equal(/saveConfig\(/.test(body), false, '草稿预览不得落盘（不应调用 saveConfig）')
+  assert.equal(/refreshPromptAndInject\(/.test(body), false, '草稿预览不得注入会话（不应调用 refreshPromptAndInject）')
+})
+
+check('客户端「参与编译的字段」与宿主 compilePrompt 实际读取的字段一致', () => {
+  const block = clientSource.match(/const PROMPT_FIELD_KEYS = \[([\s\S]*?)\]/)
+  assert.ok(block, '客户端缺少 PROMPT_FIELD_KEYS')
+  const clientKeys = [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort()
+
+  const driven = new Set(['enabled', ...PERSONA_FIELDS])
+  const hostKeys = [...new Set([...promptCompilerSource().matchAll(/config\.(\w+)/g)].map((m) => m[1]))]
+    .filter((key) => driven.has(key))
+    .sort()
+
+  assert.deepEqual(
+    clientKeys,
+    hostKeys,
+    'PROMPT_FIELD_KEYS 与实际参与编译的字段不一致：漏字段会让预览显示陈旧内容，多字段会触发无谓重编译'
+  )
+  assert.ok(clientKeys.length >= 5, `参与编译的字段过少：${clientKeys.length}`)
+})
+
+check('客户端在有未保存编辑时预览草稿，否则预览已生效提示词', () => {
+  assert.ok(/async previewPrompt\(draft\)/.test(clientSource), '控制器缺少 previewPrompt')
+  assert.ok(/await controller\.previewPrompt\(promptDraft\(\)\)/.test(clientSource), '未调用草稿预览端点')
+  assert.ok(/const promptDirty = PROMPT_FIELD_KEYS\.some\(/.test(clientSource), 'promptDirty 应由 PROMPT_FIELD_KEYS 判定（改光轨不该让预览变成草稿）')
+  // 只断言下面的三元语法不够：把 asDraft 写死成 false 也能让三元看起来「正确」，
+  // 但预览就永远只看已生效内容了。必须把「草稿判定来源于 promptDirty」这一环钉住。
+  assert.ok(/const asDraft = promptDirty\b/.test(clientSource), 'asDraft 必须取自 promptDirty，否则预览会永远停留在已生效内容')
+  assert.ok(/asDraft\s*\?\s*await controller\.previewPrompt/.test(clientSource), '草稿分支未按 asDraft 选择端点')
+})
+
+check('提示词预览的编译入口唯一（避免重复请求与过期闭包）', () => {
+  assert.equal(
+    clientSource.includes('if (showPrompt) await loadPrompt()'),
+    false,
+    '保存/重置/应用预设处理器内不应再直接编译预览——刷新统一由 effect 驱动，两处调用会重复请求并可能用到过期闭包'
+  )
+  const effect = clientSource.match(
+    /const promptSettled = React\.useRef\(false\)[\s\S]*?\}, \[showPrompt, promptDraftKey, promptDirty\]\)/
+  )
+  assert.ok(effect, '缺少预览驱动 effect')
+  assert.equal(
+    effect[0].split('void loadPrompt()').length - 1,
+    2,
+    'effect 应有两个编译触发点：刚展开时立即一次、此后防抖一次'
+  )
+})
+
+check('提示词预览新增文案键中英各一份', () => {
+  for (const key of ['prompt.titleDraft', 'prompt.summaryDraft', 'prompt.invalid']) {
+    const hits = clientSource.split(`'${key}':`).length - 1
+    assert.equal(hits, 2, `${key} 应在 zh / en 各出现一次，实际 ${hits} 次`)
+  }
+})
+
 console.log(`\n全部通过：${passed} 项检查`)

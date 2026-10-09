@@ -7,7 +7,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 ## Features
 
 - Personalization settings page in the Web UI
-- Localized settings UI (English/Chinese, follows the interface language), dirty tracking (save disabled when unchanged), save-result toasts, and a read-only "active prompt" viewer
+- Localized settings UI (English/Chinese, follows the interface language), dirty tracking (save disabled when unchanged), save-result toasts, and a read-only prompt preview panel
 - Enable or disable personalization
 - "About you": set your nickname, occupation and bio so replies fit your background
 - Combined style & tone option: `professional`, `casual`, `humorous`, `roast`, `efficient`
@@ -34,6 +34,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - Change detection: the prompt is refreshed and sessions injected only when a behavior-affecting field actually changed — appearance-only config (composer light trail) is persisted without injecting anything
 - Plugin icon: a dedicated icon in the plugin manager list and the sidebar entry (`assets/icon.svg`, 36×36, shipped with the npm package)
 - Settings nav icon: the "Personalization" entry in the settings panel draws the same geometry as the plugin icon — same trail and spark, but coloured and weighted like its neighbours (monochrome `currentColor`). DSH hardcodes nav glyphs by section id and offers no way for a plugin to declare one, so the client swaps the glyph in the DOM
+- Prompt preview (read-only, collapsible section at the bottom of the settings page): shows the **currently active** prompt while the form is untouched; as soon as any edit is pending it compiles the **draft** instead — what will actually be injected once you save — refreshing live (400 ms after you stop typing) and again after save / reset / applying a persona. Fields that fail validation are listed separately and excluded from the preview
 
 ## Installation
 

@@ -11,7 +11,7 @@
 - 输入框光轨：Agent 回复中时输入框边框的流光动效——开关、预设色板 + 取色器 + 十六进制输入、流动速度（慢 / 中 / 快）、光带粗细（细 / 中 / 粗），以及随配置实时联动的效果示例
 - 关键字段带 ⓘ 提示图标；保存 / 重置按钮带 toast；失败时页面内展示错误条
 - 中英双语文案（跟随界面语言）；dirty 检测（无改动禁用保存 + 未保存提示）；保存结果区分「已保存 / 无变化」
-- 「查看当前生效提示词」折叠区：展示当前已保存配置编译出的 system prompt 与字符数（只读）
+- 提示词预览折叠区（只读）：无未保存编辑时展示「当前生效提示词」；一旦表单有改动，就改为在保存前编译草稿、展示「保存后将生效的提示词」——边改边看（停止输入 400ms 后自动重编译），并在保存 / 重置 / 应用预设后自动刷新；未通过校验的字段会如实列出、且不计入预览，避免「预览悄悄用了旧值」
 
 **斜杠命令**（输出语言跟随配置 `language`，中英文案）
 
@@ -33,7 +33,7 @@
 **配置与集成**
 - 持久化：`$DSH_HOME/soul-config.json`（用户预设存于同文件 `personas` 字段；内置人设只在代码 `lib/personas.mjs` 里，不落盘，因此升级时自动更新、也无法被删除或篡改）
 - 服务：`soulConfig`（`getConfig` / `updateConfig` / `getSystemPrompt` / `resetConfig`）
-- HTTP API：`/api/soul/config`（GET/POST）、`/api/soul/prompt`、`/api/soul/config/reset`、`/api/soul/personas`（GET）、`/api/soul/personas/save|use|delete`（POST）
+- HTTP API：`/api/soul/config`（GET/POST）、`/api/soul/prompt`（已生效提示词）、`/api/soul/prompt/preview`（POST 草稿，不落盘、不注入）、`/api/soul/config/reset`、`/api/soul/personas`（GET）、`/api/soul/personas/save|use|delete`（POST）
 - 输入校验：字段白名单、类型、长度上限与枚举校验，HTTP 保存 / `/soul` 命令 / `set_persona` 工具 / `soulConfig` 服务共用；非法或超限字段整单拒绝
 - Agent 工具：`set_persona`（需宿主安装 `@deepseek-ai/dsh-tools`；缺失或不兼容时自动跳过，其余功能不受影响；确认模式下返回 `pending` 提议）
 - 插件图标：`package.json` 的 `icon` 指向 `assets/icon.svg`（36×36 viewBox，随 npm 包发布）

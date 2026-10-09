@@ -464,7 +464,50 @@ function registerRoutes(ctx) {
       }
     })
     
-    // 预览系统提示词端点已在 v0.2.0 移除（提示词预览功能下线）
+    // 预览「未保存的编辑」编译出的 system prompt：以已保存配置为底，用请求体中
+    // 通过校验的字段覆盖后编译。
+    //
+    // **不落盘、不注入会话** —— 纯只读旁路，供设置在保存前确认真正会被注入的内容。
+    // v0.1.x 曾有同类端点，随 v0.2.0 精简重构下线；此处恢复并修掉旧实现的一个疏漏：
+    // 旧版直接展开请求体（{ ...current, ...draft }）未经校验，而这里与保存路径共用
+    // 同一套 sanitizeConfig —— 非法字段既不参与预览、也不会落盘，并通过 invalid
+    // 回报给客户端，避免出现「预览悄悄沿用了旧值」这种看不出原因的偏差。
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/prompt/preview',
+      handler: async (req, res) => {
+        const send = (status, body) => {
+          res.writeHead(status, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(body))
+        }
+
+        try {
+          if (req.method !== 'POST') {
+            send(405, { ok: false, error: 'Method not allowed' })
+            return
+          }
+
+          const parsed = await readJsonBody(req)
+          if (!parsed.ok) {
+            send(parsed.status, { ok: false, error: parsed.error })
+            return
+          }
+
+          const { patch, errors } = sanitizeConfig(parsed.body)
+          const current = await loadConfig()
+          const draft = { ...current, ...patch }
+
+          send(200, {
+            ok: true,
+            prompt: compilePrompt(draft),
+            enabled: draft.enabled,
+            invalid: Object.keys(errors)
+          })
+        } catch (err) {
+          send(500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
 
     // 重置配置
     wsCtx.webServer.register({

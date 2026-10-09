@@ -7,7 +7,8 @@
 //   - Agent 工具：set_persona 确认模式开关
 //   - 输入框光轨：Agent 回复中时输入框边框的流光动效（颜色 / 速度 / 粗细 + 实时示例）
 //   - dirty 检测（无改动禁用保存）、统一 toast 提示
-//   - 查看当前生效提示词（只读）与字符数
+//   - 提示词预览（只读）：无未保存编辑时显示「当前生效提示词」，有编辑时改为编译草稿
+//     —— 展示保存后真正会注入的内容，并在保存/重置/应用预设后自动刷新
 //
 // 光轨另注册到 conversation.input.overlay 槽位（输入框卡片内部），
 // 运行时按会话 running 状态在卡片上挂载/隐藏 SVG 环，见 SoulTrail。
@@ -466,6 +467,14 @@ window.__ModuleLoader__.load({
         return payload
       }
 
+      // 预览「未保存的编辑」编译出的提示词：POST 草稿字段，服务端以已保存配置为底
+      // 覆盖后编译。不落盘、不注入 —— 返回的 invalid 列出未通过校验、因而未计入
+      // 预览的字段名，供界面如实提示，避免用户以为改动已生效。
+      async previewPrompt(draft) {
+        const payload = await this.postJSON('/api/soul/prompt/preview', draft)
+        return payload
+      }
+
       async dispose() {
         this.disposed = true
       }
@@ -707,6 +716,9 @@ window.__ModuleLoader__.load({
       'prompt.loading': '提示词加载中...',
       'prompt.empty': '（个性化已禁用，提示词为空）',
       'prompt.chars': '当前字符数：{n}',
+      'prompt.titleDraft': '保存后将生效的提示词',
+      'prompt.summaryDraft': '{n} 字符 · 未保存',
+      'prompt.invalid': '以下字段未通过校验，未计入本次预览：{fields}',
       'toast.saveFailed': '❌ 保存失败，请检查配置',
       'trail.title': '输入框光轨',
       'trail.enable': '启用输入框光轨',
@@ -821,6 +833,9 @@ window.__ModuleLoader__.load({
       'prompt.loading': 'Loading prompt...',
       'prompt.empty': '(personalization disabled — the prompt is empty)',
       'prompt.chars': 'Current character count: {n}',
+      'prompt.titleDraft': 'Prompt after saving',
+      'prompt.summaryDraft': '{n} chars · unsaved',
+      'prompt.invalid': 'These fields failed validation and are excluded from this preview: {fields}',
       'toast.saveFailed': '❌ Save failed — please check the config',
       'trail.title': 'Composer light trail',
       'trail.enable': 'Enable composer light trail',
@@ -892,6 +907,11 @@ window.__ModuleLoader__.load({
 
     // 表单字段与 store 字段的一一对应（dirty 检测与保存载荷共用）
     const FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+
+    // 其中真正参与 compilePrompt 的字段子集。
+    // 提示词预览只依赖它们：改光轨颜色 / 粗细、切换 set_persona 确认模式都不会改变
+    // 编译结果，不该因此重新请求，也不该让预览被标成「未保存」。
+    const PROMPT_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions']
 
     // 提示词小图标：hover 展示说明文字
     function SoulHint(props) {
@@ -991,6 +1011,10 @@ window.__ModuleLoader__.load({
       const [promptText, setPromptText] = React.useState('')
       const [promptLoading, setPromptLoading] = React.useState(false)
       const [promptError, setPromptError] = React.useState(null)
+      // 当前预览的是「未保存的编辑」编译结果（true）还是已生效的提示词（false）
+      const [promptIsDraft, setPromptIsDraft] = React.useState(false)
+      // 未通过校验、因而未计入预览的字段名（服务端返回 invalid）
+      const [promptInvalid, setPromptInvalid] = React.useState([])
       const [openSection, setOpenSection] = React.useState(() => {
         try {
           return globalThis.localStorage?.getItem('dsh-soul:open-section') || 'about'
@@ -1041,12 +1065,32 @@ window.__ModuleLoader__.load({
       const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
       const dirty = FIELD_KEYS.some((key) => savedMap[key] !== localMap[key])
 
+      // 预览是否反映未保存的编辑：只看参与编译的字段（见 PROMPT_FIELD_KEYS）。
+      // 这里用 localMap/savedMap 逐字段比，而不是复用上面的 dirty —— 改光轨颜色会让
+      // dirty 为真，但那不影响提示词，此时预览仍是「已生效内容」，标成草稿反而误导。
+      const promptDirty = PROMPT_FIELD_KEYS.some((key) => savedMap[key] !== localMap[key])
+      // 草稿指纹：仅在影响编译的字段真的变化时才重新预览
+      const promptDraftKey = PROMPT_FIELD_KEYS.map((key) => String(localMap[key])).join('\u0000')
+
+      // 只把参与编译的字段发给预览端点：光轨等字段的校验失败不该出现在提示词预览里
+      const promptDraft = () => {
+        const out = {}
+        for (const key of PROMPT_FIELD_KEYS) out[key] = localMap[key]
+        return out
+      }
+
+      // 有未保存编辑时预览草稿（＝保存后真正会注入的内容），否则预览已生效提示词
       const loadPrompt = async () => {
+        const asDraft = promptDirty
         setPromptLoading(true)
         setPromptError(null)
         try {
-          const payload = await controller.fetchPrompt()
+          const payload = asDraft
+            ? await controller.previewPrompt(promptDraft())
+            : await controller.fetchPrompt()
           setPromptText(payload.prompt || '')
+          setPromptInvalid(Array.isArray(payload.invalid) ? payload.invalid : [])
+          setPromptIsDraft(asDraft)
         } catch (err) {
           setPromptError(messageOf(err))
         } finally {
@@ -1054,11 +1098,8 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const togglePrompt = async () => {
-        const next = !showPrompt
-        setShowPrompt(next)
-        if (next) await loadPrompt()
-      }
+      // 展开/收起只切状态；编译由下方 effect 统一驱动（唯一入口，避免重复请求）
+      const togglePrompt = () => setShowPrompt((open) => !open)
 
       const loadPersonas = async () => {
         try {
@@ -1094,6 +1135,28 @@ window.__ModuleLoader__.load({
         }
       }, [controller, dirty, saving])
 
+      // 提示词预览的编译入口（唯一）。
+      // 展开时立即编译一次；此后只要影响编译的字段或脏状态变化，停止 400ms 再编译 —
+      // 边改边看保存后真正会注入的内容。
+      // promptSettled 用来区分「刚展开」与「展开后字段又变了」：否则展开这一动作自身
+      // 会先立即编译一次、再被防抖重复编译一次。
+      // 依赖里刻意不放 loadPrompt（组件体内每次渲染都会重建函数，放进去会无限循环）；
+      // 两个依赖项任一变化都会让 effect 带着最新闭包重跑，闭包不会过期。
+      const promptSettled = React.useRef(false)
+      React.useEffect(() => {
+        if (!showPrompt) {
+          promptSettled.current = false
+          return
+        }
+        if (!promptSettled.current) {
+          promptSettled.current = true
+          void loadPrompt()
+          return
+        }
+        const timer = setTimeout(() => { void loadPrompt() }, 400)
+        return () => clearTimeout(timer)
+      }, [showPrompt, promptDraftKey, promptDirty])
+
       const handleSave = async () => {
         const payload = await controller.saveConfig(localMap)
         // saveConfig 失败时内部已记录 error 并返回 undefined：给出失败提示，而非误报「无变化」
@@ -1105,13 +1168,15 @@ window.__ModuleLoader__.load({
           text: Array.isArray(payload.changed) && payload.changed.length > 0 ? t('toast.saved') : t('toast.noChanges'),
           kind: 'success'
         })
-        if (showPrompt) await loadPrompt()
+        // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
+        // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
       }
 
       const handleReset = async () => {
         await controller.resetConfig()
         setToast({ text: t('toast.reset'), kind: 'success' })
-        if (showPrompt) await loadPrompt()
+        // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
+        // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
       }
 
       const handleSavePersona = async () => {
@@ -1132,7 +1197,8 @@ window.__ModuleLoader__.load({
           const payload = await controller.usePersona(name)
           await loadPersonas()
           setToast({ text: payload && payload.unchanged ? t('toast.personaUnchanged') : t('toast.personaUsed'), kind: 'success' })
-          if (showPrompt) await loadPrompt()
+          // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
+        // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
         } catch (err) {
           setToast({ text: messageOf(err), kind: 'error' })
         }
@@ -1169,7 +1235,7 @@ window.__ModuleLoader__.load({
       const personasSummary = personas === null ? t('status.loading') : `${Object.keys(personas).length} ${t('accordion.personas')}`
       const toolSummary = localToolConfirm ? t('accordion.on') : t('accordion.off')
       const promptSummary = promptText.length > 0
-        ? t('prompt.summaryChars', { n: String(promptText.length) })
+        ? t(promptIsDraft ? 'prompt.summaryDraft' : 'prompt.summaryChars', { n: String(promptText.length) })
         : (enabled ? t('prompt.summaryEnabled') : t('prompt.summaryDisabled'))
       const toggleSection = (section) => () => {
         setOpenSection(current => current === section ? null : section)
@@ -1491,7 +1557,7 @@ window.__ModuleLoader__.load({
 
         e(SoulAccordion, {
           id: 'soul-prompt',
-          title: t('prompt.title'),
+          title: t(promptIsDraft ? 'prompt.titleDraft' : 'prompt.title'),
           summary: promptSummary,
           open: showPrompt,
           onToggle: togglePrompt
@@ -1502,7 +1568,9 @@ window.__ModuleLoader__.load({
               ? e('div', { className: 'soul-error' }, promptError)
               : e(Fragment, null,
                 e('pre', { className: 'soul-prompt-pre' }, promptText || t('prompt.empty')),
-                e('div', { className: 'soul-status' }, t('prompt.chars', { n: String(promptText.length) }))
+                e('div', { className: 'soul-status' }, t('prompt.chars', { n: String(promptText.length) })),
+                promptInvalid.length > 0 && e('div', { className: 'soul-error' },
+                  t('prompt.invalid', { fields: promptInvalid.join('、') }))
               ))
         ),
 
