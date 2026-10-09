@@ -6,20 +6,20 @@
 
 ```bash
 # 安装（registry 版本）
-dsh plugin --profile web add dsh-soul
+dsh plugin --profile <profile> add dsh-soul
 
 # 安装（本地目录：file: 语义，会把包复制进 profile，见第二节）
-dsh plugin --profile web add ./dsh-soul
-dsh plugin --profile web add file:<插件源码绝对路径>
+dsh plugin --profile <profile> add ./dsh-soul
+dsh plugin --profile <profile> add file:<插件源码绝对路径>
 
 # 查看已装（转发给 pnpm）
-dsh plugin --profile web list
+dsh plugin --profile <profile> list
 
 # 升级
-dsh plugin --profile web update dsh-soul
+dsh plugin --profile <profile> update dsh-soul
 
 # 卸载
-dsh plugin --profile web remove dsh-soul
+dsh plugin --profile <profile> remove dsh-soul
 ```
 
 卸载后如需彻底清干净，还要手动删除插件自身不管理的用户数据：
@@ -47,8 +47,8 @@ $DSH_HOME/soul-config.json      # 未设置 DSH_HOME 时在 ~/.dsh/ 下
 
 | 方案 | 命令 | 改源码后 | 代价 |
 | --- | --- | --- | --- |
-| A. 每次重装副本 | `dsh plugin --profile web remove dsh-soul` → `add file:<绝对路径>` | 需**先 remove 再 add** + 重启宿主 + 硬刷新 | 最稳，但每次改动都要重来；**只 `add` 不会更新**，见下方 2.1 |
-| B. `link:` 协议 | `dsh plugin --profile web add link:<绝对路径>` | 软链直指源码，预期即时生效 | **Windows 上不可靠，见下方警告** |
+| A. 每次重装副本 | `dsh plugin --profile <profile> remove dsh-soul` → `add file:<绝对路径>` | 需**先 remove 再 add** + 重启宿主 + 硬刷新 | 最稳，但每次改动都要重来；**只 `add` 不会更新**，见下方 2.1 |
+| B. `link:` 协议 | `dsh plugin --profile <profile> add link:<绝对路径>` | 软链直指源码，预期即时生效 | **Windows 上不可靠，见下方警告** |
 | C. 目录联接 | 用 `mklink /J` 手工替换 `node_modules/dsh-soul` | 即时生效 | 绕过 pnpm，后续 install 可能清理掉联接 |
 
 ### 2.1 为什么只 `add` 不会更新（实测）
@@ -58,7 +58,7 @@ $DSH_HOME/soul-config.json      # 未设置 DSH_HOME 时在 ~/.dsh/ 下
 实测（副本停在 0.6.0、源码已到 0.6.2）：
 
 ```text
-dsh plugin --profile web add file:<绝对路径>
+dsh plugin --profile <profile> add file:<绝对路径>
 → Already up to date        # 没有任何报错，也没有任何警告提示你没装上
 → node_modules/dsh-soul 仍是 0.6.0
 → 并且继续按旧 package.json 报 peer 不兼容
@@ -67,14 +67,14 @@ dsh plugin --profile web add file:<绝对路径>
 **正确做法是「先移除、再安装」**——输出里出现 `Packages: +1` 才是真的装了：
 
 ```bash
-dsh plugin --profile web remove dsh-soul
-dsh plugin --profile web add file:<绝对路径>
+dsh plugin --profile <profile> remove dsh-soul
+dsh plugin --profile <profile> add file:<绝对路径>
 ```
 
 装完务必核对副本版本，这是最容易踩空的一步：
 
 ```powershell
-(Get-Content "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-soul\package.json" | ConvertFrom-Json).version
+(Get-Content "$env:USERPROFILE\.dsh\profiles\<profile>\node_modules\dsh-soul\package.json" | ConvertFrom-Json).version
 ```
 
 或者直接选方案 C 的联接，从根上绕开复制语义：改源码即时生效，不存在"忘了重装"。
@@ -104,14 +104,14 @@ dsh plugin --profile web add file:<绝对路径>
 ### 方案 C：目录联接（本机推荐）
 
 ```powershell
-$web = "$env:USERPROFILE\.dsh\profiles\web"
-$src = "<插件源码绝对路径>"
+$prof = "$env:USERPROFILE\.dsh\profiles\<profile>"
+$src  = "<插件源码绝对路径>"
 
 # 1) 备份原副本（可回滚）
-Rename-Item "$web\node_modules\dsh-soul" "dsh-soul.bak"
+Rename-Item "$prof\node_modules\dsh-soul" "dsh-soul.bak"
 
 # 2) 建立联接，指向源码目录（无需管理员权限）
-cmd /c mklink /J "$web\node_modules\dsh-soul" "$src"
+cmd /c mklink /J "$prof\node_modules\dsh-soul" "$src"
 ```
 
 为避免后续 `pnpm install` 覆盖联接，可把 `dsh-soul` 从 `package.json` 的 `dependencies` 中移除、但在 `dsh.profile.bundles` 中保留 `dsh-soul`。调和逻辑只对"依赖中列出"的条目做增删，因此这样它既不会被摘出层栈，也不会被 pnpm 重装成副本。
@@ -132,7 +132,7 @@ cmd /c mklink /J "$web\node_modules\dsh-soul" "$src"
 ### 1) 配置层（不启动服务）
 
 ```powershell
-dsh --profile web --dump-config
+dsh --profile desktop --dump-config
 ```
 
 输出中应能看到 `soul` 这一行（`name: dsh-soul`），说明 patch 已正确合入配置树。包名写错会在这一步暴露为 `Cannot find package`。
@@ -181,7 +181,42 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 1. 确认保存真的成功 —— 设置页没有错误横幅、`soul-config.json` 已更新、`POST /api/soul/config` 返回 `changed` 非空；
 2. 发一条**新消息**再观察（两条通道都只在下一次请求生效，不会打断正在进行的回复）；
 3. 看会话流里有没有 `[dsh-soul 个性化配置已更新]`（通道 ② 的可见载体，user 角色）；纯外观字段（输入框光轨）**不会**产生它，这是预期行为；
-4. 仍不生效时跑 `npm run verify:e2e` / `npm run verify:host` 定位断在哪一层 —— 前者失败说明插件侧（保存或注入），后者失败说明宿主行为已变（DSH 升级后尤其要跑一次）。
+4. **直接问插件自己**（0.7.1 起，此前这类失败是全静默的）：
+   - `/soul show` 末尾的「送达」一行 —— 显示活动会话数、成功注入数与异常原因；
+   - `curl.exe -s http://127.0.0.1:3080/api/soul/status` —— 两条通道的状态、配置路径与版本号；
+   - 设置页的提示条：`configError`（配置**读不出来**）与 `deliveryWarning`（配置**送不到会话**）是两种问题、两种处理方式；
+   - 插件日志：同一个原因只会打印一次（`ctx.logger`），恢复正常后允许再次打印。
+5. 仍不生效时跑 `npm run verify:e2e` / `npm run verify:host` 定位断在哪一层 —— 前者失败说明插件侧（保存或注入），后者失败说明宿主行为已变（DSH 升级后尤其要跑一次）。
+
+> `verify:host` 验证的是**哪一份宿主**由锚点顺序决定，且会打印出来：优先「装了本插件的 profile」，并在解析到多份 DSH 副本时逐一列出。若你的机器上装着多份 DSH（例如 `~/.dsh/profiles/*` 之外还有一个全局安装），不要用 `--dsh` 指错目录——脚本会直接报错而不是悄悄换一份实现去验证。
+
+### 3.6) `npm run verify` 里的「跳过」与「假绿」
+
+`npm run verify` 串了 7 个脚本，其中三个会因为环境原因**跳过**：
+
+| 脚本 | 何时跳过 | 未执行的断言 |
+| --- | --- | --- |
+| `verify-trail` | 起不来浏览器（沙箱 / 安全软件 / Chrome 被占用） | 11 项 |
+| `verify-nav-icon` | 同上 | 16 项（含 6 项判断力自检） |
+| `verify-compat` / `verify:host` | 定位不到 DSH 运行时 | 10 / 20 项 |
+
+**跳过也是退出码 0** —— 所以整条链看起来一片绿，实际可能少了 50+ 项断言。0.7.1 起：
+
+- 跳过会显式打印「本次有 N 项断言**未执行**。跳过不等于通过。」，并给出补跑方式；
+- 需要「跳过即失败」时用 `npm run verify:strict`（链上每一项都带 `--strict`）；
+- 每个脚本跑完时会校验实际断言数与脚本里声明的 `EXPECTED_ASSERTIONS` 一致 —— 断言数对不上说明本次运行不可信，会直接判失败（这比数字悄悄变成谎话好）。
+
+无浏览器时的补跑（两段式，本机 sandbox 常拦子进程，此路必用）：
+
+```powershell
+node scripts/verify-trail.mjs --emit "$env:TEMP\trail.html"
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --headless=new --disable-gpu --no-sandbox `
+  --user-data-dir="$env:TEMP\chrome-trail-profile" --virtual-time-budget=8000 `
+  --allow-file-access-from-files --dump-dom "file:///$env:TEMP\trail.html" > "$env:TEMP\trail-dump.html"
+node scripts/verify-trail.mjs --dump "$env:TEMP\trail-dump.html"
+```
+
+`verify-nav-icon` 同理（`--emit` / `--dump`，无须 `--allow-file-access-from-files`）。
 
 ### 4) 功能与动效（本版新增「输入框光轨」）
 
@@ -203,13 +238,13 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | 报错 / 症状 | 原因 | 解决 |
 | --- | --- | --- |
 | `dsh-soul@x.y.z 与 DSH a.b.c 不兼容（要求 …）` | 插件声明的 peer 范围不含当前 DSH 运行时版本 | 见下方 4.1 |
-| `Cannot find package 'dsh-soul' imported from …\profiles\web\` | 配置树里有插件行，但包没进 `node_modules` | 先 `dsh plugin add`，再启动 |
+| `Cannot find package 'dsh-soul' imported from …\profiles\<profile>\` | 配置树里有插件行，但包没进 `node_modules` | 先 `dsh plugin add`，再启动 |
 | 插件目录存在但为空 | `link:` 在无开发者模式的 Windows 上静默退化成空目录 | 改用 `mklink /J` 联接 |
 | 设置栏目不显示 | 插件没装进当前 profile / DSH 未完全重启 / 页面没刷新 | 重装 → 重启 → 硬刷新 |
 | 动效完全不出现 | 开关关闭 / Agent 未处于回复中 / `prefers-reduced-motion` 生效 | 逐项核对 |
 | 输入框卡片高度不断变大、聊天区出现巨大空白（开着光轨时） | 光轨的 SVG 退回了常规流，形成尺寸正反馈 | 见下方 4.2；0.6.2 起已内置三层隔离与熔断 |
 | 改源码后无反应 | 装的是复制副本 | 见第二节方案 C |
-| `dsh web --patch ./x.yml` 报 `web takes none of …` | `web` 别名命令不接受全局选项 | 写全称 `dsh --profile web --patch …` |
+| `dsh web --patch ./x.yml` 报 `web takes none of …` | `web` 别名命令不接受全局选项 | 写全称 `dsh --profile <profile> --patch …` |
 | 配置保存了但 Agent 行为没变 | `agent.inject()` 只在下一次模型请求生效 | 先发一条新消息再观察 |
 | 自定义指令里写了 `{{…}}` 之后，**每个会话的每一轮**都失败 | 宿主提示词 section 默认开启严格插值，而插件不注册任何变量 | 见下方 4.3（0.7.1 起已关闭插值） |
 | 昵称 / 风格 / 预设库突然全部为空 | `soul-config.json` 被写坏；旧版会静默回退默认值并把它写回磁盘 | 见下方 4.4（0.7.1 起改为拒绝写入 + 自动备份） |
@@ -247,15 +282,15 @@ node scripts/verify-compat.mjs --runtime 0.2.0-rc.2
 
 | 方式 | 做法 | 适用 |
 | --- | --- | --- |
-| 升级插件（推荐） | `dsh plugin --profile web update dsh-soul` | 上游已发布声明兼容的版本 |
-| 临时豁免 | `dsh plugin --profile web allow-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2 --accept-risk` | 上游尚未发版，需先跑起来 |
+| 升级插件（推荐） | `dsh plugin --profile <profile> update dsh-soul` | 上游已发布声明兼容的版本 |
+| 临时豁免 | `dsh plugin --profile <profile> allow-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2 --accept-risk` | 上游尚未发版，需先跑起来 |
 | 参与修复 | 放宽 `peerDependencies` 上界并升版本发版 | 你是维护者（见 `PUBLISHING.md`） |
 
 豁免查询与撤销：
 
 ```bash
-dsh plugin --profile web version-exemptions
-dsh plugin --profile web revoke-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2
+dsh plugin --profile <profile> version-exemptions
+dsh plugin --profile <profile> revoke-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2
 ```
 
 豁免写入 profile 目录下的 `compatibility.json`，且**只对写明的「包版本 + DSH 版本」组合生效**——升级任一侧都会重新触发校验。
@@ -334,21 +369,22 @@ svg.getBoundingClientRect().height  // 正常应 ≈ 输入框卡片高度（+4p
 
 **根因**：`soul-config.json` 被写坏（写盘中途进程被杀、磁盘满、手工编辑出错）。**0.7.0 及更早**的读取逻辑会吞掉一切异常并静默回退默认值，同时把它写进内存缓存 —— 于是之后**任何一次保存**都会以「默认值」为底合并改动再写回磁盘，用户原有的自定义指令与预设库**被永久覆盖，且全程没有任何提示**。
 
-**0.7.1 的三处修复**：
+**0.7.1 的四处修复**：
 
 | 修复 | 作用 |
 | --- | --- |
 | 写入改为「临时文件 + `rename` 覆盖」 | 同目录 rename 是原子替换，中断只会残留一个 `.tmp`，不会再产生截断的 JSON |
 | 读取区分「文件不存在」与「文件损坏」 | 不存在 → 回退默认值、允许保存（首次运行的正常路径）；损坏 → 回退默认值以维持插件可用，但**拒绝任何写入** |
 | 损坏文件自动另存 `soul-config.json.corrupt`，并在设置页上报 | 原内容可找回；用户不必自己猜「为什么人设没了」 |
+| **「重置」成为逃生口** | 拒绝写入如果没有出口，用户就只能自己删文件。重置被定义为**刻意丢弃**：先把损坏文件移开（＝备份为 `.corrupt`），再写入默认值。它与「不静默覆盖」不冲突——静默覆盖仍被禁止，重置则是用户显式发起、且覆盖前留备份 |
 
 **处理**：
 
 | 情形 | 做法 |
 | --- | --- |
 | 想沿用旧配置 | 打开 `soul-config.json.corrupt`，把内容修正为合法 JSON（常见问题是缺一个 `}` 或末尾多一个逗号），另存回 `soul-config.json`，再刷新设置页 —— 读取会在下一次请求自动恢复，**不必重启 DSH** |
-| 不需要旧配置 | 直接删除 `soul-config.json`，然后正常保存即可（文件不存在是允许写入的正常路径） |
-| 只想临时回到默认 | 设置页「重置为默认值」（注意该操作会覆盖当前文件，前提是文件本身可解析） |
+| 不需要旧配置 | 直接用设置页的**「重置为默认」** —— 损坏状态下这是唯一还能成功的写操作，它会自动把损坏文件备份为 `.corrupt`；也可以手动删除 `soul-config.json`，然后正常保存 |
+| 想确认备份去了哪 | `/soul reset` 会回报备份路径，设置页重置成功的提示也会说明「已备份」 |
 
 > 同目录下可能出现的两个辅助文件：`soul-config.json.tmp`（原子写的中间态，正常情况下会被 rename 吃掉，只在中断后残留）与 `soul-config.json.corrupt`（损坏内容的备份）。两者都可安全删除。
 

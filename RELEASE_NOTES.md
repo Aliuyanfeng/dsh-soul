@@ -33,7 +33,7 @@
 **配置与集成**
 - 持久化：`$DSH_HOME/soul-config.json`（用户预设存于同文件 `personas` 字段；内置人设只在代码 `lib/personas.mjs` 里，不落盘，因此升级时自动更新、也无法被删除或篡改）
 - 服务：`soulConfig`（`getConfig` / `updateConfig` / `getSystemPrompt` / `resetConfig`）
-- HTTP API：`/api/soul/config`（GET/POST）、`/api/soul/prompt`（已生效提示词）、`/api/soul/prompt/preview`（POST 草稿，不落盘、不影响生效提示词）、`/api/soul/config/reset`、`/api/soul/personas`（GET）、`/api/soul/personas/save|use|delete`（POST）
+- HTTP API：`/api/soul/config`（GET/POST）、`/api/soul/prompt`（已生效提示词）、`/api/soul/prompt/preview`（POST 草稿，不落盘、不影响生效提示词）、`/api/soul/config/reset`、`/api/soul/status`（GET，诊断两条送达通道与配置状态）、`/api/soul/personas`（GET）、`/api/soul/personas/save|use|delete`（POST）
 - 输入校验：字段白名单、类型、长度上限与枚举校验，HTTP 保存 / `/soul` 命令 / `set_persona` 工具 / `soulConfig` 服务共用；非法或超限字段整单拒绝
 - Agent 工具：`set_persona`（需宿主安装 `@deepseek-ai/dsh-tools`；缺失或不兼容时自动跳过，其余功能不受影响；确认模式下返回 `pending` 提议）
 - 插件图标：`package.json` 的 `icon` 指向 `assets/icon.svg`（36×36 viewBox，随 npm 包发布）
@@ -45,6 +45,9 @@
 - 保存配置后在**下一次请求**生效：配置变化同时走 system prompt section（每一步装配时重新求值）与活动会话注入（保存后主动推送快照），不会打断进行中的请求，也不会改写历史消息
 - 有效配置变化会在会话里留下一条 `[dsh-soul 个性化配置已更新]` 消息（user 角色）——它是「即时生效」的可见载体；纯外观配置（输入框光轨）只落盘，不产生该消息
 - 两条通道**缺一不可**：底座是宿主「每步重新装配 + 不对函数式 section 文本做缓存」，`npm run verify:host` 用宿主的真实实现直接验证它；而本版实测证明**只有底座不够**（会话进行中改配置不生效），因此注入是必需的第二条通道，不要单独删除（见 `DEBUGGING.md` 3.5）
+- 「改了配置不生效」有三处可查：`/soul show` 末尾的「送达」行、`GET /api/soul/status`、设置页的提示条（`configError` = 配置读不出来；`deliveryWarning` = 配置送不到活动会话）
+- 配置文件**损坏**时普通保存会被拒绝（以免以默认值为底覆盖你的内容），设置页的**重置**是逃生口：它把损坏文件另存为 `soul-config.json.corrupt` 后再写入默认值
+- `npm run verify` 里可能包含**跳过**（无浏览器 / 定位不到 DSH）：跳过会显式打印未执行的断言数，但退出码仍为 0；需要「跳过即失败」时用 `npm run verify:strict`
 - 仅支持 `web` 平台客户端
 
 ## 兼容性
@@ -74,19 +77,30 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 - **配置损坏不再被静默覆盖**：读取区分「文件不存在」（回退默认，属正常首启路径）与「文件损坏」（保留原文件、另存 `.corrupt` 备份、**拒绝在此基础上写入**）。此前 `catch {}` 会静默回退成默认值，并在下一次保存时以默认值为底写回磁盘 ⇒ 自定义指令与人设库**永久丢失且全程没有任何提示**。读取失败时刻意不写缓存，用户修好文件后**不必重启 DSH** 即自动恢复；设置页会直接显示原因与备份位置
 - 新增 `lib/store.mjs` 收口全部配置读写（校验/迁移留在 `lib/config.mjs`，`index.mjs` 只管缓存与状态，且不再直接 import `node:fs/promises`）
 - **撤回本版草稿中的「移除会话注入」**（同版本内回退，未发布）：删除 `injectPromptToAllAgents` 与 `lib/injection.mjs` 的理由是「宿主每一步都重新装配提示词、对函数式 section 文本不做缓存、文本变化时自行提交新的 system 快照 ⇒ 注入冗余」。实测该推理**不足以支撑删除** —— 只保留 section 通道时，**会话进行中修改人设不会在下一轮生效**。现已恢复注入、`lib/injection.mjs` 与 `@deepseek-ai/dsh-llm` 依赖：配置变化继续走**双通道**（section 每次装配重算 + 保存后主动推送活动会话），两者互为兜底
+- **配置损坏时不再是死路**：此前损坏状态下「保存 / 重置 / 斜杠命令 / 工具 / 服务」五条写路径**全部被拒**，用户除手删文件外没有出路。现在「重置」被定义为**刻意丢弃**——先把损坏文件移开（备份为 `.corrupt`）再写入默认值，并且**重置本身也走同一个写入路径**（不另写一份「读—改—写」）。这与上一条「损坏配置绝不被**静默**覆盖」不冲突：静默覆盖仍被禁止，而重置是用户显式发起的动作
+- **重置失败不再被报成成功**：客户端此前无条件弹「已重置为默认值」，即使请求失败（配置损坏时那条必然失败的重置正落在这里）。现在失败给失败提示，成功且丢弃过损坏文件时告知「已备份」
 
 **优化**
 
 - 修正 `registerSection` 中一处与事实不符的注释：原先称「重新注册会触发 `system-prompt/change`，让 DSH 丢弃已缓存的快照」——该事件当前**没有任何消费者**（只在 `dsh-system-prompt` 内部 emit）
+- **「改了配置不生效」从此有据可查**（此前是全静默：`agents` 服务不可用时直接 `return`，注入异常被 `catch {}` 吞掉，日志全被注释）：
+  - `injectPromptToAllAgents` 如实统计送达结果（活动会话数 / 成功数 / 失败数 / 原因），并经 `ctx.logger` 告警（同一原因只告一次，恢复正常后允许再次告警）
+  - 新增 `GET /api/soul/status`：报告两条通道的状态、配置路径与版本号
+  - `/soul show` 末尾新增「送达」一行（是否有活动会话、注入是否成功）
+  - 设置页新增 `deliveryWarning` 提示：与 `configError`（配置读不出来）分开上报——两者症状相同、处理方式不同
+  - `soulConfig` 服务的 `updateConfig` 现在也走「变更即送达」，与服务之外的另外三条写路径保持一致
+- **`npm run verify` 不再「假绿」**：`verify-trail` / `verify-nav-icon` 在无浏览器时、`verify-e2e` / `verify:host` / `verify:compat` 在定位不到 DSH 时会**跳过并返回 0**，此前混在 `&&` 链里看起来一片绿，实际有几十项断言根本没跑。现在跳过会显式说明「有 N 项断言未执行」，并新增 `npm run verify:strict`（跳过即失败）。各脚本还会在跑完时校验实际断言数与声明值一致，避免数字变成谎话
+- **`verify:host` 不再由当前工作目录决定验证哪一份宿主**：锚点原先以 `process.cwd()` 开头，而模块解析会从锚点向上找 `node_modules` ⇒ 换个目录跑就可能命中另一份 DSH 安装（本机同时存在 0.2.1-alpha.1 与用户主目录 pnpm store 里的 0.1.0-rc.8，后者不支持 `interpolate`）。现在优先「装了本插件的 profile」，并在解析到多份副本时逐一打印、说明本次验证的是哪一份；`--dsh` 指向非 DSH 目录时直接报错，不再悄悄退回自动定位
 
 **校验**
 
-- `verify-config` 59 → **64 项**；新增 `verify-store`（14 项真实文件系统断言，含「被拒绝的保存不得改动原文件一个字节」）
+- `verify-config` 59 → **75 项**（新增：重置逃生口单一实现、注入失败必须留痕、诊断端点形状、两类问题分开上报、版本号不新增常量、三张双语文案表逐键对齐、`verify` 与 `verify:strict` 两条链同序且逐项带 `--strict`）；`verify-store` 14 → **18 项**（新增 `moveAsideConfigFile` 的四条行为断言）
 - 新增两个回归并入 `npm run verify`，把「改配置 → 下一轮生效」的两条通道分别钉住（上述撤回正是由它们暴露的）：
   - `verify:host`（20 项 + 3 项判断力对照）：用宿主的**真实实现**验证底座 —— 真实 `SystemPrompt` + 真实 Cordis Context 跑「改值→再装配即读到新值、改回又读到旧值」，原样切片 `SystemPromptProjection` 跑「文本变了才提交、没变不提交、清空则归一化」，外加 `preStep` / `assemble` 的源文本契约。**注意它只证明底座成立，不等于端到端一定生效**（这正是本版撤回的原因）
-  - `verify:e2e`（20 项 + 2 项判断力对照）：用**真实 `index.mjs`** + 假宿主在纯 Node 里跑通 `POST /api/soul/config` → 原子落盘 → 两条通道各拿到新文本（E4 / E8 断言 section provider 立即读到新值；E13 / E16 断言活动会话确实收到注入快照、且来源符合会话格式 v4 准入）。插件挂载前会在临时目录生成 `@deepseek-ai/dsh-llm` 的形状兼容桩，因此不依赖本机是否装过 DSH
-  - 另有「纯外观字段既不刷新也不注入」（E10 / E10b）与「草稿预览是只读旁路」（E17）；两者都配**判断力对照**（改坏关键条件必须失败），`verify:host` 在定位不到 DSH 时优雅跳过
-- 发布包 14 → **18 个文件**（新增 `lib/store.mjs` 与两个校验脚本）
+  - `verify:e2e`（**28 项** + 2 项判断力对照）：用**真实 `index.mjs`** + 假宿主在纯 Node 里跑通 `POST /api/soul/config` → 原子落盘 → 两条通道各拿到新文本（E4 / E8 断言 section provider 立即读到新值；E13 / E16 断言活动会话确实收到注入快照、且来源符合会话格式 v4 准入），另起一个**配置损坏场景**验证逃生口（E18–E24：如实上报、拒绝保存且不改动原文件、重置可用并回报备份、重置后免重启恢复、诊断端点可用）。插件挂载前会在临时目录生成 `@deepseek-ai/dsh-llm` 的形状兼容桩，因此不依赖本机是否装过 DSH
+  - 另有「纯外观字段既不刷新也不注入」（E10 / E10b）与「草稿预览是只读旁路」（E17）；两者都配**判断力对照**（改坏关键条件必须失败）
+- 新增 `scripts/lib/skip-report.mjs`：统一「跳过」语义（`skipExit` / `assertCount`）
+- 发布包 14 → **19 个文件**（新增 `lib/store.mjs`、两个校验脚本与 `scripts/lib/skip-report.mjs`；`--strict` 链不增加文件）
 
 ### v0.7.0（2026-10-08）
 

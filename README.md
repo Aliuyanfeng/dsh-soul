@@ -31,6 +31,8 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
 - 配置持久化保存
 - 配置输入校验：字段白名单、类型、长度上限（昵称/职业 50、介绍 500、自定义指令 2000 字符）、枚举与十六进制颜色校验，非法或超限字段整单拒绝
 - 配置持久化健壮性：写入为**原子替换**（先写临时文件再 `rename`，中断不会留下半份配置）；读取区分「文件不存在」与「文件损坏」——损坏时保留原文件、另存 `.corrupt` 备份、**拒绝覆写**，并把原因直接显示在设置页，避免自定义指令与人设库被静默清空
+- 配置损坏时有**逃生口**：「重置」会先把损坏文件移开（备份为 `.corrupt`）再写入默认值 —— 否则损坏状态下五条写路径全被拒，用户只能自己删文件
+- 送达可观测：`/soul show` 的「送达」行、`GET /api/soul/status`、设置页提示条（`configError` = 配置读不出来；`deliveryWarning` = 配置送不到活动会话）
 - 提示词插值已关闭：自定义指令里的 `{{…}}` 按字面保留，不会触发宿主提示词装配失败
 - 配置更新后同步到所有活动 Agent
 - 变更检测：仅在影响 Agent 行为的配置实际变化时刷新提示词并注入会话；纯外观配置（输入框光轨）只落盘，不产生注入消息
@@ -41,8 +43,8 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
 ## 安装
 
 ```powershell
-dsh plugin --profile web add dsh-soul
-dsh plugin --profile web update dsh-soul
+dsh plugin --profile <profile> add dsh-soul
+dsh plugin --profile <profile> update dsh-soul
 ```
 
 插件配置由 `cordis.patch.yml` 提供：
@@ -68,7 +70,7 @@ dsh plugin --profile web update dsh-soul
 若 DSH 提示「dsh-soul@x.y.z 与 DSH a.b.c 不兼容」，说明插件版本早于该 DSH 版本，升级插件即可：
 
 ```powershell
-dsh plugin --profile web update dsh-soul
+dsh plugin --profile <profile> update dsh-soul
 ```
 
 ## 截图
@@ -96,7 +98,7 @@ dsh plugin --profile web update dsh-soul
 也可以使用斜杠命令：
 
 ```text
-/soul show        查看当前配置（含确认模式与预设数量）
+/soul show        查看当前配置（含确认模式、预设数量与送达状态）
 /soul set k=v     修改配置项（如 /soul set style=humorous language=en；光轨：trailColor=#679EFE trailSpeed=fast trailWidth=thick）
 /soul save <名>   保存当前配置为人设预设（内置名不可占用）
 /soul use <名>    应用人设预设（内置预设同样可用）
@@ -104,7 +106,7 @@ dsh plugin --profile web update dsh-soul
 /soul del <名>    删除人设预设（delete / rm 别名；内置预设不可删）
 /soul confirm     应用待确认的人设变更（确认模式）
 /soul reject      拒绝待确认的人设变更
-/soul reset       重置配置（保留人设预设库）
+/soul reset       重置配置（保留人设预设库）；配置损坏时这是逃生口，会先备份为 .corrupt
 /soul enable      启用个性化设置
 /soul disable     禁用个性化设置
 /soul 小明        设置昵称
@@ -149,31 +151,39 @@ soul-config.json
 
 ## 实现原理
 
-插件通过 `compilePrompt()` 将昵称、风格、语调和自定义指令编译成 system prompt，并注册到 DSH：
+「保存后下一次请求即生效」由**两条通道**共同保证（缺一不可，见 `DEBUGGING.md` 3.5）。
+
+**通道一：system prompt section。** 插件把配置编译成 system prompt 并注册到 DSH：
 
 ```js
 spCtx.systemPrompt.section({
   name: 'soul:persona',
   order: 0,
+  // 关闭宿主提示词插值：默认开启时，用户自定义指令里任何一对完整的 {{…}}
+  // 都会让装配抛错（该抛错在 agent.step() 开头且无 try/catch ⇒ 每轮都失败）
+  interpolate: false,
   text: () => compilePrompt(configCache || DEFAULT_CONFIG)
 })
 ```
 
-配置更新后，插件会遍历所有活动 Agent，使用标准 `UserMessage` 调用 `agent.inject()`：
+宿主在**每一个 step 之前**都会重新装配提示词，对函数式 `text` provider **不做缓存**，并在文本变化时自行提交新的 system 快照 —— 所以这一条的更新时机是「下一次请求」。
+
+**通道二：活动会话注入。** 配置变化后，插件遍历所有活动 Agent，用标准 `UserMessage` 调用 `agent.inject()`：
 
 ```js
 agent.inject(createUserMessage({
-  content: [{ type: 'text', text: prompt }],
-  source: {
-    kind: 'plugin',
-    plugin: 'dsh-soul',
-    form: 'snapshot',
-    sections: [{ name: 'soul:persona', text: prompt }]
-  }
+  content: [{ type: 'text', text: `[dsh-soul 个性化配置已更新]\n…\n${prompt}` }],
+  // 会话格式 v4 要求生产者自持 kind（不得再用共享的 kind:'plugin' + plugin 字段，
+  // 那会让每一轮在 step 开始前失败）；构造见 lib/injection.mjs
+  source: { kind: 'plugin:dsh-soul', form: 'snapshot', sections: [{ name: 'soul:persona', text: prompt }] }
 }))
 ```
 
-`agent.inject()` 会将最新配置放入 Agent 的待处理上下文，在下一次请求中生效；不会主动触发新请求，也不会修改历史消息。
+`agent.inject()` 会把最新配置放入 Agent 的待处理上下文，在下一次请求中生效；不会主动触发新请求，也不会修改历史消息。它同时是「即时生效」的可见载体：会话里会出现一条 `[dsh-soul 个性化配置已更新]` 消息。
+
+> 为什么两条都要：**只保留通道一时，实测「会话进行中修改人设」不会在下一轮生效**（0.7.1 开发中曾据此删除通道二，随后原样撤回）。`npm run verify:host` 与 `npm run verify:e2e` 分别把两条通道钉住，DSH 升级后请重跑。
+
+**诊断。** 这两条通道静默失效时症状都是「改了配置不生效」，因此插件会如实记录送达结果：`/soul show` 末尾的「送达」行、`GET /api/soul/status`、以及设置页的提示条（`configError` = 配置读不出来，`deliveryWarning` = 配置送不到活动会话）。
 
 ## 许可证
 

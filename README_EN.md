@@ -31,6 +31,8 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - Configuration persisted to disk
 - Input validation: field whitelist, types, length limits (nickname/occupation 50, bio 500, custom instructions 2000 chars), enum and hex-color checks; invalid or oversized fields reject the whole write
 - Durable config: writes are **atomic** (temp file + `rename`, so an interrupted write can never leave half a config); reads tell "file missing" apart from "file corrupted" — a corrupt file is left untouched, backed up as `.corrupt`, **refused as a write target**, and the reason is shown right in the settings page so your custom instructions and persona library are never silently wiped
+- Reset is the **escape hatch** for a corrupt config: since every other write path refuses to touch a corrupt file, `/soul reset` (and the settings-page reset button) moves it aside as `.corrupt` and writes a fresh default config, reporting the backup path — so a bad file never locks you out of the plugin without a restart
+- Delivery is **observable**: `/soul show` ends with a delivery line, `GET /api/soul/status` reports `version` / `enabled` / `configPath` / `configError` / `promptChars` / both channels / `deliveryWarning`, and the settings page shows the same reason as a banner. `configError` (**cannot read** the config) and `deliveryWarning` (**cannot deliver** it to active sessions) are reported separately — same symptom, different fix
 - Prompt interpolation is disabled: `{{…}}` in custom instructions stays literal and can no longer break system-prompt assembly
 - Configuration synced to all active agents after every update
 - Change detection: the prompt is refreshed and sessions injected only when a behavior-affecting field actually changed — appearance-only config (composer light trail) is persisted without injecting anything
@@ -41,9 +43,11 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 ## Installation
 
 ```powershell
-dsh plugin --profile web add dsh-soul
-dsh plugin --profile web update dsh-soul
+dsh plugin --profile <profile> add dsh-soul
+dsh plugin --profile <profile> update dsh-soul
 ```
+
+Replace `<profile>` with your own profile name (e.g. `desktop` when using the DSH desktop build).
 
 The plugin is registered via `cordis.patch.yml`:
 
@@ -68,7 +72,7 @@ So DSH **0.1.x and 0.2.x** are supported, prereleases included. Run `npm run ver
 If DSH reports "dsh-soul@x.y.z is incompatible with DSH a.b.c", the plugin predates that DSH version — updating it is enough:
 
 ```powershell
-dsh plugin --profile web update dsh-soul
+dsh plugin --profile <profile> update dsh-soul
 ```
 
 ## Screenshots
@@ -96,7 +100,7 @@ After starting DSH, open the **Personalization** section on the settings page, e
 Slash commands are also available:
 
 ```text
-/soul show        Show current configuration (confirmation mode & persona count)
+/soul show        Show current configuration (confirmation mode, persona count & delivery status)
 /soul set k=v     Change config fields (e.g. /soul set style=humorous language=en; trail: trailColor=#679EFE trailSpeed=fast trailWidth=thick)
 /soul save <name> Save the current config as a persona (built-in names are reserved)
 /soul use <name>  Apply a persona (built-in personas work the same way)
@@ -104,7 +108,7 @@ Slash commands are also available:
 /soul del <name>  Delete a persona (delete / rm aliases; built-in personas cannot be deleted)
 /soul confirm     Apply the pending persona proposal (confirmation mode)
 /soul reject      Discard the pending persona proposal
-/soul reset       Reset configuration (keeps the persona library)
+/soul reset       Reset configuration (keeps the persona library; with a corrupt config this is the escape hatch — the bad file is moved aside as .corrupt first)
 /soul enable      Enable personalization
 /soul disable     Disable personalization
 /soul Bob         Set nickname
@@ -149,31 +153,41 @@ Length limits: nickname / occupation 50 chars, bio 500 chars, custom instruction
 
 ## How It Works
 
-The plugin compiles the nickname, style, tone and custom instructions into a system prompt via `compilePrompt()` and registers it with DSH:
+"Takes effect on the next request after saving" is guaranteed by **two channels** — both are required (see `DEBUGGING.md` 3.5).
+
+**Channel 1: the system-prompt section.** The plugin compiles the config into a system prompt and registers it with DSH:
 
 ```js
 spCtx.systemPrompt.section({
   name: 'soul:persona',
   order: 0,
+  // Host prompt interpolation is disabled: with it on, any complete {{…}} pair in your
+  // custom instructions makes assembly throw — and that throw happens at the top of
+  // agent.step() with no try/catch, so every single turn fails.
+  interpolate: false,
   text: () => compilePrompt(configCache || DEFAULT_CONFIG)
 })
 ```
 
-After each update, the plugin iterates over all active agents and calls `agent.inject()` with a standard `UserMessage`:
+The host re-assembles the prompt **before every step**, does **not** cache function-form `text` providers, and commits a new system snapshot whenever the text changes — so this channel updates on the **next request**.
+
+**Channel 2: injection into active sessions.** After a config change the plugin walks every active agent and calls `agent.inject()` with a standard `UserMessage`:
 
 ```js
 agent.inject(createUserMessage({
-  content: [{ type: 'text', text: prompt }],
-  source: {
-    kind: 'plugin',
-    plugin: 'dsh-soul',
-    form: 'snapshot',
-    sections: [{ name: 'soul:persona', text: prompt }]
-  }
+  content: [{ type: 'text', text: `[dsh-soul personalization updated]\n…\n${prompt}` }],
+  // Session format v4 requires producers to carry their own kind (the shared
+  // kind:'plugin' + plugin field is rejected, failing every turn before step);
+  // construction lives in lib/injection.mjs
+  source: { kind: 'plugin:dsh-soul', form: 'snapshot', sections: [{ name: 'soul:persona', text: prompt }] }
 }))
 ```
 
-`agent.inject()` places the latest configuration into the agent's pending context so it takes effect on the next request. It does not trigger a new request and does not modify message history.
+`agent.inject()` places the latest config into the agent's pending context so it takes effect on the next request; it does not trigger a new request and does not rewrite message history. It is also the visible carrier of "already updated": a `[dsh-soul personalization updated]` message shows up in the conversation.
+
+> Why both are needed: **with channel 1 alone, changing the persona mid-conversation was measured not to take effect on the next turn** (channel 2 was removed on that assumption during 0.7.1 development, then rolled back verbatim). `npm run verify:host` and `npm run verify:e2e` pin each channel down in place; re-run them after every DSH upgrade.
+
+**Diagnostics.** Both channels fail silently with the same symptom — "I changed the config and nothing happened" — so the plugin records delivery honestly: the delivery line at the end of `/soul show`, `GET /api/soul/status`, and the banner on the settings page (`configError` = the config **cannot be read**; `deliveryWarning` = it **cannot be delivered** to active sessions).
 
 ## License
 

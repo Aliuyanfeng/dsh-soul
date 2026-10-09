@@ -10,16 +10,16 @@
 - `dsh.bundle.patch`
 - `files`
 
-发布包至少应包含：
+发布包至少应包含（当前 19 个文件）：
 
 ```text
 index.mjs
-lib/config.mjs
-lib/injection.mjs
-lib/personas.mjs
-lib/store.mjs
+lib/*.mjs                      # config / injection / personas / store
 client/index.mjs
+assets/icon.svg
 cordis.patch.yml
+scripts/lib/skip-report.mjs
+scripts/verify-*.mjs           # config / store / e2e-prompt / live-prompt / compat / trail / nav-icon
 README.md
 README_EN.md
 package.json
@@ -30,6 +30,8 @@ package.json
 ```bash
 npm pack --dry-run
 ```
+
+发版前先跑一遍回归：`npm run verify`（全部通过时 rc=0）。若环境缺浏览器 / DSH 运行时，部分脚本会**显式跳过并以 rc=0 通过**——要求「跳过即失败」时改用 `npm run verify:strict`（链上每项都带 `--strict`，无浏览器时会失败，属预期）。
 
 ## 发布
 
@@ -165,9 +167,9 @@ node scripts/verify-compat.mjs --dsh "<DSH 安装目录>"
 用户侧若要在插件发新版前强行装载，DSH 提供按「精确包版本 + 精确 DSH 版本」的豁免（写入 profile 的 `compatibility.json`，需显式接受风险）：
 
 ```bash
-dsh plugin --profile web allow-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2 --accept-risk
-dsh plugin --profile web version-exemptions
-dsh plugin --profile web revoke-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2
+dsh plugin --profile <profile> allow-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2 --accept-risk
+dsh plugin --profile <profile> version-exemptions
+dsh plugin --profile <profile> revoke-version dsh-soul@0.6.0 --dsh-version 0.2.0-rc.2
 ```
 
 > 豁免只对写明的那个组合生效，任一侧升级后即失效。
