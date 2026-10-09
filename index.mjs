@@ -1136,6 +1136,15 @@ function registerSystemPrompt(ctx) {
       disposeSection = spCtx.systemPrompt.section({
         name: 'soul:persona',
         order: 0,
+        // 关闭宿主的提示词插值（默认开启）。插值是严格模式：文本里每一对完整的
+        // {{...}} 都必须命中一个已注册变量，否则 renderPrompt 抛错；而本 section
+        // 的装配里变量集为空 ⇒ 用户在「自定义指令」里写一句模板语法（例如 {{name}}）
+        // 就会让整个 system prompt 装配失败。该抛错位于 agent.step() 开头且无
+        // try/catch ⇒ 不是「忽略那段文字」，而是**该会话的每一轮都失败**。
+        //
+        // 代价为 0：我们不使用任何宿主提示词变量（需要上下文时，text 本身就是
+        // provider）。关掉它同时让「预览所见」与「真实注入」逐字符一致。
+        interpolate: false,
         text: () => {
           const prompt = compilePrompt(configCache || DEFAULT_CONFIG)
           if (prompt) {

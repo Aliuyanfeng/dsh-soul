@@ -670,4 +670,19 @@ check('提示词预览新增文案键中英各一份', () => {
   }
 })
 
+// ---------- 系统提示词插值 ----------
+
+check('系统提示词 section 显式关闭宿主插值', () => {
+  const anchor = indexSource.indexOf("name: 'soul:persona'")
+  assert.ok(anchor >= 0, '找不到 soul:persona 的 section 注册')
+  const region = indexSource.slice(anchor, anchor + 1500)
+  assert.ok(
+    /interpolate:\s*false/.test(region),
+    'section 必须显式写 interpolate: false —— 宿主默认开启且是严格模式，' +
+      '用户只要在「自定义指令」里写出一对完整的 {{...}} 就会让 renderPrompt 抛错；' +
+      '该错位于 agent.step() 开头且无 try/catch ⇒ 该会话每一轮都失败'
+  )
+  assert.equal(/interpolate:\s*true/.test(region), false, 'interpolate 不得为 true')
+})
+
 console.log(`\n全部通过：${passed} 项检查`)
