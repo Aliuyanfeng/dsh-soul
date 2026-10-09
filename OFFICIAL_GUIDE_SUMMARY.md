@@ -34,4 +34,4 @@ patch 内容：
 - `client/index.mjs`：注册 Web UI 设置栏目。
 - `cordis.patch.yml`：声明插件在 DSH 中的加载项。
 
-配置更新后，插件通过 `agent.inject()` 将最新配置快照放入活动 Agent 的上下文，并在下一次请求中生效。
+配置更新后，插件只需更新配置缓存：宿主在每一步都会重新装配系统提示词并重新求值 `soul:persona` section，下一次请求即生效，插件侧**不向会话注入任何消息**。

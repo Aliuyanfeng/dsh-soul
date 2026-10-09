@@ -176,9 +176,27 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | 动效形态 | 单段拖尾沿输入框边缘匀速绕行，头部最亮、尾部渐隐，**与边框完全重合为一条线** |
 | 系统偏好 | 开启「减少动态效果」后动画停止（`prefers-reduced-motion`） |
 | 持久化 | 保存后重开设置页四项参数不变；`$DSH_HOME/soul-config.json` 中出现 `trail*` 四字段 |
-| 不污染提示词 | 只改光轨颜色 → 仅提示「已保存」，**不产生**会话注入消息；改昵称 / 风格才会注入 |
+| 不污染提示词 | 只改光轨颜色 → 仅提示「已保存」，系统提示词**不变**；改昵称 / 风格才会改变提示词 |
 
-> 光轨四项属于**纯外观配置**：计入"配置已变更"（用于保存提示与脏检查），但被排除在 `promptChanged` 之外，因此既不刷新系统提示词，也不向会话注入快照。
+> 光轨四项属于**纯外观配置**：计入"配置已变更"（用于保存提示与脏检查），但被排除在 `promptChanged` 之外，因此不会刷新系统提示词。
+
+### 5) 宿主等价性回归（0.7.1 起）
+
+0.7.1 移除了「向所有活动会话注入最新配置」，改为**完全依赖**「宿主每个 step 重新求值 section 的 `text` provider」。这条依赖属于宿主行为：一旦宿主改成缓存文本，「改配置 → 下一轮生效」会**静默失效**（不报错，只是配置不再生效 —— 最难排查的一类）。两个脚本把这条链路的**两端**各自钉住：
+
+```bash
+npm run verify:host    # 宿主端：真实 SystemPrompt + 真实 Cordis Context + 切片 SystemPromptProjection
+npm run verify:e2e     # 插件端：真实 index.mjs + 假宿主，走 HTTP 保存 → section 立刻读到新文本
+```
+
+| 脚本 | 证明什么 | 关键断言 |
+| --- | --- | --- |
+| `verify:host` | 宿主每次装配都重新求值；文本变了才提交新快照 | A2/A3：改配置后**再装配**即读到新文本，改回又能读到旧值（双向可变 ⇒ 无缓存）；B4：文本未变**不提交**（不堆消息）；C3：`preStep` 每个 step 都调 `assemble` |
+| `verify:e2e` | 保存配置后 provider 确实返回新文本 | E4/E8：保存后立即生效（同一进程、无需重启、无需重新注册）；E10：纯外观字段不触发刷新；E13：全程**未索要 `agents` 服务**（注入通道已彻底移除） |
+
+两者都内置**判断力对照**（把关键条件改坏，对应用例必须失败）：`verify:host` 把 `text` 退化为静态字符串、并删掉「文本相等则不提交」；`verify:e2e` 把 provider 读的配置源换成 `DEFAULT_CONFIG`。**DSH 升级后请重跑 `npm run verify:host`** —— 它是这条链路唯一的自动化护栏。
+
+> 两者都并入 `npm run verify`。定位不到 DSH 时优雅跳过（退出码 0）；`verify:host` 的 B 层若在宿主源码里找不到 `SystemPromptProjection` 也会跳过（宿主实现已变），A / C 层仍照常执行。
 
 ## 四、常见报错
 
@@ -192,7 +210,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | 输入框卡片高度不断变大、聊天区出现巨大空白（开着光轨时） | 光轨的 SVG 退回了常规流，形成尺寸正反馈 | 见下方 4.2；0.6.2 起已内置三层隔离与熔断 |
 | 改源码后无反应 | 装的是复制副本 | 见第二节方案 C |
 | `dsh web --patch ./x.yml` 报 `web takes none of …` | `web` 别名命令不接受全局选项 | 写全称 `dsh --profile web --patch …` |
-| 配置保存了但 Agent 行为没变 | `agent.inject()` 只在下一次模型请求生效 | 先发一条新消息再观察 |
+| 配置保存了但 Agent 行为没变 | 新配置在下**一次**模型请求生效（section 在装配时求值，不会打断进行中的请求） | 先发一条新消息再观察；若仍不变见 4.5 |
 | 自定义指令里写了 `{{…}}` 之后，**每个会话的每一轮**都失败 | 宿主提示词 section 默认开启严格插值，而插件不注册任何变量 | 见下方 4.3（0.7.1 起已关闭插值） |
 | 昵称 / 风格 / 预设库突然全部为空 | `soul-config.json` 被写坏；旧版会静默回退默认值并把它写回磁盘 | 见下方 4.4（0.7.1 起改为拒绝写入 + 自动备份） |
 | 保存时提示「为避免覆盖，本次保存已拒绝」 | 磁盘上的配置当前不可解析，写入被有意拦下 | 见下方 4.4：修复或删除该文件后重试 |
@@ -208,7 +226,7 @@ dsh-soul@0.6.0 与 DSH 0.2.0-rc.2 不兼容（要求 @deepseek-ai/dsh-llm ^0.1.1
 
 **判定规则**（权威实现：`@deepseek-ai/dsh-app-boot` 的 `evaluatePluginCompatibility`）：
 
-1. 只校验名字为 `@deepseek-ai/dsh` 或以 `@deepseek-ai/dsh-` 开头的 peer；**`@deepseek-ai/cordis` 不参与判定**（所以报错只列 dsh-llm 与 dsh-tools）；
+1. 只校验名字为 `@deepseek-ai/dsh` 或以 `@deepseek-ai/dsh-` 开头的 peer；**`@deepseek-ai/cordis` 不参与判定**（所以报错只列 dsh-tools）；
 2. 被比较的一方是 **DSH 运行时版本**（`dsh-app-boot/package.json` 的 version），不是这两个包各自的版本；
 3. 判定式 `semver.satisfies(runtimeVersion, range, { includePrerelease: true })`。`^0.1.1-rc.2` 的隐含上界是 `<0.2.0-0`，所以它会挡住整条 0.2.x 线。
 
@@ -220,7 +238,7 @@ node scripts/verify-compat.mjs --dsh "<DSH 安装目录>"
 node scripts/verify-compat.mjs --runtime 0.2.0-rc.2
 ```
 
-输出会逐条给出「通过 / 不通过」，并标注判定方式（能取到宿主时会直接调用 DSH 的原生函数）。脚本末尾还会抽查 `createUserMessage` / `defineTool` / `TOOL_RUNTIME_SCHEDULER` 与客户端 `inject` 包——这一层 DSH 不校验：
+输出会逐条给出「通过 / 不通过」，并标注判定方式（能取到宿主时会直接调用 DSH 的原生函数）。脚本末尾还会抽查 `defineTool` / `TOOL_RUNTIME_SCHEDULER` 与客户端 `inject` 包——这一层 DSH 不校验：
 
 - 只有 peer 不通过、符号齐备 → 属**声明过期**，升级插件即可；
 - 同时报符号缺失 → **代码也需要适配**，不能只改版本范围。
@@ -303,7 +321,7 @@ svg.getBoundingClientRect().height  // 正常应 ≈ 输入框卡片高度（+4p
 | 0.7.0 及更早 | 打开设置页 →「自定义指令」，删掉里面的 `{{…}}` 并保存，即可恢复 |
 | 0.7.1 及以上 | 已修：section 注册显式 `interpolate: false`，花括号一律**按字面保留**，不再参与插值 |
 
-> 修复的附加收益：预览与真实注入**逐字符一致**。0.7.0 时「提示词预览」会把 `{{cwd}}` 原样显示出来，实际注入却抛错或替换 —— 预览里看到的并不是真正会生效的内容。插件不使用任何宿主提示词变量，因此关闭插值的代价为 0（需要上下文时，section 的 `text` 本身就是 `(context) => string` provider）。
+> 修复的附加收益：预览与实际生效的文本**逐字符一致**。0.7.0 时「提示词预览」会把 `{{cwd}}` 原样显示出来，实际装配却抛错或替换 —— 预览里看到的并不是真正会生效的内容。插件不使用任何宿主提示词变量，因此关闭插值的代价为 0（需要上下文时，section 的 `text` 本身就是 `(context) => string` provider）。
 
 ### 4.4 配置损坏 →「人设像是被重置了」
 
@@ -333,6 +351,22 @@ svg.getBoundingClientRect().height  // 正常应 ≈ 输入框卡片高度（+4p
 | 只想临时回到默认 | 设置页「重置为默认值」（注意该操作会覆盖当前文件，前提是文件本身可解析） |
 
 > 同目录下可能出现的两个辅助文件：`soul-config.json.tmp`（原子写的中间态，正常情况下会被 rename 吃掉，只在中断后残留）与 `soul-config.json.corrupt`（损坏内容的备份）。两者都可安全删除。
+
+### 4.5 配置保存了，但 Agent 行为没变（0.7.1 起）
+
+**症状**：设置页显示「已保存」，但当前会话的下一轮回复仍沿用旧风格 / 旧昵称 / 旧语言。
+
+**先排除误判**：光轨四项（`trail*`）属纯外观配置，保存后本就不会改变系统提示词（见第三节 4) 的说明）。
+
+**逐项排查（按发生概率排序）**：
+
+| 检查 | 做法 | 说明 |
+| --- | --- | --- |
+| 保存其实被拒绝了 | 看设置页是否有红色横幅，或直接读 `$DSH_HOME/soul-config.json` | 配置损坏时写入会被有意拦下（见 4.4），界面会显示原因 |
+| 跑的是旧副本 / 旧版本 | 见第三节 2) 版本核对 | `file:` 安装不会自动更新，改源码后必须 `remove` + `add` |
+| 宿主不再每步重新求值 | `npm run verify:host` | 0.7.1 起「新配置生效」完全依赖宿主「每步重新装配 + 对函数式 `text` 不做缓存」。该脚本直接跑宿主的**真实实现**来判定；若它失败，说明 DSH 行为已变，需改回「主动刷新」思路（即 0.7.0 的做法：除注册 section 外，再 `agent.inject()` 一条快照） |
+
+> 0.7.1 之前这条链路有第二重保险：插件会向所有活动会话 `agent.inject()` 一条配置快照。移除它的理由见 README「实现原理」；`npm run verify:host` 与 `npm run verify:e2e` 正是为替代这重保险而加的自动化护栏。
 
 ## 五、配置文件与日志
 

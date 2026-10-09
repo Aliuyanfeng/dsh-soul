@@ -13,12 +13,11 @@
 //   - 保存用户配置到文件系统
 //   - 提供 HTTP API 供客户端调用
 //   - 注册斜杠命令 /soul 查看当前配置
-//   - 注入系统提示词到 Agent
-//   - 配置写入统一走写队列，返回 changed（有无实际变更）与 promptChanged（是否需要刷新提示词并注入会话）
+//   - 将个性化配置注册为 system prompt section（宿主每步重新求值，无需注入会话）
+//   - 配置写入统一走写队列，返回 changed（有无实际变更）与 promptChanged（是否需要刷新提示词）
 
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
   DEFAULT_CONFIG,
   STYLE_VALUES,
@@ -31,7 +30,6 @@ import {
   sanitizeConfig,
   sanitizePersonaName
 } from './lib/config.mjs'
-import { createInjectionSource } from './lib/injection.mjs'
 import { isBuiltinPersona, mergePersonas, personaMatches, resolvePersona } from './lib/personas.mjs'
 import { configWriteRefusal, describeConfigFailure, readConfigFile, writeConfigFile } from './lib/store.mjs'
 
@@ -44,7 +42,7 @@ function configPath() {
 
 // ==================== 提示词文案与构建器 ====================
 
-// 提示词固定文案表：所有进入 system prompt / 会话注入 / 工具返回的文本，
+// 提示词固定文案表：所有进入 system prompt / 工具返回的文本，
 // 按输出语言（config.language）提供中英两套，键集完全对齐。
 const PROMPT_TEXT = {
   zh: {
@@ -86,16 +84,6 @@ const PROMPT_TEXT = {
     joiner: '，',
     rulesHeader: '[执行规则]',
     rules: '你必须在每一条回复中严格遵守以上角色设定和回复风格；涉及用户背景时，用它来理解用户、贴合用户的需求和水平作答，而不是把它当作你自己的身份。包括但不限于：代码解释、技术问答、日常闲聊、知识科普等所有场景。违反此规则视为失败。',
-    injectUpdatedHeader: '[dsh-soul 个性化配置已更新]',
-    injectUpdatedBody: [
-      '以下是当前最新的个性化配置快照（含昵称、回复风格和语调、特质、输出语言等）。',
-      '从现在开始必须按照此配置回复，不要继续使用旧的昵称、角色、风格、语调、特质或输出语言。'
-    ].join('\n'),
-    injectDisabled: [
-      '[dsh-soul 个性化配置已关闭]',
-      '从现在开始不要使用 dsh-soul 之前注入的昵称、角色、回复风格、语调、特质或输出语言配置。',
-      '请恢复使用 Agent 的默认行为。'
-    ].join('\n'),
     toolUpdated: '已更新个性化设置',
     toolNoChanges: '没有要更改的设置',
     toolValidationFailed: '配置校验失败：',
@@ -141,16 +129,6 @@ const PROMPT_TEXT = {
     joiner: '; ',
     rulesHeader: '[Execution rules]',
     rules: 'You must strictly follow the role setup and reply style above in EVERY reply; when user background is involved, use it to understand the user and tailor your answers to their needs and level — never treat it as your own identity. This covers all scenarios including code explanation, technical Q&A, casual chat and knowledge sharing. Violating this rule counts as failure.',
-    injectUpdatedHeader: '[dsh-soul] Personalization config updated',
-    injectUpdatedBody: [
-      'Below is the latest personalization snapshot (nickname, reply style & tone, traits, output language, etc.).',
-      'From now on you must reply according to this config; do not keep using the previous nickname, role, style, tone, traits or output language.'
-    ].join('\n'),
-    injectDisabled: [
-      '[dsh-soul] Personalization config disabled',
-      'Stop using any nickname, role, reply style, tone, traits or output language previously injected by dsh-soul.',
-      'Return to your default behavior.'
-    ].join('\n'),
     toolUpdated: 'Personalization settings updated',
     toolNoChanges: 'No settings to change',
     toolValidationFailed: 'Config validation failed: ',
@@ -258,7 +236,7 @@ function enqueueConfigWrite(task) {
   return run
 }
 
-// 纯客户端外观字段：变更它们不需要刷新系统提示词，也不需要向活动会话注入快照；
+// 纯客户端外观字段：变更它们不会改变 Agent 行为，因此不需要刷新系统提示词；
 // 但它们仍是实际配置变更，必须计入 changed（供调用方判断「已保存 / 无变化」并驱动前端 dirty）。
 const NON_PROMPT_FIELDS = new Set(['trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth'])
 
@@ -266,7 +244,7 @@ const NON_PROMPT_FIELDS = new Set(['trailEnabled', 'trailColor', 'trailSpeed', '
 // 注意 mutate 必须在队列任务内完成全部读取与合并，不要在队列外提前读取配置。
 // 返回 { config, changed, promptChanged }：
 //   - changed：实际发生变化的字段名数组（不含 personas 预设库），供调用方判断有无变更
-//   - promptChanged：changed 中会影响 Agent 行为的子集；为空时应跳过提示词刷新与会话注入
+//   - promptChanged：changed 中会影响 Agent 行为的子集；为空时应跳过提示词刷新
 async function commitConfig(mutate) {
   return enqueueConfigWrite(async () => {
     const current = await loadConfig()
@@ -279,7 +257,7 @@ async function commitConfig(mutate) {
 }
 
 // 比较两份配置的差异字段名（浅比较；soul 配置为扁平对象）。
-// personas（人设预设库）不属于活动配置：库的增删改不应触发提示词刷新与会话注入。
+// personas（人设预设库）不属于活动配置：库的增删改不应触发提示词刷新。
 function diffKeys(a, b) {
   const changed = []
   for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
@@ -370,46 +348,26 @@ function compilePrompt(config) {
   return parts.join('\n')
 }
 
-// ==================== Agent 上下文注入 ====================
+// ==================== 提示词刷新 ====================
 
-// 将最新配置作为 model-facing context 注入所有活动会话。
-// inject() 不会唤醒 Agent，也不改写普通用户消息；会在下一次 step 被模型读取。
-function injectPromptToAllAgents(ctx, config) {
-  const agents = ctx.get('agents')
-  if (!agents || typeof agents.list !== 'function') {
-    // console.warn('[dsh-soul] agents 服务不可用，跳过最新配置注入')
-    return
-  }
-
-  const T = promptTextOf(config)
-  const prompt = compilePrompt(config)
-  const snapshotText = prompt || T.injectDisabled
-
-  for (const agent of agents.list()) {
-    try {
-      agent.inject(createUserMessage({
-        content: [{
-          type: 'text',
-          text: prompt ? `${T.injectUpdatedHeader}\n${T.injectUpdatedBody}\n\n${prompt}` : snapshotText
-        }],
-        // 会话格式 v4 要求生产者自持 kind；旧的 `kind: 'plugin'` + `plugin` 组合
-        // 会让每一轮在 step 开始前失败（issue #1，构造与校验见 lib/injection.mjs）
-        source: createInjectionSource(snapshotText)
-      }))
-      // console.log(`[dsh-soul] 已向 Agent ${agent.id} 注入最新配置`)
-    } catch (err) {
-      // console.error(`[dsh-soul] 向 Agent ${agent.id} 注入配置失败:`, err)
-    }
-  }
-}
-
-function refreshPromptAndInject(ctx, config) {
+// 配置变更后刷新系统提示词：重新注册 section（先释放旧的，再按最新配置注册）。
+//
+// 这里**刻意不做任何会话注入**。宿主每个 step 都会重新求值 section 的 text provider，
+// 并在文本变化时自行提交新的 system 快照，所以「下一次对话即用新配置」并不依赖注入：
+//   - preStep()（dsh-agent-loop）每个 step 都调 systemPrompt.assemble()；
+//   - assemble() 对函数式 text 不做缓存，每次调用重新求值；
+//   - project() 用文本精确比较决定是否提交新的 system 快照（相等则不提交）。
+// 详见 DEBUGGING.md 的「配置生效链路」。
+//
+// 反过来，会话注入是多余且有害的：agent.inject() 把消息以 **user 角色**放进收件箱
+// （与 followup() 同一条队列，会落进会话记录），等于把系统指令伪装成用户发言，
+// 并把整份人设全文复制进上下文；它还是会话格式 v4 准入失败（issue #1）的唯一触发源。
+function refreshPrompt() {
   if (globalUpdatePrompt) {
     globalUpdatePrompt().catch(err => {
       // console.error('[dsh-soul] 更新系统提示词失败:', err)
     })
   }
-  injectPromptToAllAgents(ctx, config)
 }
 
 // ==================== HTTP 路由 ====================
@@ -454,10 +412,10 @@ function registerRoutes(ctx) {
             // 写队列内「读—改—写」，只合并通过校验的字段（未知字段不落盘）
             const { config: updated, changed, promptChanged } = await commitConfig(current => ({ ...current, ...patch }))
 
-            // 仅影响 Agent 行为的字段变化才刷新提示词并注入会话；
-            // 光轨等纯外观字段只更新配置，不向会话堆积注入快照
+            // 仅影响 Agent 行为的字段变化才刷新系统提示词；
+            // 光轨等纯外观字段只更新配置
             if (promptChanged.length > 0) {
-              refreshPromptAndInject(ctx, updated)
+              refreshPrompt()
             }
 
             send(200, { ok: true, config: updated, changed })
@@ -493,7 +451,7 @@ function registerRoutes(ctx) {
     // 预览「未保存的编辑」编译出的 system prompt：以已保存配置为底，用请求体中
     // 通过校验的字段覆盖后编译。
     //
-    // **不落盘、不注入会话** —— 纯只读旁路，供设置在保存前确认真正会被注入的内容。
+    // **不落盘、不影响已生效的提示词** —— 纯只读旁路，供设置在保存前确认真正会生效的内容。
     // v0.1.x 曾有同类端点，随 v0.2.0 精简重构下线；此处恢复并修掉旧实现的一个疏漏：
     // 旧版直接展开请求体（{ ...current, ...draft }）未经校验，而这里与保存路径共用
     // 同一套 sanitizeConfig —— 非法字段既不参与预览、也不会落盘，并通过 invalid
@@ -548,9 +506,9 @@ function registerRoutes(ctx) {
         try {
           const { config, changed, promptChanged } = await commitConfig(current => defaultConfigPreservingPersonas(current))
 
-          // 仅影响 Agent 行为的字段变化才刷新提示词并注入会话
+          // 仅影响 Agent 行为的字段变化才刷新系统提示词
           if (promptChanged.length > 0) {
-            refreshPromptAndInject(ctx, config)
+            refreshPrompt()
           }
 
           send(200, { ok: true, config, changed })
@@ -612,8 +570,8 @@ function personaLibrary(config) {
 }
 
 // 人设预设 HTTP 路由：列表 / 保存 / 使用 / 删除。
-// 保存与删除仅变更 personas 库（diffKeys 跳过该字段），不会触发会话注入；
-// 使用会变更活动配置字段，走常规 promptChanged 门控注入。
+// 保存与删除仅变更 personas 库（diffKeys 跳过该字段），不会触发提示词刷新；
+// 使用会变更活动配置字段，走常规 promptChanged 门控刷新。
 function registerPersonaRoutes(ctx) {
   ctx.inject(['webServer'], (wsCtx) => {
     const send = (res, status, body) => {
@@ -677,7 +635,7 @@ function registerPersonaRoutes(ctx) {
       }
     })
 
-    // 使用预设：将预设字段应用到活动配置（走 promptChanged 门控注入）
+    // 使用预设：将预设字段应用到活动配置（走 promptChanged 门控刷新）
     wsCtx.webServer.register({
       kind: 'exact',
       path: '/api/soul/personas/use',
@@ -705,7 +663,7 @@ function registerPersonaRoutes(ctx) {
           const { patch } = sanitizeConfig(pickPersonaValues(entry))
           const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
           if (promptChanged.length > 0) {
-            refreshPromptAndInject(ctx, updated)
+            refreshPrompt()
           }
           send(res, 200, { ok: true, config: updated, changed, unchanged: changed.length === 0 })
         } catch (err) {
@@ -971,8 +929,8 @@ function registerCommands(ctx) {
             if (errors.nickname) {
               return { kind: 'error', text: t.failed(errors.nickname) }
             }
-            const { config: updated, promptChanged } = await commitConfig(c => ({ ...c, nickname: patch.nickname }))
-            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
+            const { promptChanged } = await commitConfig(c => ({ ...c, nickname: patch.nickname }))
+            if (promptChanged.length > 0) refreshPrompt()
             return { kind: 'success', text: t.nicknameDone(patch.nickname) }
           }
 
@@ -1006,21 +964,21 @@ function registerCommands(ctx) {
 
           if (first === 'reset') {
             // 重置活动配置，但保留人设预设库
-            const { config: updated, promptChanged } = await commitConfig(current => defaultConfigPreservingPersonas(current))
-            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
+            const { promptChanged } = await commitConfig(current => defaultConfigPreservingPersonas(current))
+            if (promptChanged.length > 0) refreshPrompt()
             return { kind: 'success', text: t.resetDone }
           }
 
           if (first === 'enable') {
-            // 写队列内「读—改—写」，不在队列外改写内存缓存对象；无变化时跳过注入
-            const { config: updated, promptChanged } = await commitConfig(c => ({ ...c, enabled: true }))
-            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
+            // 写队列内「读—改—写」，不在队列外改写内存缓存对象；无变化时跳过刷新
+            const { promptChanged } = await commitConfig(c => ({ ...c, enabled: true }))
+            if (promptChanged.length > 0) refreshPrompt()
             return { kind: 'success', text: t.enableDone }
           }
 
           if (first === 'disable') {
-            const { config: updated, promptChanged } = await commitConfig(c => ({ ...c, enabled: false }))
-            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
+            const { promptChanged } = await commitConfig(c => ({ ...c, enabled: false }))
+            if (promptChanged.length > 0) refreshPrompt()
             return { kind: 'success', text: t.disableDone }
           }
 
@@ -1048,11 +1006,11 @@ function registerCommands(ctx) {
             }
             // 预设值保存时已校验；此处再过一遍白名单，防御手改文件等异常数据
             const { patch } = sanitizeConfig(pickPersonaValues(entry))
-            const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
+            const { changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
             if (changed.length === 0) {
               return { kind: 'success', text: t.useUnchanged(personaName) }
             }
-            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
+            if (promptChanged.length > 0) refreshPrompt()
             return { kind: 'success', text: t.useDone(personaName) }
           }
 
@@ -1114,8 +1072,8 @@ function registerCommands(ctx) {
             if (Object.keys(patch).length === 0) {
               return { kind: 'error', text: t.failed(droppedKeys.length > 0 ? `${t.unknownField}: ${droppedKeys.join(', ')}` : t.setUsage) }
             }
-            const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
-            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
+            const { changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
+            if (promptChanged.length > 0) refreshPrompt()
             return { kind: 'success', text: changed.length > 0 ? t.setDone(changed) : t.setNoChanges }
           }
 
@@ -1123,8 +1081,8 @@ function registerCommands(ctx) {
             if (!pendingPersonaProposal) return { kind: 'error', text: t.noPending }
             const proposal = pendingPersonaProposal
             pendingPersonaProposal = null
-            const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...proposal.patch }))
-            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
+            const { promptChanged } = await commitConfig(c => ({ ...c, ...proposal.patch }))
+            if (promptChanged.length > 0) refreshPrompt()
             const detail = Object.keys(proposal.patch).map((key) => `${key}=${JSON.stringify(proposal.patch[key])}`).join(', ')
             return { kind: 'success', text: t.confirmDone(detail) }
           }
@@ -1145,9 +1103,9 @@ function registerCommands(ctx) {
   })
 }
 
-// ==================== 系统提示词注入 ====================
+// ==================== 系统提示词注册 ====================
 
-// 全局变量，用于在配置变化时更新提示词
+// 配置变化时刷新提示词的钩子（由 registerSystemPrompt 安装）
 let globalUpdatePrompt = null
 
 function registerSystemPrompt(ctx) {
@@ -1155,8 +1113,15 @@ function registerSystemPrompt(ctx) {
     let disposeSection = null
 
     const registerSection = () => {
-      // 重新注册前先移除旧 section，触发 system-prompt/change，
-      // 让 DSH 丢弃当前会话已经缓存的 system prompt 快照。
+      // 释放旧 section 再注册新的，保证只有一份 soul:persona 注册。
+      //
+      // 「新配置生效」**不靠**这里的重新注册：宿主每个 step 都会重新装配并求值
+      // section 的 text provider（无缓存），文本变化时由 project() 自行提交新的
+      // system 快照（见下方 text 与 DEBUGGING.md「配置生效链路」）。重新注册只是
+      // 让 section 选项本身的变化及时反映，并避免重复注册堆积。
+      //
+      // 也**不要**指望 system-prompt/change 事件去做失效：该事件目前没有任何消费者
+      // （只在 dsh-system-prompt 内部 emit），据此写注释会误导后来者。
       disposeSection?.()
 
       disposeSection = spCtx.systemPrompt.section({
@@ -1169,7 +1134,7 @@ function registerSystemPrompt(ctx) {
         // try/catch ⇒ 不是「忽略那段文字」，而是**该会话的每一轮都失败**。
         //
         // 代价为 0：我们不使用任何宿主提示词变量（需要上下文时，text 本身就是
-        // provider）。关掉它同时让「预览所见」与「真实注入」逐字符一致。
+        // provider）。关掉它同时让「预览所见」与「实际生效的文本」逐字符一致。
         interpolate: false,
         text: () => {
           const prompt = compilePrompt(configCache || DEFAULT_CONFIG)
@@ -1329,7 +1294,7 @@ function registerTools(ctx) {
               return { ok: true, message: promptTextOf(updated).toolNoChanges }
             }
 
-            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
+            if (promptChanged.length > 0) refreshPrompt()
             return {
               ok: true,
               message: promptTextOf(updated).toolUpdated,

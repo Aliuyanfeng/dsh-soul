@@ -18,8 +18,10 @@
   "type": "module",
   "main": "index.mjs",
   "scripts": {
-    "verify": "node scripts/verify-config.mjs && node scripts/verify-store.mjs && node scripts/verify-compat.mjs && node scripts/verify-trail.mjs && node scripts/verify-nav-icon.mjs",
+    "verify": "node scripts/verify-config.mjs && node scripts/verify-store.mjs && node scripts/verify-e2e-prompt.mjs && node scripts/verify-live-prompt.mjs && node scripts/verify-compat.mjs && node scripts/verify-trail.mjs && node scripts/verify-nav-icon.mjs",
     "verify:store": "node scripts/verify-store.mjs",
+    "verify:e2e": "node scripts/verify-e2e-prompt.mjs",
+    "verify:host": "node scripts/verify-live-prompt.mjs",
     "verify:compat": "node scripts/verify-compat.mjs",
     "verify:trail": "node scripts/verify-trail.mjs",
     "verify:nav-icon": "node scripts/verify-nav-icon.mjs"
@@ -31,7 +33,6 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1 || ^4.0.5-alpha.1",
-    "@deepseek-ai/dsh-llm": ">=0.1.1-rc.2 <0.3.0-0",
     "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6 <0.3.0-0"
   },
   "dsh": {

@@ -8,7 +8,7 @@
 //   - 输入框光轨：Agent 回复中时输入框边框的流光动效（颜色 / 速度 / 粗细 + 实时示例）
 //   - dirty 检测（无改动禁用保存）、统一 toast 提示
 //   - 提示词预览（只读）：无未保存编辑时显示「当前生效提示词」，有编辑时改为编译草稿
-//     —— 展示保存后真正会注入的内容，并在保存/重置/应用预设后自动刷新
+//     —— 展示保存后真正会生效的内容，并在保存/重置/应用预设后自动刷新
 //
 // 光轨另注册到 conversation.input.overlay 槽位（输入框卡片内部），
 // 运行时按会话 running 状态在卡片上挂载/隐藏 SVG 环，见 SoulTrail。
@@ -471,7 +471,7 @@ window.__ModuleLoader__.load({
       }
 
       // 预览「未保存的编辑」编译出的提示词：POST 草稿字段，服务端以已保存配置为底
-      // 覆盖后编译。不落盘、不注入 —— 返回的 invalid 列出未通过校验、因而未计入
+      // 覆盖后编译。不落盘、不影响生效提示词 —— 返回的 invalid 列出未通过校验、因而未计入
       // 预览的字段名，供界面如实提示，避免用户以为改动已生效。
       async previewPrompt(draft) {
         const payload = await this.postJSON('/api/soul/prompt/preview', draft)
@@ -1082,7 +1082,7 @@ window.__ModuleLoader__.load({
         return out
       }
 
-      // 有未保存编辑时预览草稿（＝保存后真正会注入的内容），否则预览已生效提示词
+      // 有未保存编辑时预览草稿（＝保存后真正会生效的内容），否则预览已生效提示词
       const loadPrompt = async () => {
         const asDraft = promptDirty
         setPromptLoading(true)
@@ -1140,7 +1140,7 @@ window.__ModuleLoader__.load({
 
       // 提示词预览的编译入口（唯一）。
       // 展开时立即编译一次；此后只要影响编译的字段或脏状态变化，停止 400ms 再编译 —
-      // 边改边看保存后真正会注入的内容。
+      // 边改边看保存后真正会生效的内容。
       // promptSettled 用来区分「刚展开」与「展开后字段又变了」：否则展开这一动作自身
       // 会先立即编译一次、再被防抖重复编译一次。
       // 依赖里刻意不放 loadPrompt（组件体内每次渲染都会重建函数，放进去会无限循环）；

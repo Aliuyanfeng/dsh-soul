@@ -1,6 +1,6 @@
 # dsh-soul Release Notes
 
-`dsh-soul` 为 DeepSeek Harness（DSH）提供「个性化设置」能力：通过 Web 设置页或斜杠命令配置「关于你」（昵称、职业、介绍）、回复风格和语调、特质（标题和列表 / 表情符号 / 表格）、回复长度偏好、输出语言与自定义指令，配置实时编译为 system prompt 并同步到所有活动会话。
+`dsh-soul` 为 DeepSeek Harness（DSH）提供「个性化设置」能力：通过 Web 设置页或斜杠命令配置「关于你」（昵称、职业、介绍）、回复风格和语调、特质（标题和列表 / 表情符号 / 表格）、回复长度偏好、输出语言与自定义指令，配置实时编译为 system prompt，**下一次请求即生效**。
 
 ## 功能
 
@@ -33,7 +33,7 @@
 **配置与集成**
 - 持久化：`$DSH_HOME/soul-config.json`（用户预设存于同文件 `personas` 字段；内置人设只在代码 `lib/personas.mjs` 里，不落盘，因此升级时自动更新、也无法被删除或篡改）
 - 服务：`soulConfig`（`getConfig` / `updateConfig` / `getSystemPrompt` / `resetConfig`）
-- HTTP API：`/api/soul/config`（GET/POST）、`/api/soul/prompt`（已生效提示词）、`/api/soul/prompt/preview`（POST 草稿，不落盘、不注入）、`/api/soul/config/reset`、`/api/soul/personas`（GET）、`/api/soul/personas/save|use|delete`（POST）
+- HTTP API：`/api/soul/config`（GET/POST）、`/api/soul/prompt`（已生效提示词）、`/api/soul/prompt/preview`（POST 草稿，不落盘、不影响生效提示词）、`/api/soul/config/reset`、`/api/soul/personas`（GET）、`/api/soul/personas/save|use|delete`（POST）
 - 输入校验：字段白名单、类型、长度上限与枚举校验，HTTP 保存 / `/soul` 命令 / `set_persona` 工具 / `soulConfig` 服务共用；非法或超限字段整单拒绝
 - Agent 工具：`set_persona`（需宿主安装 `@deepseek-ai/dsh-tools`；缺失或不兼容时自动跳过，其余功能不受影响；确认模式下返回 `pending` 提议）
 - 插件图标：`package.json` 的 `icon` 指向 `assets/icon.svg`（36×36 viewBox，随 npm 包发布）
@@ -42,8 +42,8 @@
 ## 已知限制
 
 - 安装 / 升级后需完全重启 DSH 并刷新浏览器，设置栏目才会出现
-- 保存配置后需发送一条新消息才生效：`agent.inject()` 面向下一次 Agent step，不打断进行中的请求，也不改写历史消息
-- `agents` 服务不可用时跳过注入，需重启会话才能应用配置
+- 保存配置后在**下一次请求**生效：提示词在每一步装配时重新求值，不会打断进行中的请求，也不会改写历史消息
+- 提示词生效依赖宿主「每步重新装配 + 不对函数式 section 文本做缓存」这一行为。`npm run verify:host` 会用宿主的真实实现直接验证；若该脚本失败，说明 DSH 行为已变，需要改回「主动刷新」的思路（见 `DEBUGGING.md` 4.5）
 - 仅支持 `web` 平台客户端
 
 ## 兼容性
@@ -52,13 +52,12 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 
 | 包 | 范围 | DSH 是否校验 |
 | --- | --- | --- |
-| `@deepseek-ai/dsh-llm` | `>=0.1.1-rc.2 <0.3.0-0` | 是 |
 | `@deepseek-ai/dsh-tools` | `>=0.1.0-rc.6 <0.3.0-0` | 是 |
 | `@deepseek-ai/cordis` | `^4.0.1 \|\| ^4.0.5-alpha.1` | 否（名称不以 `@deepseek-ai/dsh-` 开头，不参与判定） |
 
 即支持 DSH **0.1.x 与 0.2.x**（含 prerelease）。DSH 进入 0.3.x 线后需重新评估再放宽，流程见 `PUBLISHING.md`。
 
-用 `npm run verify:compat` 可在升级 DSH 后一条命令确认声明是否仍然成立（见 `DEBUGGING.md` 第四节）。
+用 `npm run verify:compat` 可在升级 DSH 后一条命令确认声明是否仍然成立（见 `DEBUGGING.md` 第四节）；`npm run verify:host` / `npm run verify:e2e` 另可确认「改配置 → 下一轮生效」这条链路在升级后依然成立。
 
 ---
 
