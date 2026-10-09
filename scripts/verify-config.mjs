@@ -685,4 +685,61 @@ check('系统提示词 section 显式关闭宿主插值', () => {
   assert.equal(/interpolate:\s*true/.test(region), false, 'interpolate 不得为 true')
 })
 
+// ---------- 配置持久化（原子写 / 损坏不覆盖）----------
+
+const storeSource = readFileSync(new URL('../lib/store.mjs', import.meta.url), 'utf8')
+
+check('配置读取区分「文件不存在」与「文件损坏」，失败时不缓存', () => {
+  const matched = indexSource.match(/async function loadConfig\(\)[\s\S]*?\n\}/)
+  assert.ok(matched, 'index.mjs 中找不到 loadConfig')
+  const body = matched[0]
+  assert.ok(/readConfigFile\(/.test(body), 'loadConfig 应经由 lib/store.mjs 读取（失败类型的判定在那里）')
+  assert.ok(/configLoadFailure = failure/.test(body), 'loadConfig 必须记录失败，供写入路径拒绝保存')
+  assert.ok(/return \{ \.\.\.DEFAULT_CONFIG \}/.test(body), '失败时回退默认值（保证插件与设置页仍可用）')
+
+  const failBlock = body.match(/if \(failure\) \{[\s\S]*?\n  \}/)
+  assert.ok(failBlock, '找不到 loadConfig 的失败分支')
+  assert.equal(
+    /configCache\s*=/.test(failBlock[0]),
+    false,
+    '失败分支不得写入 configCache：缓存了默认值，用户修好文件后不重启就恢复不了'
+  )
+})
+
+check('「是否允许写入」的判定只在 lib/store.mjs 实现一份', () => {
+  assert.equal(
+    /function configWriteRefusal|function describeConfigFailure/.test(indexSource),
+    false,
+    'index.mjs 不应自带失败说明 / 拒绝判定的实现——写入路径有四条，本地再写一份必然漂移'
+  )
+  assert.ok(
+    /configWriteRefusal\(configLoadFailure, configPath\(\)\)/.test(indexSource),
+    'saveConfig 应调用 configWriteRefusal 决定是否拒绝写入'
+  )
+})
+
+check('配置写入只有一条路径：lib/store.mjs 的「临时文件 + rename」', () => {
+  assert.equal(
+    /from 'node:fs\/promises'/.test(indexSource),
+    false,
+    'index.mjs 不应直接操作文件系统——原子写必须收口在 lib/store.mjs，否则会被绕过'
+  )
+  assert.ok(/await writeConfigFile\(configPath\(\), clean\)/.test(indexSource), 'saveConfig 应经由 writeConfigFile 写入')
+  assert.ok(
+    /writeFile\(tmpPath[\s\S]*?rename\(tmpPath, filePath\)/.test(storeSource),
+    'lib/store.mjs 的写入必须是「先写 .tmp、再 rename 覆盖」；直接 writeFile 会在中断时留下截断的 JSON'
+  )
+})
+
+check('配置损坏时上报原因（设置页不必等一次失败的保存才知道）', () => {
+  assert.ok(
+    /configError: configLoadFailure \? describeConfigFailure\(configLoadFailure\) : null/.test(indexSource),
+    'GET /api/soul/config 应带回 configError，否则用户只会看到「人设无故被重置」'
+  )
+  assert.ok(
+    /s\.error = typeof payload\.configError === 'string' \? payload\.configError : null/.test(clientSource),
+    '客户端应展示后端上报的配置损坏原因'
+  )
+})
+
 console.log(`\n全部通过：${passed} 项检查`)

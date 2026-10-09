@@ -30,6 +30,8 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - `/soul set` key=value field updates
 - Configuration persisted to disk
 - Input validation: field whitelist, types, length limits (nickname/occupation 50, bio 500, custom instructions 2000 chars), enum and hex-color checks; invalid or oversized fields reject the whole write
+- Durable config: writes are **atomic** (temp file + `rename`, so an interrupted write can never leave half a config); reads tell "file missing" apart from "file corrupted" — a corrupt file is left untouched, backed up as `.corrupt`, **refused as a write target**, and the reason is shown right in the settings page so your custom instructions and persona library are never silently wiped
+- Prompt interpolation is disabled: `{{…}}` in custom instructions stays literal and can no longer break system-prompt assembly
 - Configuration synced to all active agents after every update
 - Change detection: the prompt is refreshed and sessions injected only when a behavior-affecting field actually changed — appearance-only config (composer light trail) is persisted without injecting anything
 - Plugin icon: a dedicated icon in the plugin manager list and the sidebar entry (`assets/icon.svg`, 36×36, shipped with the npm package)

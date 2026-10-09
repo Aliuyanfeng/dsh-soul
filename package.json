@@ -18,7 +18,8 @@
   "type": "module",
   "main": "index.mjs",
   "scripts": {
-    "verify": "node scripts/verify-config.mjs && node scripts/verify-compat.mjs && node scripts/verify-trail.mjs && node scripts/verify-nav-icon.mjs",
+    "verify": "node scripts/verify-config.mjs && node scripts/verify-store.mjs && node scripts/verify-compat.mjs && node scripts/verify-trail.mjs && node scripts/verify-nav-icon.mjs",
+    "verify:store": "node scripts/verify-store.mjs",
     "verify:compat": "node scripts/verify-compat.mjs",
     "verify:trail": "node scripts/verify-trail.mjs",
     "verify:nav-icon": "node scripts/verify-nav-icon.mjs"

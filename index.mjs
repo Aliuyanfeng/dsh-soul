@@ -16,7 +16,6 @@
 //   - 注入系统提示词到 Agent
 //   - 配置写入统一走写队列，返回 changed（有无实际变更）与 promptChanged（是否需要刷新提示词并注入会话）
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -34,6 +33,7 @@ import {
 } from './lib/config.mjs'
 import { createInjectionSource } from './lib/injection.mjs'
 import { isBuiltinPersona, mergePersonas, personaMatches, resolvePersona } from './lib/personas.mjs'
+import { configWriteRefusal, describeConfigFailure, readConfigFile, writeConfigFile } from './lib/store.mjs'
 
 const name = 'soul'
 
@@ -198,29 +198,48 @@ const MAX_BODY_BYTES = 64 * 1024
 // 内存中的配置缓存
 let configCache = null
 
-// 读取配置
+// 磁盘上的配置存在但不可用（读不出来 / 不是合法 JSON）时的记录。
+// 置位后 saveConfig 会拒绝写入，避免把损坏的配置静默清空成默认值。
+let configLoadFailure = null
+
+// 读取配置。
+//
+// 文件不存在（首次运行）与文件损坏是两件不同的事，必须分开处理：
+//   - 不存在  → 回退默认值，正常路径，可以照常保存；
+//   - 损坏    → 也回退默认值（保证插件与设置页仍可用），但记录失败原因，
+//               并让写入路径拒绝保存。否则「回退默认」会在下一次保存时变成
+//               「以默认值为底写回磁盘」，用户的自定义指令与预设库就永久丢了。
+//
+// 失败时刻意**不写 configCache**：这样用户修好文件后，下一次读取会自动恢复正常，
+// 不必重启 DSH。
 async function loadConfig() {
   if (configCache) return configCache
-  
-  try {
-    const data = await readFile(configPath(), 'utf8')
-    configCache = migrateConfig(JSON.parse(data))
-  } catch {
-    configCache = { ...DEFAULT_CONFIG }
+  configLoadFailure = null
+
+  const { value, exists, failure } = await readConfigFile(configPath())
+  if (failure) {
+    configLoadFailure = failure
+    return { ...DEFAULT_CONFIG }
   }
+
+  configCache = exists ? migrateConfig(value) : { ...DEFAULT_CONFIG }
   return configCache
 }
 
-// 保存配置
+// 保存配置（原子写，见 lib/store.mjs 的 writeConfigFile）。
+// 磁盘配置损坏时拒绝写入：拒绝的原因与恢复方式由 lib/store.mjs 统一生成。
 async function saveConfig(config) {
-  const dir = join(configPath(), '..')
-  await mkdir(dir, { recursive: true })
+  const refusal = configWriteRefusal(configLoadFailure, configPath())
+  if (refusal) {
+    throw new Error(refusal)
+  }
+
   // 过滤已废弃字段（旧客户端可能仍携带 tone / presets / examples）
   const clean = { ...config }
   delete clean.tone
   delete clean.presets
   delete clean.examples
-  await writeFile(configPath(), JSON.stringify(clean, null, 2), 'utf8')
+  await writeConfigFile(configPath(), clean)
   configCache = clean
   return clean
 }
@@ -410,7 +429,14 @@ function registerRoutes(ctx) {
         try {
           if (req.method === 'GET') {
             const config = await loadConfig()
-            send(200, { ok: true, config })
+            // configError：磁盘配置存在但不可用时上报（此时 config 是回退的默认值）。
+            // 让设置页能直接说明「人设为什么像是被重置了」，而不是让用户自己发现；
+            // 正常情况下该字段为 null，不影响既有客户端。
+            send(200, {
+              ok: true,
+              config,
+              configError: configLoadFailure ? describeConfigFailure(configLoadFailure) : null
+            })
           } else if (req.method === 'POST') {
             const parsed = await readJsonBody(req)
             if (!parsed.ok) {

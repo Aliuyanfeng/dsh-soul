@@ -368,6 +368,9 @@ window.__ModuleLoader__.load({
           const payload = await this.postJSON('/api/soul/config', null, { method: 'GET' })
           this.store.update(s => {
             this.applyConfig(s, payload.config)
+            // 磁盘配置损坏时后端回退默认值并回报原因（configError）。
+            // 直接显示在面板上，避免用户把「人设像是被重置了」当成插件的 bug。
+            s.error = typeof payload.configError === 'string' ? payload.configError : null
             s.loading = false
           })
         } catch (error) {

@@ -17,6 +17,7 @@ index.mjs
 lib/config.mjs
 lib/injection.mjs
 lib/personas.mjs
+lib/store.mjs
 client/index.mjs
 cordis.patch.yml
 README.md
