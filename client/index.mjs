@@ -368,9 +368,13 @@ window.__ModuleLoader__.load({
           const payload = await this.postJSON('/api/soul/config', null, { method: 'GET' })
           this.store.update(s => {
             this.applyConfig(s, payload.config)
-            // 磁盘配置损坏时后端回退默认值并回报原因（configError）。
-            // 直接显示在面板上，避免用户把「人设像是被重置了」当成插件的 bug。
-            s.error = typeof payload.configError === 'string' ? payload.configError : null
+            // 两类问题分开上报、合到同一条提示里：
+            //   configError     —— 磁盘配置读不出来（回退默认值，写入被拒）
+            //   deliveryWarning —— 配置送不到活动会话（agents 服务不可用等）
+            // 两者表面症状都是「改了人设不生效」，所以都要让用户看得见。
+            s.error = typeof payload.configError === 'string'
+              ? payload.configError
+              : (typeof payload.deliveryWarning === 'string' ? payload.deliveryWarning : null)
             s.loading = false
           })
         } catch (error) {
@@ -391,6 +395,8 @@ window.__ModuleLoader__.load({
           this.store.update(s => {
             this.applyConfig(s, payload.config)
             s.lastChanged = Array.isArray(payload.changed) ? payload.changed : []
+            // 保存成功也可能带着送达警告（配置写下了但送不到会话）
+            s.error = typeof payload.deliveryWarning === 'string' ? payload.deliveryWarning : null
             s.saving = false
           })
           return payload
@@ -412,6 +418,7 @@ window.__ModuleLoader__.load({
           this.store.update(s => {
             this.applyConfig(s, payload.config)
             s.lastChanged = Array.isArray(payload.changed) ? payload.changed : []
+            s.error = typeof payload.deliveryWarning === 'string' ? payload.deliveryWarning : null
             s.saving = false
           })
           return payload
@@ -706,6 +713,8 @@ window.__ModuleLoader__.load({
       'toast.saved': '✅ 设置已保存',
       'toast.noChanges': '✅ 配置无变化',
       'toast.reset': '✅ 已重置为默认值',
+      'toast.resetRecovered': '✅ 已重置为默认值（损坏的配置已备份）',
+      'toast.resetFailed': '❌ 重置失败',
       'toast.personaSaved': '✅ 预设已保存',
       'toast.personaUsed': '✅ 预设已应用',
       'toast.personaUnchanged': 'ℹ 预设与当前配置一致',
@@ -823,6 +832,8 @@ window.__ModuleLoader__.load({
       'toast.saved': '✅ Settings saved',
       'toast.noChanges': '✅ No changes to save',
       'toast.reset': '✅ Reset to defaults',
+      'toast.resetRecovered': '✅ Reset to defaults (the damaged config was backed up)',
+      'toast.resetFailed': '❌ Reset failed',
       'toast.personaSaved': '✅ Persona saved',
       'toast.personaUsed': '✅ Persona applied',
       'toast.personaUnchanged': 'ℹ Persona matches current config',
@@ -1176,8 +1187,18 @@ window.__ModuleLoader__.load({
       }
 
       const handleReset = async () => {
-        await controller.resetConfig()
-        setToast({ text: t('toast.reset'), kind: 'success' })
+        // resetConfig 失败时内部已记录 error 并返回 undefined。
+        // 此前这里无条件报「已重置」——失败也显示成功，正好把「配置损坏时唯一的自救操作
+        // 没成功」这件事藏了起来。
+        const payload = await controller.resetConfig()
+        if (!payload) {
+          setToast({ text: t('toast.resetFailed'), kind: 'error' })
+          return
+        }
+        setToast({
+          text: payload.backupPath ? t('toast.resetRecovered') : t('toast.reset'),
+          kind: 'success'
+        })
         // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
         // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
       }

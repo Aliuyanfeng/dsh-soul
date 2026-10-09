@@ -18,6 +18,7 @@
 
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { createRequire } from 'node:module'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
   DEFAULT_CONFIG,
@@ -33,13 +34,26 @@ import {
 } from './lib/config.mjs'
 import { createInjectionSource } from './lib/injection.mjs'
 import { isBuiltinPersona, mergePersonas, personaMatches, resolvePersona } from './lib/personas.mjs'
-import { configWriteRefusal, describeConfigFailure, readConfigFile, writeConfigFile } from './lib/store.mjs'
+import { configWriteRefusal, describeConfigFailure, moveAsideConfigFile, readConfigFile, writeConfigFile } from './lib/store.mjs'
 
 const name = 'soul'
 
 // 配置文件路径：$DSH_HOME/soul-config.json
 function configPath() {
   return join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'soul-config.json')
+}
+
+// 版本号：唯一来源是 package.json。
+//
+// 刻意**不**在这里再写一个常量 —— 需要手工同步的版本号已经有三处
+// （package.json / client 的 VERSION / RELEASE_NOTES.md），再加一处只会多一个漂移点。
+// 读不到就返回 null：诊断端点不应该因为版本读不出来而失败。
+function pluginVersion() {
+  try {
+    return createRequire(import.meta.url)('./package.json').version || null
+  } catch {
+    return null
+  }
 }
 
 // ==================== 提示词文案与构建器 ====================
@@ -296,6 +310,31 @@ function defaultConfigPreservingPersonas(current) {
   return next
 }
 
+// 重置：配置损坏时的**逃生口**。
+//
+// 损坏状态下所有写入都被 saveConfig 拒绝 —— 包括重置。但「一个出口都没有」意味着
+// 用户只能自己去删文件，所以「重置」被定义为**刻意丢弃**：先把损坏的文件移开
+// （＝备份到 <config>.corrupt），路径随即回到「首次运行」分支，这次写入才能真正落盘。
+//
+// 这与 R3 的「损坏配置绝不**静默**被覆盖」不冲突：静默覆盖被禁止，而重置是用户显式
+// 发起的动作、且覆盖前先留下备份。
+//
+// 复用 commitConfig 的「读—改—写」，不另写一份；写入失败时恢复失败标记，
+// 避免把「文件仍然不可用」误报成正常状态。
+async function resetConfigWithEscape() {
+  const failure = configLoadFailure
+  const backupPath = failure ? await moveAsideConfigFile(configPath()) : null
+  if (failure) configLoadFailure = null
+
+  try {
+    const result = await commitConfig((current) => defaultConfigPreservingPersonas(current))
+    return { ...result, backupPath }
+  } catch (err) {
+    if (failure) configLoadFailure = failure
+    throw err
+  }
+}
+
 // 将字段级校验错误汇总为一行文本（HTTP 错误信息 / 工具返回消息共用）
 function formatFieldErrors(errors) {
   return Object.entries(errors)
@@ -370,14 +409,76 @@ function compilePrompt(config) {
   return parts.join('\n')
 }
 
-// ==================== Agent 上下文注入 ====================
+// ==================== 配置生效链路的送达诊断 ====================
 
-// 将最新配置作为 model-facing context 注入所有活动会话。
+// 「改配置 → 下一轮生效」由两条通道共同承载：system prompt section（底座）与
+// 活动会话注入（立即见效）。任一条静默失效，表面症状都是「改了人设不生效」而没有
+// 任何报错 —— 正是本插件历史上最难排查的一类问题（见 DEBUGGING.md 3.5）。
+//
+// 因此这里如实记录事实，并让三处可读到：日志（同因只告一次）、GET /api/soul/status、
+// /soul show。诊断本身不改变行为，只在真的出问题时才说话（正常状态不打扰）。
+const deliveryState = {
+  injectedAt: null,        // 最近一次注入尝试的时间（ISO）
+  agents: 0,               // 最近一次看到的活动会话数
+  delivered: 0,            // 最近一次成功注入的会话数
+  failed: 0,               // 最近一次注入抛错的会话数
+  injectionProblem: null,  // 未能如实送达的原因；正常为 null
+  sectionRegisteredAt: null // section 最近一次注册成功的时间（ISO）
+}
+
+// 同一原因只告一次警，避免每次保存都刷屏；一旦恢复正常则清掉记录，
+// 这样「好了又坏」会再次告警。
+const warnedReasons = new Set()
+
+function warnOnce(ctx, reason, message) {
+  if (warnedReasons.has(reason)) return
+  warnedReasons.add(reason)
+  try {
+    ctx.logger?.warn?.(`[dsh-soul] ${message}`)
+  } catch {
+    // 日志不可用不应影响功能
+  }
+}
+
+// 把内部原因码翻译成一句能直接看懂的话（/soul show、设置页、状态端点共用）。
+function deliveryProblemText(config) {
+  const problem = deliveryState.injectionProblem
+  if (!problem) return null
+  const T = promptTextOf(config)
+  if (problem === 'agents-service-unavailable') return T.deliveryNoAgentsService
+  return T.deliveryInjectFailed(problem.replace(/^inject-failed:\s*/, ''))
+}
+
+// 把最新配置作为 model-facing context 注入所有活动会话。
 // inject() 不会唤醒 Agent，也不改写普通用户消息；会在下一次 step 被模型读取。
 function injectPromptToAllAgents(ctx, config) {
+  const stamp = new Date().toISOString()
+  const unavailable = (reason, message) => {
+    deliveryState.injectedAt = stamp
+    deliveryState.agents = 0
+    deliveryState.delivered = 0
+    deliveryState.failed = 0
+    deliveryState.injectionProblem = reason
+    warnOnce(ctx, reason, message)
+  }
+
   const agents = ctx.get('agents')
   if (!agents || typeof agents.list !== 'function') {
-    // console.warn('[dsh-soul] agents 服务不可用，跳过最新配置注入')
+    unavailable(
+      'agents-service-unavailable',
+      'agents 服务不可用：新配置只能经 system prompt section 送达，保存后可能要到新会话才生效'
+    )
+    return
+  }
+
+  let listed
+  try {
+    listed = agents.list()
+  } catch (err) {
+    unavailable(
+      'agents-service-unavailable',
+      `列出活动会话失败（${String((err && err.message) || err)}）：新配置只能经 system prompt section 送达`
+    )
     return
   }
 
@@ -385,7 +486,11 @@ function injectPromptToAllAgents(ctx, config) {
   const prompt = compilePrompt(config)
   const snapshotText = prompt || T.injectDisabled
 
-  for (const agent of agents.list()) {
+  let delivered = 0
+  let failed = 0
+  let lastError = null
+
+  for (const agent of listed) {
     try {
       agent.inject(createUserMessage({
         content: [{
@@ -396,17 +501,39 @@ function injectPromptToAllAgents(ctx, config) {
         // 会让每一轮在 step 开始前失败（issue #1，构造与校验见 lib/injection.mjs）
         source: createInjectionSource(snapshotText)
       }))
-      // console.log(`[dsh-soul] 已向 Agent ${agent.id} 注入最新配置`)
+      delivered++
     } catch (err) {
-      // console.error(`[dsh-soul] 向 Agent ${agent.id} 注入配置失败:`, err)
+      failed++
+      lastError = err
+      try {
+        ctx.logger?.warn?.(`[dsh-soul] 向会话 ${agent?.id} 注入配置失败：${String((err && err.message) || err)}`)
+      } catch {
+        // 同上：日志失败不影响功能
+      }
     }
   }
+
+  deliveryState.injectedAt = stamp
+  deliveryState.agents = listed.length
+  deliveryState.delivered = delivered
+  deliveryState.failed = failed
+  deliveryState.injectionProblem = failed > 0
+    ? `inject-failed: ${String((lastError && lastError.message) || lastError)}`
+    : null
+
+  // 恢复正常后允许再次告警（「好了又坏」不该被静默）
+  if (failed === 0) warnedReasons.delete('agents-service-unavailable')
+  else warnedReasons.add('agents-service-unavailable')
 }
 
 function refreshPromptAndInject(ctx, config) {
   if (globalUpdatePrompt) {
     globalUpdatePrompt().catch(err => {
-      // console.error('[dsh-soul] 更新系统提示词失败:', err)
+      try {
+        ctx.logger?.warn?.(`[dsh-soul] 重新注册 system prompt section 失败：${String((err && err.message) || err)}`)
+      } catch {
+        // 同上
+      }
     })
   }
   injectPromptToAllAgents(ctx, config)
@@ -435,7 +562,11 @@ function registerRoutes(ctx) {
             send(200, {
               ok: true,
               config,
-              configError: configLoadFailure ? describeConfigFailure(configLoadFailure) : null
+              configError: configLoadFailure ? describeConfigFailure(configLoadFailure) : null,
+              // deliveryWarning：配置送达异常时上报（例如 agents 服务不可用）。
+              // 与 configError 分开：configError 是「配置读不出来」，这里是「配置送不到会话」，
+              // 两者症状都表现为「改了人设不生效」，但处理方式完全不同。
+              deliveryWarning: deliveryProblemText(config)
             })
           } else if (req.method === 'POST') {
             const parsed = await readJsonBody(req)
@@ -460,7 +591,7 @@ function registerRoutes(ctx) {
               refreshPromptAndInject(ctx, updated)
             }
 
-            send(200, { ok: true, config: updated, changed })
+            send(200, { ok: true, config: updated, changed, deliveryWarning: deliveryProblemText(updated) })
           } else {
             send(405, { ok: false, error: 'Method not allowed' })
           }
@@ -546,14 +677,67 @@ function registerRoutes(ctx) {
         }
 
         try {
-          const { config, changed, promptChanged } = await commitConfig(current => defaultConfigPreservingPersonas(current))
+          // 经由逃生口：配置损坏时这是设置页唯一还能成功的写操作。
+          // backupPath 非 null 说明刚才确实丢弃了一份损坏的配置（已备份），
+          // 客户端据此给出「备份在哪」的提示，而不是让用户以为数据凭空消失。
+          const { config, changed, promptChanged, backupPath } = await resetConfigWithEscape()
 
           // 仅影响 Agent 行为的字段变化才刷新提示词并注入会话
           if (promptChanged.length > 0) {
             refreshPromptAndInject(ctx, config)
           }
 
-          send(200, { ok: true, config, changed })
+          send(200, { ok: true, config, changed, backupPath, deliveryWarning: deliveryProblemText(config) })
+        } catch (err) {
+          send(500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
+
+    // 生效链路诊断：两条通道（system prompt section / 活动会话注入）的当前状态。
+    // 设置页与 /soul show 之外，这是给「改了配置不生效」提供的第三个、也是脚本化的观察点。
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/status',
+      handler: async (req, res) => {
+        const send = (status, body) => {
+          res.writeHead(status, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(body))
+        }
+
+        try {
+          if (req.method !== 'GET') {
+            send(405, { ok: false, error: 'Method not allowed' })
+            return
+          }
+
+          const config = await loadConfig()
+          const injection = {
+            lastAt: deliveryState.injectedAt,
+            agents: deliveryState.agents,
+            delivered: deliveryState.delivered,
+            failed: deliveryState.failed,
+            problem: deliveryState.injectionProblem
+          }
+
+          send(200, {
+            ok: true,
+            version: pluginVersion(),
+            enabled: config.enabled,
+            configPath: configPath(),
+            configError: configLoadFailure ? describeConfigFailure(configLoadFailure) : null,
+            promptChars: compilePrompt(config).length,
+            channels: {
+              // section 是底座：它一旦注册成功，宿主每一步装配都会重新求值
+              // （不依赖任何缓存，见 scripts/verify-live-prompt.mjs）
+              section: {
+                registered: deliveryState.sectionRegisteredAt !== null,
+                registeredAt: deliveryState.sectionRegisteredAt
+              },
+              injection
+            },
+            deliveryWarning: deliveryProblemText(config)
+          })
         } catch (err) {
           send(500, { ok: false, error: String(err.message || err) })
         }
@@ -837,6 +1021,13 @@ const COMMAND_MESSAGES = {
     setDone: (keys) => `✅ 已更新：${keys.join('、')}`,
     help: '使用 /soul show 查看详情\n使用 /soul set style=humorous 修改配置项\n使用 /soul save <名称> 保存预设；/soul use <名称> 应用；/soul list 查看；/soul del <名称> 删除\n使用 /soul confirm 或 /soul reject 处理待确认的人设变更\n使用 /soul reset 重置配置\n使用 /soul enable 启用；/soul disable 禁用\n使用 /soul 昵称xxx 设置昵称',
     resetDone: '✅ 配置已重置为默认值',
+    resetRecovered: (file) => `✅ 配置已重置为默认值（损坏的文件已备份为 ${file}）`,
+    deliveryLabel: '送达：',
+    deliveryOk: (delivered, total) => total === 0
+      ? '暂无活动会话（配置将在新会话生效）'
+      : `已注入 ${delivered}/${total} 个活动会话`,
+    deliveryNoAgentsService: 'agents 服务不可用 —— 新配置只能经 system prompt section 送达，保存后可能要到新会话才生效',
+    deliveryInjectFailed: (detail) => `向活动会话注入失败：${detail}`,
     enableDone: '✅ 个性化设置已启用',
     disableDone: '✅ 个性化设置已禁用',
     nicknameDone: (n) => `✅ 昵称已设置为：${n}`,
@@ -917,6 +1108,13 @@ const COMMAND_MESSAGES = {
     setDone: (keys) => `✅ Updated: ${keys.join(', ')}`,
     help: 'Use /soul show for details\nUse /soul set style=humorous to change fields\nUse /soul save <name> / use <name> / list / del <name> for personas\nUse /soul confirm or /soul reject for pending persona proposals\nUse /soul reset to reset\nUse /soul enable / disable to toggle\nUse /soul <nickname> to set your nickname',
     resetDone: '✅ Configuration reset to defaults',
+    resetRecovered: (file) => `✅ Configuration reset to defaults (the damaged file was backed up as ${file})`,
+    deliveryLabel: 'Delivery: ',
+    deliveryOk: (delivered, total) => total === 0
+      ? 'no active sessions (the config will apply in a new session)'
+      : `injected into ${delivered}/${total} active sessions`,
+    deliveryNoAgentsService: 'the `agents` service is unavailable — the new config can only travel via the system prompt section, so it may take a new session to apply',
+    deliveryInjectFailed: (detail) => `injection into active sessions failed: ${detail}`,
     enableDone: '✅ Personalization enabled',
     disableDone: '✅ Personalization disabled',
     nicknameDone: (n) => `✅ Nickname set to: ${n}`,
@@ -997,18 +1195,24 @@ function registerCommands(ctx) {
               t.trailSpeedNames[config.trailSpeed] || config.trailSpeed,
               t.trailWidthNames[config.trailWidth] || config.trailWidth
             )
+            // 送达状态：直接回答「我刚改了配置，为什么没生效」这个高频疑问 ——
+            // 两条通道里注入是否真的送到了活动会话，此前完全没有可观测点。
+            const delivery = deliveryProblemText(config) || t.deliveryOk(deliveryState.delivered, deliveryState.agents)
 
             return {
               kind: 'success',
-              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.occupationLabel}${t.colon}${occupation}\n${t.bioLabel}${t.colon}${bio}\n${t.styleLabel}${t.colon}${styleName}\n${t.traitsLabel}${t.colon}${traitsLine}\n${t.trailLabel}${t.colon}${trailText}\n${t.instructionsLabel}${t.colon}${instructions}\n${t.toolConfirmLabel}${t.colon}${config.requireToolConfirmation ? t.onLabel : t.offLabel}\n${t.personasLabel}${t.colon}${personaCount}${pendingLine}\n\n${t.help}`
+              text: `${t.showTitle}\n\n${t.statusLabel}${t.colon}${status}\n${t.nicknameLabel}${t.colon}${nickname}\n${t.occupationLabel}${t.colon}${occupation}\n${t.bioLabel}${t.colon}${bio}\n${t.styleLabel}${t.colon}${styleName}\n${t.traitsLabel}${t.colon}${traitsLine}\n${t.trailLabel}${t.colon}${trailText}\n${t.instructionsLabel}${t.colon}${instructions}\n${t.toolConfirmLabel}${t.colon}${config.requireToolConfirmation ? t.onLabel : t.offLabel}\n${t.personasLabel}${t.colon}${personaCount}${pendingLine}\n${t.deliveryLabel}${t.colon}${delivery}\n\n${t.help}`
             }
           }
 
           if (first === 'reset') {
-            // 重置活动配置，但保留人设预设库
-            const { config: updated, promptChanged } = await commitConfig(current => defaultConfigPreservingPersonas(current))
+            // 重置活动配置，但保留人设预设库。
+            // 经由逃生口：配置损坏时这是唯一还能落盘的操作（先备份损坏文件）。
+            const { config: updated, promptChanged, backupPath } = await resetConfigWithEscape()
             if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
-            return { kind: 'success', text: t.resetDone }
+            return backupPath
+              ? { kind: 'success', text: t.resetRecovered(backupPath) }
+              : { kind: 'success', text: t.resetDone }
           }
 
           if (first === 'enable') {
@@ -1155,8 +1359,15 @@ function registerSystemPrompt(ctx) {
     let disposeSection = null
 
     const registerSection = () => {
-      // 重新注册前先移除旧 section，触发 system-prompt/change，
-      // 让 DSH 丢弃当前会话已经缓存的 system prompt 快照。
+      // 重新注册前先移除旧 section。
+      //
+      // 注意：这里**不是**靠 `system-prompt/change` 让宿主丢弃快照 —— 该事件当前全树
+      // 没有任何消费者（只在 dsh-system-prompt 内部 emit）。真正让新配置生效的是
+      // section 的 text provider 在每次装配时重新求值（宿主对函数式 text 不做缓存），
+      // 以及活动会话注入这条第二条通道。两件事都有回归兜底：
+      // scripts/verify-live-prompt.mjs / verify-e2e-prompt.mjs。
+      //
+      // 保留「先移除再注册」是因为宿主按名字插入、同名会抛重复错。
       disposeSection?.()
 
       disposeSection = spCtx.systemPrompt.section({
@@ -1171,14 +1382,10 @@ function registerSystemPrompt(ctx) {
         // 代价为 0：我们不使用任何宿主提示词变量（需要上下文时，text 本身就是
         // provider）。关掉它同时让「预览所见」与「真实注入」逐字符一致。
         interpolate: false,
-        text: () => {
-          const prompt = compilePrompt(configCache || DEFAULT_CONFIG)
-          if (prompt) {
-            // console.log(`[dsh-soul] 系统提示词已组装：${prompt.substring(0, 100)}...`)
-          }
-          return prompt
-        }
+        text: () => compilePrompt(configCache || DEFAULT_CONFIG)
       })
+
+      deliveryState.sectionRegisteredAt = new Date().toISOString()
     }
 
     registerSection()
@@ -1186,12 +1393,12 @@ function registerSystemPrompt(ctx) {
     globalUpdatePrompt = async () => {
       await loadConfig()
       registerSection()
-      // console.log('[dsh-soul] 系统提示词已更新，当前会话下一次请求将使用最新配置')
     }
 
     ctx.effect(() => () => {
       disposeSection?.()
       disposeSection = null
+      deliveryState.sectionRegisteredAt = null
       if (globalUpdatePrompt) {
         globalUpdatePrompt = null
       }
@@ -1363,7 +1570,10 @@ export async function apply(ctx) {
       if (Object.keys(errors).length > 0) {
         throw new Error('配置校验失败：' + formatFieldErrors(errors))
       }
-      const { config } = await commitConfig(current => ({ ...current, ...patch }))
+      const { config, promptChanged } = await commitConfig(current => ({ ...current, ...patch }))
+      // 送达与另外三条写路径保持一致：服务调用方（其它插件）改配置后同样应当
+      // 立即反映到活动会话，否则「改了配置不生效」会从服务这条路再次出现。
+      if (promptChanged.length > 0) refreshPromptAndInject(ctx, config)
       return config
     },
     async getSystemPrompt() {
@@ -1371,7 +1581,9 @@ export async function apply(ctx) {
       return compilePrompt(config)
     },
     async resetConfig() {
-      const { config } = await commitConfig(current => defaultConfigPreservingPersonas(current))
+      // 与 HTTP / 斜杠命令两条重置入口共用逃生口
+      const { config, promptChanged } = await resetConfigWithEscape()
+      if (promptChanged.length > 0) refreshPromptAndInject(ctx, config)
       return config
     }
   })

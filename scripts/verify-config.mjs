@@ -8,7 +8,7 @@
 // 零依赖，直接 `node scripts/verify-config.mjs` 运行。
 
 import assert from 'node:assert/strict'
-import { readFileSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -39,6 +39,53 @@ function check(name, fn) {
   fn()
   passed++
   console.log(`  ✓ ${name}`)
+}
+
+// 按括号配平取出从 anchor 起的那一个对象字面量。
+// 扫描时会跳过字符串与行注释 —— 文案里出现的 `{n}` 占位符、行尾的 `// {` 之类
+// 都不该影响配平（否则「取出来的对象」会一路吃到文件末尾）。
+function extractObject(source, anchor) {
+  const at = source.indexOf(anchor)
+  if (at === -1) return ''
+  let i = source.indexOf('{', at)
+  if (i === -1) return ''
+  const from = i
+  let depth = 0
+  let quote = null
+  for (; i < source.length; i++) {
+    const c = source[i]
+    if (quote) {
+      if (c === '\\') { i++; continue }
+      if (c === quote) quote = null
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; continue }
+    if (c === '/' && source[i + 1] === '/') {
+      const nl = source.indexOf('\n', i)
+      i = nl === -1 ? source.length : nl
+      continue
+    }
+    if (c === '{') depth++
+    else if (c === '}') { depth--; if (depth === 0) return source.slice(from, i + 1) }
+  }
+  return source.slice(from)
+}
+
+// 键必须是「行首（允许缩进）的 key:」—— 只按 `\w+:` 扫会把文案里的冒号误判成键
+// （例如 'Use /soul: show' 里的 soul）。
+function objectKeys(text) {
+  const keys = new Set()
+  for (const m of text.matchAll(/^[ \t]*(?:'([^']+)'|"([^"]+)"|([A-Za-z_$][\w$]*))\s*:/gm)) {
+    keys.add(m[1] ?? m[2] ?? m[3])
+  }
+  return keys
+}
+
+// 取某个具名文案表内 zh / en 各自的键集（表名 → 在表内定位 `zh: {` / `en: {`）。
+function tableLangKeys(source, tableName, lang) {
+  const at = source.indexOf(`const ${tableName} = {`)
+  if (at === -1) return new Set()
+  return objectKeys(extractObject(source.slice(at), lang === 'zh' ? 'zh: {' : 'en: {'))
 }
 
 console.log('migrateConfig')
@@ -737,9 +784,156 @@ check('配置损坏时上报原因（设置页不必等一次失败的保存才�
     'GET /api/soul/config 应带回 configError，否则用户只会看到「人设无故被重置」'
   )
   assert.ok(
-    /s\.error = typeof payload\.configError === 'string' \? payload\.configError : null/.test(clientSource),
-    '客户端应展示后端上报的配置损坏原因'
+    /s\.error = typeof payload\.configError === 'string'[\s\S]{0,120}?typeof payload\.deliveryWarning === 'string'/.test(clientSource),
+    '客户端应同时展示 configError（读不出来）与 deliveryWarning（送不到会话）——两者症状相同、处理方式不同'
   )
+})
+
+// ---------- 损坏配置的逃生口（重置）----------
+
+check('移除损坏配置只有一条实现：lib/store.mjs 的 moveAsideConfigFile', () => {
+  assert.ok(
+    /export async function moveAsideConfigFile\(filePath\)[\s\S]*?await rename\(filePath, target\)/.test(storeSource),
+    '必须用 rename 把损坏文件移开——只 copyFile 保留原文件的话，读取仍判定为损坏，重置依然被拒'
+  )
+  assert.equal(
+    /rename\(configPath\(\)|unlink\(configPath\(\)/.test(indexSource),
+    false,
+    'index.mjs 不应自己搬移/删除配置文件，收口在 lib/store.mjs'
+  )
+})
+
+check('重置是配置损坏时的逃生口：先移开损坏文件，再复用同一条写入路径', () => {
+  const matched = indexSource.match(/async function resetConfigWithEscape\(\)[\s\S]*?\n\}/)
+  assert.ok(matched, 'index.mjs 中找不到 resetConfigWithEscape')
+  const body = matched[0]
+  assert.ok(/moveAsideConfigFile\(configPath\(\)\)/.test(body), '重置应先移开损坏文件（＝备份到 .corrupt）')
+  assert.ok(/configLoadFailure = null/.test(body), '移开之后必须清掉失败标记，否则 saveConfig 仍会拒绝')
+  assert.ok(/commitConfig\(/.test(body), '重置应复用 commitConfig，而不是另写一份「读—改—写」')
+  assert.ok(
+    /catch[\s\S]*?configLoadFailure = failure[\s\S]*?throw/.test(body),
+    '写入失败必须恢复失败标记，否则会把「文件仍然不可用」误报成正常'
+  )
+})
+
+check('两个重置入口都走逃生口（HTTP 与斜杠命令）', () => {
+  const route = indexSource.match(/path: '\/api\/soul\/config\/reset'[\s\S]*?\n    \}\)/)
+  assert.ok(route, '找不到 /api/soul/config/reset 端点')
+  assert.ok(/resetConfigWithEscape\(\)/.test(route[0]), 'HTTP 重置必须走逃生口')
+  assert.ok(/backupPath/.test(route[0]), 'HTTP 重置应回传备份路径，供界面如实说明数据去哪了')
+
+  const resetBranch = indexSource.match(/if \(first === 'reset'\)[\s\S]*?\n          \}/)
+  assert.ok(resetBranch, "找不到 /soul reset 分支")
+  assert.ok(/resetConfigWithEscape\(\)/.test(resetBranch[0]), '/soul reset 必须走逃生口')
+  assert.ok(/backupPath/.test(resetBranch[0]), '/soul reset 应告知备份位置')
+
+  assert.equal(
+    /commitConfig\(current => defaultConfigPreservingPersonas\(current\)\)/.test(indexSource),
+    false,
+    '不得再有绕过逃生口的重置路径——否则损坏状态下会走到一条必然失败的写'
+  )
+})
+
+check('重置失败不得被报成成功', () => {
+  const handler = clientSource.match(/const handleReset = async \(\) => \{[\s\S]*?\n      \}/)
+  assert.ok(handler, '找不到客户端的 handleReset')
+  assert.ok(/if \(!payload\)/.test(handler[0]), 'handleReset 必须区分失败（resetConfig 失败时返回 undefined）')
+  assert.ok(/toast\.resetFailed/.test(handler[0]), '失败时应用失败提示，而不是无条件报「已重置」')
+  assert.ok(/payload\.backupPath/.test(handler[0]), '有备份时应提示「已备份」，避免用户以为数据凭空消失')
+})
+
+// ---------- 配置生效链路的可观测性 ----------
+
+check('注入失败必须留下可观测记录，不得静默返回', () => {
+  const matched = indexSource.match(/function injectPromptToAllAgents\(ctx, config\)[\s\S]*?\n\}/)
+  assert.ok(matched, 'index.mjs 中找不到 injectPromptToAllAgents')
+  const body = matched[0]
+  assert.ok(/deliveryState\.injectionProblem = reason/.test(body), 'agents 不可用时必须记录原因')
+  assert.equal(
+    /if \(!agents \|\| typeof agents\.list !== 'function'\) \{\s*return\s*\}/.test(body),
+    false,
+    'agents 不可用不得直接裸 return——这正是「改了人设不生效却毫无线索」的来源'
+  )
+  assert.ok(/warnOnce\(/.test(body), '应经 logger 告警（同因只告一次，避免刷屏）')
+  assert.ok(/delivered\+\+/.test(body) && /failed\+\+/.test(body), '应如实统计成功与失败数')
+  assert.equal(/console\.(warn|error)\(/.test(body), false, '不要用被注释掉的 console——统一走 ctx.logger')
+})
+
+check('诊断端点 /api/soul/status 暴露两条通道', () => {
+  const matched = indexSource.match(/path: '\/api\/soul\/status'[\s\S]*?\n    \}\)/)
+  assert.ok(matched, '应注册 GET /api/soul/status')
+  const body = matched[0]
+  assert.ok(/channels:/.test(body), '应分别报告两条通道')
+  assert.ok(/section:/.test(body) && /injection/.test(body), 'section 与 injection 都要有')
+  assert.ok(/sectionRegisteredAt/.test(indexSource), 'section 的注册状态必须被记录')
+})
+
+check('「送不到会话」与「读不出来」是两种问题，分开上报', () => {
+  assert.ok(
+    /deliveryWarning: deliveryProblemText\(config\)/.test(indexSource),
+    'GET /api/soul/config 应带回 deliveryWarning'
+  )
+  assert.ok(
+    /deliveryWarning: deliveryProblemText\(updated\)/.test(indexSource),
+    'POST /api/soul/config 也应带回——保存成功但送不到会话时要让用户看见'
+  )
+  assert.ok(/deliveryProblemText\(config\)/.test(indexSource), '/soul show 应展示送达状态')
+  assert.ok(/t\.deliveryLabel/.test(indexSource), '/soul show 应带「送达」标签行')
+})
+
+check('版本号不新增需手工同步的常量（唯一来源 package.json）', () => {
+  assert.ok(
+    /createRequire\(import\.meta\.url\)\('\.\/package\.json'\)\.version/.test(indexSource),
+    'host 端版本应直接取自 package.json'
+  )
+  assert.equal(
+    /const\s+(PLUGIN_)?VERSION\s*=\s*'0\./.test(indexSource),
+    false,
+    '不要再写一个版本常量——需要手工同步的地方已经有三处'
+  )
+})
+
+// ---------- 双语文案与校验链完整性 ----------
+
+check('host 双语文案表逐键对齐（PROMPT_TEXT / COMMAND_MESSAGES）', () => {
+  for (const table of ['PROMPT_TEXT', 'COMMAND_MESSAGES']) {
+    const zh = tableLangKeys(indexSource, table, 'zh')
+    const en = tableLangKeys(indexSource, table, 'en')
+    assert.ok(zh.size > 10, `${table} 的 zh 键数异常：${zh.size}`)
+    assert.deepEqual(
+      [...zh].sort(),
+      [...en].sort(),
+      `${table} 的 zh / en 必须逐键对齐（少一个键就是另一种语言下少一句话）`
+    )
+  }
+})
+
+check('client 双语文案表逐键对齐', () => {
+  const zh = objectKeys(extractObject(clientSource, 'const zh = {'))
+  const en = objectKeys(extractObject(clientSource, 'const en = {'))
+  assert.ok(zh.size > 50, `client zh 键数异常：${zh.size}`)
+  assert.deepEqual([...zh].sort(), [...en].sort(), 'client i18n 的 zh / en 必须逐键对齐')
+})
+
+check('校验链与 --strict 链覆盖同一组脚本，且后者逐项带 --strict', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const entries = (cmd) => [...String(cmd).matchAll(/scripts\/([\w.-]+\.mjs)(\s+--strict)?/g)]
+    .map((m) => ({ file: m[1], strict: Boolean(m[2]) }))
+  const chain = entries(pkg.scripts['verify'])
+  const strict = entries(pkg.scripts['verify:strict'])
+  assert.ok(chain.length >= 5, `verify 链应覆盖全部脚本，实际 ${chain.length}`)
+  assert.deepEqual(
+    strict.map((e) => e.file),
+    chain.map((e) => e.file),
+    'verify:strict 必须与 verify 逐项同序，否则 --strict 会漏掉某些脚本'
+  )
+  assert.ok(
+    strict.every((e) => e.strict),
+    'verify:strict 的每一项都必须带 --strict，否则那一项仍会「跳过即通过」'
+  )
+  for (const { file } of [...chain, ...strict]) {
+    assert.ok(existsSync(new URL(`../scripts/${file}`, import.meta.url)), `package.json 引用了不存在的脚本：${file}`)
+  }
 })
 
 console.log(`\n全部通过：${passed} 项检查`)

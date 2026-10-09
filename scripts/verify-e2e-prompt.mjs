@@ -23,6 +23,11 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { assertCount } from './lib/skip-report.mjs'
+
+// 基线运行应跑出的断言数：E 场景 18 项 + F 损坏场景 8 项 + 2 项判断力对照。
+// 跑完时校验，防止「脚本加/删用例」与文档口径悄悄脱节。
+const EXPECTED_ASSERTIONS = 28
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -116,12 +121,12 @@ function makeCtx() {
 }
 
 /** 直接调用捕获到的 HTTP 处理器，避免起真实服务器。 */
-async function callRoute(ctx, path, body) {
+async function callRoute(ctx, path, body, method = 'POST') {
   const handler = ctx.state.routes.get(path)
   if (!handler) throw new Error(`未注册路由 ${path}`)
   const payload = Buffer.from(JSON.stringify(body ?? {}))
   const req = {
-    method: 'POST',
+    method,
     async *[Symbol.asyncIterator]() {
       yield payload
     }
@@ -257,8 +262,102 @@ async function scenario(entry) {
   return results
 }
 
-// ==================== 挂载沙箱 ====================
+// ==================== 配置损坏场景（F1 逃生口 / F2 可观测性）====================
 
+/**
+ * 预置一份**截断的** soul-config.json，再启动插件 —— 复现用户真实踩到的路径：
+ * 文件被手改坏后重启，「人设像是被重置了」，而且保存 / 命令 / 工具 / 服务四条写路径
+ * 全部被拒（这是刻意的：避免以默认值为底把用户配置覆盖掉），此时**重置是唯一出路**。
+ *
+ * 单独一个场景而不是塞进 scenario()：损坏状态下前面那些「保存后立即生效」的用例
+ * 必然全灭（它们本来就要被拒绝），混在一起会互相污染。
+ */
+async function corruptConfigScenario(entry) {
+  const dshHome = mkdtempSync(join(tmpdir(), 'dsh-soul-e2e-corrupt-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+
+  const results = []
+  const push = (name, ok, detail) => results.push({ name, ok, detail })
+  const configFile = join(dshHome, 'soul-config.json')
+  const damaged = '{"enabled": true, "nickname": "小明"'
+  const backupFile = `${configFile}.corrupt`
+  const parseable = () => {
+    try {
+      JSON.parse(readFileSync(configFile, 'utf8'))
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  try {
+    writeFileSync(configFile, damaged, 'utf8')
+
+    const mod = await import(pathToFileURL(entry).href + `?t=${Date.now()}`)
+    const ctx = makeCtx()
+    await mod.apply(ctx)
+
+    const read1 = await callRoute(ctx, '/api/soul/config', null, 'GET')
+    push(
+      'E18 损坏的配置被如实上报（configError），而不是静默回退默认值',
+      read1.status === 200 && typeof read1.body?.configError === 'string' && read1.body.configError.length > 0,
+      JSON.stringify(read1.body?.configError)
+    )
+
+    const refused = await callRoute(ctx, '/api/soul/config', { nickname: '不该写进去' })
+    push(
+      'E19 损坏状态下普通保存被拒绝（防止以默认值为底覆盖用户配置）',
+      refused.status === 500 && /拒绝/.test(String(refused.body?.error)),
+      JSON.stringify(refused.body).slice(0, 140)
+    )
+    push('E19b 被拒绝的保存没有改动磁盘上的原文件一个字节', readFileSync(configFile, 'utf8') === damaged)
+
+    const reset = await callRoute(ctx, '/api/soul/config/reset')
+    push(
+      'E20 重置仍可用（逃生口），并回报备份路径',
+      reset.status === 200 && typeof reset.body?.backupPath === 'string' && reset.body.backupPath.length > 0,
+      JSON.stringify(reset.body).slice(0, 160)
+    )
+    push(
+      'E21 损坏内容被备份到 .corrupt（逐字节一致），原文件已重新可解析',
+      existsSync(backupFile) && readFileSync(backupFile, 'utf8') === damaged && parseable(),
+      `备份存在=${existsSync(backupFile)} 可解析=${parseable()}`
+    )
+
+    const read2 = await callRoute(ctx, '/api/soul/config', null, 'GET')
+    push(
+      'E22 重置后不再上报 configError（修好/重置后不必重启 DSH）',
+      read2.status === 200 && read2.body?.configError === null,
+      JSON.stringify(read2.body?.configError)
+    )
+
+    const save2 = await callRoute(ctx, '/api/soul/config', { nickname: '重置后' })
+    push(
+      'E23 重置后保存恢复正常',
+      save2.status === 200 && save2.body?.config?.nickname === '重置后',
+      JSON.stringify(save2.body).slice(0, 140)
+    )
+
+    const status = await callRoute(ctx, '/api/soul/status', null, 'GET')
+    push(
+      'E24 诊断端点报告两条通道与版本号',
+      status.status === 200 &&
+        status.body?.channels?.section?.registered === true &&
+        typeof status.body?.channels?.injection?.delivered === 'number' &&
+        typeof status.body?.version === 'string' && status.body.version.length > 0,
+      JSON.stringify(status.body).slice(0, 220)
+    )
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(dshHome, { recursive: true, force: true })
+  }
+
+  return results
+}
+
+// ==================== 挂载沙箱 ====================
 /**
  * 把插件复制到临时目录，并生成静态依赖 `@deepseek-ai/dsh-llm` 的形状兼容桩。
  *
@@ -274,6 +373,8 @@ function prepareSandbox(pkgDir, label) {
   const dir = mkdtempSync(join(tmpdir(), `dsh-soul-e2e-${label}-`))
   cpSync(join(pkgDir, 'index.mjs'), join(dir, 'index.mjs'))
   cpSync(join(pkgDir, 'lib'), join(dir, 'lib'), { recursive: true })
+  // package.json 也要带上：诊断端点用 createRequire 从包根读版本号（唯一来源）
+  cpSync(join(pkgDir, 'package.json'), join(dir, 'package.json'))
 
   const llmDir = join(dir, 'node_modules', '@deepseek-ai', 'dsh-llm')
   mkdirSync(llmDir, { recursive: true })
@@ -310,6 +411,16 @@ async function main() {
   }
   for (const r of base) record(r.name, r.ok, r.detail)
 
+  // 配置损坏场景（F1 逃生口 / F2 可观测性）：另起一份沙箱，预置截断的配置文件
+  console.log('')
+  console.log('F 配置损坏：重置逃生口 + 诊断端点')
+  const corruptSandbox = prepareSandbox(PKG_DIR, 'corrupt')
+  try {
+    for (const r of await corruptConfigScenario(corruptSandbox.entry)) record(r.name, r.ok, r.detail)
+  } finally {
+    rmSync(corruptSandbox.dir, { recursive: true, force: true })
+  }
+
   // 判断力对照：把 provider 读的配置源换成 DEFAULT_CONFIG（模拟「配置改了但读不到」），
   // E4 / E8 必须失败 —— 否则这些断言证明不了「新配置真的到了 provider」。
   const sandbox = mkdtempSync(join(tmpdir(), 'dsh-soul-sabotage-'))
@@ -322,11 +433,13 @@ async function main() {
     })
     const target = join(patched, 'index.mjs')
     const source = readFileSync(target, 'utf8')
-    const marker = 'const prompt = compilePrompt(configCache || DEFAULT_CONFIG)'
+    // marker 取「provider 读的那个配置源」这一表达式本身，而不是它所在的整行语句 ——
+    // 后者会随 section 注册处的写法调整而失效（曾经就这样报废过一次对照）。
+    const marker = 'compilePrompt(configCache || DEFAULT_CONFIG)'
     if (!source.includes(marker)) {
       record('E 判断力对照：可在副本中改坏 provider 的配置源', false, '找不到 marker')
     } else {
-      writeFileSync(target, source.replace(marker, 'const prompt = compilePrompt(DEFAULT_CONFIG)'))
+      writeFileSync(target, source.replace(marker, 'compilePrompt(DEFAULT_CONFIG)'))
       const sabotageSandbox = prepareSandbox(patched, 'sabotage')
       try {
         sabotage = await scenario(sabotageSandbox.entry)
@@ -351,6 +464,7 @@ async function main() {
 
   console.log('')
   if (failures.length === 0) {
+    if (!assertCount('verify-e2e-prompt', passed, EXPECTED_ASSERTIONS)) process.exit(1)
     console.log(`全部通过：${passed} 项检查`)
     process.exit(0)
   }

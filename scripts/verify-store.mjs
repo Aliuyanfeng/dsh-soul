@@ -17,6 +17,7 @@ import {
   configWriteRefusal,
   corruptBackupPath,
   describeConfigFailure,
+  moveAsideConfigFile,
   readConfigFile,
   writeConfigFile
 } from '../lib/store.mjs'
@@ -209,6 +210,57 @@ await check('正常闭环：不存在 → 写入 → 再读回，全程无失败
   const back = await readConfigFile(p)
   assert.equal(back.failure, null)
   assert.deepEqual(back.value, { enabled: false, occupation: '工程师' })
+})
+
+// ---------- moveAsideConfigFile：损坏配置的逃生口（重置）----------
+
+await check('移开损坏配置：原路径不再存在，备份逐字节一致，读取回到「首次运行」分支', async () => {
+  const p = freshPath('moveaside')
+  const damaged = '{"enabled": true, "nickname": "小'   // 截断的 JSON
+  writeFileSync(p, damaged, 'utf8')
+
+  // 先确认它就是「损坏」状态（否则后面的断言没有意义）
+  const broken = await readConfigFile(p)
+  assert.equal(broken.failure?.code, 'invalid-json')
+
+  const target = await moveAsideConfigFile(p)
+  assert.equal(target, corruptBackupPath(p), '备份路径应为 <file>.corrupt')
+  assert.equal(existsSync(p), false, '原文件必须被移走——只复制不移开的话，重置仍会被判定为损坏而拒绝')
+  assert.equal(readFileSync(target, 'utf8'), damaged, '备份必须逐字节一致')
+
+  const after = await readConfigFile(p)
+  assert.equal(after.exists, false, '移开后应回到「文件不存在」分支')
+  assert.equal(after.failure, null, '移开后不得再报告失败')
+  assert.equal(configWriteRefusal(after.failure, p), null, '移开后必须允许写入，否则重置依然被拒')
+})
+
+await check('移开后可以正常写入新配置（重置真正落盘）', async () => {
+  const p = freshPath('moveaside-write')
+  writeFileSync(p, 'not json at all', 'utf8')
+  const target = await moveAsideConfigFile(p)
+  assert.ok(target)
+
+  await writeConfigFile(p, { enabled: true })
+  const back = await readConfigFile(p)
+  assert.equal(back.failure, null)
+  assert.deepEqual(back.value, { enabled: true })
+})
+
+await check('文件不存在时移开返回 null，且不制造任何残留', async () => {
+  const p = freshPath('moveaside-missing')
+  assert.equal(await moveAsideConfigFile(p), null)
+  assert.equal(existsSync(p), false)
+  assert.equal(existsSync(corruptBackupPath(p)), false, '不该凭空造出备份文件')
+})
+
+await check('已有旧备份时会被本次内容覆盖（避免保留一份更早的损坏副本）', async () => {
+  const p = freshPath('moveaside-overwrite')
+  writeFileSync(corruptBackupPath(p), 'older backup', 'utf8')
+  writeFileSync(p, 'newer damaged', 'utf8')
+
+  const target = await moveAsideConfigFile(p)
+  assert.equal(readFileSync(target, 'utf8'), 'newer damaged', '备份应反映最近一次被丢弃的内容')
+  assert.equal(existsSync(p), false)
 })
 
 console.log(`\n全部通过：${passed} 项检查`)
