@@ -8,7 +8,7 @@
 // 零依赖，直接 `node scripts/verify-config.mjs` 运行。
 
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -615,8 +615,7 @@ check('草稿预览端点复用保存路径的校验与编译，且不落盘、�
   assert.ok(/compilePrompt\(draft\)/.test(body), '草稿预览未调用 compilePrompt')
   assert.ok(/req\.method !== 'POST'/.test(body), '草稿预览应限制为 POST')
   assert.equal(/saveConfig\(/.test(body), false, '草稿预览不得落盘（不应调用 saveConfig）')
-  assert.equal(/refreshPrompt\(\)/.test(body), false, '草稿预览不得刷新提示词（不应调用 refreshPrompt）')
-  assert.equal(/systemPrompt\.section\(/.test(body), false, '草稿预览不得触碰 section 注册')
+  assert.equal(/refreshPromptAndInject\(/.test(body), false, '草稿预览不得注入会话（不应调用 refreshPromptAndInject）')
 })
 
 check('客户端「参与编译的字段」与宿主 compilePrompt 实际读取的字段一致', () => {
@@ -684,39 +683,6 @@ check('系统提示词 section 显式关闭宿主插值', () => {
       '该错位于 agent.step() 开头且无 try/catch ⇒ 该会话每一轮都失败'
   )
   assert.equal(/interpolate:\s*true/.test(region), false, 'interpolate 不得为 true')
-})
-
-// ---------- 不再向会话注入（0.7.1 移除 O1）----------
-
-check('个性化配置只走 system prompt section，不再向会话注入', () => {
-  // 注入是多余的：宿主每个 step 都会重新装配并求值 section 的 text provider
-  // （无缓存），文本变化时由 project() 自行提交新的 system 快照 ⇒「下一轮即生效」
-  // 不依赖注入。注入反而把系统指令伪装成 user 消息、复制整份人设全文，并且是
-  // 会话格式 v4 准入失败（issue #1）的唯一触发源。
-  assert.equal(/\binjectPromptToAllAgents\b/.test(indexSource), false, '会话注入函数不得复活')
-  assert.equal(/createUserMessage/.test(indexSource), false, 'index.mjs 不应再构造注入消息')
-  assert.equal(
-    /from '@deepseek-ai\/dsh-llm'/.test(indexSource),
-    false,
-    'index.mjs 不应再静态导入 dsh-llm（该导入只被注入用到）'
-  )
-  assert.equal(/\.\/lib\/injection\.mjs/.test(indexSource), false, '不得再引用已删除的注入模块')
-  assert.equal(existsSync(new URL('../lib/injection.mjs', import.meta.url)), false, 'lib/injection.mjs 应已删除')
-
-  // 注入文案随之退役：留着就是死代码，且会误导后来者以为仍有注入通道
-  for (const key of ['injectUpdatedHeader', 'injectUpdatedBody', 'injectDisabled']) {
-    assert.equal(indexSource.includes(key), false, `注入文案 ${key} 应随功能一并移除`)
-  }
-
-  // 刷新入口收敛为无参函数：它只做「重读配置 + 重新注册 section」，不需要 ctx / config
-  assert.ok(/^function refreshPrompt\(\) \{/m.test(indexSource), '刷新入口应为无参的 refreshPrompt()')
-  assert.equal(/refreshPromptAndInject/.test(indexSource), false, 'refreshPromptAndInject 应已改名')
-  const callSites = (indexSource.match(/refreshPrompt\(\)/g) || []).length
-  assert.ok(callSites >= 10, `refreshPrompt() 调用点过少（实际 ${callSites}）：所有配置写路径都应刷新提示词`)
-
-  // 刷新必须仍受 promptChanged 门控 —— 纯外观字段（光轨）不该触发提示词刷新
-  const gated = (indexSource.match(/if \(promptChanged\.length > 0\) refreshPrompt\(\)/g) || []).length
-  assert.ok(gated >= 8, `受 promptChanged 门控的刷新点过少（实际 ${gated}）`)
 })
 
 // ---------- 配置持久化（原子写 / 损坏不覆盖）----------

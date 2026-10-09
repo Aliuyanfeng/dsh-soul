@@ -32,11 +32,11 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - Input validation: field whitelist, types, length limits (nickname/occupation 50, bio 500, custom instructions 2000 chars), enum and hex-color checks; invalid or oversized fields reject the whole write
 - Durable config: writes are **atomic** (temp file + `rename`, so an interrupted write can never leave half a config); reads tell "file missing" apart from "file corrupted" — a corrupt file is left untouched, backed up as `.corrupt`, **refused as a write target**, and the reason is shown right in the settings page so your custom instructions and persona library are never silently wiped
 - Prompt interpolation is disabled: `{{…}}` in custom instructions stays literal and can no longer break system-prompt assembly
-- Configuration takes effect on its own: a single system-prompt section is registered, re-evaluated by the host on every step — **no session injection at all**
-- Change detection: the prompt is refreshed only when a behavior-affecting field actually changed — appearance-only config (composer light trail) is persisted without touching the prompt
+- Configuration synced to all active agents after every update
+- Change detection: the prompt is refreshed and sessions injected only when a behavior-affecting field actually changed — appearance-only config (composer light trail) is persisted without injecting anything
 - Plugin icon: a dedicated icon in the plugin manager list and the sidebar entry (`assets/icon.svg`, 36×36, shipped with the npm package)
 - Settings nav icon: the "Personalization" entry in the settings panel draws the same geometry as the plugin icon — same trail and spark, but coloured and weighted like its neighbours (monochrome `currentColor`). DSH hardcodes nav glyphs by section id and offers no way for a plugin to declare one, so the client swaps the glyph in the DOM
-- Prompt preview (read-only, collapsible section at the bottom of the settings page): shows the **currently active** prompt while the form is untouched; as soon as any edit is pending it compiles the **draft** instead — what will actually take effect once you save — refreshing live (400 ms after you stop typing) and again after save / reset / applying a persona. Fields that fail validation are listed separately and excluded from the preview
+- Prompt preview (read-only, collapsible section at the bottom of the settings page): shows the **currently active** prompt while the form is untouched; as soon as any edit is pending it compiles the **draft** instead — what will actually be injected once you save — refreshing live (400 ms after you stop typing) and again after save / reset / applying a persona. Fields that fail validation are listed separately and excluded from the preview
 
 ## Installation
 
@@ -59,6 +59,7 @@ The plugin ships no DSH runtime packages; the host provides them all. DSH valida
 
 | Package | Range |
 | --- | --- |
+| `@deepseek-ai/dsh-llm` | `>=0.1.1-rc.2 <0.3.0-0` |
 | `@deepseek-ai/dsh-tools` | `>=0.1.0-rc.6 <0.3.0-0` |
 | `@deepseek-ai/cordis` | `^4.0.1 \|\| ^4.0.5-alpha.1` |
 
@@ -109,7 +110,7 @@ Slash commands are also available:
 /soul Bob         Set nickname
 ```
 
-Once saved, the configuration takes effect **on the next request**: the host re-assembles the system prompt on every step and re-evaluates this plugin's section, committing a new system snapshot whenever the text changed. No restart and no plugin reload, and **no extra message is ever written into the session**.
+Once saved, the configuration is synced to all active agents and takes effect on the next request in the current session; no-op saves inject nothing.
 
 The agent can also use the `set_persona` tool to adjust your persona (nickname, style & tone, traits, reply language, custom instructions). The model only invokes this tool when you explicitly ask to change how it addresses or responds to you. With **Require confirmation for persona changes** (`requireToolConfirmation`) enabled, tool changes come back as a pending proposal and take effect only after `/soul confirm` (or are discarded by `/soul reject`).
 
@@ -142,28 +143,37 @@ Example:
 
 Your own personas are stored in the same file under the `personas` field: name → persona field snapshot (nickname / occupation / bio / style / traits / reply length / language / custom instructions) + `updatedAt`. Persona library changes never touch the active config; a persona is applied to the config (and synced to sessions) only when used. Built-in personas are not persisted — they live in `lib/personas.mjs` — and listing / applying / match detection all go through the merged view of built-ins plus your own; on a name collision the built-in wins, and a built-in name can neither be saved over nor deleted.
 
-Composer light trail fields: `trailEnabled` (on/off, default `true`), `trailColor` (6-digit hex, stored uppercase, default `#679EFE`), `trailSpeed` (`slow` / `normal` / `fast`, default `slow`), `trailWidth` (`thin` / `normal` / `thick`, default `thin`). These are appearance-only: they are persisted but never enter the system prompt and never trigger a prompt refresh.
+Composer light trail fields: `trailEnabled` (on/off, default `true`), `trailColor` (6-digit hex, stored uppercase, default `#679EFE`), `trailSpeed` (`slow` / `normal` / `fast`, default `slow`), `trailWidth` (`thin` / `normal` / `thick`, default `thin`). These are appearance-only: they are persisted but never enter the system prompt and never trigger a session injection.
 
 Length limits: nickname / occupation 50 chars, bio 500 chars, custom instructions 2000 chars; the color must be `#rrggbb`. Unknown fields are dropped; invalid or oversized fields reject the whole write (HTTP returns 400 with per-field error details).
 
 ## How It Works
 
-The plugin compiles the nickname, style, tone and custom instructions into a system prompt via `compilePrompt()` and registers it as one DSH prompt section:
+The plugin compiles the nickname, style, tone and custom instructions into a system prompt via `compilePrompt()` and registers it with DSH:
 
 ```js
 spCtx.systemPrompt.section({
   name: 'soul:persona',
   order: 0,
-  interpolate: false,                                        // host interpolation off: {{…}} stays literal
-  text: () => compilePrompt(configCache || DEFAULT_CONFIG)    // function provider: re-evaluated per assembly
+  text: () => compilePrompt(configCache || DEFAULT_CONFIG)
 })
 ```
 
-**Why no session injection is needed**: before every step DSH re-assembles the system prompt, and a function `text` is **not cached** (it is re-evaluated on each call); whenever the assembly differs from the previous one, the host commits a fresh system snapshot itself. So "save → effective on the next request" is guaranteed by that chain alone — the plugin only has to keep its config cache up to date.
+After each update, the plugin iterates over all active agents and calls `agent.inject()` with a standard `UserMessage`:
 
-`interpolate: false` is required: the host interpolates section text **strictly** by default, so a malformed or unregistered variable makes assembly throw. That throw sits at the top of `agent.step()` with no try/catch — the result is not "that snippet is ignored" but **every turn of that session failing**. The plugin uses no host prompt variables, so turning it off costs nothing.
+```js
+agent.inject(createUserMessage({
+  content: [{ type: 'text', text: prompt }],
+  source: {
+    kind: 'plugin',
+    plugin: 'dsh-soul',
+    form: 'snapshot',
+    sections: [{ name: 'soul:persona', text: prompt }]
+  }
+}))
+```
 
-Up to 0.7.0 the plugin also iterated over all active agents and pushed a config snapshot via `agent.inject()`. That message was **user-role** and landed in the session transcript (system instructions disguised as a user turn, plus a full duplicate of the persona text), and it was the only trigger of the DSH session-format v4 admission failure ([#1](https://github.com/Aliuyanfeng/dsh-soul/issues/1)) — removed entirely in 0.7.1.
+`agent.inject()` places the latest configuration into the agent's pending context so it takes effect on the next request. It does not trigger a new request and does not modify message history.
 
 ## License
 

@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 /**
- * scripts/verify-live-prompt.mjs — 宿主实现层等价性回归（0.7.1 移除会话注入的护栏）
+ * scripts/verify-live-prompt.mjs — 宿主实现层探针（配置生效链路的底座）
  *
- * 为什么需要它：0.7.1 移除了「把最新配置注入所有活动会话」，改为**完全依赖**
- * section 的 `text` provider 在每次装配时重新求值。这条依赖属于**宿主行为**：
- * 一旦宿主改成缓存 section 文本，「改配置 → 下一轮生效」会**静默失效**
- * （不报错，只是配置不再生效 —— 最难排查的一类问题）。
- * 本脚本用**已安装 DSH 的真实实现**把这条依赖钉住，DSH 升级后跑一次即可确认。
+ * 为什么需要它：「改配置 → 下一轮生效」依赖两条通道，本脚本钉住其中的底座 ——
+ * section 的 `text` provider 在每次装配时都被重新求值。这属于**宿主行为**：
+ * 一旦宿主改成缓存 section 文本，这条通道会**静默失效**（不报错，只是配置
+ * 不再经它生效 —— 最难排查的一类问题）。
+ *
+ * 注意（0.7.1 的实测教训）：本脚本 20 项全绿，只证明「宿主每次装配都会重新求值
+ * 并提交变化后的文本」这一层成立，**不等于**会话进行中改配置就一定生效 ——
+ * 0.7.1 曾据此移除活动会话注入，实测出现了「会话进行中改配置不生效」，
+ * 因此注入已恢复（见 verify-e2e-prompt.mjs 的 E13 / E16）。本脚本保留为
+ * 宿主行为探针：DSH 升级后跑一次，可确认这条底座机制没有被改掉。
  *
  * 三层证据：
  *   A 真实服务 —— 真实 `SystemPrompt` + 真实 Cordis Context：`assemble()` 每次
@@ -316,7 +321,7 @@ async function main() {
   record(
     'C1 assemble 对函数式 text 直接调用、无缓存',
     /typeof section\.text === "function" \? section\.text\(context\) : section\.text/.test(spSource),
-    '宿主可能已改为缓存 section 文本 —— 若如此，移除注入后「改配置下一轮生效」将静默失效'
+    '宿主可能已改为缓存 section 文本 —— 若如此，这条通道会静默失效（此时只剩活动会话注入兜底）'
   )
   if (loopEntry) {
     const loopSource = readFileSync(loopEntry, 'utf8')

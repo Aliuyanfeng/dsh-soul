@@ -15,6 +15,7 @@
 ```text
 index.mjs
 lib/config.mjs
+lib/injection.mjs
 lib/personas.mjs
 lib/store.mjs
 client/index.mjs
@@ -126,10 +127,9 @@ npm publish --access public
 
 | 包 | 范围 | DSH 是否校验 |
 | --- | --- | --- |
+| `@deepseek-ai/dsh-llm` | `>=0.1.1-rc.2 <0.3.0-0` | 是 |
 | `@deepseek-ai/dsh-tools` | `>=0.1.0-rc.6 <0.3.0-0` | 是 |
 | `@deepseek-ai/cordis` | `^4.0.1 \|\| ^4.0.5-alpha.1` | 否 |
-
-> 0.7.1 起不再声明 `@deepseek-ai/dsh-llm`：插件已移除会话注入，不再 import 它（少一条 peer 就少一个装载门槛）。
 
 ### DSH 如何判定（决定范围该怎么写）
 
@@ -158,9 +158,7 @@ node scripts/verify-compat.mjs --dsh "<DSH 安装目录>"
 - **通过** → 无需改动；
 - **不通过** → 放宽上界（或按实际支持的范围重写）、升 `version`，再按正常流程发版。
 
-脚本在能定位到宿主时，会直接调用 DSH 导出的 `evaluatePluginCompatibility`，判定与宿主逐字一致；此外还会抽查 `defineTool` / `TOOL_RUNTIME_SCHEDULER` 等运行时符号与客户端 `inject` 包是否仍在——**peer 检查覆盖不到这一层**，若报符号缺失，说明不只是声明过期，插件代码也需要适配。
-
-> 0.7.1 起原先「会话格式 v4 注入来源契约」那一段已随注入代码一并退役（插件不再向会话注入任何内容）。取而代之的是两个**行为等价性**回归：`npm run verify:host`（跑宿主的真实 `SystemPrompt` / `SystemPromptProjection`，证明「改配置 → 下一轮生效」仍成立）与 `npm run verify:e2e`（用真实 `index.mjs` + 假宿主跑通「保存 → section 立刻读到新文本」）。两者都并入 `npm run verify`。
+脚本在能定位到宿主时，会直接调用 DSH 导出的 `evaluatePluginCompatibility`，判定与宿主逐字一致；此外还会抽查 `createUserMessage` / `defineTool` / `TOOL_RUNTIME_SCHEDULER` 等运行时符号与客户端 `inject` 包是否仍在——**peer 检查覆盖不到这一层**，若报符号缺失，说明不只是声明过期，插件代码也需要适配。
 
 ### 应急：临时版本豁免
 

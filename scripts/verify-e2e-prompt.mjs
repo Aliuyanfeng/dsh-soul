@@ -1,22 +1,25 @@
 #!/usr/bin/env node
 /**
- * scripts/verify-e2e-prompt.mjs — 插件侧端到端回归：保存配置 → section 立即读到新文本
+ * scripts/verify-e2e-prompt.mjs — 插件侧端到端回归：保存配置 → 两条通道都拿到新文本
  *
  * 用**真实的 index.mjs**（不是抽取片段）+ 假 ctx 在纯 Node 里跑通整条链路：
  *
  *   POST /api/soul/config → 写队列 → 原子落盘 → configCache → section 的 text provider
+ *                                                    ↘ refreshPromptAndInject → 活动会话注入
  *
- * 它补上 verify-live-prompt.mjs 的另一半：那边证明「宿主每个 step 都会重新求值
- * provider」，这边证明「插件保存后 provider 确实返回新文本」。两端合起来才是
- * 「改配置 → 下一轮生效」的完整证据链（0.7.1 移除会话注入后完全依赖这条链）。
+ * 「改配置 → 下一轮生效」由两条通道共同保证（0.7.1 的实测结论）：
+ *   1. system prompt section：宿主每个 step 都重新求值 provider（E4 / E8 证明）；
+ *   2. 活动会话注入：保存后主动把最新快照推给所有活动 agent（E13 / E16 证明）。
+ * 0.7.1 曾尝试只保留通道 1 并删除注入，实测出现「会话进行中改配置不生效」，
+ * 因此注入已恢复。本脚本把两条通道都钉住 —— 少了任何一条都会有用例失败。
  *
- * 0.7.1 起 index.mjs **没有任何静态外部依赖**（只剩 tools 注册处一个动态 import），
- * 因此可以这样直接挂载 —— 本脚本同时把这一点当契约断言（import 失败即失败）。
+ * index.mjs 有静态外部依赖 `@deepseek-ai/dsh-llm`（注入用的 `createUserMessage`），
+ * 而插件包内不含该依赖，因此挂载前先在临时目录复制一份并生成形状兼容的桩。
  *
  * 用法：node scripts/verify-e2e-prompt.mjs
  * 退出码：0 = 通过；1 = 存在失败项。
  */
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -38,14 +41,22 @@ function record(name, ok, detail) {
 
 // ==================== 假宿主 ====================
 
-/** 记录一切被访问的服务名，用于断言插件「从不索要 agents 服务」（O1）。 */
+/** 记录一切被访问的服务名与每次会话注入，供 E13 / E16 断言两条通道都健在。 */
 function makeCtx() {
   const state = {
     sections: [],       // 每次 systemPrompt.section() 的注册
     disposals: 0,
     routes: new Map(),  // path -> handler
     services: [],       // ctx.get / ctx.inject 索要过的服务名
-    providers: []       // 已注册的服务（ctx.provide）
+    providers: [],      // 已注册的服务（ctx.provide）
+    injected: []        // 每个活动 agent 收到的注入消息
+  }
+
+  // 活动 agent 桩：宿主通过 agents.list() 暴露，注入走 agent.inject()
+  const agents = {
+    list() {
+      return [{ id: 'fake-agent', inject(message) { state.injected.push(message) } }]
+    }
   }
 
   const systemPrompt = {
@@ -68,6 +79,7 @@ function makeCtx() {
   const host = {
     systemPrompt,
     webServer,
+    agents,
     logger: { info() {}, warn() {}, error() {} }
   }
 
@@ -175,13 +187,19 @@ async function scenario(entry) {
     push('E8 同一进程内再次改配置 → provider 读到新值（无需重启、无需重新注册）', after2.includes('E2E-乙'), JSON.stringify(after2.slice(0, 80)))
     push('E9 旧值已被替换（不是叠加）', !after2.includes('E2E-甲'), JSON.stringify(after2.slice(0, 80)))
 
-    // 纯外观字段不得触发提示词刷新
+    // 纯外观字段不得触发提示词刷新，也不得注入会话
     const sectionCountBefore = ctx.state.sections.length
+    const injectedBefore = ctx.state.injected.length
     await callRoute(ctx, '/api/soul/config', { trailColor: '#123456' })
     push(
       'E10 纯外观字段（光轨颜色）保存后不重新注册 section（promptChanged 门控）',
       ctx.state.sections.length === sectionCountBefore,
       `${sectionCountBefore} → ${ctx.state.sections.length}`
+    )
+    push(
+      'E10b 纯外观字段保存后不向会话注入（promptChanged 门控）',
+      ctx.state.injected.length === injectedBefore,
+      `${injectedBefore} → ${ctx.state.injected.length}`
     )
 
     // 校验失败不得改动生效提示词
@@ -189,9 +207,25 @@ async function scenario(entry) {
     push('E11 非法枚举被拒绝（400）', bad.status === 400, JSON.stringify(bad.body))
     push('E12 被拒绝的保存不影响生效提示词', currentPrompt(ctx) === after2, '生效文本发生了变化')
 
-    // O1 的核心契约：插件不再需要 agents 服务（也就无从注入会话）
-    const askedAgents = ctx.state.services.filter((s) => s.endsWith(':agents'))
-    push('E13 全程未索要 agents 服务（注入通道已彻底移除）', askedAgents.length === 0, JSON.stringify(askedAgents))
+    // 通道 2：配置变化必须主动推给活动会话（0.7.1 恢复注入后的核心契约）
+    const lastInjected = ctx.state.injected[ctx.state.injected.length - 1]
+    push(
+      'E13 保存配置后向活动 agent 注入了最新快照（含刚保存的文本）',
+      ctx.state.injected.length > 0 && JSON.stringify(lastInjected).includes('E2E-乙'),
+      `注入 ${ctx.state.injected.length} 次`
+    )
+    push(
+      'E16 注入 source 带生产者自持 kind（会话格式 v4 准入，issue #1）',
+      ctx.state.injected.length > 0 &&
+        ctx.state.injected.every(
+          (m) =>
+            typeof m?.source?.kind === 'string' &&
+            m.source.kind.length > 0 &&
+            m.source.kind !== 'plugin' &&
+            m.source.kind.startsWith('plugin:')
+        ),
+      JSON.stringify(ctx.state.injected[0]?.source?.kind)
+    )
 
     // 草稿预览是只读旁路
     const preview = await callRoute(ctx, '/api/soul/prompt/preview', { customInstructions: '草稿-丙' })
@@ -209,6 +243,11 @@ async function scenario(entry) {
       currentPrompt(ctx) === after2 && !currentPrompt(ctx).includes('草稿-丙'),
       JSON.stringify(currentPrompt(ctx).slice(0, 80))
     )
+    push(
+      'E17 草稿预览不注入会话、不重新注册 section（只读旁路）',
+      ctx.state.injected.length === injectedBefore && ctx.state.sections.length === sectionCountBefore,
+      `注入 ${ctx.state.injected.length}（基准 ${injectedBefore}）/ section 注册 ${ctx.state.sections.length}（基准 ${sectionCountBefore}）`
+    )
   } finally {
     if (previous === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previous
@@ -218,14 +257,57 @@ async function scenario(entry) {
   return results
 }
 
+// ==================== 挂载沙箱 ====================
+
+/**
+ * 把插件复制到临时目录，并生成静态依赖 `@deepseek-ai/dsh-llm` 的形状兼容桩。
+ *
+ * 真实宿主由 DSH 自身提供该包（peer），插件包内不含 —— 离线挂载要么指向已装
+ * DSH 的 node_modules，要么造桩。造桩更稳：不依赖本机是否装了 DSH，也不会
+ * 因宿主版本变化而改变被测行为（注入构造的形状由 E16 单独钉住）。
+ *
+ * @param pkgDir - 插件包目录（含 index.mjs 与 lib/）
+ * @param label - 临时目录后缀，便于排查
+ * @returns { dir, entry } —— dir 需由调用方清理
+ */
+function prepareSandbox(pkgDir, label) {
+  const dir = mkdtempSync(join(tmpdir(), `dsh-soul-e2e-${label}-`))
+  cpSync(join(pkgDir, 'index.mjs'), join(dir, 'index.mjs'))
+  cpSync(join(pkgDir, 'lib'), join(dir, 'lib'), { recursive: true })
+
+  const llmDir = join(dir, 'node_modules', '@deepseek-ai', 'dsh-llm')
+  mkdirSync(llmDir, { recursive: true })
+  writeFileSync(
+    join(llmDir, 'package.json'),
+    JSON.stringify({ name: '@deepseek-ai/dsh-llm', version: '0.0.0', type: 'module', main: 'index.js' }, null, 2)
+  )
+  writeFileSync(
+    join(llmDir, 'index.js'),
+    [
+      '// 形状兼容桩：真实宿主由 DSH 提供该包，这里只满足插件对 createUserMessage 的使用',
+      'export function createUserMessage(input) {',
+      '  return { role: "user", content: input && input.content, source: input && input.source }',
+      '}'
+    ].join('\n')
+  )
+
+  return { dir, entry: join(dir, 'index.mjs') }
+}
+
 // ==================== 主流程 ====================
 
 async function main() {
-  console.log('dsh-soul — 端到端回归：保存配置 → section 立即生效')
+  console.log('dsh-soul — 端到端回归：保存配置 → section 与活动会话都拿到新文本')
   console.log('')
 
   console.log('E 真实 index.mjs + 假宿主')
-  const base = await scenario(join(PKG_DIR, 'index.mjs'))
+  const baseSandbox = prepareSandbox(PKG_DIR, 'base')
+  let base = []
+  try {
+    base = await scenario(baseSandbox.entry)
+  } finally {
+    rmSync(baseSandbox.dir, { recursive: true, force: true })
+  }
   for (const r of base) record(r.name, r.ok, r.detail)
 
   // 判断力对照：把 provider 读的配置源换成 DEFAULT_CONFIG（模拟「配置改了但读不到」），
@@ -244,10 +326,13 @@ async function main() {
     if (!source.includes(marker)) {
       record('E 判断力对照：可在副本中改坏 provider 的配置源', false, '找不到 marker')
     } else {
-      const broken = source.replace(marker, 'const prompt = compilePrompt(DEFAULT_CONFIG)')
-      const { writeFileSync } = await import('node:fs')
-      writeFileSync(target, broken)
-      sabotage = await scenario(target)
+      writeFileSync(target, source.replace(marker, 'const prompt = compilePrompt(DEFAULT_CONFIG)'))
+      const sabotageSandbox = prepareSandbox(patched, 'sabotage')
+      try {
+        sabotage = await scenario(sabotageSandbox.entry)
+      } finally {
+        rmSync(sabotageSandbox.dir, { recursive: true, force: true })
+      }
       const killed = sabotage.filter((r) => !r.ok).map((r) => r.name)
       record(
         'E 判断力对照：provider 读不到新配置时，E4 / E8 必须失败',
@@ -255,8 +340,8 @@ async function main() {
         `实际失败项 ${JSON.stringify(killed)}`
       )
       record(
-        'E 判断力对照：E1 / E13 等结构断言不受影响',
-        sabotage.filter((r) => r.name.startsWith('E1 ') || r.name.startsWith('E13')).every((r) => r.ok),
+        'E 判断力对照：E1 / E16 等结构断言不受影响',
+        sabotage.filter((r) => r.name.startsWith('E1 ') || r.name.startsWith('E16')).every((r) => r.ok),
         '对照跑不应波及结构断言'
       )
     }
