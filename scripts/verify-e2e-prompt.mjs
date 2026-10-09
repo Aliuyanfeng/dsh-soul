@@ -13,9 +13,12 @@
  * 0.7.1 曾尝试只保留通道 1 并删除注入，实测出现「会话进行中改配置不生效」，
  * 因此注入已恢复。本脚本把两条通道都钉住 —— 少了任何一条都会有用例失败。
  *
- * 另有一组用例钉住「人设预设与『关于你』的边界」：应用**内置**预设不得改动昵称 /
- * 职业 / 介绍 / 输出语言（E25，并由 E26 防止它空过），而**自建**预设是完整快照、
- * 会把这些字段一并写回（E27）。两者行为不同是刻意设计，见 lib/personas.mjs 的三条约定。
+ * 另有一组用例钉住「人设预设与『关于你』的边界」：预设是 **Agent 的人格存档**，
+ * 「关于你」（昵称 / 职业 / 介绍）是**使用者的身份信息**，两者是两码事 ——
+ * 所以应用**任何**预设（内置 E25 或自建 E27）都不得改动这三个字段，同时它声明过的
+ * 人格维度（含输出语言 E28）必须真的写回。E29 / E30 另起一份带着「v0.7.1 之前那套
+ * 完整快照」的旧配置，验证历史残留既被迁移剥离、也不会在应用时写回。
+ * 语义来源见 lib/personas.mjs 的四条约定。
  *
  * index.mjs 有静态外部依赖 `@deepseek-ai/dsh-llm`（注入用的 `createUserMessage`），
  * 而插件包内不含该依赖，因此挂载前先在临时目录复制一份并生成形状兼容的桩。
@@ -30,11 +33,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { assertCount } from './lib/skip-report.mjs'
 // 内置人设的期望值直接取代码里的同一份数据（它的数据契约另有 verify-config 钉住），
 // 免得 e2e 里再抄一份「极简主义者 = efficient / less」这类会悄悄漂移的常量。
+// 「关于你」的字段名单同理取自配置层唯一来源（PROFILE_FIELDS）。
 import { BUILTIN_PERSONAS } from '../lib/personas.mjs'
+import { PROFILE_FIELDS } from '../lib/config.mjs'
 
-// 基线运行应跑出的断言数：E 场景 21 项 + F 损坏场景 8 项 + 2 项判断力对照。
+// 基线运行应跑出的断言数：E 场景 24 项 + F 损坏场景 8 项 + 2 项判断力对照。
 // 跑完时校验，防止「脚本加/删用例」与文档口径悄悄脱节。
-const EXPECTED_ASSERTIONS = 31
+const EXPECTED_ASSERTIONS = 34
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -173,6 +178,22 @@ async function scenario(entry) {
   const push = (name, ok, detail) => results.push({ name, ok, detail })
 
   try {
+    // 预置一份「v0.7.1 之前保存的」自建预设：那时快照是完整配置，带着「关于你」。
+    // 必须在插件挂载前落盘 —— loadConfig 会缓存首次读取的结果，而这正是被测的迁移入口。
+    const LEGACY_PERSONA = {
+      nickname: '老昵称',
+      occupation: '老职业',
+      bio: '老简介',
+      style: 'roast',
+      headingLists: 'less',
+      updatedAt: '2025-01-01T00:00:00.000Z'
+    }
+    const LEGACY_NAME = '历史预设'
+    writeFileSync(
+      join(dshHome, 'soul-config.json'),
+      JSON.stringify({ personas: { [LEGACY_NAME]: LEGACY_PERSONA } }, null, 2)
+    )
+
     const mod = await import(pathToFileURL(entry).href + `?t=${Date.now()}`)
     const ctx = makeCtx()
     await mod.apply(ctx)
@@ -261,15 +282,12 @@ async function scenario(entry) {
       `注入 ${ctx.state.injected.length}（基准 ${injectedBefore}）/ section 注册 ${ctx.state.sections.length}（基准 ${sectionCountBefore}）`
     )
 
-    // ── 人设预设与「关于你」的边界：内置 vs 自建 ────────────────────────────────
-    // 用真实 index.mjs 回答两个容易误解的问题：
-    //   1. 切换**内置**人设会不会动到「关于你」（昵称 / 职业 / 介绍）与输出语言？
-    //      —— 不会。内置预设刻意只声明它要覆盖的维度（见 lib/personas.mjs 的三条约定），
-    //         应用路径 pickPersonaValues 只取条目里**实际存在**的键（部分覆盖语义）。
-    //         新用户没有自建预设、只会命中这一条，所以不会莫名丢资料。
-    //   2. 那**自建**预设呢？—— 会。它是「保存那一刻的完整快照」，含「关于你」，
-    //         应用时一并写回。差异是刻意的：用户自己存的就是「我这套完整配置」。
-    // E26 是 E25 的防空过护栏 —— 若 apply 整个失败、配置没变，E25 会「因为没改所以通过」。
+    // ── 人设预设与「关于你」的边界 ──────────────────────────────────────────────
+    // 预设是 Agent 的人格存档，「关于你」是使用者的身份信息 —— 切换预设只换说话方式，
+    // 不该动你的资料。用真实 index.mjs 验证这条对**任何**预设都成立：内置（E25）与
+    // 自建（E27）都不动昵称 / 职业 / 介绍；同时它声明过的人格维度必须真的写回 ——
+    // 含输出语言（E28）。E26 是 E25 的防空过护栏：若 apply 整个失败、配置没变，
+    // E25 会「因为没改所以通过」。
     const MY_PERSONAL = { nickname: 'E2E昵称', occupation: 'E2E职业', bio: 'E2E简介', language: 'en' }
     await callRoute(ctx, '/api/soul/config', MY_PERSONAL)
 
@@ -277,13 +295,12 @@ async function scenario(entry) {
     const useBuiltin = await callRoute(ctx, '/api/soul/personas/use', { name: '极简主义者' })
     const afterBuiltin = useBuiltin.body?.config || {}
     push(
-      'E25 应用内置预设不改动「关于你」与输出语言（只覆盖它声明过的字段）',
-      ['nickname', 'occupation', 'bio', 'language'].every((key) => afterBuiltin[key] === MY_PERSONAL[key]),
+      'E25 应用内置预设不改动「关于你」（只覆盖它声明过的字段）',
+      PROFILE_FIELDS.every((key) => afterBuiltin[key] === MY_PERSONAL[key]),
       JSON.stringify({
         nickname: afterBuiltin.nickname,
         occupation: afterBuiltin.occupation,
-        bio: afterBuiltin.bio,
-        language: afterBuiltin.language
+        bio: afterBuiltin.bio
       })
     )
     push(
@@ -294,16 +311,46 @@ async function scenario(entry) {
       JSON.stringify({ style: afterBuiltin.style, headingLists: afterBuiltin.headingLists, emoji: afterBuiltin.emoji })
     )
 
+    // 自建预设：先保存，再把「关于你」与一个已声明维度一起改掉，然后应用 ——
+    // 只有后者该被回滚。
     await callRoute(ctx, '/api/soul/personas/save', { name: 'E2E自建' })
-    await callRoute(ctx, '/api/soul/config', { nickname: '改过的昵称' })
+    await callRoute(ctx, '/api/soul/config', { nickname: '改过的昵称', style: 'humorous', language: 'zh' })
     const useMine = await callRoute(ctx, '/api/soul/personas/use', { name: 'E2E自建' })
     const afterMine = useMine.body?.config || {}
     push(
-      'E27 自建预设是完整快照：应用时把保存那刻的「关于你」一并写回（与内置刻意不同）',
-      afterMine.nickname === MY_PERSONAL.nickname &&
+      'E27 应用自建预设同样不动「关于你」（与内置一致，不再是完整配置快照）',
+      afterMine.nickname === '改过的昵称' &&
         afterMine.occupation === MY_PERSONAL.occupation &&
         afterMine.bio === MY_PERSONAL.bio,
       JSON.stringify({ nickname: afterMine.nickname, occupation: afterMine.occupation, bio: afterMine.bio })
+    )
+    push(
+      'E28 自建预设会还原它声明过的人格维度，含输出语言（语言属于预设范围）',
+      afterMine.style === minimal.style && afterMine.language === MY_PERSONAL.language,
+      JSON.stringify({ style: afterMine.style, language: afterMine.language })
+    )
+
+    // 历史数据：v0.7.1 之前的自建预设是「完整配置快照」，磁盘上残留着「关于你」——
+    // 这份预设是在插件挂载前就写进 soul-config.json 的（见本函数开头的预置）。
+    const readBack = await callRoute(ctx, '/api/soul/config', null, 'GET')
+    const legacy = readBack.body?.config?.personas?.[LEGACY_NAME] || {}
+    const legacyDroppedFromDisk = !readFileSync(join(dshHome, 'soul-config.json'), 'utf8').includes('老昵称')
+    push(
+      'E29 历史预设里残留的「关于你」在读取时被剥离，并随下一次写入落盘',
+      PROFILE_FIELDS.every((key) => !(key in legacy)) &&
+        legacy.style === LEGACY_PERSONA.style &&
+        legacy.headingLists === LEGACY_PERSONA.headingLists &&
+        legacy.updatedAt === LEGACY_PERSONA.updatedAt &&
+        legacyDroppedFromDisk,
+      `${JSON.stringify(legacy)} 落盘已清理=${legacyDroppedFromDisk}`
+    )
+
+    const useLegacy = await callRoute(ctx, '/api/soul/personas/use', { name: LEGACY_NAME })
+    const afterLegacy = useLegacy.body?.config || {}
+    push(
+      'E30 应用历史预设同样不动「关于你」（迁移 + 应用白名单双重防线）',
+      afterLegacy.nickname === '改过的昵称' && afterLegacy.style === LEGACY_PERSONA.style,
+      JSON.stringify({ nickname: afterLegacy.nickname, style: afterLegacy.style })
     )
   } finally {
     if (previous === undefined) delete process.env.DSH_HOME

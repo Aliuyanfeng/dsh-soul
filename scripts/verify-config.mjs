@@ -16,6 +16,8 @@ import {
   FIELD_LIMITS,
   PERSONA_FIELDS,
   PERSONA_NAME_MAX,
+  PROFILE_FIELDS,
+  PROMPT_INPUT_FIELDS,
   REPLY_LENGTH_VALUES,
   STYLE_VALUES,
   TRAIT_VALUES,
@@ -463,14 +465,85 @@ check('内置人设只声明 PERSONA_FIELDS 内的键', () => {
   }
 })
 
-check('内置人设不声明用户自有信息、输出语言与总开关', () => {
-  // nickname / occupation / bio 是「关于你」的用户资料，预设去写它们等于把用户
-  // 的昵称职业清空；language 属于用户偏好，写死会让另一种语言的用户被强行切回；
-  // enabled 是总开关，预设不该能替你关掉个性化。
+check('内置人设不声明「关于你」、输出语言与总开关', () => {
+  // 「关于你」的三个字段根本不在 PERSONA_FIELDS 里（见下面「预设范围」一组），这里
+  // 另外钉住内置数据本身也不写；language 在预设范围内，但内置是给任何语言用户共用的
+  // 通用人格，写死会让另一种语言的用户应用一次就被强行切回；enabled 是总开关，
+  // 预设不该能替你关掉个性化。
   for (const name of builtinPersonaNames()) {
-    for (const key of ['nickname', 'occupation', 'bio', 'language', 'enabled']) {
+    for (const key of [...PROFILE_FIELDS, 'language', 'enabled']) {
       assert.equal(key in BUILTIN_PERSONAS[name], false, `${name} 不应声明 ${key}`)
     }
+  }
+})
+
+// ==================== 预设范围：「关于你」不属于预设 ====================
+
+check('预设范围只含人设，与「关于你」无交集', () => {
+  // 总纲：三个身份字段不在 PERSONA_FIELDS 里，于是保存（快照）/ 应用（取键）/
+  // 匹配（判据）/ 磁盘归一化四条路径都会自然地把它们排除在外 —— 不止内置预设，
+  // 用户自建预设也一样。
+  assert.deepEqual(PROFILE_FIELDS, ['nickname', 'occupation', 'bio'])
+  for (const key of PROFILE_FIELDS) {
+    assert.equal(PERSONA_FIELDS.includes(key), false, `「关于你」的 ${key} 不应出现在 PERSONA_FIELDS`)
+  }
+  // 反向防空过：人设维度必须还在，否则「无交集」会因为 PERSONA_FIELDS 被误清空而假通过
+  assert.ok(PERSONA_FIELDS.includes('style'), 'style 应在预设范围内')
+  assert.ok(PERSONA_FIELDS.includes('customInstructions'), 'customInstructions 应在预设范围内')
+  // 输出语言属于人设（决定 Agent 用什么语言作答）：自建预设会保存并在应用时还原它
+  assert.ok(PERSONA_FIELDS.includes('language'), 'language 应在预设范围内')
+  assert.equal(PERSONA_FIELDS.includes('enabled'), false, 'enabled 是全局开关，不进预设')
+  assert.deepEqual(
+    [...PROMPT_INPUT_FIELDS].sort(),
+    [...new Set(['enabled', ...PROFILE_FIELDS, ...PERSONA_FIELDS])].sort(),
+    '编译读取范围应恰好等于「总开关 + 关于你 + 人设」'
+  )
+})
+
+check('用户自建预设里残留的「关于你」一律不算数（匹配与取值都忽略）', () => {
+  // 历史数据或手改文件都可能残留这些键：既不该影响 ★ 匹配，也不该被应用。
+  const legacy = { nickname: '老昵称', occupation: '老职业', bio: '老简介', style: 'roast', updatedAt: 'x' }
+  assert.deepEqual(declaredPersonaKeys(legacy), ['style'], '「关于你」不应算作已声明字段')
+  assert.equal(
+    personaMatches(legacy, { ...DEFAULT_CONFIG, style: 'roast', nickname: '换了个人' }),
+    true,
+    '残留的「关于你」不应影响匹配'
+  )
+})
+
+check('normalizePersonas 剥离历史预设里的「关于你」，保留人设字段与元数据', () => {
+  const out = normalizePersonas({
+    历史预设: {
+      nickname: '老昵称',
+      occupation: '老职业',
+      bio: '老简介',
+      style: 'roast',
+      headingLists: 'less',
+      updatedAt: 'T'
+    },
+    脏条目: 'not-an-object'
+  })
+  assert.deepEqual(Object.keys(out), ['历史预设'], '非对象条目应被剔除')
+  assert.deepEqual(Object.keys(out['历史预设']).sort(), ['headingLists', 'style', 'updatedAt'])
+  assert.equal('nickname' in out['历史预设'], false, '历史遗留的昵称应被剥离')
+  // 走真实读取路径（migrateConfig → normalizePersonas）同样生效
+  const migrated = migrateConfig({ personas: { 历史预设: { nickname: '老昵称', style: 'roast' } } })
+  assert.deepEqual(migrated.personas['历史预设'], { style: 'roast' })
+})
+
+check('预设的保存与应用都只遍历 PERSONA_FIELDS 这一份白名单', () => {
+  // 宿主侧唯一的两处取键：数据源必须是常量而不是各自硬编码一份字段表，
+  // 否则「预设范围」的增删会出现两套互相漂移的语义。
+  const snapshot = indexSource.match(/function personaSnapshotOf\(config\) \{([\s\S]*?)\n\}/)
+  assert.ok(snapshot, '缺少 personaSnapshotOf')
+  assert.ok(/for \(const key of PERSONA_FIELDS\)/.test(snapshot[1]), '快照必须按 PERSONA_FIELDS 取键')
+  const pick = indexSource.match(/function pickPersonaValues\(persona\) \{([\s\S]*?)\n\}/)
+  assert.ok(pick, '缺少 pickPersonaValues')
+  assert.ok(/for \(const key of PERSONA_FIELDS\)/.test(pick[1]), '应用必须按 PERSONA_FIELDS 取键')
+  // 反向：两处都不得出现硬编码的身份字段（否则会绕过白名单）
+  for (const key of PROFILE_FIELDS) {
+    assert.equal(snapshot[1].includes(key), false, `快照不应涉及 ${key}`)
+    assert.equal(pick[1].includes(key), false, `应用不应涉及 ${key}`)
   }
 })
 
@@ -622,6 +695,18 @@ check('客户端内置预设行不渲染删除按钮，改为「内置」标记'
   assert.ok(/!builtin && e\('button'/.test(clientSource), '删除按钮未被 builtin 条件包裹')
 })
 
+check('客户端预设行摘要不读「关于你」', () => {
+  // 行摘要显示「这个预设会改变什么」。身份字段已不属于预设，摘要再显示昵称就会
+  // 与「应用它不会动昵称」自相矛盾。
+  const block = clientSource.match(/const personaRowMeta = \(entry\) => \{([\s\S]*?)return parts\.join/)
+  assert.ok(block, '缺少 personaRowMeta')
+  for (const key of PROFILE_FIELDS) {
+    assert.equal(block[1].includes(`row.${key}`), false, `预设行摘要不应读取 ${key}`)
+  }
+  // 反向防空过：摘要仍要读人设维度，否则「不读身份字段」会因为整个函数被掏空而假通过
+  assert.ok(/row\.style/.test(block[1]), '预设行摘要仍应读 style')
+})
+
 check('服务端四条写路径都拒绝内置名，读取路径都走合并库', () => {
   // HTTP 保存 / 删除各一处，/soul 命令的 save / del 各一处
   const rejections = indexSource.split('isBuiltinPersona(personaName)').length - 1
@@ -670,7 +755,10 @@ check('客户端「参与编译的字段」与宿主 compilePrompt 实际读取�
   assert.ok(block, '客户端缺少 PROMPT_FIELD_KEYS')
   const clientKeys = [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort()
 
-  const driven = new Set(['enabled', ...PERSONA_FIELDS])
+  // 「参与编译的字段」由配置层单点定义（总开关 + 关于你 + 人设）。这里刻意**不**用
+  // PERSONA_FIELDS —— 预设能覆盖的字段与编译读取的字段是两回事，混用会在改预设范围
+  // 时把这条契约连带改错。
+  const driven = new Set(PROMPT_INPUT_FIELDS)
   const hostKeys = [...new Set([...promptCompilerSource().matchAll(/config\.(\w+)/g)].map((m) => m[1]))]
     .filter((key) => driven.has(key))
     .sort()

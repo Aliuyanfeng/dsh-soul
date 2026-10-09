@@ -673,7 +673,7 @@ window.__ModuleLoader__.load({
       'personas.confirmDelete': '确定删除预设「{name}」？',
       'personas.empty': '暂无人设预设，保存当前配置后可一键切换',
       'personas.builtin': '内置',
-      'personas.hint': '内置预设随插件提供，不可删除；保存当前配置可创建自己的预设',
+      'personas.hint': '预设只保存 Agent 的人设（风格 / 特质 / 回复长度 / 输出语言 / 自定义指令），不含「关于你」；内置预设随插件提供，不可删除',
       'style.professional': '专业严谨',
       'style.casual': '轻松自然',
       'style.humorous': '幽默风趣',
@@ -792,7 +792,7 @@ window.__ModuleLoader__.load({
       'personas.confirmDelete': 'Delete persona "{name}"?',
       'personas.empty': 'No personas yet — save the current config to switch with one click',
       'personas.builtin': 'Built-in',
-      'personas.hint': 'Built-in personas ship with the plugin and cannot be deleted; save the current config to create your own',
+      'personas.hint': 'A persona saves the agent personality only (style / traits / reply length / reply language / custom instructions), never your own identity fields; built-ins ship with the plugin and cannot be deleted',
       'style.professional': 'Professional',
       'style.casual': 'Casual',
       'style.humorous': 'Humorous',
@@ -1265,15 +1265,15 @@ window.__ModuleLoader__.load({
         setOpenSection(current => current === section ? null : section)
       }
 
-      // 预设行摘要：风格 + 昵称 + 所有「偏离默认值」的维度。
-      // 内置预设刻意不声明昵称等用户自有信息，所以它们只显示风格与维度差异——
-      // 这恰好也是比较两个预设时最需要看到的信息。
+      // 预设行摘要：风格 + 所有「偏离默认值」的人设维度。
+      // 预设只描述 Agent 的人格，不含「关于你」（昵称 / 职业 / 介绍）—— 那是使用者
+      // 的身份信息，不随预设切换。所以摘要里不再出现昵称，剩下的恰好也是比较两个
+      // 预设时最需要看到的信息。
       const personaRowMeta = (entry) => {
         const row = entry || {}
         const parts = []
         if (STYLE_VALUES.includes(row.style)) parts.push(t(`style.${row.style}`))
         else if (row.style) parts.push(row.style)
-        if (row.nickname) parts.push(row.nickname)
         for (const [field, allowed] of Object.entries(META_FIELD_VALUES)) {
           const value = row[field]
           if (!value || value === META_FIELD_DEFAULTS[field]) continue

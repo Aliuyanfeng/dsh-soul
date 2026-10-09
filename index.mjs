@@ -753,14 +753,21 @@ function registerRoutes(ctx) {
 // 待确认的人设变更提议（set_persona 确认模式；进程内短生命周期，不做持久化）
 let pendingPersonaProposal = null
 
-// 从配置中提取人设字段快照（作为预设保存的内容）
+// 从配置中提取人设快照（作为预设保存的内容）。
+//
+// 只遍历 PERSONA_FIELDS ⇒ **不含「关于你」（昵称 / 职业 / 介绍）**：预设是 Agent 的
+// 人格存档，不是使用者身份存档。切换预设不该把你的昵称职业一起换掉。
+// 输出语言在范围内（它决定 Agent 用什么语言作答）。
 function personaSnapshotOf(config) {
   const values = {}
   for (const key of PERSONA_FIELDS) values[key] = config[key]
   return values
 }
 
-// 从预设条目中挑出人设字段（忽略 updatedAt 等元数据）
+// 从预设条目中挑出人设字段（忽略 updatedAt 等元数据与「关于你」）。
+// `if (key in persona)` 即「部分覆盖」语义：只应用条目**实际声明**的键，
+// 未声明的保持用户当前值；而遍历白名单本身则是第二道防线——即便磁盘上残留了
+// nickname / occupation / bio（历史数据），也不会被写回活动配置。
 function pickPersonaValues(persona) {
   const values = {}
   for (const key of PERSONA_FIELDS) {
@@ -1420,7 +1427,7 @@ function registerTools(ctx) {
       toolsCtx.tools.register(defineTool({
         name: 'set_persona',
         description:
-          '调整当前个性化人设（昵称、回复风格和语调、自定义指令）。' +
+          '调整当前个性化设置（昵称、回复风格和语调、自定义指令）。' +
           '当用户明确要求改变称呼、语气、风格或角色时使用。' +
           '只需要传入要修改的字段，未提供的字段保持不变。',
         parameters: {
