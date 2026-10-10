@@ -20,7 +20,7 @@
 /soul set k=v     修改配置项（如 /soul set style=humorous language=en；特质：tables=more replyLength=concise；光轨字段：trailColor / trailSpeed / trailWidth / trailEnabled）
 /soul save <名>   保存当前配置为人设预设（内置名不可占用）
 /soul use <名>    应用人设预设（内置预设同样可用）
-/soul list        查看人设预设（✔ 标记当前匹配项；内置项带 [内置] 标记）
+/soul list        查看人设预设（✔ 标记当前匹配项；内置项带 [内置] 标记；并报告每个预设覆盖的维度数）
 /soul del <名>    删除人设预设（delete / rm 别名；内置预设不可删）
 /soul confirm     应用待确认的人设变更（确认模式）
 /soul reject      拒绝待确认的人设变更
@@ -68,7 +68,7 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 
 ## 版本历史
 
-### v0.7.1（2026-10-09）
+### v0.7.1（2026-10-10）
 
 **新增**
 
