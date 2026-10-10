@@ -188,4 +188,4 @@ agent.inject(createUserMessage({
 
 ## 许可证
 
-MIT License
+MIT License，完整文本见 [LICENSE](LICENSE)。

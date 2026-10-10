@@ -192,19 +192,48 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 ### 3.6) `npm run verify` 里的「跳过」与「假绿」
 
-`npm run verify` 串了 7 个脚本，其中三个会因为环境原因**跳过**：
+`npm run verify` 串了 **8 个脚本**，按「由浅入深」四层排列：
 
-| 脚本 | 何时跳过 | 未执行的断言 |
-| --- | --- | --- |
-| `verify-trail` | 起不来浏览器（沙箱 / 安全软件 / Chrome 被占用） | 11 项 |
-| `verify-nav-icon` | 同上 | 16 项（含 6 项判断力自检） |
-| `verify-compat` / `verify:host` | 定位不到 DSH 运行时 | 10 / 20 项 |
+| 层 | 脚本 | 断言数 | 会不会跳过 |
+| --- | --- | --- | --- |
+| 纯函数 / 契约 | `verify-config` | 80 | 否 |
+| 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
+| 客户端行为 | `verify-client` | 12 | 否 |
+| 端到端（保存 → 两条通道都拿到新文本） | `verify-e2e-prompt` | 34 | 否 |
+| 宿主实现 | `verify-live-prompt` | 20 | 定位不到 DSH 时整脚本跳过 |
+| 版本兼容 | `verify-compat` | 随本机装了什么浮动 | 同上 |
+| 渲染层 | `verify-trail` | 11 | 起不来浏览器时整脚本跳过 |
+| 渲染层 | `verify-nav-icon` | 16（含 6 项判断力自检） | 同上 |
+
+也可以单跑一层：`npm run verify:store` / `verify:client` / `verify:e2e` / `verify:host` / `verify:compat` / `verify:trail` / `verify:nav-icon`。
 
 **跳过也是退出码 0** —— 所以整条链看起来一片绿，实际可能少了 50+ 项断言。0.7.1 起：
 
 - 跳过会显式打印「本次有 N 项断言**未执行**。跳过不等于通过。」，并给出补跑方式；
 - 需要「跳过即失败」时用 `npm run verify:strict`（链上每一项都带 `--strict`）；
-- 每个脚本跑完时会校验实际断言数与脚本里声明的 `EXPECTED_ASSERTIONS` 一致 —— 断言数对不上说明本次运行不可信，会直接判失败（这比数字悄悄变成谎话好）。
+- 每个脚本跑完时会校验实际断言数与脚本里声明的 `EXPECTED_ASSERTIONS` 一致 —— 断言数对不上说明本次运行不可信，会直接判失败（这比数字悄悄变成谎话好）；
+- 两种跳过的分工：**整个脚本**跑不了用 `skipExit`（直接结束进程）；**脚本内某一项**跑不了用 `skipNote`（其余断言照跑，该项不计入声明数，并在 `--strict` 下判失败）。`skipNote` 是为 `verify-store` 的 inode 探测加的 —— 各平台上 `stat.ino` 的可用性不同，不该让整脚本陪葬；
+- 断言数自校验自己也有回归守着：`verify-config` 会逐个读链上脚本的源文本，要求它**真正 `import` 了 `./lib/skip-report.mjs`**（只在注释里出现不算）、**把断言数交给了 skip-report**（`assertCount` 精确校验，或 `NOMINAL_ASSERTIONS` 供 `skipExit` 报告）、且**不得自己解析 `--strict`**（否则两处判定会漂移）。这三条都是「判断力对照」逼出来的 —— 注释替身、装饰性 `--strict` 都曾真的骗过更宽松的写法。
+
+### 3.7) 客户端行为怎么离线验证（`verify-client`）
+
+`verify-trail` / `verify-nav-icon` 覆盖的是**渲染层**（DOM 里的 SVG），而设置页的**交互行为**此前只有「源文本契约」——即断言 `client/index.mjs` 里出现了某段写法。那种断言证明不了运行时真的走了那条分支：把 `if (!payload)` 改成常量、或让 `resetConfig` 永不返回 `undefined`，源码看起来依然正确。
+
+`verify-client` 把**真实的 `client/index.mjs` 原样载入**（不复制、不裁剪），在纯 Node 里用一小撮 React 垫片 + 假 `window` / `document` / `fetch` / 定时器跑真实的 `apply(ctx)`，然后**像用户一样点按钮**，断言**用户实际会看到的那句提示**。它守着 0.7.1 修过、而此前没有行为回归看护的四处：
+
+| 用例 | 守的是什么 |
+| --- | --- |
+| C1 / C2 / C12 | 装配、注册 `settings.section`、装配后立即 GET 拉配置、设置页真的渲染出可点的按钮与字段（防「空树也通过」） |
+| C3 / C4 / C5 | `configError`（读不出来）与 `deliveryWarning`（送不到会话）都要可见，且两者同在时**前者优先** |
+| C6 / C7 | 保存成功带回的 `deliveryWarning` 要落到提示条；保存失败必须返回 falsy |
+| C8 | 重置失败**不得**报成成功（配置损坏时那唯一一条自救路径） |
+| C9 / C10 | 重置丢弃过损坏文件时要提示「已备份」；普通重置不留残余警告 |
+| C11 | 保存失败**不得**误报成「配置无变化」 |
+
+两个实现要点（离线复刻时踩过的坑）：
+
+- 必须接管 `setInterval`，不只是 `setTimeout` —— 设置页「关于你」分组每 2s 轮询刷新，不接管则事件循环永不空，脚本打印完最后一行却不退出（看起来像挂住）；
+- `fetch` 桩要能表达「HTTP 200 但 `payload.ok === false`」这种失败形态，因为 `postJSON` 正是按 `!response.ok || payload.ok !== true` 判失败的。
 
 无浏览器时的补跑（两段式，本机 sandbox 常拦子进程，此路必用）：
 

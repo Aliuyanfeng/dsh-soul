@@ -113,8 +113,11 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - `verify:host`（20 项 + 3 项判断力对照）：用宿主的**真实实现**验证底座 —— 真实 `SystemPrompt` + 真实 Cordis Context 跑「改值→再装配即读到新值、改回又读到旧值」，原样切片 `SystemPromptProjection` 跑「文本变了才提交、没变不提交、清空则归一化」，外加 `preStep` / `assemble` 的源文本契约。**注意它只证明底座成立，不等于端到端一定生效**（这正是本版撤回的原因）
   - `verify:e2e`（**34 项** + 2 项判断力对照）：用**真实 `index.mjs`** + 假宿主在纯 Node 里跑通 `POST /api/soul/config` → 原子落盘 → 两条通道各拿到新文本（E4 / E8 断言 section provider 立即读到新值；E13 / E16 断言活动会话确实收到注入快照、且来源符合会话格式 v4 准入），另起一个**配置损坏场景**验证逃生口（E18–E24：如实上报、拒绝保存且不改动原文件、重置可用并回报备份、重置后免重启恢复、诊断端点可用）；另有 **E25–E30** 钉住「人设预设与『关于你』的边界」——应用**任何**预设（内置 E25 / 自建 E27）都不得改动昵称 / 职业 / 介绍，同时它声明过的人格维度必须真的写回、含输出语言（E26 是防止 E25「因为没改所以通过」的防空过护栏，E28 证明语言在预设范围内）；E29 / E30 另起一份**带着 v0.7.1 之前那套完整快照的旧配置**，验证历史残留既在读取时被迁移剥离（内存与落盘各断言一次）、也不会在应用时写回。插件挂载前会在临时目录生成 `@deepseek-ai/dsh-llm` 的形状兼容桩，因此不依赖本机是否装过 DSH
   - 另有「纯外观字段既不刷新也不注入」（E10 / E10b）与「草稿预览是只读旁路」（E17）；两者都配**判断力对照**（改坏关键条件必须失败）。E25–E30 同样配了判断力对照：把身份字段加回 `PERSONA_FIELDS`（等价于回到「完整快照」）⇒ E27 必须失败；让 `normalizePersonas` 不再过滤 ⇒ E29 必须失败；把语言移出 `PERSONA_FIELDS` ⇒ E28 必须失败；而 E25 只在内置数据被改坏时才失败（精确，不误伤）
-- 新增 `scripts/lib/skip-report.mjs`：统一「跳过」语义（`skipExit` / `assertCount`）
-- 发布包 14 → **19 个文件**（新增 `lib/store.mjs`、两个校验脚本与 `scripts/lib/skip-report.mjs`；`--strict` 链不增加文件）
+- 新增 **`verify-client`（12 项）**，把「客户端行为」补成独立一层：把**真实的 `client/index.mjs`** 原样载入纯 Node（一小撮 React 垫片 + 假 `window` / `document` / `fetch` / 定时器），跑真实的 `apply(ctx)`，再**像用户一样点按钮**，断言**用户实际会看到的那句提示**。守的是本版修过、此前只有「源文本契约」看护的四处：两类问题分开上报且 `configError` 优先（C3–C5）、保存成功带回的 `deliveryWarning` 要落到提示条（C6）、保存失败必须返回 falsy（C7）、**重置失败不得被报成成功**（C8）、重置丢弃过损坏文件时提示「已备份」且普通重置不留残余警告（C9 / C10）、保存失败不得误报「配置无变化」（C11）。之所以需要它：源文本断言证明不了运行时走了哪条分支——把 `if (!payload)` 改成常量、或让 `resetConfig` 永不返回 `undefined`，源码看起来依然正确
+- `scripts/lib/skip-report.mjs` 新增 `skipNote`：区分「**整个脚本**跳过」（`skipExit`，直接结束进程）与「**脚本内某一项**跳过」（`skipNote`，其余断言照跑、该项不计入声明数、`--strict` 下判失败），用于 `verify-store` 的 inode 探测（各平台上 `stat.ino` 的可用性不同，不该让整脚本陪葬）；`assertCount` 覆盖到 `verify-config` / `verify-store` / `verify-client`，三条链上的脚本现在都自校验断言数
+- `verify-config` 新增一条**加严的链断言**：逐个读链上脚本的源文本，要求它**真正 `import` 了 `./lib/skip-report.mjs`**（只在注释里出现不算）、**把断言数交给了 skip-report**（`assertCount` 精确校验，或 `NOMINAL_ASSERTIONS` 供 `skipExit` 报告）、且**不得自己解析 `--strict`**（否则两处判定会漂移）。三条都是「判断力对照」逼出来的——注释替身与装饰性 `--strict` 都曾真的骗过更宽松的写法；`npm run verify` 因此从 7 → **8 个脚本**
+- 新增 `LICENSE`（MIT），补 `homepage` / `bugs`；发布包 19 → **21 个文件**（新增 `LICENSE` 与 `scripts/verify-client.mjs`）
+- 新增 **CI**：`.github/workflows/ci.yml` 在 push / PR 时跑 `npm run verify`，并单独一步报告 runner 上是否有 Chrome（渲染层两套在 ubuntu runner 上是真跑，不像本机沙箱里恒跳过）。它**不装依赖**——仓库只有 `pnpm-lock.yaml`，`npm ci` 必失败，而校验链本身零依赖。同时把 `npm run verify` 加为 `publish.yml` 的**发布门槛**（发布不可逆、同版本号不能重发，宁可多花一分钟）
 
 ### v0.7.0（2026-10-08）
 

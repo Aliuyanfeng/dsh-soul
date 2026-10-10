@@ -10,7 +10,7 @@
 - `dsh.bundle.patch`
 - `files`
 
-发布包至少应包含（当前 19 个文件）：
+发布包至少应包含（当前 21 个文件）：
 
 ```text
 index.mjs
@@ -19,11 +19,14 @@ client/index.mjs
 assets/icon.svg
 cordis.patch.yml
 scripts/lib/skip-report.mjs
-scripts/verify-*.mjs           # config / store / e2e-prompt / live-prompt / compat / trail / nav-icon
+scripts/verify-*.mjs           # config / store / client / e2e-prompt / live-prompt / compat / trail / nav-icon
 README.md
 README_EN.md
+LICENSE
 package.json
 ```
+
+> `LICENSE` 由 npm 默认包含（无需写进 `files` 白名单），但它必须是真实存在的文件，否则 `npm pack` 会把这一行变成「找不到」的静默缺失。`DEBUGGING.md` / `PUBLISHING.md` / `RELEASE_NOTES.md` / `screenshots/` / `.github/` 只进仓库、不入包。
 
 使用以下命令检查包内容：
 
@@ -31,7 +34,11 @@ package.json
 npm pack --dry-run
 ```
 
-发版前先跑一遍回归：`npm run verify`（全部通过时 rc=0）。若环境缺浏览器 / DSH 运行时，部分脚本会**显式跳过并以 rc=0 通过**——要求「跳过即失败」时改用 `npm run verify:strict`（链上每项都带 `--strict`，无浏览器时会失败，属预期）。
+发版前先跑一遍回归：`npm run verify`（全部通过时 rc=0）。若环境缺浏览器 / DSH 运行时，部分脚本会**显式跳过并以 rc=0 通过**——要求「跳过即失败」时改用 `npm run verify:strict`（链上每项都带 `--strict`，无浏览器时会失败，属预期）。跳过的语义与各脚本的断言数见 `DEBUGGING.md` 3.6。
+
+> 这条命令现在也是 **CI 的发布门槛**：`publish.yml` 在 `npm pack --dry-run` 之后、幂等检查之前会跑一次 `npm run verify`。发布不可逆（同版本号不能重发），所以宁可多花一分钟，也不要把没跑过校验的代码推上 npm。
+>
+> 另有 `.github/workflows/ci.yml` 在 push / PR 时跑同一条命令（外加一步报告 runner 上是否有 Chrome），用于在合入前拦下回归。它**不装依赖**——仓库只有 `pnpm-lock.yaml`，`npm ci` 必失败，而校验链本身零依赖。
 
 ## 发布
 
@@ -79,7 +86,7 @@ git push origin main
 
 > **tag 命名约定**：仓库全部历史 tag 均为不带 `v` 的形式（`0.1.1`、`0.3.0` … `0.6.0`），而 Release **标题**惯例带 `v`。工作流用 `TAG_VERSION="${GITHUB_REF_NAME#v}"` 校验，所以两种写法都能通过校验，但混用会造成 tag 命名不一致，不建议。
 
-工作流执行内容：校验 tag 版本号与 `package.json` 一致（不一致直接失败，仅 Release 触发时执行）→ `npm pack --dry-run` 检查包内容 → 幂等检查（npm 上已存在同版本则置 `already=true`）→ `npm publish`（由 `if` 门控，已发布时整步跳过，避免 403；OIDC，自动生成溯源证明）。
+工作流执行内容：校验 tag 版本号与 `package.json` 一致（不一致直接失败，仅 Release 触发时执行）→ `npm pack --dry-run` 检查包内容 → **跑一遍 `npm run verify`**（发布门槛）→ 幂等检查（npm 上已存在同版本则置 `already=true`）→ `npm publish`（由 `if` 门控，已发布时整步跳过，避免 403；OIDC，自动生成溯源证明）。
 
 > **工作流文件取自 tag 所指向的 commit**，而不是默认分支的最新版本。因此若 tag 指向的 commit 早于某次工作流修复，该次发布仍会执行旧版工作流。发版前请确认 tag 基于最新 main 创建（选择 *Create new tag on publish* 且目标为 `main`）。
 

@@ -192,4 +192,4 @@ agent.inject(createUserMessage({
 
 ## License
 
-MIT License
+MIT License — see [LICENSE](LICENSE) for the full text.
