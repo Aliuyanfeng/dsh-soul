@@ -11,10 +11,10 @@
 #
 # 覆盖范围（ubuntu runner 自带 Chrome，所以浏览器那两套在这里是**真跑**，不像本机
 # 沙箱里恒跳过）：
-#   纯函数/契约  verify-config（80 项）
+#   纯函数/契约  verify-config（91 项）
 #   持久化行为    verify-store（18 项）
-#   客户端行为    verify-client（12 项）
-#   端到端        verify-e2e-prompt（34 项）
+#   客户端行为    verify-client（17 项）
+#   端到端        verify-e2e-prompt（38 项）
 #   宿主实现      verify-live-prompt（20 项）  —— 需要本机装了 DSH，CI 上会跳过
 #   版本兼容      verify-compat                 —— 同上，CI 上会跳过
 #   渲染层        verify-trail（11 项）/ verify-nav-icon（16 项）—— 用 runner 自带的 Chrome

@@ -277,7 +277,9 @@ document.getElementById('RESULT').textContent = JSON.stringify(results)
 
 function extract() {
   const src = fs.readFileSync(CLIENT_FILE, 'utf8')
-  const consts = slice(src, '    const TRAIL_DASH = 12', '\n\n    // 颜色容错')
+  // 终点必须锚在**代码**上，不能锚在注释文案上：此前用的是「\n\n    // 颜色容错」，
+  // 于是仅改写那句注释（零行为变化）就会让本脚本假失败 —— 变异实验实测过。
+  const consts = slice(src, '    const TRAIL_DASH = 12', '\n    function safeTrailColor(')
   const renderer = slice(src, '    function createSvgNode(', '\n    var SoulController = class')
   for (const needle of ['TRAIL_PAD', 'TRAIL_MAX_SIDE']) {
     if (!consts.includes(needle)) throw new Error(`常量块缺少 ${needle}，请更新本脚本的切片标记`)

@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 12
+const EXPECTED_ASSERTIONS = 17
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -318,8 +318,19 @@ function loadClient(routes) {
 
 // ==================== 四、驱动器 ====================
 
-/** 装配一个干净的客户端实例（含真实的初始 loadConfig）。 */
-async function boot(configPayload = {}) {
+/**
+ * 装配一个干净的客户端实例（含真实的初始 loadConfig）。
+ *
+ * **桩必须与宿主真实协议同形**：`GET /api/soul/personas` 返回的是
+ * `{ personas: <对象 map>, activeName: <名字|null> }`（见 index.mjs:835 personaLibrary），
+ * 其中 personas 由 mergePersonas 生成、**恒含 7 个内置人设**（已实测：mergePersonas(null)
+ * 也有 7 个键），所以真实环境里「空列表」分支不可达。
+ * 此前这个桩写的是 `{ personas: [], activePersona: null }` —— 字段名错（activePersona
+ * 而非 activeName）、类型也错（数组而非对象 map），于是人设行与 ★ 标记的渲染在行为层
+ * **从未被执行过**：把它改成真实形状，整套 C 系列依然全绿（实测）。这正是「测试替身
+ * 与真实协议漂移」的典型：桩喂了一个真实环境不可达的输入，测试永远看不到真问题。
+ */
+async function boot(configPayload = {}, personaPayload = null) {
   fetchCalls = []
   timerQueue = []
   const routes = {
@@ -327,7 +338,12 @@ async function boot(configPayload = {}) {
       ? { ok: true, config: { ...CONFIG }, ...configPayload }
       : { ok: true, config: { ...CONFIG }, changed: [] }),
     '/api/soul/config/reset': () => ({ ok: true, config: { ...CONFIG }, changed: [], backupPath: null }),
-    '/api/soul/personas': () => ({ ok: true, personas: [], activePersona: null }),
+    // 默认形状贴近宿主：对象 map + activeName（不是数组、不是 activePersona）
+    '/api/soul/personas': () => (personaPayload || {
+      ok: true,
+      personas: { 苏格拉底式提问者: { style: 'professional', builtin: true } },
+      activeName: null
+    }),
     '/api/soul/prompt': () => ({ ok: true, prompt: 'P', enabled: true })
   }
   const world = loadClient(routes)
@@ -351,6 +367,31 @@ function rootElement(world) {
 }
 
 const renderSettings = (world) => world.runtime.settle(rootElement(world))
+
+/** 输入框左侧的快捷开关（conversation.input.left 槽位），渲染方式与设置页同源。 */
+function quickToggleElement(world) {
+  const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.input.left')
+  assert.ok(slot, '未注册 conversation.input.left 槽位')
+  const props = slot.options.inject()
+  const store = props.hooks.soulController
+  const useSoulController = (selector) => {
+    const [, force] = world.runtime.React.useState(0)
+    world.runtime.React.useEffect(() => store.subscribe(() => force((n) => n + 1)), [])
+    return selector(store.getSnapshot())
+  }
+  return { type: slot.component, props: { ...props, useSoulController } }
+}
+
+/** 像用户一样点快捷开关，返回之后的按钮节点（可读 props 上的反馈）。 */
+async function clickQuickToggle(world) {
+  const before = await world.runtime.settle(quickToggleElement(world))
+  const buttons = findAll(before, (n) => n.type === 'button' && typeof n.props?.onClick === 'function')
+  assert.equal(buttons.length, 1, `快捷开关应恰好一个可点按钮，实际 ${buttons.length}`)
+  await buttons[0].props.onClick()
+  for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+  const after = await world.runtime.settle(quickToggleElement(world))
+  return findAll(after, (n) => n.type === 'button')[0]
+}
 
 /** 像用户一样点下指定文案的按钮，返回之后的 toast（{ text, kind }）。 */
 async function clickButton(world, labelKey) {
@@ -513,6 +554,142 @@ try {
         `设置页缺少「${key}」对应的文案（${world.dicts.zh[key]}）：${text}`
       )
     }
+  })
+
+  await check('C13 快捷开关保存失败时必须给出反馈（此前静默：按钮外观与文案都不变）', async () => {
+    const world = await boot()
+    world.routes['/api/soul/config'] = (call) => (call.method === 'GET'
+      ? { ok: true, config: { ...CONFIG } }
+      : false)
+    const button = await clickQuickToggle(world)
+    assert.equal(button.props['data-failed'], 'true', '失败后 data-failed 必须为 true')
+    assert.ok(
+      String(button.props.title || '').includes('boom'),
+      `失败原因要出现在 title 上，实际：${button.props.title}`
+    )
+    assert.equal(
+      button.props['aria-label'],
+      button.props.title,
+      'aria-label 需与 title 一致（读屏用户同样要拿到失败原因）'
+    )
+    // 防空过：成功时该标记必须是 false，否则上面的断言等于写死
+    const ok = await boot()
+    const good = await clickQuickToggle(ok)
+    assert.equal(good.props['data-failed'], 'false', '成功时不应残留失败标记')
+  })
+
+  await check('C14 预设列表拉取失败时显示失败原因，不得永远停在「加载中...」', async () => {
+    const world = await boot()
+    world.routes['/api/soul/personas'] = () => false
+    // 人设分组默认折叠（Accordion 折叠时不渲染子节点），先像用户一样展开它
+    const closed = await renderSettings(world)
+    const triggers = findAll(closed, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.personas']))
+    assert.equal(triggers.length, 1, `应恰好一个「人设预设」折叠标题，实际 ${triggers.length}`)
+    await triggers[0].props.onClick()
+    const text = textOf(await renderSettings(world))
+    const failedLabel = world.dicts.zh['personas.loadFailed'].split('{')[0]
+    assert.ok(text.includes(failedLabel), `应显示加载失败提示，实际渲染：${text.slice(0, 240)}`)
+    assert.ok(text.includes('boom'), '失败原因要一并显示')
+    assert.ok(
+      !text.includes(world.dicts.zh['status.loading']),
+      '失败后不得继续显示「加载中...」（此前是空 catch，personas 永为 null）'
+    )
+    // 防空过：正常加载时不应误报失败
+    const ok = await boot()
+    const okClosed = await renderSettings(ok)
+    const okTrigger = findAll(okClosed, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.personas']))[0]
+    await okTrigger.props.onClick()
+    const okText = textOf(await renderSettings(ok))
+    assert.ok(!okText.includes(failedLabel), '正常加载不应误报失败')
+  })
+
+  await check('C15 只改首尾空格不算「未保存的更改」（与服务端 trim 判据一致）', async () => {
+    // 服务端对字符串字段一律 trim 后再落盘，客户端若按原始串比较 dirty，就会出现
+    // 「敲了个空格 → 保存按钮亮起 → 保存成功却提示『配置无变化』」这种自相矛盾的状态。
+    const world = await boot()
+    world.routes['/api/soul/config'] = (call) => (call.method === 'GET'
+      ? { ok: true, config: { ...CONFIG, nickname: 'NickLi6' } }
+      : { ok: true, config: { ...CONFIG, nickname: 'NickLi6' }, changed: [] })
+    await world.controller.loadConfig()
+    for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+
+    const find = async () => findAll(await renderSettings(world), (n) => n.type === 'input' && n.props?.id === 'soul-nickname')
+    const inputs = await find()
+    assert.equal(inputs.length, 1, `应有一个昵称输入框，实际 ${inputs.length}`)
+    inputs[0].props.onChange({ target: { value: '  NickLi6  ' } })
+    for (let i = 0; i < 4; i++) await new Promise((r) => drainTick(r))
+    assert.ok(
+      !textOf(await renderSettings(world)).includes(world.dicts.zh['status.unsaved']),
+      '只加首尾空格不应被判成「未保存的更改」'
+    )
+    // 防空过：真有改动时必须提示，否则上面那条等于恒真
+    const inputs2 = await find()
+    inputs2[0].props.onChange({ target: { value: 'NickLi6-改过' } })
+    for (let i = 0; i < 4; i++) await new Promise((r) => drainTick(r))
+    assert.ok(
+      textOf(await renderSettings(world)).includes(world.dicts.zh['status.unsaved']),
+      '真有改动时必须提示「有未保存的更改」'
+    )
+  })
+
+  await check('C16 人设行真的按宿主协议渲染，且「当前生效」预设带 ★ 标记', async () => {
+    // 这条补的是一个**覆盖空洞**：此前桩返回 `{ personas: [], activePersona: null }`
+    // （字段名与类型都与宿主不符），于是人设行渲染与 ★ 标记从未被执行过 —— 把桩改成
+    // 真实形状后，整套 C 系列仍全绿（实测），说明没有任何断言吃过这份数据。
+    // 宿主真实协议：personas 是由 mergePersonas 生成的**对象 map**（恒含 7 个内置），
+    // activeName 是「与当前配置匹配」的预设名（client:1235 读的就是它）。
+    const world = await boot({}, {
+      ok: true,
+      personas: {
+        苏格拉底式提问者: { style: 'professional', builtin: true },
+        我的自建: { style: 'roast', emoji: 'more' }
+      },
+      activeName: '我的自建'
+    })
+    const closed = await renderSettings(world)
+    const triggers = findAll(closed, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.personas']))
+    assert.equal(triggers.length, 1, '应有一个「人设预设」分组标题')
+    await triggers[0].props.onClick()
+    const tree = await renderSettings(world)
+
+    // ① activeName → store.activePersona 这条链路必须真的通（字段名写错就全灭）
+    assert.equal(
+      world.controller.store.getSnapshot().activePersona,
+      '我的自建',
+      'activeName 未被写进 store.activePersona —— 字段名与宿主协议不符'
+    )
+
+    // ② 两行都渲染出来，且 line 文本各自完整
+    const rows = findAll(tree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('soul-persona-row'))
+    assert.equal(rows.length, 2, `应渲染两行预设，实际 ${rows.length}`)
+    const rowText = rows.map(textOf)
+
+    // ③ 生效预设带 ★，非生效的不带（防空过：两个方向都要断言，否则「恒加★」也会过）
+    const activeRow = rowText.find((t) => t.includes('我的自建'))
+    const idleRow = rowText.find((t) => t.includes('苏格拉底式提问者'))
+    assert.ok(activeRow, `未渲染「我的自建」行：${rowText.join(' | ')}`)
+    assert.ok(idleRow, `未渲染「苏格拉底式提问者」行：${rowText.join(' | ')}`)
+    assert.ok(activeRow.includes('★'), `生效预设应带 ★：${activeRow}`)
+    assert.ok(!idleRow.includes('★'), `非生效预设不应带 ★：${idleRow}`)
+
+    // ④ 内置行带「内置」标记、且不渲染删除按钮；自建行相反
+    assert.ok(idleRow.includes(world.dicts.zh['personas.builtin']), `内置行应带「内置」标记：${idleRow}`)
+    assert.ok(!activeRow.includes(world.dicts.zh['personas.builtin']), `自建行不应带「内置」标记：${activeRow}`)
+    const deleteButtons = findAll(tree, (n) => n.type === 'button' && textOf(n) === world.dicts.zh['personas.delete'])
+    assert.equal(deleteButtons.length, 1, `只应有一个删除按钮（内置行不得有），实际 ${deleteButtons.length}`)
+  })
+
+  await check('C17 应用预设成功后清掉上一轮的失败提示', async () => {
+    // 该端点不返回 deliveryWarning；此前不清 error ⇒ 上一轮保存失败过的红色提示
+    // 会一直挂在设置页上，即使随后切预设成功。
+    const world = await boot()
+    world.routes['/api/soul/config'] = (call) => (call.method === 'GET' ? { ok: true, config: { ...CONFIG } } : false)
+    const failed = await world.controller.saveConfig({ style: 'casual' })
+    assert.equal(failed, undefined, '前置条件：保存失败应返回 undefined')
+    assert.equal(world.controller.store.getSnapshot().error, 'boom', '前置条件：失败原因应写进 store')
+    world.routes['/api/soul/personas/use'] = () => ({ ok: true, config: { ...CONFIG }, changed: ['style'], invalid: [] })
+    await world.controller.usePersona('任意')
+    assert.equal(world.controller.store.getSnapshot().error, null, '应用预设成功后不得残留上一轮的失败提示')
   })
 } finally {
   restoreTimers()

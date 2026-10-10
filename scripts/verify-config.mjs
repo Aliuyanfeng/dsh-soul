@@ -8,12 +8,15 @@
 // 零依赖，直接 `node scripts/verify-config.mjs` 运行。
 
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { extname, isAbsolute, relative, resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { homedir } from 'node:os'
+import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   DEFAULT_CONFIG,
   FIELD_LIMITS,
+  LANGUAGE_VALUES,
   PERSONA_FIELDS,
   PERSONA_NAME_MAX,
   PROFILE_FIELDS,
@@ -35,20 +38,27 @@ import {
   personaMatches,
   resolvePersona
 } from '../lib/personas.mjs'
-import { assertCount } from './lib/skip-report.mjs'
+import { assertCount, skipNote } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。跑完时校验，防止「脚本加/删用例」与文档口径悄悄脱节。
 //
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 80
+const EXPECTED_ASSERTIONS = 91
 
 let passed = 0
+const failures = []
 function check(name, fn) {
-  fn()
-  passed++
-  console.log(`  ✓ ${name}`)
+  try {
+    fn()
+    passed++
+    console.log(`  ✓ ${name}`)
+  } catch (err) {
+    failures.push({ name, err })
+    console.log(`  ✗ ${name}`)
+    console.log(`      ${String(err && err.message || err).split('\n')[0]}`)
+  }
 }
 
 // 按括号配平取出从 anchor 起的那一个对象字面量。
@@ -89,6 +99,76 @@ function objectKeys(text) {
     keys.add(m[1] ?? m[2] ?? m[3])
   }
   return keys
+}
+
+// 剥离行注释 / 块注释（字符串内容保留——它们是真实代码的一部分）。
+// **长度保持不变**：被剥掉的字符以空格占位。这样剥离结果与原串共享同一套下标，
+// extractCall 才能先在剥离文本上定位锚点、再回原串切片。
+// 所有「对源码做正则断言」的地方都应先过这一步：否则把真实调用注释掉、在注释里留下
+// 同样的字样，断言就被 satisfies（M5 类漏洞，变异实验实测可绕过）。
+function stripComments(source) {
+  const out = source.split('')
+  let i = 0
+  let quote = null
+  const blank = (from, to) => { for (let k = from; k < to && k < out.length; k++) if (out[k] !== '\n') out[k] = ' ' }
+  while (i < source.length) {
+    const c = source[i]
+    if (quote) {
+      if (c === '\\') { i += 2; continue }
+      if (c === quote) quote = null
+      i++
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; i++; continue }
+    if (c === '/' && source[i + 1] === '/') {
+      const nl = source.indexOf('\n', i)
+      blank(i, nl === -1 ? source.length : nl)
+      i = nl === -1 ? source.length : nl
+      continue
+    }
+    if (c === '/' && source[i + 1] === '*') {
+      const end = source.indexOf('*/', i + 2)
+      const to = end === -1 ? source.length : end + 2
+      blank(i, to)
+      i = to
+      continue
+    }
+    i++
+  }
+  return out.join('')
+}
+
+// 从 anchor 起按括号配平取出**完整调用**文本。定位与配平都在**去注释后**的文本上进行
+// （注释里的 anchor 与不等宽括号都不该影响判定），再回**原串**切片 —— stripComments
+// 刻意保持长度不变，两套文本共享同一套下标。
+// anchor 可带可不带 `(`：`skipExit(` 与 `e('span', { ... }`（调用括号在 anchor 内）都支持，
+// 一律取「anchor 起点之后的第一个 `(`」作为配平起点。
+// 之所以不用缩进/固定窗口猜终点：后者会随代码重排而捕获越界或假失败（徽标断言曾用
+// `\s{22}` 定界，实测把摘要列、操作区全部吞进捕获，断言失去判断力）。
+function extractCall(source, anchor) {
+  const stripped = stripComments(source)
+  const at = stripped.indexOf(anchor)
+  if (at === -1) return ''
+  let open = -1
+  for (let i = at; i < stripped.length; i++) {
+    if (stripped[i] === '(') { open = i; break }
+    if (stripped[i] === '\n' && i > at + anchor.length) return ''
+  }
+  if (open === -1) return ''
+  let depth = 0
+  let quote = null
+  for (let i = open; i < stripped.length; i++) {
+    const c = stripped[i]
+    if (quote) {
+      if (c === '\\') { i++; continue }
+      if (c === quote) quote = null
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; continue }
+    if (c === '(') depth++
+    else if (c === ')') { depth--; if (depth === 0) return source.slice(at, i + 1) }
+  }
+  return ''
 }
 
 // 取某个具名文案表内 zh / en 各自的键集（表名 → 在表内定位 `zh: {` / `en: {`）。
@@ -256,12 +336,16 @@ check('migrateConfig：personas 归一化透传，缺省时保持缺席；确认
 console.log('特质：表格 / 回复长度')
 
 const indexSource = readFileSync(new URL('../index.mjs', import.meta.url), 'utf8')
+// 断言一律对**去注释后**的源码做匹配：注释里写一句 // const VERSION = '0.0.0' 或
+// // await writeConfigFile(...) 就能骗过裸正则（M5 类，变异实验实测可绕过）。
+// stripComments 长度保持不变，因此位置与字符串内容都不受影响。
+const indexCode = stripComments(indexSource)
 
 // 从 index.mjs 的 PROMPT_TEXT 中按缩进切片取出某个文案子表（zh / en 各一处）。
 // 用「块数量必须为 2」做结构断言：文案表若被重构或改名，这里会直接失败而不是静默放过。
 function promptTextBlocks(key) {
   const re = new RegExp(`\\n    ${key}: \\{\\n([\\s\\S]*?)\\n    \\\},`, 'g')
-  return [...indexSource.matchAll(re)].map((m) => m[1])
+  return [...indexCode.matchAll(re)].map((m) => m[1])
 }
 
 check('DEFAULT_CONFIG 含表格与回复长度的默认值', () => {
@@ -542,10 +626,10 @@ check('normalizePersonas 剥离历史预设里的「关于你」，保留人设�
 check('预设的保存与应用都只遍历 PERSONA_FIELDS 这一份白名单', () => {
   // 宿主侧唯一的两处取键：数据源必须是常量而不是各自硬编码一份字段表，
   // 否则「预设范围」的增删会出现两套互相漂移的语义。
-  const snapshot = indexSource.match(/function personaSnapshotOf\(config\) \{([\s\S]*?)\n\}/)
+  const snapshot = indexCode.match(/function personaSnapshotOf\(config\) \{([\s\S]*?)\n\}/)
   assert.ok(snapshot, '缺少 personaSnapshotOf')
   assert.ok(/for \(const key of PERSONA_FIELDS\)/.test(snapshot[1]), '快照必须按 PERSONA_FIELDS 取键')
-  const pick = indexSource.match(/function pickPersonaValues\(persona\) \{([\s\S]*?)\n\}/)
+  const pick = indexCode.match(/function pickPersonaValues\(persona\) \{([\s\S]*?)\n\}/)
   assert.ok(pick, '缺少 pickPersonaValues')
   assert.ok(/for \(const key of PERSONA_FIELDS\)/.test(pick[1]), '应用必须按 PERSONA_FIELDS 取键')
   // 反向：两处都不得出现硬编码的身份字段（否则会绕过白名单）
@@ -652,9 +736,37 @@ check('未声明任何字段的条目不匹配（避免匹配一切）', () => {
 console.log('\n前后端契约一致性')
 
 const clientSource = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+const clientCode = stripComments(clientSource)
+
+// 真实 @deepseek-ai/dsh-tools（若本机可解析）：用于行为层校验 set_persona 的 schema。
+// ESM 顶层 await；解析不到（CI / 未装 DSH）时为 null，行为层以 skipNote 报告。
+//
+// 解析不能用 createRequire(插件 package.json) 单点：dsh-tools 是 **peer 依赖**，不在
+// 插件 node_modules 里，从插件目录解析注定 MODULE_NOT_FOUND（首次实现即踩此坑：
+// skipNote 提示「未安装」却依然显示 ✓，靠 --strict 才暴露）。这里按 verify-compat 的
+// anchors 思路显式发现：插件目录 → cwd → DSH profiles 下各 profile → 逐级向上。
+let defineTool = null
+try {
+  const here = fileURLToPath(new URL('..', import.meta.url))
+  const anchors = [here, process.cwd()]
+  const profiles = join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'profiles')
+  if (existsSync(profiles)) {
+    for (const p of readdirSync(profiles)) anchors.push(join(profiles, p))
+  }
+  let resolved = null
+  for (const anchor of anchors) {
+    try {
+      resolved = createRequire(join(anchor, 'noop.js')).resolve('@deepseek-ai/dsh-tools')
+      break
+    } catch { /* 换下一个 anchor */ }
+  }
+  if (!resolved) throw new Error('not found')
+  ;({ defineTool } = await import(pathToFileURL(resolved).href))
+} catch { /* 未装 DSH：行为层跳过（skipNote 在用到它的 check 里报告） */ }
+if (defineTool) console.log('  · 已定位真实 @deepseek-ai/dsh-tools，set_persona 将做行为层校验')
 
 check('客户端摘要的默认值表与宿主 DEFAULT_CONFIG 逐项一致', () => {
-  const block = clientSource.match(/const META_FIELD_DEFAULTS = \{([\s\S]*?)\}/)
+  const block = clientCode.match(/const META_FIELD_DEFAULTS = \{([\s\S]*?)\}/)
   assert.ok(block, '客户端缺少 META_FIELD_DEFAULTS')
   const pairs = [...block[1].matchAll(/(\w+):\s*'([^']*)'/g)].map((m) => [m[1], m[2]])
   assert.ok(pairs.length >= 5, `默认值表条目过少：${pairs.length}`)
@@ -668,7 +780,7 @@ check('客户端摘要的默认值表与宿主 DEFAULT_CONFIG 逐项一致', () 
 })
 
 check('客户端摘要覆盖的字段集合固定', () => {
-  const block = clientSource.match(/const META_FIELD_VALUES = \{([\s\S]*?)\}/)
+  const block = clientCode.match(/const META_FIELD_VALUES = \{([\s\S]*?)\}/)
   assert.ok(block, '客户端缺少 META_FIELD_VALUES')
   const fields = [...block[1].matchAll(/(\w+):/g)].map((m) => m[1]).sort()
   assert.deepEqual(fields, ['emoji', 'headingLists', 'language', 'replyLength', 'tables'])
@@ -696,17 +808,92 @@ check('客户端为内置预设提供中英双语文案键', () => {
 })
 
 check('客户端内置预设行不渲染删除按钮，改为「内置」标记', () => {
+  // 徽标渲染在名称列（紧跟名称），不是操作区 —— 放操作区会把「使用」挤出竖列。
+  // 定界必须用括号配平（extractCall），不能用缩进/固定窗口：曾用 `\s{22}` 猜终点，
+  // 而真实闭合是 24 空格 ⇒ 捕获一路吞掉摘要列与操作区，「徽标在名称列」退化成
+  // 「徽标在这一行里」，把徽标挪到摘要列也能通过（变异实验实测，H4）。
+  const nameCell = extractCall(clientSource, "e('span', { className: 'soul-persona-name' }")
+  assert.ok(nameCell !== '', '找不到名称列渲染块')
   assert.ok(
-    /builtin && e\('span', \{ className: 'soul-persona-badge' \}/.test(clientSource),
-    '内置标记未渲染'
+    /soul-persona-badge/.test(nameCell),
+    '内置标记未渲染在名称列（放操作区会让两类行的「使用」不同列）'
   )
-  assert.ok(/!builtin && e\('button'/.test(clientSource), '删除按钮未被 builtin 条件包裹')
+  // 名称列不得包含摘要/操作区内容 —— 防止定界再次失效而不自知
+  assert.ok(
+    !nameCell.includes('soul-persona-meta') && !nameCell.includes('soul-persona-actions'),
+    '名称列的捕获范围越界（定界用括号配平，不得吞入 meta/actions）'
+  )
+  // 徽标不得出现在操作区块里
+  const actionsCell = extractCall(clientSource, "e('span', { className: 'soul-persona-actions' }")
+  assert.ok(actionsCell !== '', '找不到操作区渲染块')
+  assert.equal(
+    /soul-persona-badge/.test(actionsCell),
+    false,
+    '徽标不应出现在操作区（会占掉「使用」的列位）'
+  )
+  // 徽标也不得出现在摘要列（把徽标挪进 meta 同样破坏对齐前提）
+  const metaCell = extractCall(clientSource, "e('span', { className: 'soul-persona-meta' }")
+  assert.ok(metaCell !== '', '找不到摘要列渲染块')
+  assert.equal(
+    /soul-persona-badge/.test(metaCell),
+    false,
+    '徽标不应出现在摘要列（对齐断言的前提是徽标独占名称列）'
+  )
+  // 内置行在操作区第 2 轨放空占位（span，非按钮），自建行才是删除按钮：
+  // 这正是两类行「使用」按钮能严格同列的原因。
+  assert.ok(
+    /builtin\s*\?\s*e\('span', \{ className: 'soul-persona-slot'/.test(clientCode),
+    '内置行缺少操作区空占位（会导致「使用」与自建行不同列）'
+  )
+  assert.ok(
+    /e\('button', \{ type: 'button', className: 'soul-prompt-link soul-persona-danger'/.test(stripComments(clientSource)),
+    '删除按钮未渲染'
+  )
+  // 空占位必须是 span 而不是 button —— 否则会造出一个点了没反应的控件
+  assert.equal(
+    /soul-persona-slot'[^)]*\}\s*,\s*\{[^}]*onClick/.test(clientCode),
+    false,
+    '空占位不应是可点控件'
+  )
+})
+
+check('客户端人设行用网格布局保证「使用」按钮跨行同列', () => {
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  const row = cssBlock.match(/\.soul-persona-row\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(/display:grid/.test(row), '人设行应使用网格布局（flex 下按钮列会随内容错位）')
+  const actions = cssBlock.match(/\.soul-persona-actions\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(/display:grid/.test(actions), '操作区应是网格（两条固定轨道）')
+  // 轨道必须两端等宽：`auto`/`minmax()` 会按各自内容算宽，内置行第 2 轨为空 ⇒ 两行不同列
+  assert.ok(
+    /grid-template-columns:1fr 1fr/.test(actions),
+    '操作区两条轨道必须等宽固定，否则内置行（第 2 轨为空）与自建行的「使用」不同列'
+  )
+  assert.ok(/width:\s*\d/.test(actions), '操作区需要固定宽度，跨行几何才会一致')
+})
+
+check('客户端的动效尊重 prefers-reduced-motion（含提示条）', () => {
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  const reduced = cssBlock.match(/@media \(prefers-reduced-motion:reduce\)\{([\s\S]*?)\}\}/g) ?? []
+  assert.ok(reduced.length > 0, '客户端没有任何 prefers-reduced-motion 规则')
+  const all = reduced.join('')
+  // 三处会动的元素都必须在 reduced-motion 下停：光轨层、快捷开关圆点、提示条。
+  // 提示条此前被漏掉 —— 它用的是**内联** animation，只查样式表容易漏看。
+  for (const [needle, why] of [
+    ['.soul-trail-layer', '光轨流动'],
+    ['.soul-quick-toggle', '快捷开关圆点的脉冲'],
+    ['.soul-toast', '保存/失败提示条的淡出']
+  ]) {
+    assert.ok(all.includes(needle), `prefers-reduced-motion 未覆盖 ${needle}（${why}）`)
+  }
+  // 提示条那条要能压过内联声明（实测：普通声明也有效，但 !important 更稳）
+  const toastRule = (all.match(/\.soul-toast\{[^}]*\}/) ?? [''])[0]
+  assert.ok(/animation:none/.test(toastRule), '提示条在 reduced-motion 下必须 animation:none')
 })
 
 check('客户端预设行摘要不读「关于你」', () => {
   // 行摘要显示「这个预设会改变什么」。身份字段已不属于预设，摘要再显示昵称就会
   // 与「应用它不会动昵称」自相矛盾。
-  const block = clientSource.match(/const personaRowMeta = \(entry\) => \{([\s\S]*?)return parts\.join/)
+  const block = clientCode.match(/const personaRowMeta = \(entry\) => \{([\s\S]*?)return parts\.join/)
   assert.ok(block, '缺少 personaRowMeta')
   for (const key of PROFILE_FIELDS) {
     assert.equal(block[1].includes(`row.${key}`), false, `预设行摘要不应读取 ${key}`)
@@ -717,20 +904,20 @@ check('客户端预设行摘要不读「关于你」', () => {
 
 check('服务端四条写路径都拒绝内置名，读取路径都走合并库', () => {
   // HTTP 保存 / 删除各一处，/soul 命令的 save / del 各一处
-  const rejections = indexSource.split('isBuiltinPersona(personaName)').length - 1
+  const rejections = indexCode.split('isBuiltinPersona(personaName)').length - 1
   assert.equal(rejections, 4, `内置名拒绝点应为 4 处（HTTP 与命令层各 2），实际 ${rejections} 处`)
-  assert.ok(indexSource.split('mergePersonas(').length - 1 >= 3, '预设库读取应统一走 mergePersonas')
-  assert.ok(/resolvePersona\(personaName, config\.personas\)/.test(indexSource), '命令层 use 未走 resolvePersona')
-  assert.ok(/resolvePersona\(personaName, current\.personas\)/.test(indexSource), 'HTTP use 未走 resolvePersona')
+  assert.ok(indexCode.split('mergePersonas(').length - 1 >= 3, '预设库读取应统一走 mergePersonas')
+  assert.ok(/resolvePersona\(personaName, config\.personas\)/.test(indexCode), '命令层 use 未走 resolvePersona')
+  assert.ok(/resolvePersona\(personaName, current\.personas\)/.test(indexCode), 'HTTP use 未走 resolvePersona')
 })
 
 check('匹配逻辑只在纯模块实现一份（不留本地重复实现）', () => {
   assert.equal(
-    indexSource.includes('function declaredPersonaKeys'),
+    indexCode.includes('function declaredPersonaKeys'),
     false,
     'index.mjs 不应自带 declaredPersonaKeys——已下沉到 lib/personas.mjs，两份实现会漂移'
   )
-  assert.ok(/personaMatches\(/.test(indexSource), 'index.mjs 应调用 personaMatches 做 ★ 判定')
+  assert.ok(/personaMatches\(/.test(indexCode), 'index.mjs 应调用 personaMatches 做 ★ 判定')
 })
 
 // ---------- 提示词预览（草稿编译）----------
@@ -740,7 +927,7 @@ check('匹配逻辑只在纯模块实现一份（不留本地重复实现）', (
 function promptCompilerSource() {
   const chunks = []
   for (const name of ['buildUserProfile', 'buildBehavior', 'compilePrompt']) {
-    const matched = indexSource.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}`))
+    const matched = indexCode.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}`))
     assert.ok(matched, `index.mjs 中找不到函数 ${name}`)
     chunks.push(matched[0])
   }
@@ -748,7 +935,7 @@ function promptCompilerSource() {
 }
 
 check('草稿预览端点复用保存路径的校验与编译，且不落盘、不注入', () => {
-  const matched = indexSource.match(/path: '\/api\/soul\/prompt\/preview'[\s\S]*?\n    \}\)/)
+  const matched = indexCode.match(/path: '\/api\/soul\/prompt\/preview'[\s\S]*?\n    \}\)/)
   assert.ok(matched, '缺少 /api/soul/prompt/preview 端点')
   const body = matched[0]
   assert.ok(/sanitizeConfig\(parsed\.body\)/.test(body), '草稿预览未复用 sanitizeConfig（未校验的草稿会编出误导性提示词）')
@@ -759,7 +946,7 @@ check('草稿预览端点复用保存路径的校验与编译，且不落盘、�
 })
 
 check('客户端「参与编译的字段」与宿主 compilePrompt 实际读取的字段一致', () => {
-  const block = clientSource.match(/const PROMPT_FIELD_KEYS = \[([\s\S]*?)\]/)
+  const block = clientCode.match(/const PROMPT_FIELD_KEYS = \[([\s\S]*?)\]/)
   assert.ok(block, '客户端缺少 PROMPT_FIELD_KEYS')
   const clientKeys = [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort()
 
@@ -779,23 +966,162 @@ check('客户端「参与编译的字段」与宿主 compilePrompt 实际读取�
   assert.ok(clientKeys.length >= 5, `参与编译的字段过少：${clientKeys.length}`)
 })
 
+check('客户端复刻的枚举常量与宿主 lib/config.mjs 逐项一致', () => {
+  // 浏览器模块表不允许 client/index.mjs import lib/config.mjs，所以客户端必须**复刻**
+  // 一份常量；这些常量本身写着「与 lib/config.mjs 的合法值保持一致」，但那只是注释。
+  // 漂移后果各不相同且都不报错：
+  //   - 少了取值：下拉框少一档，用户在界面上根本选不到该能力
+  //   - 多了取值：界面能选、宿主 sanitizeConfig 拒绝 ⇒ 保存报 400
+  //   - 换了取值：与宿主枚举错位，脏检查与保存载荷对不上
+  // 因此这里从两端各取一次真相再比对：宿主用 import 到的真实值，客户端按源文本解析。
+  const specs = [
+    ['STYLE_VALUES', STYLE_VALUES],
+    ['TRAIT_VALUES', TRAIT_VALUES],
+    ['REPLY_LENGTH_VALUES', REPLY_LENGTH_VALUES],
+    ['LANGUAGE_VALUES', LANGUAGE_VALUES]
+  ]
+  for (const [name, hostValues] of specs) {
+    const m = clientCode.match(new RegExp(`const ${name} = \\[([^\\]]*)\\]`))
+    assert.ok(m, `客户端缺少 ${name}`)
+    const clientValues = [...m[1].matchAll(/'([^']*)'/g)].map((x) => x[1])
+    assert.ok(clientValues.length > 0, `客户端 ${name} 解析为空`)
+    assert.deepEqual(
+      clientValues,
+      hostValues,
+      `客户端 ${name} 与宿主不一致（客户端 ${JSON.stringify(clientValues)} / 宿主 ${JSON.stringify(hostValues)}）`
+    )
+  }
+})
+
+check('客户端 FIELD_KEYS 覆盖宿主全部配置字段（dirty 门控不漏字段）', () => {
+  // FIELD_KEYS 驱动 dirty 判定与保存载荷。漏一个字段的后果是静默的：
+  // 改那个字段后「保存」按钮可能仍被禁用（看起来像界面卡住），或保存结果被判成「无变化」。
+  const m = clientCode.match(/const FIELD_KEYS = \[([^\]]*)\]/)
+  assert.ok(m, '客户端缺少 FIELD_KEYS')
+  const clientKeys = [...m[1].matchAll(/'([^']*)'/g)].map((x) => x[1])
+  const hostFields = Object.keys(DEFAULT_CONFIG).sort()
+  assert.deepEqual(
+    [...clientKeys].sort(),
+    hostFields,
+    'FIELD_KEYS 必须与宿主 DEFAULT_CONFIG 的字段集合完全相同（漏字段会让 dirty 检测失效）'
+  )
+  // 顺序无关紧要但重复有害：同一字段出现两次会让 dirty 判定重复计算。
+  assert.equal(new Set(clientKeys).size, clientKeys.length, 'FIELD_KEYS 含重复字段')
+})
+
+check('预设应用只有一条实现路径，且非法字段必须回报（HTTP 与 /soul use 共用）', () => {
+  // 两条应用路径（POST /api/soul/personas/use 与 /soul use）此前各自内联一份
+  // `sanitizeConfig(pickPersonaValues(entry))`，且都只取 patch、把 errors 丢掉 ⇒
+  // 「部分应用」被报成成功（实测：style / emoji 被静默丢弃，仍返回 ok:true）。
+  // 现已收口到 applyPersonaEntry。这里钉三件事：
+  //   ① 该校验全仓只允许出现在收口函数里（再写一份必漏 errors）；
+  //   ② 两条路径都真的走收口函数；
+  //   ③ 收口函数把 errors 换算成 invalid / applied 回报，且调用方真的消费。
+  // 一律匹配**去注释后**的源码：注释里写着「applied 是…」就能让裸 includes 恒真
+  // （本条初版正是这么写的，被自己的变异实验抓到 —— 与 M5 同一漏洞类别）。
+  const bare = stripComments(indexSource)
+  const inlined = [...bare.matchAll(/sanitizeConfig\(pickPersonaValues\(entry\)\)/g)].length
+  assert.equal(inlined, 1, `预设取值校验只应有一处实现（收口在 applyPersonaEntry），实际 ${inlined} 处`)
+  const uses = [...bare.matchAll(/await applyPersonaEntry\(ctx, entry\)/g)].length
+  assert.equal(uses, 2, `HTTP 与 /soul use 都应走 applyPersonaEntry，实际 ${uses} 处`)
+  const body = stripComments(extractObject(indexSource, 'async function applyPersonaEntry'))
+  assert.ok(body !== '', '找不到 applyPersonaEntry')
+  for (const token of ['invalid', 'applied', 'Object.keys(errors)']) {
+    assert.ok(body.includes(token), `applyPersonaEntry 未回报 ${token}：非法字段会被静默丢弃`)
+  }
+  assert.ok(/invalid\.length > 0/.test(bare), '命令路径未按 invalid 分支提示（usePartial / useAllInvalid）')
+  assert.ok(/invalid \}/.test(bare), 'HTTP 响应未带出 invalid')
+  // 双语文案表必须提供这两个键，否则部分应用时界面上没有对应文案
+  for (const lang of ['zh', 'en']) {
+    const keys = tableLangKeys(indexSource, 'COMMAND_MESSAGES', lang)
+    for (const key of ['usePartial', 'useAllInvalid']) {
+      assert.ok(keys.has(key), `COMMAND_MESSAGES.${lang} 缺少 ${key}`)
+    }
+  }
+})
+
+check('命令层的三处行为契约（覆盖列 / 键名大小写 / 昵称兜底）', () => {
+  // ① `/soul list` 不得再显示预设的「关于你」：v0.7.1 起预设不含 nickname，
+  //    normalizePersonas 也会剥离它 ⇒ 显示 `昵称=${entry.nickname || '-'}` 恒为
+  //    `昵称=-`，是一列永远没有信息的死数据。改为报告覆盖了几个维度。
+  const listBody = extractObject(indexCode, "if (first === 'list')")
+  assert.ok(listBody !== '', '找不到 /soul list 分支')
+  assert.equal(/entry\.nickname/.test(listBody), false, '/soul list 不得再读 entry.nickname（预设已不含该字段，会恒显示「-」）')
+  assert.ok(/listCovers/.test(listBody), '/soul list 应报告覆盖的维度数（listCovers）')
+  // ② 键名忽略大小写，且必须**映射回真实字段名**：直接 toLowerCase 会把 headingLists
+  //    压成 headinglists 反而匹配不上白名单，所以查表还原（STYLE → style）。
+  assert.ok(/COMMAND_FIELD_BY_LOWER/.test(indexCode), '缺少字段名小写索引表')
+  assert.ok(/normalizeSetKey\(rawKey\)/.test(indexCode), '/soul set 未对键名做大小写归一化')
+  assert.ok(
+    /new Map\(Object\.keys\(DEFAULT_CONFIG\)\.map/.test(indexCode),
+    '字段名索引表应由 DEFAULT_CONFIG 生成（手写列表会漂移）'
+  )
+  // ③ 昵称兜底是**刻意的设计**：非关键字输入整体视为昵称（/soul help 会写昵称）。
+  //    这条断言把设计钉住，避免有人顺手加 help/status 关键字而无声改变语义。
+  assert.ok(
+    /!COMMAND_KEYWORDS\.has\(first\)[\s\S]{0,400}?sanitizeConfig\(\{ nickname: raw \}\)/.test(indexCode),
+    '非关键字输入应整体视为昵称（该行为是设计，改动需同步文档与断言）'
+  )
+  for (const key of ['help', 'status', 'version']) {
+    assert.equal(
+      new RegExp(`COMMAND_KEYWORDS = new Set\\(\\[[^\\]]*'${key}'`).test(indexCode),
+      false,
+      `COMMAND_KEYWORDS 不应包含 ${key}：那会改变「非关键字即昵称」的既有语义`
+    )
+  }
+})
+
+check('枚举值 trim 与文本字段同规则', () => {
+  // 文本字段本来就 trim（见上面的 TEXT_FIELDS 断言），枚举不 trim 会让
+  // `/soul set style= humorous`（= 后带空格）被拒，而 `bio= 张三` 却能成功 ——
+  // 同一命令里两套规则。这里直接对真实 sanitizeConfig 断言行为。
+  assert.equal(sanitizeConfig({ style: ' humorous' }).patch.style, 'humorous')
+  assert.equal(sanitizeConfig({ replyLength: ' concise ' }).patch.replyLength, 'concise')
+  assert.equal(sanitizeConfig({ trailSpeed: ' fast' }).patch.trailSpeed, 'fast')
+  // 防空过：trim 不能把非法值放进来
+  assert.ok(sanitizeConfig({ style: '  humorous  ' }).errors.style === undefined)
+  assert.ok(sanitizeConfig({ style: 'bogus' }).errors.style !== undefined, '非法枚举仍须被拒')
+  assert.ok(sanitizeConfig({ style: '' }).errors.style !== undefined, '空串仍须被拒')
+})
+
+check('客户端标题徽标的版本号与 package.json 一致', () => {
+  // 宿主端已由下一条断言钉住「唯一来源 package.json」；客户端因为拿不到该模块系统，
+  // 只能复刻一个字面量显示在标题右上角。这处漂移此前**完全无人看管**（实测：把它改成
+  // 9.9.9 后整套 verify 依然全绿），而症状是界面上写着错误的版本号。
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const m = clientCode.match(/const VERSION = '([^']+)'/)
+  assert.ok(m, '客户端缺少 VERSION 常量')
+  assert.equal(
+    m[1],
+    manifest.version,
+    `客户端标题徽标显示 v${m[1]}，而 package.json 是 ${manifest.version}（升版本时漏改这一处）`
+  )
+})
+
+check('客户端版本号是唯一需要手工同步的常量（不再新增同类副本）', () => {
+  // VERSION 是历史遗留的复刻点（上面一条断言已保证它与 package.json 一致）。
+  // 除此之外不应再出现别的版本常量，否则每加一处就多一处漏改风险。
+  const hits = [...clientSource.matchAll(/const\s+(?:PLUGIN_)?VERSION\s*=/g)].length
+  assert.equal(hits, 1, `客户端版本常量应恰好 1 处（VERSION），实际 ${hits} 处`)
+})
+
 check('客户端在有未保存编辑时预览草稿，否则预览已生效提示词', () => {
-  assert.ok(/async previewPrompt\(draft\)/.test(clientSource), '控制器缺少 previewPrompt')
-  assert.ok(/await controller\.previewPrompt\(promptDraft\(\)\)/.test(clientSource), '未调用草稿预览端点')
-  assert.ok(/const promptDirty = PROMPT_FIELD_KEYS\.some\(/.test(clientSource), 'promptDirty 应由 PROMPT_FIELD_KEYS 判定（改光轨不该让预览变成草稿）')
+  assert.ok(/async previewPrompt\(draft\)/.test(clientCode), '控制器缺少 previewPrompt')
+  assert.ok(/await controller\.previewPrompt\(promptDraft\(\)\)/.test(clientCode), '未调用草稿预览端点')
+  assert.ok(/const promptDirty = PROMPT_FIELD_KEYS\.some\(/.test(clientCode), 'promptDirty 应由 PROMPT_FIELD_KEYS 判定（改光轨不该让预览变成草稿）')
   // 只断言下面的三元语法不够：把 asDraft 写死成 false 也能让三元看起来「正确」，
   // 但预览就永远只看已生效内容了。必须把「草稿判定来源于 promptDirty」这一环钉住。
-  assert.ok(/const asDraft = promptDirty\b/.test(clientSource), 'asDraft 必须取自 promptDirty，否则预览会永远停留在已生效内容')
-  assert.ok(/asDraft\s*\?\s*await controller\.previewPrompt/.test(clientSource), '草稿分支未按 asDraft 选择端点')
+  assert.ok(/const asDraft = promptDirty\b/.test(clientCode), 'asDraft 必须取自 promptDirty，否则预览会永远停留在已生效内容')
+  assert.ok(/asDraft\s*\?\s*await controller\.previewPrompt/.test(clientCode), '草稿分支未按 asDraft 选择端点')
 })
 
 check('提示词预览的编译入口唯一（避免重复请求与过期闭包）', () => {
   assert.equal(
-    clientSource.includes('if (showPrompt) await loadPrompt()'),
+    clientCode.includes('if (showPrompt) await loadPrompt()'),
     false,
     '保存/重置/应用预设处理器内不应再直接编译预览——刷新统一由 effect 驱动，两处调用会重复请求并可能用到过期闭包'
   )
-  const effect = clientSource.match(
+  const effect = clientCode.match(
     /const promptSettled = React\.useRef\(false\)[\s\S]*?\}, \[showPrompt, promptDraftKey, promptDirty\]\)/
   )
   assert.ok(effect, '缺少预览驱动 effect')
@@ -816,24 +1142,29 @@ check('提示词预览新增文案键中英各一份', () => {
 // ---------- 系统提示词插值 ----------
 
 check('系统提示词 section 显式关闭宿主插值', () => {
-  const anchor = indexSource.indexOf("name: 'soul:persona'")
-  assert.ok(anchor >= 0, '找不到 soul:persona 的 section 注册')
-  const region = indexSource.slice(anchor, anchor + 1500)
+  // 用括号配平取 section(...) 的**整个选项对象**，而不是「anchor 起 1500 字符」的
+  // 固定窗口：窗口式取法在注册点与选项之间多出约 1100 字符（注释或代码）后就会
+  // 把 interpolate 推出窗口而假失败，且附近再出现一个 section 注册时可能锚错对象。
+  const opts = stripComments(extractObject(indexSource, 'spCtx.systemPrompt.section('))
+  assert.ok(opts !== '', '找不到 spCtx.systemPrompt.section(...) 调用')
+  // 先确认锚对了对象（否则下面的断言可能对着别的 section 通过）
+  assert.ok(/name:\s*'soul:persona'/.test(opts), 'section 选项对象里没有 soul:persona（锚点异常）')
   assert.ok(
-    /interpolate:\s*false/.test(region),
+    /interpolate:\s*false/.test(opts),
     'section 必须显式写 interpolate: false —— 宿主默认开启且是严格模式，' +
       '用户只要在「自定义指令」里写出一对完整的 {{...}} 就会让 renderPrompt 抛错；' +
       '该错位于 agent.step() 开头且无 try/catch ⇒ 该会话每一轮都失败'
   )
-  assert.equal(/interpolate:\s*true/.test(region), false, 'interpolate 不得为 true')
+  assert.equal(/interpolate:\s*true/.test(opts), false, 'interpolate 不得为 true')
 })
 
 // ---------- 配置持久化（原子写 / 损坏不覆盖）----------
 
 const storeSource = readFileSync(new URL('../lib/store.mjs', import.meta.url), 'utf8')
+const storeCode = stripComments(storeSource)
 
 check('配置读取区分「文件不存在」与「文件损坏」，失败时不缓存', () => {
-  const matched = indexSource.match(/async function loadConfig\(\)[\s\S]*?\n\}/)
+  const matched = indexCode.match(/async function loadConfig\(\)[\s\S]*?\n\}/)
   assert.ok(matched, 'index.mjs 中找不到 loadConfig')
   const body = matched[0]
   assert.ok(/readConfigFile\(/.test(body), 'loadConfig 应经由 lib/store.mjs 读取（失败类型的判定在那里）')
@@ -851,36 +1182,128 @@ check('配置读取区分「文件不存在」与「文件损坏」，失败时�
 
 check('「是否允许写入」的判定只在 lib/store.mjs 实现一份', () => {
   assert.equal(
-    /function configWriteRefusal|function describeConfigFailure/.test(indexSource),
+    /function configWriteRefusal|function describeConfigFailure/.test(indexCode),
     false,
     'index.mjs 不应自带失败说明 / 拒绝判定的实现——写入路径有四条，本地再写一份必然漂移'
   )
   assert.ok(
-    /configWriteRefusal\(configLoadFailure, configPath\(\)\)/.test(indexSource),
+    /configWriteRefusal\(configLoadFailure, configPath\(\)\)/.test(indexCode),
     'saveConfig 应调用 configWriteRefusal 决定是否拒绝写入'
   )
 })
 
 check('配置写入只有一条路径：lib/store.mjs 的「临时文件 + rename」', () => {
   assert.equal(
-    /from 'node:fs\/promises'/.test(indexSource),
+    /from 'node:fs\/promises'/.test(indexCode),
     false,
     'index.mjs 不应直接操作文件系统——原子写必须收口在 lib/store.mjs，否则会被绕过'
   )
-  assert.ok(/await writeConfigFile\(configPath\(\), clean\)/.test(indexSource), 'saveConfig 应经由 writeConfigFile 写入')
+  assert.ok(/await writeConfigFile\(configPath\(\), clean\)/.test(stripComments(indexSource)), 'saveConfig 应经由 writeConfigFile 写入（匹配去注释后的源码：注释里留字样不算）')
   assert.ok(
-    /writeFile\(tmpPath[\s\S]*?rename\(tmpPath, filePath\)/.test(storeSource),
+    /writeFile\(tmpPath[\s\S]*?rename\(tmpPath, filePath\)/.test(storeCode),
     'lib/store.mjs 的写入必须是「先写 .tmp、再 rename 覆盖」；直接 writeFile 会在中断时留下截断的 JSON'
   )
 })
 
+check('set_persona 的输出 schema 能被真实 dsh-tools 的 DSL 接受（注册不失败）', () => {
+  // 背景：DSH 的 schema DSL 与 JSON Schema 不同 —— 根级不支持 required（作者错误
+  // "schema.required is not supported by the value schema DSL"）、object 属性必须显式
+  // 声明 additionalProperties。两者都曾让 defineTool 抛错，再被 .catch() 吞成一条 warn
+  // ⇒ set_persona 静默不注册（Agent 无法改人设），而 196 项断言全绿 —— 因为全链
+  // 只有 dsh-llm 桩、从未用真实 DSL 校验过 schema。本条就是那个缺口。
+  const toolCall = extractCall(indexSource, 'defineTool(')
+  assert.ok(toolCall !== '', 'index.mjs 应调用 defineTool 注册 set_persona')
+  // 结构层（去注释后）：不得出现根级 required；对象属性必须带 additionalProperties
+  const outputSchema = toolCall.slice(toolCall.indexOf('output:'))
+  assert.equal(
+    /required:\s*\[/.test(outputSchema),
+    false,
+    'set_persona 输出 schema 不得使用根级 required（DSH DSL 不支持，defineTool 会抛错且被静默吞掉）'
+  )
+  assert.ok(
+    /ok:\s*\{[^}]*required:\s*true/.test(outputSchema),
+    'set_persona 输出的 ok 必须用属性级 required: true 声明必填（DSL 的唯一写法）'
+  )
+  assert.ok(
+    /changes:\s*\{[^{}]*additionalProperties:\s*false/.test(outputSchema.replace(/\s+/g, ' ')),
+    'set_persona 输出的 changes（object）必须显式声明 additionalProperties: false'
+  )
+  // 行为层：本机能解析到真实 @deepseek-ai/dsh-tools 时，用**真实 defineTool** 校验
+  // schema —— 这是「结构对了但 DSL 仍拒收」这类回归的唯一可靠判据。
+  // （顶层 await 已解析；本机未装 DSH 时为 null，CI 上走结构层即可。）
+  if (defineTool) {
+    // 从真实源码抽出 output.schema 的字面量并求值，保证测的就是插件里那份
+    const literal = outputSchema.slice(outputSchema.indexOf('schema: {'))
+    const open = literal.indexOf('{')
+    let depth = 0
+    let quote = null
+    let end = -1
+    for (let i = open; i < literal.length; i++) {
+      const c = literal[i]
+      if (quote) {
+        if (c === '\\') { i++; continue }
+        if (c === quote) quote = null
+        continue
+      }
+      if (c === "'" || c === '"') { quote = c; continue }
+      if (c === '{') depth++
+      else if (c === '}') { depth--; if (depth === 0) { end = i + 1; break } }
+    }
+    assert.ok(end > 0, '无法从 index.mjs 抽出 output.schema 字面量')
+    let schema
+    try {
+      schema = new Function(`return (${literal.slice(open, end)})`)()
+    } catch (err) {
+      assert.fail(`output.schema 字面量求值失败：${err.message}`)
+    }
+    assert.doesNotThrow(
+      () => defineTool({
+        name: 'set_persona',
+        description: 'verify-config schema 契约探针',
+        parameters: { nickname: { type: 'string', description: 'probe' } },
+        output: { schema },
+        async execute() { return { ok: true } }
+      }),
+      '真实 dsh-tools 的 defineTool 拒绝了 set_persona 的输出 schema（工具将静默注册失败）'
+    )
+    return
+  }
+  if (!skipNote('verify-config', 1, '本机未安装 @deepseek-ai/dsh-tools，set_persona 仅做结构层校验（行为层需真实 DSL）', '安装 DSH 后重跑即可覆盖行为层')) {
+    failures.push({ name: 'set_persona schema 行为层（需真实 dsh-tools）', err: new Error('--strict 下跳过按失败处理') })
+  }
+})
+
+check('set_persona 的模型侧描述必须中英并列', () => {
+  // 工具 schema 只在 apply 时注册一次，而宿主 registry 对同名重注册会抛
+  // `tool "set_persona" is already registered`（实测 dsh-tools 源码）⇒ 语言切换时
+  // **无法**原地换描述。所以描述必须中英并列，覆盖 zh / en 两种界面语言。
+  //
+  // 只检查 **parameters** 块里的描述：output.schema 的 description 是给宿主/渲染层
+  // 用的结构化标注（如「实际发生变化的字段」），不是模型读的自然语言说明 —— 把它
+  // 一并纳入会误报（本条初版就这么写的，被断言自己抓出来了）。
+  const toolCall = stripComments(extractCall(indexSource, 'defineTool('))
+  assert.ok(toolCall !== '', '找不到 defineTool 调用')
+  const paramsStart = toolCall.indexOf('parameters:')
+  const paramsEnd = toolCall.indexOf('output:', paramsStart)
+  assert.ok(paramsStart > 0 && paramsEnd > paramsStart, '无法定位 parameters 块')
+  const params = toolCall.slice(paramsStart, paramsEnd)
+  const descriptions = [...params.matchAll(/description:\s*\n?\s*((?:'[^']*'\s*\+?\s*)+)/g)]
+    .map((m) => [...m[1].matchAll(/'([^']*)'/g)].map((x) => x[1]).join(''))
+    .filter((text) => text.length > 0)
+  assert.ok(descriptions.length >= 8, `模型侧描述条目过少：${descriptions.length}`)
+  for (const text of descriptions) {
+    assert.ok(/[\u4e00-\u9fff]/.test(text), `工具描述缺少中文：${text.slice(0, 40)}`)
+    assert.ok(/[A-Za-z]{3,}/.test(text), `工具描述缺少英文（zh/en 两种界面都要能读）：${text.slice(0, 40)}`)
+  }
+})
+
 check('配置损坏时上报原因（设置页不必等一次失败的保存才知道）', () => {
   assert.ok(
-    /configError: configLoadFailure \? describeConfigFailure\(configLoadFailure\) : null/.test(indexSource),
+    /configError: configLoadFailure \? describeConfigFailure\(configLoadFailure\) : null/.test(indexCode),
     'GET /api/soul/config 应带回 configError，否则用户只会看到「人设无故被重置」'
   )
   assert.ok(
-    /s\.error = typeof payload\.configError === 'string'[\s\S]{0,120}?typeof payload\.deliveryWarning === 'string'/.test(clientSource),
+    /s\.error = typeof payload\.configError === 'string'[\s\S]{0,120}?typeof payload\.deliveryWarning === 'string'/.test(clientCode),
     '客户端应同时展示 configError（读不出来）与 deliveryWarning（送不到会话）——两者症状相同、处理方式不同'
   )
 })
@@ -889,18 +1312,18 @@ check('配置损坏时上报原因（设置页不必等一次失败的保存才�
 
 check('移除损坏配置只有一条实现：lib/store.mjs 的 moveAsideConfigFile', () => {
   assert.ok(
-    /export async function moveAsideConfigFile\(filePath\)[\s\S]*?await rename\(filePath, target\)/.test(storeSource),
+    /export async function moveAsideConfigFile\(filePath\)[\s\S]*?await rename\(filePath, target\)/.test(storeCode),
     '必须用 rename 把损坏文件移开——只 copyFile 保留原文件的话，读取仍判定为损坏，重置依然被拒'
   )
   assert.equal(
-    /rename\(configPath\(\)|unlink\(configPath\(\)/.test(indexSource),
+    /rename\(configPath\(\)|unlink\(configPath\(\)/.test(indexCode),
     false,
     'index.mjs 不应自己搬移/删除配置文件，收口在 lib/store.mjs'
   )
 })
 
 check('重置是配置损坏时的逃生口：先移开损坏文件，再复用同一条写入路径', () => {
-  const matched = indexSource.match(/async function resetConfigWithEscape\(\)[\s\S]*?\n\}/)
+  const matched = indexCode.match(/async function resetConfigWithEscape\(\)[\s\S]*?\n\}/)
   assert.ok(matched, 'index.mjs 中找不到 resetConfigWithEscape')
   const body = matched[0]
   assert.ok(/moveAsideConfigFile\(configPath\(\)\)/.test(body), '重置应先移开损坏文件（＝备份到 .corrupt）')
@@ -913,25 +1336,25 @@ check('重置是配置损坏时的逃生口：先移开损坏文件，再复用�
 })
 
 check('两个重置入口都走逃生口（HTTP 与斜杠命令）', () => {
-  const route = indexSource.match(/path: '\/api\/soul\/config\/reset'[\s\S]*?\n    \}\)/)
+  const route = indexCode.match(/path: '\/api\/soul\/config\/reset'[\s\S]*?\n    \}\)/)
   assert.ok(route, '找不到 /api/soul/config/reset 端点')
   assert.ok(/resetConfigWithEscape\(\)/.test(route[0]), 'HTTP 重置必须走逃生口')
   assert.ok(/backupPath/.test(route[0]), 'HTTP 重置应回传备份路径，供界面如实说明数据去哪了')
 
-  const resetBranch = indexSource.match(/if \(first === 'reset'\)[\s\S]*?\n          \}/)
+  const resetBranch = indexCode.match(/if \(first === 'reset'\)[\s\S]*?\n          \}/)
   assert.ok(resetBranch, "找不到 /soul reset 分支")
   assert.ok(/resetConfigWithEscape\(\)/.test(resetBranch[0]), '/soul reset 必须走逃生口')
   assert.ok(/backupPath/.test(resetBranch[0]), '/soul reset 应告知备份位置')
 
   assert.equal(
-    /commitConfig\(current => defaultConfigPreservingPersonas\(current\)\)/.test(indexSource),
+    /commitConfig\(current => defaultConfigPreservingPersonas\(current\)\)/.test(indexCode),
     false,
     '不得再有绕过逃生口的重置路径——否则损坏状态下会走到一条必然失败的写'
   )
 })
 
 check('重置失败不得被报成成功', () => {
-  const handler = clientSource.match(/const handleReset = async \(\) => \{[\s\S]*?\n      \}/)
+  const handler = clientCode.match(/const handleReset = async \(\) => \{[\s\S]*?\n      \}/)
   assert.ok(handler, '找不到客户端的 handleReset')
   assert.ok(/if \(!payload\)/.test(handler[0]), 'handleReset 必须区分失败（resetConfig 失败时返回 undefined）')
   assert.ok(/toast\.resetFailed/.test(handler[0]), '失败时应用失败提示，而不是无条件报「已重置」')
@@ -941,7 +1364,7 @@ check('重置失败不得被报成成功', () => {
 // ---------- 配置生效链路的可观测性 ----------
 
 check('注入失败必须留下可观测记录，不得静默返回', () => {
-  const matched = indexSource.match(/function injectPromptToAllAgents\(ctx, config\)[\s\S]*?\n\}/)
+  const matched = indexCode.match(/function injectPromptToAllAgents\(ctx, config\)[\s\S]*?\n\}/)
   assert.ok(matched, 'index.mjs 中找不到 injectPromptToAllAgents')
   const body = matched[0]
   assert.ok(/deliveryState\.injectionProblem = reason/.test(body), 'agents 不可用时必须记录原因')
@@ -956,34 +1379,61 @@ check('注入失败必须留下可观测记录，不得静默返回', () => {
 })
 
 check('诊断端点 /api/soul/status 暴露两条通道', () => {
-  const matched = indexSource.match(/path: '\/api\/soul\/status'[\s\S]*?\n    \}\)/)
+  const matched = indexCode.match(/path: '\/api\/soul\/status'[\s\S]*?\n    \}\)/)
   assert.ok(matched, '应注册 GET /api/soul/status')
   const body = matched[0]
   assert.ok(/channels:/.test(body), '应分别报告两条通道')
   assert.ok(/section:/.test(body) && /injection/.test(body), 'section 与 injection 都要有')
-  assert.ok(/sectionRegisteredAt/.test(indexSource), 'section 的注册状态必须被记录')
+  assert.ok(/sectionRegisteredAt/.test(indexCode), 'section 的注册状态必须被记录')
 })
 
 check('「送不到会话」与「读不出来」是两种问题，分开上报', () => {
   assert.ok(
-    /deliveryWarning: deliveryProblemText\(config\)/.test(indexSource),
+    /deliveryWarning: deliveryProblemText\(config\)/.test(indexCode),
     'GET /api/soul/config 应带回 deliveryWarning'
   )
   assert.ok(
-    /deliveryWarning: deliveryProblemText\(updated\)/.test(indexSource),
+    /deliveryWarning: deliveryProblemText\(updated\)/.test(indexCode),
     'POST /api/soul/config 也应带回——保存成功但送不到会话时要让用户看见'
   )
-  assert.ok(/deliveryProblemText\(config\)/.test(indexSource), '/soul show 应展示送达状态')
-  assert.ok(/t\.deliveryLabel/.test(indexSource), '/soul show 应带「送达」标签行')
+  assert.ok(/deliveryProblemText\(config\)/.test(indexCode), '/soul show 应展示送达状态')
+  assert.ok(/t\.deliveryLabel/.test(indexCode), '/soul show 应带「送达」标签行')
+  // delivery* 文案键**只定义在 COMMAND_MESSAGES**（PROMPT_TEXT 里没有）。
+  // deliveryProblemText 必须从 commandMessages 取表：此前误用 promptTextOf，
+  // 'agents-service-unavailable' 分支返回 undefined（JSON 序列化丢字段，故障不可见）、
+  // 'inject-failed' 分支抛 TypeError（保存已落盘却报 HTTP 500）—— 变异实验均实测复现。
+  const dpt = stripComments(extractObject(indexSource, 'function deliveryProblemText'))
+  assert.ok(dpt !== '', '找不到 deliveryProblemText 函数体')
+  assert.ok(
+    /commandMessages\(config\)/.test(dpt),
+    'deliveryProblemText 必须用 commandMessages 取文案（delivery* 键只在 COMMAND_MESSAGES；用 promptTextOf 会拿到 undefined 并在 inject-failed 时抛 TypeError）'
+  )
+  assert.equal(
+    /promptTextOf\(config\)/.test(dpt),
+    false,
+    'deliveryProblemText 不得再从 PROMPT_TEXT 取 delivery 文案（该表没有这些键）'
+  )
+  // 两张表必须真的提供这两个键（防「改了取表方向、键又缺失」的二次回归）
+  for (const table of ['COMMAND_MESSAGES']) {
+    for (const lang of ['zh', 'en']) {
+      const keys = tableLangKeys(indexSource, table, lang)
+      for (const key of ['deliveryNoAgentsService', 'deliveryInjectFailed']) {
+        assert.ok(
+          keys.has(key),
+          `${table}.${lang} 缺少 ${key}：deliveryProblemText 的两个分支都会拿不到文案`
+        )
+      }
+    }
+  }
 })
 
 check('版本号不新增需手工同步的常量（唯一来源 package.json）', () => {
   assert.ok(
-    /createRequire\(import\.meta\.url\)\('\.\/package\.json'\)\.version/.test(indexSource),
+    /createRequire\(import\.meta\.url\)\('\.\/package\.json'\)\.version/.test(indexCode),
     'host 端版本应直接取自 package.json'
   )
   assert.equal(
-    /const\s+(PLUGIN_)?VERSION\s*=\s*'0\./.test(indexSource),
+    /const\s+(PLUGIN_)?VERSION\s*=\s*'0\./.test(indexCode),
     false,
     '不要再写一个版本常量——需要手工同步的地方已经有三处'
   )
@@ -1027,27 +1477,49 @@ check('校验链与 --strict 链覆盖同一组脚本，且严格语义真在各
     strict.every((e) => e.strict),
     'verify:strict 的每一项都必须带 --strict，否则那一项仍会「跳过即通过」'
   )
+  // 链覆盖必须有下限且与 scripts 目录对账：只比对「两条链互相同序」时，对称地删掉
+  // 一个脚本（两条链一起删）两条链依然相等、CI 照样绿 —— 覆盖声明没有任何机器保证。
+  const onDisk = readdirSync(new URL('../scripts', import.meta.url))
+    .filter((f) => /^verify-[\w-]+\.mjs$/.test(f))
+    .sort()
+  assert.deepEqual(
+    [...new Set(chain.map((e) => e.file))].sort(),
+    onDisk,
+    'verify 链必须覆盖 scripts 目录下的全部 verify-*.mjs（对称删脚本不应被静默放过）'
+  )
   for (const { file } of [...chain, ...strict]) {
     const url = new URL(`../scripts/${file}`, import.meta.url)
     assert.ok(existsSync(url), `package.json 引用了不存在的脚本：${file}`)
-    const src = readFileSync(url, 'utf8')
+    // 去注释后再匹配：把真实调用注释掉、在注释里留下同样字样，不应被视为满足。
+    // （M5 类漏洞：正断言只查「字样出现」时，注释里的字样同样命中。）
+    const src = stripComments(readFileSync(url, 'utf8'))
     // 光在 package.json 里写上 `--strict` 是不够的 —— 脚本必须真的实现那套语义：
     //   ① 引入 skip-report（跳过与断言数的唯一实现）；
-    //   ② 把「本脚本有多少断言」交给它：跑完时 `assertCount` 精确校验，或像
-    //      verify-compat 那样把 **nominal**（随环境浮动的检查数）交给 `skipExit`。
-    //      两者取其一 —— compat 的检查数本身取决于本机装了什么，精确相等不适用。
-    // 本版之前 verify-config / verify-store 两条都不满足，于是链里的 `--strict`
-    // 对它们纯属装饰、数字也没人守 —— 这条断言就是为了让那种状态跑不起来。
+    //   ② 把「本脚本有多少断言」交给它，并**消费其结果**：跑完时
+    //      `if (!assertCount(...))`，或像 verify-compat 那样把 nominal（随环境浮动的
+    //      检查数）交给 `skipExit(..., NOMINAL_ASSERTIONS, ...)`。两者取其一 ——
+    //      compat 的检查数取决于本机装了什么，精确相等不适用。
+    //     只检测「字样出现」是不够的：调用被注释掉、或 assertCount 返回值被丢弃
+    //    （打印了不一致却仍 return 0），都曾实测绕过 —— 所以必须匹配**消费形态**。
     assert.ok(
       // 必须是一条**真正的 import 语句**，不能只在注释里出现这段路径 —— 否则把 import
       // 注掉、留下一行注释，这条断言照样通过（判断力对照实测过这个漏法）。
       /^\s*import\b[^\n]*from '\.\/lib\/skip-report\.mjs'/m.test(src),
       `${file} 必须真正 import ./lib/skip-report.mjs，否则跳过语义与断言数都无人守`
     )
+    const consumesCount = /!\s*assertCount\(/.test(src)
+    const skipExitCall = extractCall(src, 'skipExit(')
+    const reportsNominal = skipExitCall !== '' && /NOMINAL_ASSERTIONS/.test(skipExitCall)
     assert.ok(
-      /\bassertCount\(/.test(src) || /NOMINAL_ASSERTIONS/.test(src),
-      `${file} 必须把断言数交给 skip-report（assertCount 精确校验，或 NOMINAL_ASSERTIONS 供 skipExit 报告）`
+      consumesCount || reportsNominal,
+      `${file} 必须把断言数交给 skip-report 并消费其结果（if (!assertCount(...)) 或 skipExit(..., NOMINAL_ASSERTIONS, ...)）；返回值被丢弃或只剩注释均不算`
     )
+    if (reportsNominal && !consumesCount) {
+      assert.ok(
+        /const\s+NOMINAL_ASSERTIONS\s*=/.test(src),
+        `${file} 引用 NOMINAL_ASSERTIONS 但未声明该常量`
+      )
+    }
     assert.equal(
       /process\.argv\.includes\('--strict'\)/.test(src),
       false,
@@ -1056,6 +1528,13 @@ check('校验链与 --strict 链覆盖同一组脚本，且严格语义真在各
   }
 })
 
+// 「断言数一致」与「每一项真的通过」是两回事：前者只防脚本与声明漂移，
+// 后者才是校验本身。check() 里捕获的任何异常都必须让整体失败 —— 否则失败的
+// check 只打印一行 ✗ 却仍退出 0，这正是「看起来绿、实际没守住」的形态。
+if (failures.length > 0) {
+  console.log(`\n结果：失败（${failures.length} 项未通过）。`)
+  process.exit(1)
+}
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 
 console.log(`\n全部通过：${passed} 项检查`)

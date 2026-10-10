@@ -33,7 +33,7 @@ import {
   sanitizePersonaName
 } from './lib/config.mjs'
 import { createInjectionSource } from './lib/injection.mjs'
-import { isBuiltinPersona, mergePersonas, personaMatches, resolvePersona } from './lib/personas.mjs'
+import { isBuiltinPersona, mergePersonas, personaMatches, resolvePersona, declaredPersonaKeys } from './lib/personas.mjs'
 import { configWriteRefusal, describeConfigFailure, moveAsideConfigFile, readConfigFile, writeConfigFile } from './lib/store.mjs'
 
 const name = 'soul'
@@ -441,10 +441,15 @@ function warnOnce(ctx, reason, message) {
 }
 
 // 把内部原因码翻译成一句能直接看懂的话（/soul show、设置页、状态端点共用）。
+//
+// 文案取自 **COMMAND_MESSAGES**（不是 PROMPT_TEXT）：delivery* 系列键只定义在命令文案表里，
+// 两者都按 config.language 提供中英两套。这里此前误用 promptTextOf ⇒ 该函数在
+// 'agents-service-unavailable' 分支返回 undefined（JSON 序列化时字段整个消失，故障对
+// 用户不可见），在 'inject-failed' 分支直接抛 TypeError（保存已落盘却报 HTTP 500）。
 function deliveryProblemText(config) {
   const problem = deliveryState.injectionProblem
   if (!problem) return null
-  const T = promptTextOf(config)
+  const T = commandMessages(config)
   if (problem === 'agents-service-unavailable') return T.deliveryNoAgentsService
   return T.deliveryInjectFailed(problem.replace(/^inject-failed:\s*/, ''))
 }
@@ -612,6 +617,13 @@ function registerRoutes(ctx) {
         }
         
         try {
+          // 方法校验：本端点只读。此前是唯一不判 method 的端点（同文件其余 7 处都有
+          // 405 分支），实测 POST /api/soul/prompt 会拿到 200 —— 宿主只做路径匹配，
+          // method 判定确实是 handler 的责任。
+          if (req.method !== 'GET') {
+            send(405, { ok: false, error: 'Method not allowed' })
+            return
+          }
           const config = await loadConfig()
           const prompt = compilePrompt(config)
           send(200, { ok: true, prompt, enabled: config.enabled })
@@ -797,6 +809,27 @@ function findActivePersonaName(config) {
   return null
 }
 
+// 应用一个预设条目：过白名单 → 写队列合并。
+//
+// **必须回报被丢弃的字段**：normalizePersonas 只按字段名过滤、不校验取值，所以磁盘上
+// 残留的历史值（例如 v0.1.x 的合法 style 'friendly'）或手改的异常值会走到这里被
+// sanitizeConfig 拒绝。此前两条应用路径都只取 patch、把 errors 丢掉 ⇒ 预设被「部分
+// 应用」却返回 ok:true / 「已应用」，用户以为整套生效了（实测：style 与 emoji 被静默
+// 丢弃，只有 customInstructions 写回）。
+//
+// 语义选择：应用**合法部分**并如实回报被丢弃的字段，而不是整单拒绝 —— 后者会让一个
+// 只差一个字段的旧预设彻底不可用，代价更高；而「部分应用 + 明示」与 /api/soul/prompt/
+// preview 的 invalid 约定一致。
+async function applyPersonaEntry(ctx, entry) {
+  const { patch, errors } = sanitizeConfig(pickPersonaValues(entry))
+  const invalid = Object.keys(errors)
+  const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
+  if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
+  // applied 是「通过校验的字段数」——与 changed（实际产生差异的字段）不同：
+  // 全部非法时 applied 为 0，此时不能报「已应用」，也不能报「与当前配置一致」。
+  return { updated, changed, promptChanged, invalid, applied: Object.keys(patch).length }
+}
+
 // 预设库的对外视图（内置 + 用户）与当前命中项，供三个路由的响应复用。
 function personaLibrary(config) {
   return { personas: mergePersonas(config.personas), activeName: findActivePersonaName(config) }
@@ -893,12 +926,14 @@ function registerPersonaRoutes(ctx) {
           }
           // 内置预设已在代码里写过一遍；用户预设保存时也校验过。此处统一再过一遍
           // 白名单，防御手改 config.json 注入的异常数据。
-          const { patch } = sanitizeConfig(pickPersonaValues(entry))
-          const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
-          if (promptChanged.length > 0) {
-            refreshPromptAndInject(ctx, updated)
+          // invalid = 因取值非法而被丢弃的字段名：必须回报，不能静默部分应用。
+          const { updated, changed, invalid, applied } = await applyPersonaEntry(ctx, entry)
+          // 一个合法字段都没有 ⇒ 什么都没应用，按失败处理（与 /soul use 同语义）
+          if (applied === 0) {
+            send(res, 400, { ok: false, error: `预设「${personaName}」没有可应用的合法字段`, invalid })
+            return
           }
-          send(res, 200, { ok: true, config: updated, changed, unchanged: changed.length === 0 })
+          send(res, 200, { ok: true, config: updated, changed, unchanged: changed.length === 0, invalid })
         } catch (err) {
           send(res, 500, { ok: false, error: String(err.message || err) })
         }
@@ -1003,7 +1038,9 @@ const COMMAND_MESSAGES = {
     onLabel: '开启',
     offLabel: '关闭',
     personasLabel: '人设预设',
-    pendingHint: '⚠ 有待确认的人设变更：/soul confirm 确认，/soul reject 拒绝',
+    // 提议是**内存态**（重启即失效）、也没有 TTL，所以必须让用户看到它是什么时候提出的，
+    // 否则一条陈旧提议会一直挂着而无法判断新鲜度（proposedAt 此前只写不读）。
+    pendingHint: (at) => `⚠ 有待确认的人设变更（提出于 ${at}）：/soul confirm 确认，/soul reject 拒绝`,
     noPending: '没有待确认的人设变更',
     confirmDone: (detail) => `✅ 已应用人设变更：${detail}`,
     rejectDone: '✅ 已拒绝待确认的人设变更',
@@ -1014,16 +1051,21 @@ const COMMAND_MESSAGES = {
     builtinDeleteBlocked: (name) => `「${name}」是内置预设，无法删除`,
     useDone: (name) => `✅ 已应用预设「${name}」`,
     useUnchanged: (name) => `ℹ 预设「${name}」与当前配置一致，无需变更`,
+    // 预设里部分字段的取值非法（历史值或手改）：合法字段照常应用，被跳过的必须说出来
+    usePartial: (name, fields) => `⚠ 预设「${name}」已部分应用，以下字段取值非法、已跳过：${fields}`,
+    useAllInvalid: (name, fields) => `✗ 预设「${name}」没有可应用的合法字段：${fields}`,
     personaMissing: (name) => `预设「${name}」不存在`,
     delDone: (name) => `✅ 已删除预设「${name}」`,
     listTitle: '📋 人设预设',
     listEmpty: '暂无人设预设，使用 /soul save <名称> 保存当前配置',
+    // 列表行报告预设实际覆盖的人格维度数量（取代 v0.7.1 起恒为空的「昵称」列）
+    listCovers: (n) => `覆盖 ${n} 项`,
     saveUsage: '用法：/soul save <名称>（1-30 个字符）',
     useUsage: '用法：/soul use <名称>',
     delUsage: '用法：/soul del <名称>',
     setUsage: '用法：/soul set key=value ...（可用字段：enabled / style / headingLists / emoji / tables / replyLength / language / nickname / occupation / bio / customInstructions / trailEnabled / trailColor / trailSpeed / trailWidth）',
     unknownField: '未知配置项',
-    invalidBoolean: (key) => `${key} 取值必须为 true / false`,
+    invalidBoolean: (key, value) => `${key} 取值必须为 true / false（收到：${JSON.stringify(value)}）`,
     setNoChanges: '配置无变化，未做修改',
     setDone: (keys) => `✅ 已更新：${keys.join('、')}`,
     help: '使用 /soul show 查看详情\n使用 /soul set style=humorous 修改配置项\n使用 /soul save <名称> 保存预设；/soul use <名称> 应用；/soul list 查看；/soul del <名称> 删除\n使用 /soul confirm 或 /soul reject 处理待确认的人设变更\n使用 /soul reset 重置配置\n使用 /soul enable 启用；/soul disable 禁用\n使用 /soul 昵称xxx 设置昵称',
@@ -1091,7 +1133,9 @@ const COMMAND_MESSAGES = {
     onLabel: 'on',
     offLabel: 'off',
     personasLabel: 'Personas',
-    pendingHint: '⚠ Pending persona proposal: /soul confirm to apply, /soul reject to discard',
+    // 提议是**内存态**（重启即失效）、也没有 TTL，所以必须让用户看到它是什么时候提出的，
+    // 否则一条陈旧提议会一直挂着而无法判断新鲜度（proposedAt 此前只写不读）。
+    pendingHint: (at) => `⚠ Pending persona proposal (raised at ${at}): /soul confirm to apply, /soul reject to discard`,
     noPending: 'No pending persona proposal',
     confirmDone: (detail) => `✅ Persona changes applied: ${detail}`,
     rejectDone: '✅ Pending persona proposal discarded',
@@ -1101,16 +1145,21 @@ const COMMAND_MESSAGES = {
     builtinDeleteBlocked: (name) => `"${name}" is a built-in persona and cannot be deleted`,
     useDone: (name) => `✅ Persona "${name}" applied`,
     useUnchanged: (name) => `ℹ Persona "${name}" matches the current config`,
+    // 预设里部分字段的取值非法（历史值或手改）：合法字段照常应用，被跳过的必须说出来
+    usePartial: (name, fields) => `⚠ Persona "${name}" applied partially; skipped as invalid: ${fields}`,
+    useAllInvalid: (name, fields) => `✗ Persona "${name}" has no applicable field: ${fields}`,
     personaMissing: (name) => `Persona "${name}" does not exist`,
     delDone: (name) => `✅ Persona "${name}" deleted`,
     listTitle: '📋 Personas',
     listEmpty: 'No personas yet — save the current config with /soul save <name>',
+    // 列表行报告预设实际覆盖的人格维度数量（取代 v0.7.1 起恒为空的「昵称」列）
+    listCovers: (n) => `covers ${n} field${n === 1 ? '' : 's'}`,
     saveUsage: 'Usage: /soul save <name> (1-30 chars)',
     useUsage: 'Usage: /soul use <name>',
     delUsage: 'Usage: /soul del <name>',
     setUsage: 'Usage: /soul set key=value ... (fields: enabled / style / headingLists / emoji / tables / replyLength / language / nickname / occupation / bio / customInstructions / trailEnabled / trailColor / trailSpeed / trailWidth)',
     unknownField: 'Unknown field',
-    invalidBoolean: (key) => `${key} must be true or false`,
+    invalidBoolean: (key, value) => `${key} must be true or false (got: ${JSON.stringify(value)})`,
     setNoChanges: 'No config changes to apply',
     setDone: (keys) => `✅ Updated: ${keys.join(', ')}`,
     help: 'Use /soul show for details\nUse /soul set style=humorous to change fields\nUse /soul save <name> / use <name> / list / del <name> for personas\nUse /soul confirm or /soul reject for pending persona proposals\nUse /soul reset to reset\nUse /soul enable / disable to toggle\nUse /soul <nickname> to set your nickname',
@@ -1138,6 +1187,17 @@ const COMMAND_KEYWORDS = new Set(['show', 'reset', 'enable', 'disable', 'save', 
 
 // /soul set 中按布尔解析的键；其余键以原始字符串交给 sanitizeConfig 校验
 const COMMAND_BOOLEAN_KEYS = new Set(['enabled', 'trailEnabled'])
+
+// 配置字段名 → 小写形式。子命令关键字本就忽略大小写（见 handler 里的 toLowerCase），
+// 键名此前却严格区分：`/soul set STYLE=humorous` 会报「未知配置项」，与用户预期不一致。
+// 这里按小写**映射回真实字段名**（不是把键 toLowerCase —— 那会把 headingLists 压成
+// headinglists，反而匹配不上白名单）。非配置字段仍按未知处理。
+const COMMAND_FIELD_BY_LOWER = new Map(Object.keys(DEFAULT_CONFIG).map((key) => [key.toLowerCase(), key]))
+
+// 归一化 /soul set 的键名：命中真实字段则用其准确写法，否则原样交给白名单判未知
+function normalizeSetKey(key) {
+  return COMMAND_FIELD_BY_LOWER.get(key.toLowerCase()) || key
+}
 
 // 解析 /soul set 的键值参数：key=value 对；不含 = 的 token 追加到上一个值
 // （支持含空格的文本值，如：/soul set bio=写代码 多年 经验）
@@ -1194,8 +1254,13 @@ function registerCommands(ctx) {
               `${t.replyLengthLabel}=${t.replyLengthNames[config.replyLength] || config.replyLength}`
             ].join(t.listSep)
             const instructions = config.customInstructions || t.notSet
-            const personaCount = Object.keys(config.personas || {}).length
-            const pendingLine = pendingPersonaProposal ? `\n${t.pendingHint}` : ''
+            // 预设数量用**合并视图**（内置 + 用户），与 /soul list 和 Web UI 一致：
+            // 此前只数 config.personas（磁盘上的用户预设），于是同一个「人设预设」
+            // 在 show 里显示 2、在 list 里显示 9。
+            const personaCount = Object.keys(mergePersonas(config.personas)).length
+            const pendingLine = pendingPersonaProposal
+              ? `\n${t.pendingHint(new Date(pendingPersonaProposal.proposedAt).toLocaleString())}`
+              : ''
             const trailText = t.trailLine(
               config.trailEnabled ? t.enabled : t.disabled,
               config.trailColor,
@@ -1257,13 +1322,20 @@ function registerCommands(ctx) {
             if (!entry) {
               return { kind: 'error', text: t.personaMissing(personaName) }
             }
-            // 预设值保存时已校验；此处再过一遍白名单，防御手改文件等异常数据
-            const { patch } = sanitizeConfig(pickPersonaValues(entry))
-            const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
+            // 预设值保存时已校验；此处再过一遍白名单，防御手改文件等异常数据。
+            // 非法字段不再被静默丢弃：applied=0 ⇒ 报错；有部分非法 ⇒ 明示被跳过的字段。
+            const { changed, invalid, applied } = await applyPersonaEntry(ctx, entry)
+            const fieldsText = invalid.join(t.listSep)
+            // 预设未声明任何字段（applied=0 且 invalid=0）不是错误，是「无可应用内容」
+            if (invalid.length > 0 && applied === 0) {
+              return { kind: 'error', text: t.useAllInvalid(personaName, fieldsText) }
+            }
+            if (invalid.length > 0) {
+              return { kind: 'success', text: t.usePartial(personaName, fieldsText) }
+            }
             if (changed.length === 0) {
               return { kind: 'success', text: t.useUnchanged(personaName) }
             }
-            if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.useDone(personaName) }
           }
 
@@ -1278,9 +1350,13 @@ function registerCommands(ctx) {
             const lines = names.map((personaName) => {
               const entry = view[personaName]
               const styleText = STYLE_VALUES.includes(entry.style) ? (t.styleNames[entry.style] || entry.style) : (entry.style || '-')
-              const nickText = entry.nickname || '-'
+              // 原先这里显示 `昵称=${entry.nickname || '-'}`，但 v0.7.1 起预设**不含**
+              // 「关于你」（PERSONA_FIELDS 里没有 nickname，normalizePersonas 也会剥离）
+              // ⇒ 该列恒为「昵称=-」，是一列永远没有信息的死数据。改为报告它实际
+              // 覆盖了几个人格维度：这才是「应用这个预设会改变多少东西」的有效信息。
+              const covers = declaredPersonaKeys(entry).length
               const mark = entry.builtin ? ` [${t.builtinName}]` : ''
-              return `${personaName === activeName ? '✔ ' : '• '}${personaName}${mark} ｜ ${t.styleLabel}=${styleText} ｜ ${t.nicknameLabel}=${nickText}`
+              return `${personaName === activeName ? '✔ ' : '• '}${personaName}${mark} ｜ ${t.styleLabel}=${styleText} ｜ ${t.listCovers(covers)}`
             })
             return { kind: 'success', text: `${t.listTitle} [${names.length}]\n${lines.join('\n')}` }
           }
@@ -1306,12 +1382,17 @@ function registerCommands(ctx) {
             const pairs = parseSetArgs(rest)
             if (!pairs || pairs.length === 0) return { kind: 'error', text: t.setUsage }
             const rawPatch = {}
-            for (const [key, value] of pairs) {
+            for (const [rawKey, rawValue] of pairs) {
+              // 键名忽略大小写（与子命令关键字一致）；值统一 trim（枚举此前不 trim）
+              const key = normalizeSetKey(rawKey)
+              const value = rawValue.trim()
               if (COMMAND_BOOLEAN_KEYS.has(key)) {
                 const flag = value.toLowerCase()
                 if (['true', '1', 'on', 'yes'].includes(flag)) rawPatch[key] = true
                 else if (['false', '0', 'off', 'no'].includes(flag)) rawPatch[key] = false
-                else return { kind: 'error', text: t.failed(t.invalidBoolean(key)) }
+                // 带上收到的实际值：`enabled=true extra` 会解析成值 "true extra"，
+                // 只说「必须为 true / false」会让人以为是关键字写错了
+                else return { kind: 'error', text: t.failed(t.invalidBoolean(key, value)) }
               } else {
                 rawPatch[key] = value
               }
@@ -1321,7 +1402,9 @@ function registerCommands(ctx) {
             if (errorKeys.length > 0) {
               return { kind: 'error', text: t.failed(`${errorKeys[0]}: ${errors[errorKeys[0]]}`) }
             }
-            const droppedKeys = Object.keys(rawPatch).filter((key) => !(key in patch))
+            // hasOwn 而非 `in`：后者会命中原型链（`constructor` 之类恒为 true），
+            // 让真正未知的字段被误判成「已识别」而不进 droppedKeys。
+            const droppedKeys = Object.keys(rawPatch).filter((key) => !hasOwn(patch, key))
             if (Object.keys(patch).length === 0) {
               return { kind: 'error', text: t.failed(droppedKeys.length > 0 ? `${t.unknownField}: ${droppedKeys.join(', ')}` : t.setUsage) }
             }
@@ -1426,53 +1509,62 @@ function registerTools(ctx) {
       }
       toolsCtx.tools.register(defineTool({
         name: 'set_persona',
+        // 描述是**模型侧**文本，中英并列：工具 schema 只在 apply 时注册一次，而
+        // `tools.register` 对同名重注册会抛 "already registered"，语言切换时无法
+        // 原地换描述（registry 只在注销旧句柄后才接受同名）。并列两种语言既覆盖
+        // zh / en 两种界面，又不必引入重注册的时序风险。
         description:
           '调整当前个性化设置（昵称、回复风格和语调、自定义指令）。' +
           '当用户明确要求改变称呼、语气、风格或角色时使用。' +
-          '只需要传入要修改的字段，未提供的字段保持不变。',
+          '只需要传入要修改的字段，未提供的字段保持不变。\n' +
+          'Adjust the current personalization settings (nickname, reply style & tone, custom instructions). ' +
+          'Use it when the user explicitly asks to change how they are addressed, the tone, the style, or the role. ' +
+          'Pass only the fields to change; omitted fields keep their current values.',
         parameters: {
-          nickname: { type: 'string', description: '用户昵称，回复时会使用这个称呼。' },
-          occupation: { type: 'string', description: '用户的职业。' },
-          bio: { type: 'string', description: '关于用户的介绍。' },
+          nickname: { type: 'string', description: '用户昵称，回复时会使用这个称呼。/ The nickname to address the user by.' },
+          occupation: { type: 'string', description: '用户的职业。/ The user’s occupation.' },
+          bio: { type: 'string', description: '关于用户的介绍。/ Background about the user.' },
           style: {
             type: 'string',
             enum: STYLE_VALUES,
-            description: '回复风格和语调：professional=专业严谨，casual=轻松自然，humorous=幽默风趣，roast=吐槽达人，efficient=高效干练。'
+            description: '回复风格和语调：professional=专业严谨，casual=轻松自然，humorous=幽默风趣，roast=吐槽达人，efficient=高效干练。/ Reply style & tone.'
           },
           language: {
             type: 'string',
             enum: LANGUAGE_VALUES,
-            description: '回复语言：zh=简体中文，en=English。'
+            description: '回复语言：zh=简体中文，en=English。/ Reply language.'
           },
           headingLists: {
             type: 'string',
             enum: TRAIT_VALUES,
-            description: '特质·标题和列表：default=默认，more=增强（采用清晰格式和列表结构），less=减弱（使用更多段落文本）。'
+            description: '特质·标题和列表：default=默认，more=增强（采用清晰格式和列表结构），less=减弱（使用更多段落文本）。/ Headings & lists.'
           },
           emoji: {
             type: 'string',
             enum: TRAIT_VALUES,
-            description: '特质·表情符号：default=默认，more=增强（使用较多表情符号），less=减弱（尽量减少使用表情符号）。'
+            description: '特质·表情符号：default=默认，more=增强（使用较多表情符号），less=减弱（尽量减少使用表情符号）。/ Emoji usage.'
           },
           tables: {
             type: 'string',
             enum: TRAIT_VALUES,
-            description: '特质·表格：default=默认，more=增强（呈现对比、多字段或结构化信息时优先使用表格），less=减弱（避免表格，改用列表或段落文本）。'
+            description: '特质·表格：default=默认，more=增强（呈现对比、多字段或结构化信息时优先使用表格），less=减弱（避免表格，改用列表或段落文本）。/ Table usage.'
           },
           replyLength: {
             type: 'string',
             enum: REPLY_LENGTH_VALUES,
-            description: '回复长度偏好：concise=简洁（直击要点、不展开），normal=适中（不额外约束），detailed=详尽（充分展开背景、步骤与推理）。'
+            description: '回复长度偏好：concise=简洁（直击要点、不展开），normal=适中（不额外约束），detailed=详尽（充分展开背景、步骤与推理）。/ Reply length preference.'
           },
-          customInstructions: { type: 'string', description: '额外的自定义指令，用于覆盖或补充当前人设。' },
+          customInstructions: { type: 'string', description: '额外的自定义指令，用于覆盖或补充当前人设。/ Extra custom instructions that override or extend the current persona.' },
         },
         output: {
           schema: {
             type: 'object',
             additionalProperties: false,
-            required: ['ok'],
+            // 注意：DSH 的 schema DSL **不支持根级 required**（作者错误：
+            // "schema.required is not supported by the value schema DSL"）。
+            // 必填只能标在属性上（property.required must be true when present）。
             properties: {
-              ok: { type: 'boolean' },
+              ok: { type: 'boolean', required: true },
               message: { type: 'string' },
               pending: {
                 type: 'boolean',
@@ -1481,6 +1573,9 @@ function registerTools(ctx) {
               changes: {
                 type: 'object',
                 description: '实际发生变化的字段',
+                // object 节点必须显式声明 additionalProperties
+                // （作者错误："...additionalProperties must be explicitly true or false"）
+                additionalProperties: false,
                 properties: {
                   nickname: { type: 'string' },
                   occupation: { type: 'string' },

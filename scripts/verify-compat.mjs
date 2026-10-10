@@ -33,7 +33,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { createInjectionSource } from '../lib/injection.mjs'
-import { skipExit } from './lib/skip-report.mjs'
+import { skipExit, skipNote, assertCount } from './lib/skip-report.mjs'
 
 // 定位到 DSH 时本脚本会跑出的检查数（peer 范围判定 + 运行时符号抽查 + 注入来源契约）。
 // 各环境解析到的子包数量可能略有出入，因此这里只用于「跳过时如实说明少跑了多少」，
@@ -182,6 +182,10 @@ const isCheckedPeer = (name) => name === '@deepseek-ai/dsh' || name.startsWith('
 // ==================== 主流程 ====================
 
 async function main() {
+  // 本次真正执行 / 因环境缺失未执行的断言数（尾部对账用，见文件末说明）
+  let passed = 0
+  let skipped = 0
+  let strictSkips = 0
   console.log(`dsh-soul v${MANIFEST.version} — DSH 兼容性自检`)
   console.log('')
 
@@ -245,6 +249,7 @@ async function main() {
       console.log(`  – 忽略   ${name.padEnd(30)} ${range}   （DSH 不校验此类 peer）`)
       continue
     }
+    passed += 1
     let ok
     if (evalFn) {
       const issue = evalFn({ name: MANIFEST.name, version: MANIFEST.version, peerDependencies: { [name]: range } }, {}, runtimeVersion)
@@ -266,14 +271,26 @@ async function main() {
   ]
   for (const [spec, symbols] of audits) {
     const hit = await loadModule(searchAnchors, spec)
-    if (!hit) { console.log(`  – ${spec}：未解析到，跳过`); continue }
+    if (!hit) {
+      // 环境能力缺失 ⇒ 走 skipNote（--strict 下判失败），并计入「未执行」以便对账
+      skipped += 1
+      if (!skipNote('verify-compat', 1, `${spec} 未解析到，符号抽查跳过`, '安装 DSH 后重跑')) strictSkips += 1
+      continue
+    }
     const missing = symbols.filter((s) => !(s in hit.mod))
     if (missing.length) symbolMissing += missing.length
+    passed += 1
     console.log(`  ${missing.length ? '✗' : '✓'} ${spec}：${missing.length ? '缺少 ' + missing.join(', ') : '符号齐备'}`)
   }
   for (const spec of MANIFEST.dsh?.client?.inject || []) {
     const hit = await loadModule(searchAnchors, spec)
-    console.log(`  ${hit ? '✓' : '–'} ${spec}：${hit ? '已解析' : '未解析到，跳过'}`)
+    if (!hit) {
+      skipped += 1
+      if (!skipNote('verify-compat', 1, `${spec} 未解析到，客户端注入项跳过`, '安装 DSH 后重跑')) strictSkips += 1
+      continue
+    }
+    passed += 1
+    console.log(`  ✓ ${spec}：已解析`)
   }
 
   // ---- 注入来源契约 ----
@@ -297,6 +314,7 @@ async function main() {
   }
   for (const issue of shapeIssues) console.log(`  ✗ 形状：${issue}`)
   contractFailures += shapeIssues.length
+  passed += 1
   if (shapeIssues.length === 0) {
     console.log(`  ✓ 形状：kind=${source.kind} / form=${source.form} / sections=${source.sections.length}`)
   }
@@ -317,16 +335,23 @@ async function main() {
         source
       })
       console.log('  ✓ 构造：已用本机 dsh-llm 的 createUserMessage 生成真实注入消息')
+      passed += 1
     } catch (err) {
       contractFailures += 1
       console.log(`  ✗ 构造：createUserMessage 拒绝了当前 source：${String((err && err.message) || err)}`)
     }
   } else {
-    console.log('  – 构造：本机未解析到 @deepseek-ai/dsh-llm，改用形状字面量判定')
+    // 退化为形状字面量判定：这一项（真实构造）没验证到
+    skipped += 1
+    if (!skipNote('verify-compat', 1, '本机未解析到 @deepseek-ai/dsh-llm，改用形状字面量判定', '安装 DSH 后重跑')) strictSkips += 1
   }
 
   if (admit === null) {
-    console.log(`  – ${FORMAT_PKG}：准入校验器不可用，跳过运行时判定（仅检查形状）`)
+    // 校验器不可用 ⇒ 本次「运行时准入」这一项没验证。必须走 skipNote：
+    // 早前这里只打印一行「– 跳过」后继续，--strict 也照样 exit 0（M2）。
+    // 记 2 项：校验器有效性自检（guardLive）与运行时准入本身都无从判定。
+    skipped += 2
+    if (!skipNote('verify-compat', 2, `${FORMAT_PKG} 准入校验器不可用，仅检查形状（少跑：校验器自检 + 运行时准入）`, '安装含该包的 DSH 后重跑')) strictSkips += 1
   } else {
     // 有真实消息就用它，否则退回形状字面量
     const currentRow = realMessage === null
@@ -340,9 +365,14 @@ async function main() {
       guardLive = true
     }
     if (!guardLive) {
-      console.log('  – 校验器未拒绝已废弃形态，本次判定不可信，跳过运行时判定')
+      // 校验器对已废弃形态不报错 ⇒ 本次判定没有判断力，不能算「通过」
+      skipped += 1
+      if (!skipNote('verify-compat', 1, '校验器未拒绝已废弃形态，运行时判定不可信', '升级 DSH 至含该准入校验的版本')) strictSkips += 1
     } else {
       console.log("  ✓ 校验器有效：已废弃的 kind:'plugin' 确实被拒绝（issue #1 的复现条件）")
+      passed += 1
+      // 运行时准入这一项**已执行**（无论通过与否都算跑过；不通过会进 contractFailures）
+      passed += 1
       try {
         admit(currentRow, new Set(['user/message']))
         console.log(`  ✓ 通过   ${source.kind}：当前注入来源可被本运行时接纳`)
@@ -354,14 +384,24 @@ async function main() {
   }
 
   console.log('')
-  if (failures.length === 0 && contractFailures === 0) {
+  // 断言数必须与声明对上：此前 NOMINAL_ASSERTIONS 只在 skipExit 里被当事实打印，
+  // 通过时**完全无人校验**（改成 999 仍 exit 0，M1）。现在逐项累加：
+  //   passed  = 本次真正执行过的断言数
+  //   skipped = 因环境能力缺失未执行的项（走 skipNote，--strict 下按失败处理）
+  // 声明数按未执行项下修，与 verify-store「inode 缺失时 18→17」同一口径。
+  const declared = NOMINAL_ASSERTIONS - skipped
+  const countOk = assertCount('verify-compat', passed, declared)
+  if (failures.length === 0 && contractFailures === 0 && countOk && strictSkips === 0) {
     console.log('结果：兼容。')
     if (symbolMissing > 0) console.log(`注意：仍有 ${symbolMissing} 个运行时符号缺失，需同步适配代码。`)
+    if (skipped > 0) console.log(`注意：本次有 ${skipped} 项因环境能力缺失未执行（详见上方 ⚠ 行），跳过不等于通过。`)
     process.exit(0)
   }
   console.log('结果：不兼容')
   for (const [name, range] of failures) console.log(`  peer 范围未覆盖 ${runtimeVersion}：${name} ${range}`)
   if (contractFailures > 0) console.log(`  注入来源契约不满足：${contractFailures} 项（见上方 ✗ 行）`)
+  if (strictSkips > 0) console.log(`  --strict：本次有 ${strictSkips} 项因环境能力缺失未执行，按失败处理`)
+  if (!countOk) console.log(`  断言数对账失败：实际 ${passed} 项 / 声明 ${declared} 项`)
   console.log('')
   console.log('处理方式：')
   console.log('  1. 修正代码或 peer 声明使其满足上面的约束，然后升版本重新发布；')

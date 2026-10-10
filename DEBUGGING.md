@@ -196,12 +196,12 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 | 层 | 脚本 | 断言数 | 会不会跳过 |
 | --- | --- | --- | --- |
-| 纯函数 / 契约 | `verify-config` | 80 | 否 |
+| 纯函数 / 契约 | `verify-config` | 91 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
-| 客户端行为 | `verify-client` | 12 | 否 |
-| 端到端（保存 → 两条通道都拿到新文本） | `verify-e2e-prompt` | 34 | 否 |
+| 客户端行为 | `verify-client` | 17 | 否 |
+| 端到端（保存 → 两条通道都拿到新文本） | `verify-e2e-prompt` | 38 | 否 |
 | 宿主实现 | `verify-live-prompt` | 20 | 定位不到 DSH 时整脚本跳过 |
-| 版本兼容 | `verify-compat` | 随本机装了什么浮动 | 同上 |
+| 版本兼容 | `verify-compat` | 10（声明数；未执行项按 `skipNote` 从声明数里下修后对账） | 定位不到 DSH 时整脚本跳过 |
 | 渲染层 | `verify-trail` | 11 | 起不来浏览器时整脚本跳过 |
 | 渲染层 | `verify-nav-icon` | 16（含 6 项判断力自检） | 同上 |
 

@@ -71,11 +71,10 @@ window.__ModuleLoader__.load({
       // 人设预设库与当前匹配项（GET /api/soul/personas 带回）
       personas: null,
       activePersona: null,
-      loading: false,
+      // 预设列表请求失败的原因（成功时清空）。用于把「加载中」与「加载失败」区分开
+      personasError: null,
       saving: false,
-      error: null,
-      // 最近一次保存实际变化的字段名数组（来自写路径的 changed）
-      lastChanged: null
+      error: null
     }
 
     // 第三方插件不能 require('@deepseek-ai/dsh-client-runtime/client')——
@@ -91,11 +90,41 @@ window.__ModuleLoader__.load({
         update: (mutator) => {
           const next = { ...state }
           mutator(next)
-          state = next
-          notify()
+          // 值全等时不换引用、也不通知：设置页每 2s 轮询一次宿主配置，绝大多数轮次
+          // 什么都没变，此前却每次都让订阅方（设置页 / 快捷开关 / 光轨）白重渲染一次。
+          // 取两侧键集的并集比较：只遍历 next 会漏掉「mutator 删了某个键」的情形，
+          // 那会变成静默不更新 —— 比多通知一次严重得多。
+          for (const key of new Set([...Object.keys(state), ...Object.keys(next)])) {
+            if (!Object.is(next[key], state[key])) {
+              state = next
+              notify()
+              return
+            }
+          }
         },
         set: (next) => { state = next; notify() },
       }
+    }
+
+    // 一层浅比较：用于判断服务端新解析出的对象是否与已存的等价。
+    // 预设条目本身是扁平对象（人格字段 + updatedAt / builtin），所以一层足够。
+    const shallowEqual = (a, b) => {
+      if (a === b) return true
+      if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false
+      const ka = Object.keys(a)
+      const kb = Object.keys(b)
+      if (ka.length !== kb.length) return false
+      return ka.every((key) => Object.is(a[key], b[key]))
+    }
+
+    // 预设库是「库 → 条目」两层结构，需要逐条目比。
+    const samePersonas = (a, b) => {
+      if (a === b) return true
+      if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false
+      const ka = Object.keys(a)
+      const kb = Object.keys(b)
+      if (ka.length !== kb.length) return false
+      return ka.every((key) => shallowEqual(a[key], b[key]))
     }
 
     function hostBase() {
@@ -362,7 +391,9 @@ window.__ModuleLoader__.load({
 
       async loadConfig() {
         if (this.disposed) return
-        this.store.update(s => { s.loading = true; s.error = null })
+        // 开始读取就清掉上一次的错误；此前还写了一个 s.loading，但全客户端零处读取
+        // （设置页首帧直接显示 INITIAL 默认值），属于只写不读的死状态，已删。
+        this.store.update(s => { s.error = null })
 
         try {
           const payload = await this.postJSON('/api/soul/config', null, { method: 'GET' })
@@ -375,12 +406,10 @@ window.__ModuleLoader__.load({
             s.error = typeof payload.configError === 'string'
               ? payload.configError
               : (typeof payload.deliveryWarning === 'string' ? payload.deliveryWarning : null)
-            s.loading = false
           })
         } catch (error) {
           if (this.disposed) return
           this.store.update(s => {
-            s.loading = false
             s.error = messageOf(error)
           })
         }
@@ -394,7 +423,6 @@ window.__ModuleLoader__.load({
           const payload = await this.postJSON('/api/soul/config', config)
           this.store.update(s => {
             this.applyConfig(s, payload.config)
-            s.lastChanged = Array.isArray(payload.changed) ? payload.changed : []
             // 保存成功也可能带着送达警告（配置写下了但送不到会话）
             s.error = typeof payload.deliveryWarning === 'string' ? payload.deliveryWarning : null
             s.saving = false
@@ -417,7 +445,6 @@ window.__ModuleLoader__.load({
           const payload = await this.postJSON('/api/soul/config/reset')
           this.store.update(s => {
             this.applyConfig(s, payload.config)
-            s.lastChanged = Array.isArray(payload.changed) ? payload.changed : []
             s.error = typeof payload.deliveryWarning === 'string' ? payload.deliveryWarning : null
             s.saving = false
           })
@@ -445,7 +472,9 @@ window.__ModuleLoader__.load({
         if (!this.disposed) {
           this.store.update(s => {
             this.applyConfig(s, payload.config)
-            s.lastChanged = Array.isArray(payload.changed) ? payload.changed : []
+            // 清掉上一轮的失败提示：该端点不返回 deliveryWarning，此前一旦上一轮
+            // 保存失败过，切预设成功后红色错误条会一直挂着。
+            s.error = null
           })
         }
         return payload
@@ -501,6 +530,9 @@ window.__ModuleLoader__.load({
       '.soul-version{flex:0 0 auto;color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400;line-height:1.4;white-space:nowrap}',
       '.soul-field{margin-bottom:16px;width:100%}',
       '.soul-field label{display:block;margin-bottom:6px;font-size:13px;font-weight:500;color:var(--dsw-alias-label-secondary)}',
+      // 与上面的 label 同形，但用于「没有对应控件」的分组标题（如光轨示例预览）：
+      // 那种位置写 <label> 会是一个指向空的标签，语义错误
+      '.soul-field-label{display:block;margin-bottom:6px;font-size:13px;font-weight:500;color:var(--dsw-alias-label-secondary)}',
       '.soul-field select,.soul-field textarea,.soul-field input[type=text]{width:100%;padding:8px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.5;box-sizing:border-box}',
       '.soul-field select option{color:var(--dsw-alias-label-primary)}',
       '.soul-section{color-scheme:light}',
@@ -536,6 +568,9 @@ window.__ModuleLoader__.load({
       '.soul-quick-toggle > *{position:relative;z-index:1}',
       '.soul-quick-toggle-dot{width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}',
       '.soul-quick-toggle[data-enabled="true"] .soul-quick-toggle-dot{background:var(--dsw-static-green-500,#22c55e);animation:soul-status-pulse 1.8s ease-in-out infinite}',
+      // 保存失败：小圆点转红并停止脉冲（按钮文案不变，故必须靠颜色 + title/aria-label 反馈）
+      '.soul-quick-toggle[data-failed="true"]{border-color:var(--dsw-alias-label-error);color:var(--dsw-alias-label-error)}',
+      '.soul-quick-toggle[data-failed="true"] .soul-quick-toggle-dot{background:var(--dsw-alias-label-error);animation:none}',
       '.soul-quick-toggle:disabled{cursor:wait;opacity:.6}',
       '@keyframes soul-toggle-red-sweep{from{transform:translateX(100%)}to{transform:translateX(-100%)}}',
       '@keyframes soul-toggle-green-sweep{from{transform:translateX(100%)}to{transform:translateX(-100%)}}',
@@ -546,13 +581,40 @@ window.__ModuleLoader__.load({
       '.soul-hint:hover{color:var(--dsw-alias-label-primary)}',
       '.soul-hint-tip{position:absolute;bottom:calc(100% + 8px);left:0;padding:8px 10px;background:#ffffff;border:1px solid rgba(0,0,0,0.1);border-radius:6px;font-size:12px;font-weight:400;line-height:1.5;color:rgba(0,0,0,0.85);white-space:normal;width:max-content;max-width:260px;text-align:left;opacity:0;visibility:hidden;transition:opacity .15s ease;pointer-events:none;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.15)}',
       '.soul-hint:hover .soul-hint-tip{opacity:1;visibility:visible}',
+      // 键盘聚焦同样要能拿到说明：只有 :hover 的话，键盘 / 读屏用户永远看不到提示
+      '.soul-hint:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px;border-radius:3px}',
+      '.soul-hint:focus-visible .soul-hint-tip{opacity:1;visibility:visible}',
       '.soul-status{margin-top:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}',
       '.soul-dirty{color:#d46b08}',
-      '.soul-persona-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed var(--dsw-alias-border-l2);font-size:12px}',
-      '.soul-persona-name{color:var(--dsw-alias-label-primary);font-weight:500;white-space:nowrap}',
-      '.soul-persona-meta{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary)}',
-      '.soul-persona-actions{display:flex;gap:10px;white-space:nowrap;align-items:center}',
-      '.soul-persona-badge{font-size:11px;line-height:16px;padding:0 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-secondary);white-space:nowrap}',
+      // 人设预设行：三列网格「名称 | 摘要 | 操作」。
+      // 用网格而非 flex 是为了让操作列**列宽固定并右对齐**——内容驱动的 flex 下，
+      // 自建行多一个「删除」按钮会把「使用」挤左约 34px，与内置行的「使用」不在同一竖列。
+      // 名称列同时容纳「★ 标记」「名称」「来源徽标」，徽标是名称的修饰而非操作，
+      // 因此放在这里而不是操作区（放操作区会让内置/自建两类的按钮列错位）。
+      '.soul-persona-row{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr) auto;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px dashed var(--dsw-alias-border-l2);font-size:12px;border-radius:6px}',
+      // 内置行用底色区分来源：不再靠标签占位，横向空间留给摘要
+      '.soul-persona-row[data-builtin="true"]{background:var(--dsw-alias-interactive-bg-hover);border-bottom-color:transparent}',
+      // 名称区：名称 + 徽标。徽标弱化（无边框、更小、更淡），避免与「使用 / 删除」抢注意力
+      '.soul-persona-name{display:flex;align-items:center;gap:6px;min-width:0;color:var(--dsw-alias-label-primary);font-weight:500}',
+      '.soul-persona-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.soul-persona-meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary)}',
+      // 操作区：两列等宽槽位，「使用」永远在第 1 列、「删除」永远在第 2 列 ⇒ 跨行严格同列。
+      // 内置行第 2 列为空占位（不留按钮，因为后端也拒绝删除），这正是两类行能对齐的原因。
+      // 操作区：固定宽度 + 两个等宽轨道，「使用」永远在第 1 轨、删除位永远在第 2 轨。
+      //
+      // 为什么不能用 `auto` / `minmax()`：每一行的操作区都是**独立的**网格容器，列宽由该行
+      // 自己的内容算出——内置行第 2 轨为空（宽 0），自建行第 2 轨是「删除」的宽度，于是
+      // 两行的「使用」仍不同列。只有把容器宽度与轨道都定死，跨行几何才必然一致。
+      //
+      // 9em（12px 字号下 108px）对中英文都足够：中文「使用/删除」约 24px，英文
+      // 「Use/Delete」约 22/39px，两轨各 54px 都有余量。客户端词典只提供 zh / en，
+      // 因此这个宽度不需要为其它语言再放宽。
+      '.soul-persona-actions{display:grid;grid-template-columns:1fr 1fr;justify-items:end;align-items:center;gap:4px 10px;width:9em;white-space:nowrap}',
+      // 内置行第 2 轨的空占位：只负责让该轨道存在（不是可点控件，所以用 span）
+      '.soul-persona-slot{display:block;width:0}',
+      // 内置行第 2 列的空占位：只负责撑住列宽，不是可点控件
+      '.soul-persona-slot{display:block;width:0}',
+      '.soul-persona-badge{font-size:10px;line-height:14px;padding:0 5px;border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary);white-space:nowrap}',
       '.soul-persona-save{display:flex;gap:8px}',
       '.soul-persona-save input[type=text]{flex:1}',
       '.soul-prompt-link{background:none;border:none;padding:0;font-size:12px;color:var(--dsw-alias-label-secondary);cursor:pointer;text-decoration:underline}',
@@ -605,7 +667,12 @@ window.__ModuleLoader__.load({
       '.soul-trail-preview{position:relative;margin-top:6px;padding:16px;border:1px solid var(--dsw-alias-border-l2);border-radius:22px;background:var(--dsw-alias-bg-layer-1)}',
       '.soul-trail-preview[data-soul-trail="on"]{border-color:transparent}',
       '.soul-trail-preview-text{font-size:12px;color:var(--dsw-alias-label-tertiary)}',
-      '@media (prefers-reduced-motion:reduce){.soul-trail-layer{animation:none}}'
+      // 开了「减少动态效果」时：光轨层停动画；提示条（.soul-toast，内联 fadeInOut）
+      // 也要停 —— 它此前被漏掉了，于是每次保存/失败都会平移缩放淡出。
+      // 实测（真实 Chrome + --force-prefers-reduced-motion）：内联 animation 属 author
+      // 普通声明，样式表的普通声明同样能覆盖；这里仍用 !important 以免将来被内联改动
+      // 或选择器顺序变化影响。
+      '@media (prefers-reduced-motion:reduce){.soul-trail-layer{animation:none}.soul-toast{animation:none!important}}'
     ].join('')
 
     const tagId = 'dsh-soul/styles.css'
@@ -634,6 +701,8 @@ window.__ModuleLoader__.load({
       'settings.title': '个性化设置',
       'accordion.filled': '项已填写',
       'accordion.empty': '未填写',
+      // 分组摘要在「拉取失败」时的显示（折叠态下用户只看得到这一行）
+      'accordion.loadFailed': '加载失败',
       'accordion.personas': '个预设',
       'accordion.on': '已开启',
       'accordion.off': '未开启',
@@ -642,6 +711,8 @@ window.__ModuleLoader__.load({
       'quick.disable': '关闭个性化',
       'quick.statusEnabled': '个性化已启用',
       'quick.statusDisabled': '个性化已关闭',
+      // 快捷开关保存失败时的兜底文案（有服务端 error 时优先显示它）
+      'quick.toggleFailed': '保存失败，请重试',
       'group.aboutYou': '关于你',
       'field.nickname': '用户昵称',
       'field.nicknamePlaceholder': '输入你的昵称，回复时会称呼你',
@@ -672,6 +743,8 @@ window.__ModuleLoader__.load({
       'personas.delete': '删除',
       'personas.confirmDelete': '确定删除预设「{name}」？',
       'personas.empty': '暂无人设预设，保存当前配置后可一键切换',
+      // 列表拉取失败（此前是空 catch ⇒ 界面会永远停在「加载中...」）
+      'personas.loadFailed': '人设预设加载失败：{reason}',
       'personas.builtin': '内置',
       'personas.hint': '预设只保存 Agent 的人设（风格 / 特质 / 回复长度 / 输出语言 / 自定义指令），不含「关于你」；内置预设随插件提供，不可删除',
       'style.professional': '专业严谨',
@@ -717,10 +790,10 @@ window.__ModuleLoader__.load({
       'toast.resetFailed': '❌ 重置失败',
       'toast.personaSaved': '✅ 预设已保存',
       'toast.personaUsed': '✅ 预设已应用',
+      // 预设含非法取值时服务端只应用合法部分，被跳过的字段必须回报
+      'toast.personaPartial': '⚠ 预设仅部分应用，以下字段取值非法已跳过：{fields}',
       'toast.personaUnchanged': 'ℹ 预设与当前配置一致',
       'toast.personaDeleted': '✅ 预设已删除',
-      'prompt.view': '查看当前生效提示词',
-      'prompt.hide': '收起提示词',
       'prompt.title': '当前生效提示词',
       'prompt.summaryEnabled': '已启用',
       'prompt.summaryDisabled': '已禁用',
@@ -731,6 +804,9 @@ window.__ModuleLoader__.load({
       'prompt.titleDraft': '保存后将生效的提示词',
       'prompt.summaryDraft': '{n} 字符 · 未保存',
       'prompt.invalid': '以下字段未通过校验，未计入本次预览：{fields}',
+      // 列表分隔符：中文用顿号、英文用逗号 + 空格。此前英文界面里也硬编码「、」，
+      // 会渲染成 `...excluded from this preview: style、tables`（中英混排）。
+      'common.listSep': '、',
       'toast.saveFailed': '❌ 保存失败，请检查配置',
       'trail.title': '输入框光轨',
       'trail.enable': '启用输入框光轨',
@@ -753,6 +829,8 @@ window.__ModuleLoader__.load({
       'settings.title': 'Personalization Settings',
       'accordion.filled': 'fields filled',
       'accordion.empty': 'No fields set',
+      // 分组摘要在「拉取失败」时的显示（折叠态下用户只看得到这一行）
+      'accordion.loadFailed': 'Failed to load',
       'accordion.personas': 'personas',
       'accordion.on': 'enabled',
       'accordion.off': 'disabled',
@@ -761,6 +839,8 @@ window.__ModuleLoader__.load({
       'quick.disable': 'Disable personalization',
       'quick.statusEnabled': 'Personalization enabled',
       'quick.statusDisabled': 'Personalization disabled',
+      // 快捷开关保存失败时的兜底文案（有服务端 error 时优先显示它）
+      'quick.toggleFailed': 'Save failed, please retry',
       'group.aboutYou': 'About you',
       'field.nickname': 'Nickname',
       'field.nicknamePlaceholder': 'Your nickname — the agent will address you by it',
@@ -791,6 +871,8 @@ window.__ModuleLoader__.load({
       'personas.delete': 'Delete',
       'personas.confirmDelete': 'Delete persona "{name}"?',
       'personas.empty': 'No personas yet — save the current config to switch with one click',
+      // 列表拉取失败（此前是空 catch ⇒ 界面会永远停在「加载中...」）
+      'personas.loadFailed': 'Failed to load personas: {reason}',
       'personas.builtin': 'Built-in',
       'personas.hint': 'A persona saves the agent personality only (style / traits / reply length / reply language / custom instructions), never your own identity fields; built-ins ship with the plugin and cannot be deleted',
       'style.professional': 'Professional',
@@ -836,10 +918,10 @@ window.__ModuleLoader__.load({
       'toast.resetFailed': '❌ Reset failed',
       'toast.personaSaved': '✅ Persona saved',
       'toast.personaUsed': '✅ Persona applied',
+      // 预设含非法取值时服务端只应用合法部分，被跳过的字段必须回报
+      'toast.personaPartial': '⚠ Persona applied partially; skipped as invalid: {fields}',
       'toast.personaUnchanged': 'ℹ Persona matches current config',
       'toast.personaDeleted': '✅ Persona deleted',
-      'prompt.view': 'View the active system prompt',
-      'prompt.hide': 'Hide the prompt',
       'prompt.title': 'Active system prompt',
       'prompt.summaryEnabled': 'Enabled',
       'prompt.summaryDisabled': 'Disabled',
@@ -850,6 +932,9 @@ window.__ModuleLoader__.load({
       'prompt.titleDraft': 'Prompt after saving',
       'prompt.summaryDraft': '{n} chars · unsaved',
       'prompt.invalid': 'These fields failed validation and are excluded from this preview: {fields}',
+      // 列表分隔符：中文用顿号、英文用逗号 + 空格。此前英文界面里也硬编码「、」，
+      // 会渲染成 `...excluded from this preview: style、tables`（中英混排）。
+      'common.listSep': ', ',
       'toast.saveFailed': '❌ Save failed — please check the config',
       'trail.title': 'Composer light trail',
       'trail.enable': 'Enable composer light trail',
@@ -927,9 +1012,12 @@ window.__ModuleLoader__.load({
     // 编译结果，不该因此重新请求，也不该让预览被标成「未保存」。
     const PROMPT_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions']
 
-    // 提示词小图标：hover 展示说明文字
+    // 提示词小图标：hover / 键盘聚焦都展示说明文字。
+    // 此前只有 :hover 可达，且提示节点用 visibility:hidden —— 那会把它移出无障碍树，
+    // 键盘与读屏用户拿不到字段说明。这里补 tabIndex 让它可以聚焦，并在 :focus-visible
+    // 下显示提示（同时保留 aria-label，聚焦时读屏会念出说明本身）。
     function SoulHint(props) {
-      return e('span', { className: 'soul-hint', 'aria-label': props.text },
+      return e('span', { className: 'soul-hint', 'aria-label': props.text, tabIndex: 0 },
         e('svg', {
           viewBox: '0 0 24 24',
           width: 14,
@@ -976,18 +1064,28 @@ window.__ModuleLoader__.load({
       const enabled = state.enabled === true
       const busy = state.saving === true
 
+      // 保存失败的本地标记：失败时 store.error 会带上原因，但按钮本身此前毫无反馈
+      // （enabled 没变 ⇒ 外观与文案都不变），用户视角是「点了没反应」。
+      const [failed, setFailed] = React.useState(false)
+      const failureText = failed ? (state.error || t('quick.toggleFailed')) : null
+
       const toggle = async () => {
         if (busy) return
-        await controller.saveConfig({ enabled: !enabled })
+        setFailed(false)
+        const payload = await controller.saveConfig({ enabled: !enabled })
+        // saveConfig 失败时返回 undefined；成功时返回载荷
+        setFailed(!payload)
       }
 
       return e('button', {
         type: 'button',
-        className: 'soul-quick-toggle',
+        className: failed ? 'soul-quick-toggle soul-quick-toggle-failed' : 'soul-quick-toggle',
         'data-enabled': enabled ? 'true' : 'false',
+        'data-failed': failed ? 'true' : 'false',
         'aria-pressed': enabled,
-        'aria-label': enabled ? t('quick.disable') : t('quick.enable'),
-        title: enabled ? t('quick.disable') : t('quick.enable'),
+        // 失败时把原因写进 aria-label / title：否则按钮外观不变，用户无从得知保存失败
+        'aria-label': failureText || (enabled ? t('quick.disable') : t('quick.enable')),
+        title: failureText || (enabled ? t('quick.disable') : t('quick.enable')),
         disabled: busy,
         onClick: toggle
       },
@@ -1001,7 +1099,7 @@ window.__ModuleLoader__.load({
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, personas, activePersona, loading, saving, error } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, personas, activePersona, personasError, saving, error } = state
 
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
@@ -1047,7 +1145,14 @@ window.__ModuleLoader__.load({
       }, [openSection])
 
       // 同步状态
+      // 用 store 回填本地表单。
+      //
+      // **dirty 期间不回填**：否则任何客户端侧对共享 store 的写入（例如快捷开关成功后
+      // 的 applyConfig）都会让依赖变化、本 effect 重跑，把用户正在编辑、尚未保存的
+      // 内容整片覆盖 —— 且没有任何提示。轮询路径（下方 refresh）已有 `if (dirty ||
+      // saving) return` 的保护，这里此前漏了同一道保护。
       React.useEffect(() => {
+        if (dirty || saving) return
         setLocalEnabled(enabled)
         setLocalNickname(nickname || '')
         setLocalOccupation(occupation || '')
@@ -1074,15 +1179,25 @@ window.__ModuleLoader__.load({
         }
       }, [toast])
 
-      // dirty 检测：本地表单与已保存配置逐字段比较
+      // dirty 检测：本地表单与已保存配置逐字段比较。
+      //
+      // 字符串一律先 trim 再比：服务端对每个字符串字段都会 trim（文本字段 trim、枚举值
+      // trim、颜色 trim），所以「只改了首尾空格」落盘后与原值完全相同。此前按原始串
+      // 比较会出现「用户敲了个空格 → 保存按钮亮了 → 保存成功却提示『配置无变化』」。
+      // 不另造一份 TEXT_FIELDS 复刻表：那会多一处需要手工同步的常量。
+      const sameValue = (a, b) => (typeof a === 'string' && typeof b === 'string'
+        ? a.trim() === b.trim()
+        : a === b)
       const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth }
       const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
-      const dirty = FIELD_KEYS.some((key) => savedMap[key] !== localMap[key])
+      const dirty = FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
 
       // 预览是否反映未保存的编辑：只看参与编译的字段（见 PROMPT_FIELD_KEYS）。
       // 这里用 localMap/savedMap 逐字段比，而不是复用上面的 dirty —— 改光轨颜色会让
       // dirty 为真，但那不影响提示词，此时预览仍是「已生效内容」，标成草稿反而误导。
-      const promptDirty = PROMPT_FIELD_KEYS.some((key) => savedMap[key] !== localMap[key])
+      // 必须与 dirty 用**同一个** sameValue 判据：否则「只改了首尾空格」时 dirty 为假
+      // （保存按钮禁用）而 promptDirty 为真（预览标成草稿），两处自相矛盾。
+      const promptDirty = PROMPT_FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
       // 草稿指纹：仅在影响编译的字段真的变化时才重新预览
       const promptDraftKey = PROMPT_FIELD_KEYS.map((key) => String(localMap[key])).join('\u0000')
 
@@ -1119,11 +1234,20 @@ window.__ModuleLoader__.load({
         try {
           const payload = await controller.fetchPersonas()
           controller.store.update((s) => {
-            s.personas = payload.personas
+            // 内容相同就保留旧引用：每 2s 轮询都会重新解析出**新对象**，若直接赋值，
+            // store 的浅比较永远判为「变了」⇒ 上面那层去重失效，整页仍每 2s 白重渲染。
+            s.personas = samePersonas(s.personas, payload.personas) ? s.personas : payload.personas
             s.activePersona = payload.activeName
+            // 拉取成功：清掉上一次的失败痕迹（否则失败后即便恢复，提示会一直挂着）
+            s.personasError = null
           })
-        } catch {
-          // 预设列表加载失败不打断主配置界面
+        } catch (err) {
+          // 预设列表加载失败不打断主配置界面 —— 但必须**留下痕迹**：
+          // 此前是空 catch，personas 永远是 null，摘要与面板就一直显示「加载中...」，
+          // 与「真的还没有预设」无从区分，也没有任何失败提示。
+          controller.store.update((s) => {
+            s.personasError = messageOf(err)
+          })
         }
       }
 
@@ -1220,7 +1344,14 @@ window.__ModuleLoader__.load({
         try {
           const payload = await controller.usePersona(name)
           await loadPersonas()
-          setToast({ text: payload && payload.unchanged ? t('toast.personaUnchanged') : t('toast.personaUsed'), kind: 'success' })
+          // 服务端回报了被丢弃的非法字段 ⇒ 预设只被部分应用，必须说出来而不是报「已应用」
+          const invalid = Array.isArray(payload && payload.invalid) ? payload.invalid : []
+          const toast = invalid.length > 0
+            ? { text: t('toast.personaPartial', { fields: invalid.join(', ') }), kind: 'error' }
+            : (payload && payload.unchanged
+              ? { text: t('toast.personaUnchanged'), kind: 'success' }
+              : { text: t('toast.personaUsed'), kind: 'success' })
+          setToast(toast)
           // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
         // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
         } catch (err) {
@@ -1256,7 +1387,10 @@ window.__ModuleLoader__.load({
       const aboutFilled = [localNickname, localOccupation, localBio].filter(Boolean).length
       const aboutSummary = aboutFilled > 0 ? `${aboutFilled}/3 ${t('accordion.filled')}` : t('accordion.empty')
       const traitsSummary = t(`style.${localStyle}`)
-      const personasSummary = personas === null ? t('status.loading') : `${Object.keys(personas).length} ${t('accordion.personas')}`
+      // 失败时摘要也要区分（折叠状态下用户只看得到这一行）
+      const personasSummary = personasError
+        ? t('accordion.loadFailed')
+        : (personas === null ? t('status.loading') : `${Object.keys(personas).length} ${t('accordion.personas')}`)
       const toolSummary = localToolConfirm ? t('accordion.on') : t('accordion.off')
       const promptSummary = promptText.length > 0
         ? t(promptIsDraft ? 'prompt.summaryDraft' : 'prompt.summaryChars', { n: String(promptText.length) })
@@ -1445,27 +1579,38 @@ window.__ModuleLoader__.load({
             onToggle: toggleSection('personas')
           },
             e('div', { className: 'soul-field' },
-              personaNames === null
+              // 加载失败优先于「加载中」：否则失败时界面永远停在加载态，与「还没有预设」无从区分
+              personasError
+                ? e('div', { className: 'soul-error' }, t('personas.loadFailed', { reason: personasError }))
+                : (personaNames === null
                 ? e('div', { className: 'soul-status' }, t('status.loading'))
                 : (personaNames.length === 0
                   ? e('div', { className: 'soul-status' }, t('personas.empty'))
                   : e(Fragment, null,
                     ...personaNames.map((name) => {
                       const entry = personas[name] || {}
-                      // 内置预设不提供删除（后端也会拒绝），在 actions 区原删除按钮的
-                      // 位置显示「内置」标记，行宽因此不会跳动。
                       const builtin = !!entry.builtin
-                      return e('div', { className: 'soul-persona-row', key: name },
-                        e('span', { className: 'soul-persona-name' }, name === activePersona ? `★ ${name}` : name),
+                      // data-builtin 同时承担两件事：内置行的底色区分，以及回归断言的可断言锚点
+                      return e('div', { className: 'soul-persona-row', key: name, 'data-builtin': builtin ? 'true' : 'false' },
+                        e('span', { className: 'soul-persona-name' },
+                          e('span', { className: 'soul-persona-label' }, name === activePersona ? `★ ${name}` : name),
+                          // 来源徽标紧贴名称：它说明「这个预设从哪来」，属于名称的修饰而非操作，
+                          // 放在操作区会把「使用」挤出竖列
+                          builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin'))
+                        ),
                         e('span', { className: 'soul-persona-meta' }, personaRowMeta(entry)),
                         e('span', { className: 'soul-persona-actions' },
-                          builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
                           e('button', { type: 'button', className: 'soul-prompt-link', onClick: () => handleUsePersona(name) }, t('personas.use')),
-                          !builtin && e('button', { type: 'button', className: 'soul-prompt-link soul-persona-danger', onClick: () => handleDeletePersona(name) }, t('personas.delete'))
+                          // 内置预设不提供删除（后端也拒绝）：留一个空占位槽，让「使用」与
+                          // 自建行严格同列。这里刻意不是按钮，避免造出一个点了没反应的控件。
+                          builtin
+                            ? e('span', { className: 'soul-persona-slot', 'aria-hidden': true })
+                            : e('button', { type: 'button', className: 'soul-prompt-link soul-persona-danger', onClick: () => handleDeletePersona(name) }, t('personas.delete'))
                         )
                       )
                     })
                   ))
+                )
             ),
             e('div', { className: 'soul-field soul-persona-save' },
               e('input', {
@@ -1566,9 +1711,10 @@ window.__ModuleLoader__.load({
                 )
               ),
               e('div', { className: 'soul-field' },
-                e('label', null, t('trail.preview')),
+                // 预览示例不是表单控件，没有可关联的 id —— 用 label 会是「指向空的标签」，
+                // 所以改用同风格的 div（样式见 .soul-field-label）
+                e('div', { className: 'soul-field-label' }, t('trail.preview')),
                 e(SoulTrailPreview, {
-                  enabled: localTrailEnabled,
                   color: localTrailColor,
                   speed: localTrailSpeed,
                   width: localTrailWidth,
@@ -1594,7 +1740,7 @@ window.__ModuleLoader__.load({
                 e('pre', { className: 'soul-prompt-pre' }, promptText || t('prompt.empty')),
                 e('div', { className: 'soul-status' }, t('prompt.chars', { n: String(promptText.length) })),
                 promptInvalid.length > 0 && e('div', { className: 'soul-error' },
-                  t('prompt.invalid', { fields: promptInvalid.join('、') }))
+                  t('prompt.invalid', { fields: promptInvalid.join(t('common.listSep')) }))
               ))
         ),
 
@@ -1616,6 +1762,10 @@ window.__ModuleLoader__.load({
 
         toast && e('div', {
           className: `soul-toast ${toast.kind === 'error' ? 'soul-toast-error' : 'soul-toast-success'}`,
+          // 读屏播报：toast 2s 后自动移除（见上方计时器），没有 aria-live 时
+          // 保存成功 / 失败对读屏用户等于没有发生。
+          role: toast.kind === 'error' ? 'alert' : 'status',
+          'aria-live': toast.kind === 'error' ? 'assertive' : 'polite',
           style: {
             animation: 'fadeInOut 2s ease-in-out'
           }
@@ -1629,33 +1779,29 @@ window.__ModuleLoader__.load({
 
     // 设置页内的实时示例：与线上光轨共用同一渲染层、同一挂载点解析（resolveTrailMountPoint）
     // 与同一份 CSS，因此「示例所见」即「回复时所得」；颜色/速度/粗细随表单实时联动。
+    //
+    // 本组件**只在光轨开启时**被渲染（见调用处的 `localTrailEnabled &&`），所以它没有
+    // 「关闭」这一态：此前它接了一个 `enabled` prop 并写了 off 分支，那是永不执行的死
+    // 代码（且 `data-soul-trail="off"` 会连带影响 CSS 选择器），现在去掉。
     function SoulTrailPreview(props) {
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const hostRef = React.useRef(null)
       const anchorRef = React.useRef(null)
-      const mountedRef = React.useRef(null)
 
       React.useEffect(() => {
         const host = hostRef.current
         if (!host) return undefined
         // 与线上 SoulTrail 同一条路径：解析出的挂载点即示例内的零高度锚点 .soul-trail-anchor
         const mounted = mountTrailRing(host, resolveTrailMountPoint(host, anchorRef.current))
-        mountedRef.current = mounted
-        return () => {
-          mountedRef.current = null
-          mounted.unmount()
-        }
+        // 环的内联样式以 display:none 起（见 mountTrailRing），必须显式显形一次
+        mounted.setVisible(true)
+        return () => mounted.unmount()
       }, [])
-
-      React.useEffect(() => {
-        const mounted = mountedRef.current
-        if (mounted) mounted.setVisible(props.enabled !== false)
-      }, [props.enabled])
 
       return e('div', {
         ref: hostRef,
         className: 'soul-trail-preview',
-        'data-soul-trail': props.enabled ? 'on' : 'off',
+        'data-soul-trail': 'on',
         'data-soul-trail-speed': props.speed || 'slow',
         'data-soul-trail-width': props.width || 'thin',
         style: { '--soul-trail-color': safeTrailColor(props.color) }
@@ -1823,6 +1969,9 @@ window.__ModuleLoader__.load({
 
       const registerSettingsNavIcon = () => {
         let disposed = false
+        // 改画前记下宿主 svg 的原始子节点：此前卸载时只清 marker 属性、不还原内容，
+        // 于是禁用插件 / HMR 之后导航栏仍显示插件图标，直到壳层重建那个按钮。
+        const originalIcons = new Map()
 
         const sync = () => {
           if (disposed) return
@@ -1841,6 +1990,7 @@ window.__ModuleLoader__.load({
               if (existingIcon) {
                 // 标记已替换；React 重建按钮时标记随之消失，会重新画一次
                 button.setAttribute(SOUL_ICON_MARKER, 'true')
+                originalIcons.set(existingIcon, Array.from(existingIcon.childNodes))
                 paintSoulNavIcon(existingIcon)
               }
             } else {
@@ -1851,14 +2001,24 @@ window.__ModuleLoader__.load({
 
         // 延迟执行初始同步，等待设置页面渲染完成
         let timer = setTimeout(sync, 500)
+        // 最长等待：防抖只该合并「一连串变化」，不该被无限推迟 —— 会话流式输出时
+        // body 每帧都在变，纯 100ms 防抖会让 sync 永远排不到（图标一直不替换）。
+        const MAX_WAIT_MS = 600
+        let pendingSince = 0
 
         // 监听 DOM 变化（只监听子节点添加，不监听所有变化）
         const observer = new MutationObserver(() => {
           // 防抖：每次变化都重置计时器，停止变化 100ms 后执行
           // （修复：此前新计时器未赋回 timer，clearTimeout 永远只清除首个 500ms
           // 计时器，防抖实际失效，每次 DOM 变化都会调度一次 sync）
+          const now = Date.now()
+          if (!pendingSince) pendingSince = now
           clearTimeout(timer)
-          timer = setTimeout(sync, 100)
+          const waited = now - pendingSince
+          timer = setTimeout(() => {
+            pendingSince = 0
+            sync()
+          }, waited >= MAX_WAIT_MS ? 0 : 100)
         })
 
         observer.observe(document.body, {
@@ -1870,6 +2030,11 @@ window.__ModuleLoader__.load({
           disposed = true
           clearTimeout(timer)
           observer.disconnect()
+          // 先还原图标内容，再清 marker：顺序反了会留下「无标记但已被改画」的节点
+          for (const [svg, nodes] of originalIcons) {
+            if (svg && typeof svg.replaceChildren === 'function') svg.replaceChildren(...nodes)
+          }
+          originalIcons.clear()
           document.querySelectorAll(`[${SOUL_NAV_MARKER}]`).forEach((element) => {
             element.removeAttribute(SOUL_NAV_MARKER)
           })

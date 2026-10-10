@@ -39,7 +39,7 @@ import { PROFILE_FIELDS } from '../lib/config.mjs'
 
 // 基线运行应跑出的断言数：E 场景 24 项 + F 损坏场景 8 项 + 2 项判断力对照。
 // 跑完时校验，防止「脚本加/删用例」与文档口径悄悄脱节。
-const EXPECTED_ASSERTIONS = 34
+const EXPECTED_ASSERTIONS = 38
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -189,9 +189,20 @@ async function scenario(entry) {
       updatedAt: '2025-01-01T00:00:00.000Z'
     }
     const LEGACY_NAME = '历史预设'
+    // 同批预置两个「取值非法」的预设（必须在挂载前落盘：loadConfig 会缓存首次读取）。
+    // 'friendly' 是 v0.1.x 的合法 style 名，LEGACY_STYLE_MAP 只迁移**活动配置**、
+    // 不迁移预设库内的值 —— 所以这是真实升级路径会遇到的数据，不是人为构造。
+    const PARTIAL_NAME = '部分非法预设'
+    const ALL_INVALID_NAME = '全部非法预设'
     writeFileSync(
       join(dshHome, 'soul-config.json'),
-      JSON.stringify({ personas: { [LEGACY_NAME]: LEGACY_PERSONA } }, null, 2)
+      JSON.stringify({
+        personas: {
+          [LEGACY_NAME]: LEGACY_PERSONA,
+          [PARTIAL_NAME]: { style: 'friendly', emoji: 'default', customInstructions: 'P1-部分非法' },
+          [ALL_INVALID_NAME]: { style: 'bogus', emoji: 'lots' }
+        }
+      }, null, 2)
     )
 
     const mod = await import(pathToFileURL(entry).href + `?t=${Date.now()}`)
@@ -351,6 +362,44 @@ async function scenario(entry) {
       'E30 应用历史预设同样不动「关于你」（迁移 + 应用白名单双重防线）',
       afterLegacy.nickname === '改过的昵称' && afterLegacy.style === LEGACY_PERSONA.style,
       JSON.stringify({ nickname: afterLegacy.nickname, style: afterLegacy.style })
+    )
+
+    // ── 预设含非法取值时不得静默部分应用 ────────────────────────────────────────
+    // normalizePersonas 只按字段名过滤、**不校验取值**，所以磁盘上的历史值（v0.1.x 的
+    // 合法 style 'friendly'）或手改的异常值会走到应用路径被 sanitizeConfig 拒绝。
+    // 此前两条应用路径都只取 patch、把 errors 丢掉 ⇒ 预设被「部分应用」却返回
+    // ok:true，用户以为整套生效（实测 style 与 emoji 被静默丢弃）。
+    // 现在：合法部分照常应用，被丢弃的字段必须出现在 invalid 里回报。
+    const usePartial = await callRoute(ctx, '/api/soul/personas/use', { name: PARTIAL_NAME })
+    push(
+      'E31 应用含非法取值的预设时，被丢弃的字段必须在 invalid 里回报（不再静默部分应用）',
+      usePartial.status === 200 &&
+        Array.isArray(usePartial.body?.invalid) &&
+        usePartial.body.invalid.includes('style') &&
+        // 合法部分确实应用了：不能因为报错就整体不回写
+        usePartial.body?.config?.customInstructions === 'P1-部分非法',
+      JSON.stringify({ status: usePartial.status, invalid: usePartial.body?.invalid, changed: usePartial.body?.changed })
+    )
+    const useAllBad = await callRoute(ctx, '/api/soul/personas/use', { name: ALL_INVALID_NAME })
+    push(
+      'E32 预设无任何合法字段时按失败处理（400），不得返回 ok:true 假装应用成功',
+      useAllBad.status === 400 && useAllBad.body?.ok === false,
+      JSON.stringify({ status: useAllBad.status, body: useAllBad.body })
+    )
+    const useClean = await callRoute(ctx, '/api/soul/personas/use', { name: LEGACY_NAME })
+    push(
+      'E33 正常预设不受影响：invalid 为空数组（防空过 —— 若判定写反，E31 会通过而这条必炸）',
+      useClean.status === 200 && Array.isArray(useClean.body?.invalid) && useClean.body.invalid.length === 0,
+      JSON.stringify({ status: useClean.status, invalid: useClean.body?.invalid })
+    )
+
+    // 只读端点也必须判方法：宿主只做路径匹配，method 判定是 handler 的责任。
+    // /api/soul/prompt 此前是唯一漏判的端点 —— 实测 POST 也能拿到 200。
+    const promptWrongMethod = await callRoute(ctx, '/api/soul/prompt', null, 'POST')
+    push(
+      'E34 只读端点拒绝非 GET（POST /api/soul/prompt 必须 405，而非 200）',
+      promptWrongMethod.status === 405,
+      `status=${promptWrongMethod.status}`
     )
   } finally {
     if (previous === undefined) delete process.env.DSH_HOME

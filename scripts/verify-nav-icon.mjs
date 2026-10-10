@@ -96,7 +96,23 @@ function findBrowser(explicit) {
       '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
     )
   } else {
-    candidates.push('google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge')
+    // Linux 必须用**绝对路径**：`fs.existsSync('google-chrome')` 只按当前工作目录解析
+    // 相对路径，**不做 PATH 查找** —— 实测恒为 false，于是 CI（ubuntu runner 自带
+    // Chrome）上这 16 项永远走「找不到浏览器」的跳过分支，而 ci.yml 却声称「真跑」。
+    // 这里与 verify-trail 的 Linux 分支保持一致。
+    candidates.push(
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+      '/usr/bin/microsoft-edge'
+    )
+    // 兜底：PATH 里逐个目录拼绝对路径（这才是 existsSync 能判定的形态）
+    const pathDirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean)
+    for (const dir of pathDirs) {
+      for (const name of ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge']) {
+        candidates.push(path.join(dir, name))
+      }
+    }
   }
   for (const candidate of candidates) {
     if (!candidate) continue
