@@ -33,6 +33,10 @@
     "type": "git",
     "url": "git+https://github.com/Aliuyanfeng/dsh-soul.git"
   },
+  "homepage": "https://github.com/Aliuyanfeng/dsh-soul#readme",
+  "bugs": {
+    "url": "https://github.com/Aliuyanfeng/dsh-soul/issues"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1 || ^4.0.5-alpha.1",
     "@deepseek-ai/dsh-llm": ">=0.1.1-rc.2 <0.3.0-0",
