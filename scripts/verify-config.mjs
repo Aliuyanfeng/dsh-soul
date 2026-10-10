@@ -35,6 +35,14 @@ import {
   personaMatches,
   resolvePersona
 } from '../lib/personas.mjs'
+import { assertCount } from './lib/skip-report.mjs'
+
+// 基线运行应跑出的断言数。跑完时校验，防止「脚本加/删用例」与文档口径悄悄脱节。
+//
+// 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
+// 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
+// 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
+const EXPECTED_ASSERTIONS = 80
 
 let passed = 0
 function check(name, fn) {
@@ -1003,7 +1011,7 @@ check('client 双语文案表逐键对齐', () => {
   assert.deepEqual([...zh].sort(), [...en].sort(), 'client i18n 的 zh / en 必须逐键对齐')
 })
 
-check('校验链与 --strict 链覆盖同一组脚本，且后者逐项带 --strict', () => {
+check('校验链与 --strict 链覆盖同一组脚本，且严格语义真在各脚本里实现', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   const entries = (cmd) => [...String(cmd).matchAll(/scripts\/([\w.-]+\.mjs)(\s+--strict)?/g)]
     .map((m) => ({ file: m[1], strict: Boolean(m[2]) }))
@@ -1020,8 +1028,34 @@ check('校验链与 --strict 链覆盖同一组脚本，且后者逐项带 --str
     'verify:strict 的每一项都必须带 --strict，否则那一项仍会「跳过即通过」'
   )
   for (const { file } of [...chain, ...strict]) {
-    assert.ok(existsSync(new URL(`../scripts/${file}`, import.meta.url)), `package.json 引用了不存在的脚本：${file}`)
+    const url = new URL(`../scripts/${file}`, import.meta.url)
+    assert.ok(existsSync(url), `package.json 引用了不存在的脚本：${file}`)
+    const src = readFileSync(url, 'utf8')
+    // 光在 package.json 里写上 `--strict` 是不够的 —— 脚本必须真的实现那套语义：
+    //   ① 引入 skip-report（跳过与断言数的唯一实现）；
+    //   ② 把「本脚本有多少断言」交给它：跑完时 `assertCount` 精确校验，或像
+    //      verify-compat 那样把 **nominal**（随环境浮动的检查数）交给 `skipExit`。
+    //      两者取其一 —— compat 的检查数本身取决于本机装了什么，精确相等不适用。
+    // 本版之前 verify-config / verify-store 两条都不满足，于是链里的 `--strict`
+    // 对它们纯属装饰、数字也没人守 —— 这条断言就是为了让那种状态跑不起来。
+    assert.ok(
+      // 必须是一条**真正的 import 语句**，不能只在注释里出现这段路径 —— 否则把 import
+      // 注掉、留下一行注释，这条断言照样通过（判断力对照实测过这个漏法）。
+      /^\s*import\b[^\n]*from '\.\/lib\/skip-report\.mjs'/m.test(src),
+      `${file} 必须真正 import ./lib/skip-report.mjs，否则跳过语义与断言数都无人守`
+    )
+    assert.ok(
+      /\bassertCount\(/.test(src) || /NOMINAL_ASSERTIONS/.test(src),
+      `${file} 必须把断言数交给 skip-report（assertCount 精确校验，或 NOMINAL_ASSERTIONS 供 skipExit 报告）`
+    )
+    assert.equal(
+      /process\.argv\.includes\('--strict'\)/.test(src),
+      false,
+      `${file} 不得自己解析 --strict（必须走 skip-report 的 strictMode()，否则两处判定会漂移）`
+    )
   }
 })
+
+if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 
 console.log(`\n全部通过：${passed} 项检查`)

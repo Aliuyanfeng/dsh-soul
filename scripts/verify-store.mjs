@@ -21,13 +21,7 @@ import {
   readConfigFile,
   writeConfigFile
 } from '../lib/store.mjs'
-
-let passed = 0
-async function check(name, fn) {
-  await fn()
-  passed++
-  console.log(`  ✓ ${name}`)
-}
+import { assertCount, skipNote } from './lib/skip-report.mjs'
 
 const root = mkdtempSync(join(tmpdir(), 'dsh-soul-store-'))
 let seq = 0
@@ -35,6 +29,45 @@ function freshPath(label = 'config') {
   seq += 1
   return join(root, `${label}-${seq}.json`)
 }
+
+// 本机是否提供 inode。`writeConfigFile` 用「临时文件 + rename」落盘，而 rename 会替换
+// 目录项 ⇒ 覆盖前后 inode 不同；这是区分它和「原地截断重写」最直接的判据。少数平台上
+// `statSync().ino` 恒为 0（不提供该信息），此时那一条断言无条件执行 —— 走 skipNote
+// 如实报告，并在 --strict 下算失败（而不是静默不跑）。
+const inodeSupported = detectInodeSupport()
+function detectInodeSupport() {
+  try {
+    const probe = join(root, 'inode-probe.json')
+    writeFileSync(probe, '{}', 'utf8')
+    return statSync(probe).ino !== 0
+  } catch {
+    return false
+  }
+}
+
+// 基线运行应跑出的检查数；不提供 inode 时那条判据不执行，声明值随之减一。
+const EXPECTED_ASSERTIONS = inodeSupported ? 18 : 17
+
+let strictOk = true
+
+let passed = 0
+async function check(name, fn) {
+  // fn 返回 false 表示「这一项本次未执行，且已在内部用 skipNote 说明过」⇒ 不计入 passed。
+  let counted
+  try {
+    counted = await fn()
+  } catch (error) {
+    // 同 verify-client：失败时点名用例，否则只有一个孤零零的 AssertionError。
+    // `stack` 与 `message` 都要改 —— 未捕获错误打印的是 stack，首行在构造时已写死。
+    error.message = `【${name}】${error.message}`
+    error.stack = `【${name}】${error.stack}`
+    throw error
+  }
+  if (counted === false) return
+  passed++
+  console.log(`  ✓ ${name}`)
+}
+
 process.on('exit', () => {
   try {
     rmSync(root, { recursive: true, force: true })
@@ -178,11 +211,16 @@ await check('原子写：以 rename 替换（覆盖前后 inode 不同）', asyn
   await writeConfigFile(p, { a: 2 })
   const second = statSync(p).ino
   assert.deepEqual(JSON.parse(readFileSync(p, 'utf8')), { a: 2 }, '覆盖后的内容必须是新的')
-  if (first !== 0 && second !== 0) {
-    // rename 会替换目录项，因此 inode 改变。这是「直接 writeFile 原地改写」与
-    // 「临时文件 + rename」最直观的区别；平台不提供 inode 时（返回 0）跳过。
-    assert.notEqual(first, second, '覆盖应通过 rename 换掉目录项，而不是原地截断重写')
+  if (!inodeSupported) {
+    strictOk = skipNote(
+      'verify-store（rename 替换的 inode 判据）',
+      1,
+      '本平台不提供 inode（statSync().ino 恒为 0）',
+      '在提供 inode 的文件系统上重跑'
+    ) && strictOk
+    return false
   }
+  assert.notEqual(first, second, '覆盖应通过 rename 换掉目录项，而不是原地截断重写')
 })
 
 await check('上次中断残留的 .tmp 会被下一次写入清理', async () => {
@@ -262,5 +300,11 @@ await check('已有旧备份时会被本次内容覆盖（避免保留一份更�
   assert.equal(readFileSync(target, 'utf8'), 'newer damaged', '备份应反映最近一次被丢弃的内容')
   assert.equal(existsSync(p), false)
 })
+
+if (!assertCount('verify-store', passed, EXPECTED_ASSERTIONS)) process.exit(1)
+if (!strictOk) {
+  console.log('结果：有断言未执行（--strict 模式下按失败处理）。')
+  process.exit(1)
+}
 
 console.log(`\n全部通过：${passed} 项检查`)
