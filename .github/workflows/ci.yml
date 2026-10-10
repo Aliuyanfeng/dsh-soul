@@ -1,0 +1,61 @@
+# 回归套件：push / PR 时跑全部离线校验
+#
+# 为什么需要它：仓库有 8 个校验脚本、两百多项断言，但此前**没有任何 CI 在跑它们**
+# —— 只有 `publish.yml`（`on: release`）与 `stale.yml`。也就是说 push 与 PR 全凭本机
+# 自觉，`publish.yml` 也只做 `npm pack --dry-run`、不以校验为发布门槛。
+#
+# 为什么**不**装依赖：本仓库只有 `pnpm-lock.yaml`（无 `package-lock.json`），
+# `npm ci` 必然失败；而校验链本身是零依赖的（只用 Node 内置模块 + 仓库内源码，
+# `verify-e2e-prompt` 需要的 `@deepseek-ai/dsh-llm` 由脚本自己在临时目录生成形状兼容桩）。
+# 装上 peerDependencies 反而会引入「解析到哪一份宿主」的不确定性。
+#
+# 覆盖范围（ubuntu runner 自带 Chrome，所以浏览器那两套在这里是**真跑**，不像本机
+# 沙箱里恒跳过）：
+#   纯函数/契约  verify-config（80 项）
+#   持久化行为    verify-store（18 项）
+#   客户端行为    verify-client（12 项）
+#   端到端        verify-e2e-prompt（34 项）
+#   宿主实现      verify-live-prompt（20 项）  —— 需要本机装了 DSH，CI 上会跳过
+#   版本兼容      verify-compat                 —— 同上，CI 上会跳过
+#   渲染层        verify-trail（11 项）/ verify-nav-icon（16 项）—— 用 runner 自带的 Chrome
+#
+# 「跳过不等于通过」：跳过会显式打印未执行的断言数。CI 用非 strict 模式（`npm run
+# verify`），因为宿主相关的两套在 runner 上必然跳过；`npm run verify:strict` 是给
+# 本机「本该有浏览器 / 本该有 DSH」的场景用的。
+
+name: Verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Run regression suite
+        run: npm run verify
+
+      # 报告本次实际跑在哪里、跳过了什么 —— 让「绿」的含义一眼可查，而不是让人猜。
+      - name: Report browser availability
+        if: always()
+        run: google-chrome --version || echo "no google-chrome in PATH（渲染层校验会跳过）"

@@ -44,6 +44,12 @@ jobs:
       - name: Check package contents
         run: npm pack --dry-run
 
+      # 发布门槛：与 ci.yml 同一条命令。发布是不可逆的（同版本号不能重发），
+      # 所以宁可在这里多花一分钟，也不要把没跑过校验的代码推上 npm。
+      # 非 strict 模式：宿主相关的两套校验在这个 runner 上会跳过（见 ci.yml 的说明）。
+      - name: Run regression suite
+        run: npm run verify
+
       # 幂等守卫：同版本重复触发（如删除 Release 后重发）时跳过而不是 403 报错。
       # 注意：run 里的 exit 0 只结束当前步骤，无法跳过后续步骤，
       # 因此必须把结果写入 $GITHUB_OUTPUT，由 Publish 步骤用 if 判断。
