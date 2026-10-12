@@ -60,6 +60,7 @@
     },
     "./client": "./client/index.mjs",
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
@@ -67,6 +68,7 @@
     "lib",
     "client",
     "assets",
+    "locale",
     "cordis.patch.yml",
     "scripts",
     "README.md",

@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 91
+const EXPECTED_ASSERTIONS = 93
 
 let passed = 0
 const failures = []
@@ -503,6 +503,97 @@ check('清单：icon 落在 files 白名单内（会随 npm 包一起发布）',
   assert.ok(Array.isArray(manifest.files) && manifest.files.length > 0, 'package.json 缺少 files 白名单')
   const topLevel = iconRelative.split(sep)[0]
   assert.ok(manifest.files.includes(topLevel), `files 白名单应包含 ${topLevel}，否则图标不会进发布包`)
+})
+
+// 插件列表里显示的**名称**不等于包名：DSH 的 readPluginMeta 先读
+// `<包>/locale/<lang>.json` 的 `meta.title` / `meta.description`，读不到才回退到
+// package.json 的 name / description（见 dsh-app-boot 的 readPluginMeta / dictionariesOf）。
+// 三件事任一漏掉都会**静默回退成包名**（不报错、只是显示成 dsh-soul）：
+//   ① locale 目录没进 files 白名单 → 发布包里没有它
+//   ② exports 没声明 "./locale/*.json" → 子路径解析被 exports 挡住
+//   ③ JSON 结构不是 { meta: { title } } → dictionariesOf 读 meta?.title 取不到
+check('清单：插件展示名走 locale/*.json（否则静默回退成包名）', () => {
+  const localeDir = resolve(packageRoot, 'locale')
+  assert.equal(existsSync(localeDir), true, '缺少 locale/ 目录：插件列表会显示包名 dsh-soul 而不是自定义名称')
+  const localeFiles = readdirSync(localeDir).filter((f) => f.endsWith('.json'))
+  assert.ok(localeFiles.length > 0, 'locale/ 下没有任何 .json')
+
+  // ① files 白名单必须带上 locale
+  assert.ok(
+    manifest.files.includes('locale'),
+    'files 白名单应包含 locale，否则发布包里没有它、展示名静默回退成包名'
+  )
+  // ② exports 必须放行子路径（本包有 exports 字段，未声明的子路径会被挡住）
+  const exportKeys = Object.keys(manifest.exports || {})
+  assert.ok(
+    exportKeys.includes('./locale/*.json'),
+    'exports 必须声明 "./locale/*.json"，否则 resolvePluginResource 解析不到该子路径'
+  )
+
+  // ③ 结构必须是 { meta: { title, description } }，且英文必须有（LocalizedText 要求 en 回退）
+  for (const file of localeFiles) {
+    const raw = JSON.parse(readFileSync(resolve(localeDir, file), 'utf8'))
+    const lang = file.slice(0, -5)
+    assert.equal(/^[a-z][a-z\d-]*$/i.test(lang), true, `${file} 的文件名必须是语言 id`)
+    assert.ok(raw.meta && typeof raw.meta === 'object', `${file} 必须把字段包在 meta 里（dictionariesOf 读 meta?.title）`)
+    assert.equal(typeof raw.meta.title, 'string', `${file}: meta.title 必须是字符串`)
+    assert.ok(raw.meta.title.trim().length > 0, `${file}: meta.title 不能为空`)
+  }
+  const en = JSON.parse(readFileSync(resolve(localeDir, 'en.json'), 'utf8'))
+  assert.ok(en.meta.title, '必须有 locale/en.json（宿主以它作为英文回退与目录锚点）')
+  assert.notEqual(
+    en.meta.title,
+    manifest.name,
+    '英文展示名不应等于包名：那样与「回退成包名」无法区分，等于这条契约没生效'
+  )
+})
+
+check('清单：展示名能被宿主真实解析（readPluginMeta 行为层）', () => {
+  // 上游所有结构检查都只是「形状对」；真正要紧的是宿主解析出来的 title 不是包名回退值。
+  // 本机能定位到 dsh-app-boot 时直接调它的 readPluginMeta（该函数是导出的），
+  // 拿不到就 skipNote —— 与其它环境相关断言同一口径。
+  // 本机能定位到 dsh-app-boot 时直接调它的 readPluginMeta（该函数是导出的）。
+  // check() 回调是同步的，所以这里用 createRequire 加载（dsh-app-boot 是 CJS），
+  // 不用动态 import —— 否则会踩到「同步回调里出现 await」的语法错误。
+  //
+  // 解析不能只从包目录出发：dsh-app-boot 是 DSH 的嵌套依赖，不在本包 node_modules 里，
+  // 单点解析必然 MODULE_NOT_FOUND（与调用真实 dsh-tools 那条断言同一坑）。这里按
+  // verify-compat 的 anchors 思路显式发现：包目录 → cwd → DSH profiles 下各 profile。
+  let readPluginMeta = null
+  try {
+    const anchors = [packageRoot, process.cwd()]
+    const profiles = join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'profiles')
+    if (existsSync(profiles)) {
+      for (const p of readdirSync(profiles)) anchors.push(join(profiles, p))
+    }
+    for (const anchor of anchors) {
+      try {
+        const boot = createRequire(join(anchor, 'noop.js'))('@deepseek-ai/dsh-app-boot')
+        if (typeof boot?.readPluginMeta === 'function') { readPluginMeta = boot.readPluginMeta; break }
+      } catch { /* 换下一个 anchor */ }
+    }
+  } catch { /* 本机未装 DSH：交由 skipNote 报告 */ }
+  if (typeof readPluginMeta !== 'function') {
+    if (!skipNote('verify-config', 1, '本机未解析到 dsh-app-boot，展示名只做结构层校验（行为层需真实宿主）', '安装 DSH 后重跑即可覆盖行为层')) {
+      failures.push({ name: '展示名行为层（需真实 dsh-app-boot）', err: new Error('--strict 下跳过按失败处理') })
+    }
+    return
+  }
+  const meta = readPluginMeta(manifest.name, pathToFileURL(join(packageRoot, 'noop.js')).href)
+  assert.ok(meta, '宿主 readPluginMeta 返回 undefined：展示元数据完全没被读到')
+  assert.equal(meta.error, undefined, `宿主解析展示元数据时报错：${meta.error}`)
+  const title = meta.title
+  assert.ok(title, '宿主未解析出 title（会显示包名回退值）')
+  const resolved = typeof title === 'string' ? { en: title } : title
+  assert.notEqual(resolved.en, manifest.name, '宿主解析出的英文 title 仍是包名：locale 未被读取')
+  const en = JSON.parse(readFileSync(resolve(packageRoot, 'locale/en.json'), 'utf8'))
+  assert.equal(resolved.en, en.meta.title, '宿主解析出的 title 与 locale/en.json 不一致')
+  // 中文也应可用（dictionariesOf 会扫描 locale/ 下的所有 .json）
+  const zhPath = resolve(packageRoot, 'locale/zh.json')
+  if (existsSync(zhPath)) {
+    const zh = JSON.parse(readFileSync(zhPath, 'utf8'))
+    assert.equal(resolved.zh, zh.meta.title, '宿主解析出的中文 title 与 locale/zh.json 不一致')
+  }
 })
 
 const iconSvg = iconRef ? readFileSync(iconPath, 'utf8') : ''
