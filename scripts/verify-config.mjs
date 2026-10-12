@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
-import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   DEFAULT_CONFIG,
@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 94
+const EXPECTED_ASSERTIONS = 96
 
 let passed = 0
 const failures = []
@@ -552,7 +552,6 @@ check('清单：展示名能被宿主真实解析（readPluginMeta 行为层）'
   // 上游所有结构检查都只是「形状对」；真正要紧的是宿主解析出来的 title 不是包名回退值。
   // 本机能定位到 dsh-app-boot 时直接调它的 readPluginMeta（该函数是导出的），
   // 拿不到就 skipNote —— 与其它环境相关断言同一口径。
-  // 本机能定位到 dsh-app-boot 时直接调它的 readPluginMeta（该函数是导出的）。
   // check() 回调是同步的，所以这里用 createRequire 加载（dsh-app-boot 是 CJS），
   // 不用动态 import —— 否则会踩到「同步回调里出现 await」的语法错误。
   //
@@ -968,6 +967,127 @@ check('客户端内置预设行不渲染删除按钮，改为「内置」标记'
     /soul-persona-slot'[^)]*\}\s*,\s*\{[^}]*onClick/.test(clientCode),
     false,
     '空占位不应是可点控件'
+  )
+})
+
+// 解析宿主主题包（dsh-client-ui-theme），供「CSS 引用的 token 必须真实存在」这条断言使用。
+// 与 dsh-tools / dsh-app-boot 同样的 anchors 思路：单点解析必失败（peer/嵌套依赖）。
+const loadThemeCss = () => {
+  const anchors = [packageRoot, process.cwd()]
+  try {
+    const profiles = join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'profiles')
+    if (existsSync(profiles)) for (const p of readdirSync(profiles)) anchors.push(join(profiles, p))
+  } catch { /* 忽略：下面按 anchor 逐个尝试 */ }
+  for (const anchor of anchors) {
+    try {
+      const req = createRequire(join(anchor, 'noop.js'))
+      const entry = req.resolve('@deepseek-ai/dsh-client-ui-theme')
+      // 主题的 token 定义在 lib/client.js（入口可能指向别处，故顺带扫同目录）
+      const dir = dirname(entry)
+      for (const file of [entry, join(dir, 'client.js'), join(dir, 'index.js')]) {
+        if (existsSync(file)) {
+          const text = readFileSync(file, 'utf8')
+          if (text.includes('--dsw-radius-xl')) return text
+        }
+      }
+    } catch { /* 换下一个 anchor */ }
+  }
+  return null
+}
+
+check('客户端 CSS 引用的每个 --dsw-* token 都在宿主主题里真实存在', () => {
+  // 这是一类**静默失效**：CSS 里写了一个宿主不存在的变量名，var() 会回退成继承值
+  // （实测：不存在的 token ⇒ color 变成 rgb(0,0,0)，即黑色），不报错、不警告，
+  // 只在视觉上「颜色不对」。本插件曾用 `--dsw-alias-label-error` 表达错误色，
+  // 而宿主根本没有这个 token（宿主用 `--dsw-alias-state-error-primary`）⇒ 错误提示、
+  // 危险按钮、快捷开关失败态**全部渲染成黑色**，且 200+ 项断言全绿。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  assert.ok(cssBlock !== '', '找不到客户端 CSS 块')
+  const used = [...new Set([...cssBlock.matchAll(/var\((--dsw-[\w-]+)/g)].map((m) => m[1]))]
+  assert.ok(used.length > 0, '客户端 CSS 未引用任何主题 token（应使用 var(--dsw-*) 而非硬编码颜色）')
+
+  const theme = loadThemeCss()
+  if (theme === null) {
+    if (!skipNote('verify-config', 1, '本机未解析到 @deepseek-ai/dsh-client-ui-theme，CSS token 未做存在性校验', '安装 DSH 后重跑即可覆盖')) {
+      failures.push({ name: 'CSS token 存在性（需真实主题包）', err: new Error('--strict 下跳过按失败处理') })
+    }
+    return
+  }
+  const missing = used.filter((t) => !new RegExp(`${t}\\s*:`).test(theme))
+  assert.deepEqual(
+    missing,
+    [],
+    `CSS 引用了宿主主题里不存在的 token（var() 会静默回退成继承值）：${missing.join(', ')}`
+  )
+  // 反向也钉一条：曾用错的那个 token 不得再出现（防止回退）
+  assert.ok(
+    !used.includes('--dsw-alias-label-error'),
+    '--dsw-alias-label-error 在宿主主题里不存在（应为 --dsw-alias-state-error-primary）'
+  )
+})
+
+check('设置页样式对齐宿主栏目：无外层盒子，分组用卡片', () => {
+  // 宿主其余设置栏目（models / plugins / plugin-inventory）都不用外框：
+  // 内容直接落在 options 容器自带的 `padding:0 24px 24px` 里，分组靠「卡片」表达
+  // （.5px 描边 + settings-card-* + radius-xl）。此前 `.soul-section` 自带
+  // margin/padding/border/background，等于在宿主内边距里又套一层盒子 —— 这是观感
+  // 与其它栏目不统一最直接的原因。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  const section = cssBlock.match(/\.soul-section\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(section !== '', '找不到 .soul-section 规则')
+  for (const prop of ['padding', 'border', 'background']) {
+    assert.equal(
+      new RegExp(`(^|;)${prop}:`).test(section),
+      false,
+      `.soul-section 不应自带 ${prop}（宿主的设置内容区已提供内边距，再套一层盒子就与其它栏目不一致）`
+    )
+  }
+  assert.ok(/max-width:\s*\d+px/.test(section), '.soul-section 应限制最大宽度（宿主各栏目用 720~760px 限制行长）')
+  assert.ok(/display:flex/.test(section), '.soul-section 应为纵向弹性列（宿主各栏目同构）')
+
+  // 分组（折叠区）必须用宿主卡片 token，而不是普通边框 + 小圆角
+  const accordion = cssBlock.match(/\.soul-accordion\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(accordion !== '', '找不到 .soul-accordion 规则')
+  assert.ok(/settings-card-stroke/.test(accordion), '分组应使用 settings-card-stroke 描边（宿主卡片统一色）')
+  assert.ok(/settings-card-fill/.test(accordion), '分组应使用 settings-card-fill 底色')
+  assert.ok(/radius-xl/.test(accordion), '分组应使用 radius-xl 圆角（与宿主卡片一致）')
+
+  // 标题规格对齐：宿主栏目标题是 16px / 500 / lh24，不是 600
+  const title = cssBlock.match(/\.soul-section h3\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(/font-size:16px/.test(title), '栏目标题应为 16px（与宿主一致）')
+  assert.ok(/font-weight:500/.test(title), '栏目标题字重应为 500（宿主用 500，600 会显得更重）')
+
+  // 字段标签规格对齐：宿主 fieldLabel 是 12px / 500 / lh18
+  const fieldLabel = cssBlock.match(/\.soul-field label\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(/font-size:12px/.test(fieldLabel), '字段标签应为 12px（宿主 fieldLabel 同规格）')
+  assert.ok(/line-height:18px/.test(fieldLabel), '字段标签行高应为 18px（与宿主一致）')
+
+  // 语义色必须走宿主的状态色族，而不是硬编码。
+  // 两条容易误报的路径都要排掉（本条初版就被它们误伤过）：
+  //   ① 注释里提到的旧值（如「原先硬编码 #f6ffed」）—— 先剥注释；
+  //   ② var(--token, #fallback) 里的兜底值 —— 那是刻意保留的降级，不算硬编码。
+  const stripped = stripComments(cssBlock)
+  let withoutFallbacks = ''
+  for (let i = 0; i < stripped.length; i++) {
+    if (stripped.startsWith('var(', i)) {
+      // 括号配平跳过整个 var(...)（内部可能嵌套 color-mix(...)）
+      let depth = 0
+      let j = i + 3
+      for (; j < stripped.length; j++) {
+        if (stripped[j] === '(') depth++
+        else if (stripped[j] === ')') { depth--; if (depth === 0) break }
+      }
+      withoutFallbacks += 'var()'
+      i = j
+      continue
+    }
+    withoutFallbacks += stripped[i]
+  }
+  const hardcoded = [...withoutFallbacks.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map((m) => m[0])
+  assert.deepEqual(
+    hardcoded,
+    [],
+    `CSS 不应硬编码颜色（深色主题下会失效）：${[...new Set(hardcoded)].join(', ')}`
   )
 })
 

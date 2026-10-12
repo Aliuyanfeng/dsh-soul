@@ -524,16 +524,25 @@ window.__ModuleLoader__.load({
     // -------------------------------------------------------------------------
 
     const css = [
-      '.soul-section{margin:24px 0;padding:20px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}',
-      '.soul-section h3{margin:0 0 16px 0;font-size:16px;font-weight:600;color:var(--dsw-alias-label-primary)}',
-      '.soul-title-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}',
-      '.soul-version{flex:0 0 auto;color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:400;line-height:1.4;white-space:nowrap}',
-      '.soul-field{margin-bottom:16px;width:100%}',
-      '.soul-field label{display:block;margin-bottom:6px;font-size:13px;font-weight:500;color:var(--dsw-alias-label-secondary)}',
+      // —— 与宿主设置页对齐的栏目容器 ——
+      // 宿主其余栏目（models / plugins / plugin-inventory）都不用外框：内容直接落在
+      // 设置页 options 容器自带的 `padding:0 24px 24px` 里，靠 `max-width` 限制行长，
+      // 分组则用「卡片」表达（.5px 边框 + settings-card-* + radius-xl）。
+      // 我们此前是 `.soul-section{margin:24px 0;padding:20px;border:1px;radius:8px}`
+      // —— 等于在宿主内边距里又套了一层盒子，是观感不统一最直接的原因，故整层去掉。
+      '.soul-section{display:flex;flex-direction:column;gap:12px;width:100%;max-width:760px;color:var(--dsw-alias-label-primary)}',
+      // 标题：与宿主栏目标题同规格（16px / 500 / lh24，不是 600）
+      '.soul-section h3{margin:0;font-size:16px;font-weight:500;line-height:24px;color:var(--dsw-alias-label-primary)}',
+      '.soul-title-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-width:0}',
+      '.soul-version{flex:0 0 auto;color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:400;line-height:18px;white-space:nowrap}',
+      // 字段：宿主用 12px / 500 / lh18 的字段标签 + 8px 间距
+      '.soul-field{margin-bottom:14px;width:100%}',
+      '.soul-field label{display:block;margin-bottom:8px;font-size:12px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       // 与上面的 label 同形，但用于「没有对应控件」的分组标题（如光轨示例预览）：
       // 那种位置写 <label> 会是一个指向空的标签，语义错误
-      '.soul-field-label{display:block;margin-bottom:6px;font-size:13px;font-weight:500;color:var(--dsw-alias-label-secondary)}',
-      '.soul-field select,.soul-field textarea,.soul-field input[type=text]{width:100%;padding:8px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.5;box-sizing:border-box}',
+      '.soul-field-label{display:block;margin-bottom:8px;font-size:12px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-secondary)}',
+      // 控件：边框换宿主卡片描边色、圆角用 sm(8px)，与宿主输入控件一致
+      '.soul-field select,.soul-field textarea,.soul-field input[type=text]{width:100%;padding:8px 12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px;box-sizing:border-box}',
       '.soul-field select option{color:var(--dsw-alias-label-primary)}',
       '.soul-section{color-scheme:light}',
       'body[data-ds-dark-theme] .soul-section{color-scheme:dark}',
@@ -541,65 +550,66 @@ window.__ModuleLoader__.load({
       'body[data-ds-dark-theme] .soul-field select{color-scheme:dark}',
       '.soul-field textarea{min-height:100px;resize:vertical}',
       '.soul-field textarea.soul-textarea-sm{min-height:60px}',
-      '.soul-group-title{margin:20px 0 12px 0;padding-bottom:8px;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}',
-      '.soul-accordion{margin:12px 0;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;overflow:visible;background:var(--dsw-alias-bg-layer-1)}',
+      // 组标题：宿主用 15px/600 的小标题，这里对齐并去掉下边框（宿主分组靠卡片分隔，不靠横线）
+      '.soul-group-title{margin:4px 0 0 0;font-size:15px;font-weight:600;line-height:22px;color:var(--dsw-alias-label-primary)}',
+      // 折叠分组＝宿主卡片：.5px 描边 + card-fill + radius-xl + overflow hidden
+      '.soul-accordion{margin:0;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);overflow:hidden;background:var(--dsw-alias-settings-card-fill)}',
       '.soul-accordion-open{position:relative;z-index:20}',
-      // 展开时标题行下沿改直角：与下方内容区形成一条清晰的水平交界，
-      // 避免"标题与内容同为一片底色、分不清哪块是标题"
-      '.soul-accordion-open .soul-accordion-trigger{border-radius:5px 5px 0 0}',
-      '.soul-accordion-trigger{display:flex;align-items:center;width:100%;min-height:44px;gap:10px;padding:10px 12px;border:0;border-radius:5px;background:var(--dsw-alias-interactive-bg-active,rgba(127,127,127,0.12));color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer;transition:background-color .15s ease}',
-      '.soul-accordion-trigger:hover{background:var(--dsw-alias-interactive-bg-hover-accent,rgba(127,127,127,0.2))}',
-      '.soul-accordion-title{flex:0 0 auto;font-size:13px;font-weight:600}',
-      '.soul-accordion-summary{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:400}',
+      '.soul-accordion-trigger{display:flex;align-items:center;width:100%;min-height:44px;gap:10px;padding:10px 14px;border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer;transition:background-color .15s ease}',
+      '.soul-accordion-trigger:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-accordion-title{flex:0 0 auto;font-size:14px;font-weight:500;line-height:22px}',
+      '.soul-accordion-summary{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:400;line-height:18px}',
       '.soul-accordion-icon{flex:0 0 18px;color:var(--dsw-alias-label-secondary);font-size:18px;line-height:1;text-align:center}',
-      '.soul-accordion-body{padding:12px;border-top:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1)}',
+      '.soul-accordion-body{padding:14px;border-top:.5px solid var(--dsw-alias-settings-card-stroke);background:transparent}',
       '.soul-field select:focus,.soul-field textarea:focus,.soul-field input[type=text]:focus{outline:none;border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 25%, transparent)}',
-      '.soul-toggle{display:flex;align-items:center;gap:8px;margin-bottom:16px}',
-      '.soul-toggle label{margin:0;font-size:13px;color:var(--dsw-alias-label-primary)}',
-      '.soul-buttons{display:flex;gap:8px;margin-top:16px}',
-      '.soul-quick-toggle{position:relative;isolation:isolate;display:inline-flex;align-items:center;gap:6px;min-height:28px;overflow:hidden;padding:4px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap}',
+      '.soul-toggle{display:flex;align-items:center;gap:8px;margin-bottom:14px}',
+      '.soul-toggle label{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}',
+      '.soul-buttons{display:flex;gap:8px;margin-top:2px}',
+      '.soul-quick-toggle{position:relative;isolation:isolate;display:inline-flex;align-items:center;gap:6px;min-height:28px;overflow:hidden;padding:4px 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
       '.soul-quick-toggle:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
       '.soul-quick-toggle[data-enabled="true"]{color:var(--dsw-alias-brand-primary)}',
-      '.soul-quick-toggle[data-enabled="true"]:hover{border-color:#ef4444;color:#ef4444;box-shadow:0 0 0 2px rgba(239,68,68,.18)}',
-      '.soul-quick-toggle[data-enabled="false"]:hover{border-color:#22c55e;color:#22c55e;box-shadow:0 0 0 2px rgba(34,197,94,.18)}',
-      '.soul-quick-toggle[data-enabled="true"]:hover::before{background:rgba(239,68,68,.24);animation:soul-toggle-red-sweep .55s ease-out both}',
-      '.soul-quick-toggle[data-enabled="false"]:hover::before{background:rgba(34,197,94,.24);animation:soul-toggle-green-sweep .55s ease-out both}',
+      '.soul-quick-toggle[data-enabled="true"]:hover{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-state-error-primary) 18%,transparent)}',
+      '.soul-quick-toggle[data-enabled="false"]:hover{border-color:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-state-success-primary) 18%,transparent)}',
+      '.soul-quick-toggle[data-enabled="true"]:hover::before{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 24%,transparent);animation:soul-toggle-red-sweep .55s ease-out both}',
+      '.soul-quick-toggle[data-enabled="false"]:hover::before{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 24%,transparent);animation:soul-toggle-green-sweep .55s ease-out both}',
       '.soul-quick-toggle::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;transform:translateX(100%)}',
       '.soul-quick-toggle > *{position:relative;z-index:1}',
       '.soul-quick-toggle-dot{width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}',
-      '.soul-quick-toggle[data-enabled="true"] .soul-quick-toggle-dot{background:var(--dsw-static-green-500,#22c55e);animation:soul-status-pulse 1.8s ease-in-out infinite}',
+      '.soul-quick-toggle[data-enabled="true"] .soul-quick-toggle-dot{background:var(--dsw-alias-state-success-primary);animation:soul-status-pulse 1.8s ease-in-out infinite}',
       // 保存失败：小圆点转红并停止脉冲（按钮文案不变，故必须靠颜色 + title/aria-label 反馈）
-      '.soul-quick-toggle[data-failed="true"]{border-color:var(--dsw-alias-label-error);color:var(--dsw-alias-label-error)}',
-      '.soul-quick-toggle[data-failed="true"] .soul-quick-toggle-dot{background:var(--dsw-alias-label-error);animation:none}',
+      // 注意：--dsw-alias-label-error **在宿主主题里不存在**（实测 var() 回退成继承色＝黑），
+      // 宿主表达错误色统一用 --dsw-alias-state-error-primary，这里一并纠正。
+      '.soul-quick-toggle[data-failed="true"]{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}',
+      '.soul-quick-toggle[data-failed="true"] .soul-quick-toggle-dot{background:var(--dsw-alias-state-error-primary);animation:none}',
       '.soul-quick-toggle:disabled{cursor:wait;opacity:.6}',
       '@keyframes soul-toggle-red-sweep{from{transform:translateX(100%)}to{transform:translateX(-100%)}}',
       '@keyframes soul-toggle-green-sweep{from{transform:translateX(100%)}to{transform:translateX(-100%)}}',
-      '@keyframes soul-status-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 35%,transparent);opacity:.75}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 0%,transparent);opacity:1}}',
+      '@keyframes soul-status-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--dsw-alias-state-success-primary) 35%,transparent);opacity:.75}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--dsw-alias-state-success-primary) 0%,transparent);opacity:1}}',
       '@media (prefers-reduced-motion:reduce){.soul-quick-toggle[data-enabled="true"] .soul-quick-toggle-dot{animation:none}.soul-quick-toggle[data-enabled="true"]:hover::before,.soul-quick-toggle[data-enabled="false"]:hover::before{animation:none;transform:none}}',
-      '.soul-error{margin-top:8px;padding:8px 12px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-label-error);border-radius:6px;color:var(--dsw-alias-label-error);font-size:12px;width:100%;box-sizing:border-box}',
+      // 错误提示：颜色改用宿主真实存在的 state-error-primary（原先引用不存在的 token ⇒ 渲染成黑色）
+      '.soul-error{margin-top:8px;padding:10px 12px;background:var(--dsw-alias-interactive-bg-hover-danger,rgba(236,19,19,.05));border:.5px solid var(--dsw-alias-state-error-primary);border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;width:100%;box-sizing:border-box}',
       '.soul-hint{position:relative;display:inline-flex;align-items:center;margin-left:6px;color:var(--dsw-alias-label-secondary);cursor:help;vertical-align:middle}',
       '.soul-hint:hover{color:var(--dsw-alias-label-primary)}',
-      '.soul-hint-tip{position:absolute;bottom:calc(100% + 8px);left:0;padding:8px 10px;background:#ffffff;border:1px solid rgba(0,0,0,0.1);border-radius:6px;font-size:12px;font-weight:400;line-height:1.5;color:rgba(0,0,0,0.85);white-space:normal;width:max-content;max-width:260px;text-align:left;opacity:0;visibility:hidden;transition:opacity .15s ease;pointer-events:none;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.15)}',
+      '.soul-hint-tip{position:absolute;bottom:calc(100% + 8px);left:0;padding:8px 10px;background:var(--dsw-alias-bg-module-platform);border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);font-size:12px;font-weight:400;line-height:1.5;color:var(--dsw-alias-label-primary);white-space:normal;width:max-content;max-width:260px;text-align:left;opacity:0;visibility:hidden;transition:opacity .15s ease;pointer-events:none;z-index:9999;box-shadow:var(--dsw-shadow-lv3,0 4px 12px rgba(0,0,0,0.15))}',
       '.soul-hint:hover .soul-hint-tip{opacity:1;visibility:visible}',
       // 键盘聚焦同样要能拿到说明：只有 :hover 的话，键盘 / 读屏用户永远看不到提示
       '.soul-hint:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px;border-radius:3px}',
       '.soul-hint:focus-visible .soul-hint-tip{opacity:1;visibility:visible}',
-      '.soul-status{margin-top:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}',
-      '.soul-dirty{color:#d46b08}',
+      '.soul-status{margin-top:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
+      '.soul-dirty{color:var(--dsw-alias-state-warn-primary)}',
       // 人设预设行：三列网格「名称 | 摘要 | 操作」。
       // 用网格而非 flex 是为了让操作列**列宽固定并右对齐**——内容驱动的 flex 下，
       // 自建行多一个「删除」按钮会把「使用」挤左约 34px，与内置行的「使用」不在同一竖列。
       // 名称列同时容纳「★ 标记」「名称」「来源徽标」，徽标是名称的修饰而非操作，
       // 因此放在这里而不是操作区（放操作区会让内置/自建两类的按钮列错位）。
-      '.soul-persona-row{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr) auto;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px dashed var(--dsw-alias-border-l2);font-size:12px;border-radius:6px}',
+      '.soul-persona-row{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px 10px;border-bottom:.5px solid var(--dsw-alias-border-l2);font-size:12px;line-height:18px}',
+      '.soul-persona-row:last-child{border-bottom:0}',
       // 内置行用底色区分来源：不再靠标签占位，横向空间留给摘要
       '.soul-persona-row[data-builtin="true"]{background:var(--dsw-alias-interactive-bg-hover);border-bottom-color:transparent}',
       // 名称区：名称 + 徽标。徽标弱化（无边框、更小、更淡），避免与「使用 / 删除」抢注意力
       '.soul-persona-name{display:flex;align-items:center;gap:6px;min-width:0;color:var(--dsw-alias-label-primary);font-weight:500}',
       '.soul-persona-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.soul-persona-meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary)}',
-      // 操作区：两列等宽槽位，「使用」永远在第 1 列、「删除」永远在第 2 列 ⇒ 跨行严格同列。
-      // 内置行第 2 列为空占位（不留按钮，因为后端也拒绝删除），这正是两类行能对齐的原因。
+      '.soul-persona-meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
       // 操作区：固定宽度 + 两个等宽轨道，「使用」永远在第 1 轨、删除位永远在第 2 轨。
       //
       // 为什么不能用 `auto` / `minmax()`：每一行的操作区都是**独立的**网格容器，列宽由该行
@@ -612,18 +622,19 @@ window.__ModuleLoader__.load({
       '.soul-persona-actions{display:grid;grid-template-columns:1fr 1fr;justify-items:end;align-items:center;gap:4px 10px;width:9em;white-space:nowrap}',
       // 内置行第 2 轨的空占位：只负责让该轨道存在（不是可点控件，所以用 span）
       '.soul-persona-slot{display:block;width:0}',
-      // 内置行第 2 列的空占位：只负责撑住列宽，不是可点控件
-      '.soul-persona-slot{display:block;width:0}',
-      '.soul-persona-badge{font-size:10px;line-height:14px;padding:0 5px;border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary);white-space:nowrap}',
+      // 徽标：对齐宿主的 rowTag 规格（.5px 描边、radius-xs、11px/16px）
+      '.soul-persona-badge{border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-xs);color:var(--dsw-alias-label-secondary);flex:none;padding:0 6px;font-size:11px;line-height:16px;white-space:nowrap}',
       '.soul-persona-save{display:flex;gap:8px}',
       '.soul-persona-save input[type=text]{flex:1}',
-      '.soul-prompt-link{background:none;border:none;padding:0;font-size:12px;color:var(--dsw-alias-label-secondary);cursor:pointer;text-decoration:underline}',
+      '.soul-prompt-link{background:none;border:none;padding:0;font:inherit;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);cursor:pointer;text-decoration:underline}',
       '.soul-prompt-link:hover{color:var(--dsw-alias-label-primary)}',
-      '.soul-persona-danger{color:var(--dsw-alias-label-error)}',
-      '.soul-prompt-pre{margin:8px 0 0 0;padding:12px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;font-family:Consolas,Menlo,monospace;text-align:left;width:100%;box-sizing:border-box}',
-      '.soul-toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:8px 16px;border-radius:6px;font-size:13px;font-weight:500;z-index:10000;box-shadow:0 2px 8px rgba(0,0,0,0.15);pointer-events:none;text-align:center;min-width:auto;white-space:nowrap}',
-      '.soul-toast-success{background:#f6ffed;border:1px solid #b7eb8f;color:#52c41a}',
-      '.soul-toast-error{background:#fff1f0;border:1px solid #ffa39e;color:#f5222d}',
+      '.soul-persona-danger{color:var(--dsw-alias-state-error-primary)}',
+      // 提示词预览：宿主用 bg-module-platform 表达「内嵌代码/只读区」
+      '.soul-prompt-pre{margin:8px 0 0 0;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;font-family:var(--ds-font-family-code,Consolas,Menlo,monospace);text-align:left;width:100%;box-sizing:border-box}',
+      // 提示条：颜色全部走主题 token（原先硬编码 #f6ffed/#52c41a 等，深色主题下不可用）
+      '.soul-toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:9px 16px;border-radius:var(--dsw-radius-lg);font-size:13px;font-weight:500;line-height:20px;z-index:10000;box-shadow:var(--dsw-shadow-lv2,0 4px 12px rgba(0,0,0,0.1));pointer-events:none;text-align:center;min-width:auto;white-space:nowrap;max-width:min(80vw,420px)}',
+      '.soul-toast-success{background:var(--dsw-alias-bg-module-platform);border:.5px solid var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary)}',
+      '.soul-toast-error{background:var(--dsw-alias-bg-module-platform);border:.5px solid var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}',
       '@keyframes fadeInOut{0%{opacity:0;transform:translate(-50%,-50%) scale(0.9)}15%{opacity:1;transform:translate(-50%,-50%) scale(1)}85%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-50%) scale(0.9)}}',
       // —— 输入框光轨 ——
       // 几何规则（position/尺寸/contain）同时内联在元素上，见 mountTrailRing；
@@ -660,11 +671,11 @@ window.__ModuleLoader__.load({
       '[data-composer-card][data-soul-trail="on"]{--dsw-elevation-stroke-color:transparent}',
       // 设置页：颜色控件与实时示例
       '.soul-trail-colors{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
-      '.soul-trail-swatch{width:26px;height:26px;padding:0;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;cursor:pointer}',
+      '.soul-trail-swatch{width:26px;height:26px;padding:0;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);cursor:pointer}',
       '.soul-trail-swatch[data-active="true"]{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
-      '.soul-trail-picker{width:34px;height:26px;padding:0;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:none;cursor:pointer}',
-      '.soul-field .soul-trail-colors input.soul-trail-hex{width:104px;padding:5px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.4;font-family:Consolas,Menlo,monospace;box-sizing:border-box}',
-      '.soul-trail-preview{position:relative;margin-top:6px;padding:16px;border:1px solid var(--dsw-alias-border-l2);border-radius:22px;background:var(--dsw-alias-bg-layer-1)}',
+      '.soul-trail-picker{width:34px;height:26px;padding:0;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:none;cursor:pointer}',
+      '.soul-field .soul-trail-colors input.soul-trail-hex{width:104px;padding:5px 8px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.4;font-family:Consolas,Menlo,monospace;box-sizing:border-box}',
+      '.soul-trail-preview{position:relative;margin-top:6px;padding:16px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill)}',
       '.soul-trail-preview[data-soul-trail="on"]{border-color:transparent}',
       '.soul-trail-preview-text{font-size:12px;color:var(--dsw-alias-label-tertiary)}',
       // 开了「减少动态效果」时：光轨层停动画；提示条（.soul-toast，内联 fadeInOut）

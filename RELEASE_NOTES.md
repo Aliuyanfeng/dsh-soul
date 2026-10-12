@@ -85,9 +85,20 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - 根因是**校验缺口**：原断言只验到「`defineTool` 不抛错 = 注册成功」，**没走结果渲染那一步** —— 这正是「断言只到注册、没到能用」。现该断言升级为：抽出真实 `defineTool({...})` 定义对象整体求值 → 用真实 `defineTool` 注册 → **再逐种返回值走一遍 `output.render`**，要求返回 `[{ type: 'text', text }]` 且文本非空（4 种：成功 / pending 提议 / 失败 / 无变化）。判断力：删掉 `render` 立刻被拦，报错直指根因
 - **设置页轮询在页面隐藏时仍在跑**：`visibilitychange` 此前只处理了「变可见」这一半（`if (visible) refresh()`），而 `setInterval(refresh, 2000)` 无条件执行 ⇒ 后台标签页每 2s 仍发两个请求（config + personas），实测 250ms 内触发 4 次。修法是把守卫放进 `refresh` 本身（`interval` 与 `focus` 都走它，一处覆盖两条路径、无需重建定时器）。断言钉住「守卫必须在发请求之前」并含防回归（不得把轮询整个删掉当修好）；判断力 3 组变异（去守卫 / 守卫后置 / 删轮询），3/3 被拦
 
+**变更**
+
+- **设置页样式统一到宿主设置语言**（方案 A：去外层盒子 + 分组卡片化）：此前 `.soul-section` 自带 `margin/padding/border/background`，等于在宿主设置内容区（已有 `padding:0 24px 24px`）里**又套了一层盒子** —— 这是观感与「模型」「插件」等栏目不一致最直接的原因。现按宿主各栏目的实际写法对齐：
+  - **容器**：去掉外盒与背景，改 `display:flex;flex-direction:column;gap:12px;max-width:760px`，与宿主 `.zGbnIq_section` / `.pbvGtq_section` / `.qSYn7G_section` 同构
+  - **分组卡片**：`.5px` 描边 + `settings-card-stroke` / `settings-card-fill` + `radius-xl`(20px)，对齐宿主 `.zGbnIq_rowCard` / `.qSYn7G_card`（此前是 `1px` + `border-l2` + `6~8px` 圆角 + `bg-layer-1`）
+  - **标题**：`16px/500/24px`（此前字重 600，宿主用 500）；**字段标签**：`12px/500/18px`（此前 13px）
+  - **徽标**：`.5px` 描边 + `radius-xs` + `11px/16px`，对齐宿主 `.zGbnIq_rowTag`（此前 10px、无描边）
+  - **提示条**：硬编码的 `#f6ffed` / `#52c41a` / `#fff1f0` / `#f5222d` 全部换成 `state-success-primary` / `state-error-primary` + `bg-module-platform`——**原先在深色主题下完全不可用**
+  - **提示气泡**：`#ffffff` / `rgba(0,0,0,.85)` 硬编码同样改走 `bg-module-platform` / `label-primary`（深色主题下原本是白底黑字）
+- **修掉一类静默失效：CSS 引用了宿主不存在的 token**。`--dsw-alias-label-error` **在宿主主题里根本不存在**（宿主表达错误色统一用 `--dsw-alias-state-error-primary`），而我们在 3 处用了它：`var()` 对未定义变量会**静默回退成继承值**——真实 Chrome 实测渲染为 `rgb(0,0,0)`（黑色），不报错、不警告。后果是**错误提示、危险按钮、快捷开关失败态全部不红**，而 200+ 项断言全绿。现已全部纠正，并新增断言要求「CSS 引用的每个 `--dsw-*` token 必须在真实主题包里存在」（本机解析不到主题包时 `skipNote`）。判断力：把 token 改回 `label-error` 立刻被拦，报错直指不存在的名字
+
 **校验**
 
-- `verify-config` 91 → **94 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」三条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）
+- `verify-config` 91 → **96 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」、「CSS token 存在性」、「样式对齐宿主栏目」五条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）。样式相关的 8 组变异全部被拦（不存在 token / 加回 padding / 分组退回旧边框 / 标题字重 600 / 标签字号 13px / 硬编码颜色 / 删 render / 轮询去掉守卫）
 
 ### v0.7.1（2026-10-10）
 
