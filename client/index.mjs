@@ -548,8 +548,8 @@ window.__ModuleLoader__.load({
       'body[data-ds-dark-theme] .soul-section{color-scheme:dark}',
       '.soul-field select{color-scheme:light}',
       'body[data-ds-dark-theme] .soul-field select{color-scheme:dark}',
-      '.soul-field textarea{min-height:100px;resize:vertical}',
-      '.soul-field textarea.soul-textarea-sm{min-height:60px}',
+      '.soul-field textarea{min-height:120px;resize:vertical}',
+      '.soul-field textarea.soul-textarea-sm{min-height:72px}',
       // 组标题：宿主用 15px/600 的小标题，这里对齐并去掉下边框（宿主分组靠卡片分隔，不靠横线）
       '.soul-group-title{margin:4px 0 0 0;font-size:15px;font-weight:600;line-height:22px;color:var(--dsw-alias-label-primary)}',
       // 折叠分组＝宿主卡片：.5px 描边 + card-fill + radius-xl + overflow hidden
@@ -597,15 +597,19 @@ window.__ModuleLoader__.load({
       '.soul-hint:focus-visible .soul-hint-tip{opacity:1;visibility:visible}',
       '.soul-status{margin-top:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       '.soul-dirty{color:var(--dsw-alias-state-warn-primary)}',
-      // 人设预设行：三列网格「名称 | 摘要 | 操作」。
-      // 用网格而非 flex 是为了让操作列**列宽固定并右对齐**——内容驱动的 flex 下，
-      // 自建行多一个「删除」按钮会把「使用」挤左约 34px，与内置行的「使用」不在同一竖列。
-      // 名称列同时容纳「★ 标记」「名称」「来源徽标」，徽标是名称的修饰而非操作，
-      // 因此放在这里而不是操作区（放操作区会让内置/自建两类的按钮列错位）。
-      '.soul-persona-row{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px 10px;border-bottom:.5px solid var(--dsw-alias-border-l2);font-size:12px;line-height:18px}',
-      '.soul-persona-row:last-child{border-bottom:0}',
-      // 内置行用底色区分来源：不再靠标签占位，横向空间留给摘要
-      '.soul-persona-row[data-builtin="true"]{background:var(--dsw-alias-interactive-bg-hover);border-bottom-color:transparent}',
+      // —— 人设预设行 ——
+      // 对齐宿主「模型列表」的行卡片语言（.zGbnIq_rowCard / .zGbnIq_rows）：
+      // 每个预设是一张独立卡片（.5px 描边 + card-fill + radius-xl），卡片之间 gap 8px，
+      // 而不是此前的「共用一个容器 + 虚线分隔」。这样与其它栏目的列表观感一致，
+      // 也天然给出用户要的「每个人设之间有一点间隔」。
+      '.soul-persona-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}',
+      // 三列网格「名称 | 摘要 | 操作」。用网格而非 flex 是为了让操作列**列宽固定并右对齐**
+      // ——内容驱动的 flex 下，自建行多一个「删除」按钮会把「使用」挤左约 34px，
+      // 与内置行的「使用」不在同一竖列（后续已改为图标/文字按钮同规格，但对齐仍需固定列）。
+      '.soul-persona-row{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr) auto;align-items:center;gap:8px;padding:10px 12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-settings-card-fill);font-size:12px;line-height:18px}',
+      // 来源区分交给徽标（宿主也是用 rowTag 标「默认」而非改底色）；行底色保持统一，
+      // 因为宿主**不给行容器加 hover 底色** —— 灰色底在白色卡片群里会被误读成 hover 态。
+      // 这里只把光标语义留给交互元素，行本身不设背景差异。
       // 名称区：名称 + 徽标。徽标弱化（无边框、更小、更淡），避免与「使用 / 删除」抢注意力
       '.soul-persona-name{display:flex;align-items:center;gap:6px;min-width:0;color:var(--dsw-alias-label-primary);font-weight:500}',
       '.soul-persona-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
@@ -615,20 +619,25 @@ window.__ModuleLoader__.load({
       // 为什么不能用 `auto` / `minmax()`：每一行的操作区都是**独立的**网格容器，列宽由该行
       // 自己的内容算出——内置行第 2 轨为空（宽 0），自建行第 2 轨是「删除」的宽度，于是
       // 两行的「使用」仍不同列。只有把容器宽度与轨道都定死，跨行几何才必然一致。
-      //
-      // 9em（12px 字号下 108px）对中英文都足够：中文「使用/删除」约 24px，英文
-      // 「Use/Delete」约 22/39px，两轨各 54px 都有余量。客户端词典只提供 zh / en，
-      // 因此这个宽度不需要为其它语言再放宽。
-      '.soul-persona-actions{display:grid;grid-template-columns:1fr 1fr;justify-items:end;align-items:center;gap:4px 10px;width:9em;white-space:nowrap}',
+      // 间距对齐宿主 .zGbnIq_rowActions 的 gap:4px。
+      '.soul-persona-actions{display:grid;grid-template-columns:1fr 1fr;justify-items:end;align-items:center;gap:4px;width:9.5em;white-space:nowrap}',
       // 内置行第 2 轨的空占位：只负责让该轨道存在（不是可点控件，所以用 span）
       '.soul-persona-slot{display:block;width:0}',
+      // —— 行操作按钮：完全对齐宿主模型列表的两个按钮规格 ——
+      // 「使用」对应宿主 .zGbnIq_linkButton：height 28 / radius-sm / padding 0 10 /
+      //   12px-18px / 色 label-tertiary / 透明底无边框（hover 提亮到 label-primary）
+      // 「删除」对应宿主 .zGbnIq_dangerButton 的窄档：同尺寸同圆角，色 state-error-primary，
+      //   hover 时底色 interactive-bg-hover-danger
+      '.soul-persona-action{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap;transition:background-color .15s ease,color .15s ease}',
+      '.soul-persona-action:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.soul-persona-action:disabled{cursor:default;opacity:.4}',
+      '.soul-persona-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      '.soul-persona-danger{color:var(--dsw-alias-state-error-primary)}',
+      '.soul-persona-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}',
       // 徽标：对齐宿主的 rowTag 规格（.5px 描边、radius-xs、11px/16px）
       '.soul-persona-badge{border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-xs);color:var(--dsw-alias-label-secondary);flex:none;padding:0 6px;font-size:11px;line-height:16px;white-space:nowrap}',
       '.soul-persona-save{display:flex;gap:8px}',
       '.soul-persona-save input[type=text]{flex:1}',
-      '.soul-prompt-link{background:none;border:none;padding:0;font:inherit;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);cursor:pointer;text-decoration:underline}',
-      '.soul-prompt-link:hover{color:var(--dsw-alias-label-primary)}',
-      '.soul-persona-danger{color:var(--dsw-alias-state-error-primary)}',
       // 提示词预览：宿主用 bg-module-platform 表达「内嵌代码/只读区」
       '.soul-prompt-pre{margin:8px 0 0 0;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;font-family:var(--ds-font-family-code,Consolas,Menlo,monospace);text-align:left;width:100%;box-sizing:border-box}',
       // 提示条：颜色全部走主题 token（原先硬编码 #f6ffed/#52c41a 等，深色主题下不可用）
@@ -1602,11 +1611,12 @@ window.__ModuleLoader__.load({
                 ? e('div', { className: 'soul-status' }, t('status.loading'))
                 : (personaNames.length === 0
                   ? e('div', { className: 'soul-status' }, t('personas.empty'))
-                  : e(Fragment, null,
+                  : e('div', { className: 'soul-persona-list' },
                     ...personaNames.map((name) => {
                       const entry = personas[name] || {}
                       const builtin = !!entry.builtin
-                      // data-builtin 同时承担两件事：内置行的底色区分，以及回归断言的可断言锚点
+                      // data-builtin 是回归断言的可断言锚点（来源区分已交给徽标，
+                      // 行底色保持统一，与宿主一致）
                       return e('div', { className: 'soul-persona-row', key: name, 'data-builtin': builtin ? 'true' : 'false' },
                         e('span', { className: 'soul-persona-name' },
                           e('span', { className: 'soul-persona-label' }, name === activePersona ? `★ ${name}` : name),
@@ -1616,12 +1626,13 @@ window.__ModuleLoader__.load({
                         ),
                         e('span', { className: 'soul-persona-meta' }, personaRowMeta(entry)),
                         e('span', { className: 'soul-persona-actions' },
-                          e('button', { type: 'button', className: 'soul-prompt-link', onClick: () => handleUsePersona(name) }, t('personas.use')),
+                          // 按钮规格对齐宿主模型列表：linkButton（使用）/ dangerButton（删除）
+                          e('button', { type: 'button', className: 'soul-persona-action', onClick: () => handleUsePersona(name) }, t('personas.use')),
                           // 内置预设不提供删除（后端也拒绝）：留一个空占位槽，让「使用」与
                           // 自建行严格同列。这里刻意不是按钮，避免造出一个点了没反应的控件。
                           builtin
                             ? e('span', { className: 'soul-persona-slot', 'aria-hidden': true })
-                            : e('button', { type: 'button', className: 'soul-prompt-link soul-persona-danger', onClick: () => handleDeletePersona(name) }, t('personas.delete'))
+                            : e('button', { type: 'button', className: 'soul-persona-action soul-persona-danger', onClick: () => handleDeletePersona(name) }, t('personas.delete'))
                         )
                       )
                     })

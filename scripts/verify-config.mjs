@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 96
+const EXPECTED_ASSERTIONS = 97
 
 let passed = 0
 const failures = []
@@ -958,9 +958,14 @@ check('客户端内置预设行不渲染删除按钮，改为「内置」标记'
     /builtin\s*\?\s*e\('span', \{ className: 'soul-persona-slot'/.test(clientCode),
     '内置行缺少操作区空占位（会导致「使用」与自建行不同列）'
   )
-  assert.ok(
-    /e\('button', \{ type: 'button', className: 'soul-prompt-link soul-persona-danger'/.test(stripComments(clientSource)),
-    '删除按钮未渲染'
+  // 删除按钮的类名由样式层决定（当前是 soul-persona-action + soul-persona-danger，
+  // 对齐宿主 .zGbnIq_dangerButton）。断言只钉「非内置行渲染了一个带 danger 类的按钮」，
+  // 不绑死完整类名字符串 —— 否则每次调样式都要改断言（初版正是绑死了旧类名而失效）。
+  const actionsBlock = extractCall(clientSource, "e('span', { className: 'soul-persona-actions' }")
+  assert.match(
+    actionsBlock,
+    /e\('button', \{[^}]*soul-persona-danger[^}]*\}/,
+    '删除按钮未渲染（非内置行应在操作区渲染带 soul-persona-danger 的按钮）'
   )
   // 空占位必须是 span 而不是 button —— 否则会造出一个点了没反应的控件
   assert.equal(
@@ -1088,6 +1093,59 @@ check('设置页样式对齐宿主栏目：无外层盒子，分组用卡片', (
     hardcoded,
     [],
     `CSS 不应硬编码颜色（深色主题下会失效）：${[...new Set(hardcoded)].join(', ')}`
+  )
+})
+
+check('人设行操作按钮规格对齐宿主列表按钮', () => {
+  // 宿主「模型列表」的行操作按钮是一套固定规格：
+  //   .zGbnIq_linkButton   height 28 / radius-sm / padding 0 10 / 12px-18px /
+  //                        color label-tertiary / 透明底无边框 / hover 提亮
+  //   .zGbnIq_dangerButton 同尺寸同圆角，color state-error-primary，
+  //                        hover 用 interactive-bg-hover-danger
+  // 我们此前用的是「下划线文字链接」样式，与宿主列表操作不一致。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  const btn = cssBlock.match(/\.soul-persona-action\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(btn !== '', '找不到 .soul-persona-action 规则')
+  for (const [pattern, why] of [
+    [/height:28px/, '高度应为 28px（与宿主行按钮一致）'],
+    [/border-radius:var\(--dsw-radius-sm\)/, '圆角应为 radius-sm（宿主 button 用 sm）'],
+    [/padding:0 10px/, '横向内边距应为 0 10px（与宿主一致）'],
+    [/font-size:12px/, '字号应为 12px'],
+    [/line-height:18px/, '行高应为 18px'],
+    [/background:transparent/, '默认透明底'],
+    [/border:0/, '无边框']
+  ]) {
+    assert.ok(pattern.test(btn), why)
+  }
+  assert.ok(
+    /color:var\(--dsw-alias-label-tertiary\)/.test(btn),
+    '「使用」按钮默认色应为 label-tertiary（宿主 linkButton 同色）'
+  )
+  // hover / danger 两态
+  assert.ok(
+    /\.soul-persona-action:hover:not\(:disabled\)\{[^}]*interactive-bg-hover/.test(cssBlock),
+    '按钮 hover 应使用 interactive-bg-hover 底色'
+  )
+  const danger = cssBlock.match(/\.soul-persona-danger\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(/state-error-primary/.test(danger), '删除按钮色应为 state-error-primary')
+  assert.ok(
+    /\.soul-persona-danger:hover:not\(:disabled\)\{[^}]*interactive-bg-hover-danger/.test(cssBlock),
+    '删除按钮 hover 应使用 interactive-bg-hover-danger（宿主 dangerButton 同款）'
+  )
+  // 列表必须有卡片间隔（用户明确要求「每个人设之间有一点间隔」）
+  const list = cssBlock.match(/\.soul-persona-list\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(list !== '', '找不到 .soul-persona-list 规则（人设列表容器）')
+  assert.ok(/display:flex/.test(list) && /flex-direction:column/.test(list), '人设列表应为纵向排列')
+  assert.match(list, /gap:\s*[1-9]\d*px/, '人设列表必须有非零 gap（每个人设之间要有间隔）')
+  // 每行是独立卡片（对齐宿主 rowCard），而不是共用容器 + 分隔线
+  const row = cssBlock.match(/\.soul-persona-row\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(/settings-card-stroke/.test(row), '人设行应为独立卡片（描边用 settings-card-stroke）')
+  assert.ok(/border-radius:var\(--dsw-radius-lg\)/.test(row), '人设行卡片应有圆角')
+  // 来源区分交给徽标，不给行容器加底色（宿主不给行容器加 hover 底色）
+  assert.equal(
+    /\.soul-persona-row\[data-builtin/.test(cssBlock),
+    false,
+    '不应给内置行加底色（宿主用 rowTag 区分来源；灰底在白色卡片群里会被误读成 hover 态）'
   )
 })
 

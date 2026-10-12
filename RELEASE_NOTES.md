@@ -96,9 +96,17 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - **提示气泡**：`#ffffff` / `rgba(0,0,0,.85)` 硬编码同样改走 `bg-module-platform` / `label-primary`（深色主题下原本是白底黑字）
 - **修掉一类静默失效：CSS 引用了宿主不存在的 token**。`--dsw-alias-label-error` **在宿主主题里根本不存在**（宿主表达错误色统一用 `--dsw-alias-state-error-primary`），而我们在 3 处用了它：`var()` 对未定义变量会**静默回退成继承值**——真实 Chrome 实测渲染为 `rgb(0,0,0)`（黑色），不报错、不警告。后果是**错误提示、危险按钮、快捷开关失败态全部不红**，而 200+ 项断言全绿。现已全部纠正，并新增断言要求「CSS 引用的每个 `--dsw-*` token 必须在真实主题包里存在」（本机解析不到主题包时 `skipNote`）。判断力：把 token 改回 `label-error` 立刻被拦，报错直指不存在的名字
 
+- **人设预设列表改为卡片式，操作按钮对齐宿主列表按钮**（观感统一收尾）：
+  - 每个预设从「共用容器 + 虚线分隔」改为**独立卡片**（`.5px` 描边 + `settings-card-fill` + `radius-lg`），卡片间 `gap:8px`（对齐宿主 `.zGbnIq_rows` 的 `gap:8px`）—— 这同时给出「每个人设之间有一点间隔」的观感
+  - **操作按钮**从「下划线文字链接」改为宿主列表按钮规格：`.soul-persona-action` 对齐 `.zGbnIq_linkButton`（`height:28px` / `radius-sm` / `padding:0 10px` / `12px-18px` / `label-tertiary` / 透明底无边框 / hover 用 `interactive-bg-hover`）；「删除」对齐 `.zGbnIq_dangerButton`（同尺寸，`state-error-primary`，hover 用 `interactive-bg-hover-danger`）。操作区间距也改为宿主的 `gap:4px`
+  - **去掉内置行的灰色底**：宿主**不给行容器加 hover 底色**（`interactive-bg-*` 只用于按钮等可点元素），灰底在白色卡片群里会被误读成 hover 态。来源区分交给「内置」徽标 —— 宿主也是用 `rowTag` 标「默认」而非改底色
+  - 「自我介绍」等多行输入框最小高度 `100px → 120px`（小档 `60px → 72px`）
+  - 顺带删掉已无使用者的 `.soul-prompt-link` 两条规则（改按钮类名后成为孤儿样式）
+  - 新增断言「人设行操作按钮规格对齐宿主列表按钮」（尺寸 / 圆角 / 内边距 / 字号 / 行高 / 默认色 / hover 两态 / 列表间距 / 卡片化 / 不得加行底色），判断力 5 组变异全部被拦（高度 36px / 圆角 6px / gap 归零 / 行改回共用容器 / 加回行底色）；另修掉一条**耦合实现细节**的断言：它把旧类名 `soul-prompt-link soul-persona-danger` 写死，改样式即失效，现改为只钉「带 `soul-persona-danger` 的按钮」
+
 **校验**
 
-- `verify-config` 91 → **96 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」、「CSS token 存在性」、「样式对齐宿主栏目」五条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）。样式相关的 8 组变异全部被拦（不存在 token / 加回 padding / 分组退回旧边框 / 标题字重 600 / 标签字号 13px / 硬编码颜色 / 删 render / 轮询去掉守卫）
+- `verify-config` 91 → **97 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」、「CSS token 存在性」、「样式对齐宿主栏目」、「人设行操作按钮规格对齐宿主列表按钮」六条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）。样式相关的 13 组变异全部被拦（不存在 token / 加回 padding / 分组退回旧边框 / 标题字重 600 / 标签字号 13px / 硬编码颜色 / 按钮高度 36px / 圆角 6px / 列表 gap 归零 / 行改回共用容器 / 加回行底色 / 删 render / 轮询去掉守卫）
 
 ### v0.7.1（2026-10-10）
 
