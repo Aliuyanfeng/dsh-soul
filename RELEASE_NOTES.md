@@ -79,9 +79,15 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - 行为层直接调宿主导出的 `readPluginMeta` 校验解析结果（title 与 `locale/*.json` 一致、且无 `error` 字段）；判断力用 **7 组变异**验证（删 `locale` 目录 / 去 `exports` 子路径 / 拆 `meta` 外层 / title 空串 / 改回包名 / 删 `zh.json` / title 非字符串），7/7 被拦
   - 顺带修掉一处：手动同步 profile 副本时若漏了 `assets/`，图标解析会失败（`readPluginMeta` 会保留文本但附带 `error`）—— 发布包 21 → **23 个文件**（新增 `locale/en.json`、`locale/zh.json`）
 
+**修复**
+
+- **`set_persona` 每次成功调用都会在结果渲染阶段抛错**（本版审计发现，0.7.1 起存在）：工具定义只给了 `output.schema`、**没给 `output.render`**。`defineTool` 会**无条件**把 `options.output.render` 包成 `render(args, value) { return userRender(args, value) }`，而 `userRender` 是 `undefined` ⇒ **注册照样通过**（底层 `register` 校验的是包装后的函数），但宿主 `createSuccessResult` 在**每次工具成功执行后都会无条件调用**它（`dsh-tools` 的 `createSuccessResult`，`lib/index.js:3541-3548`）⇒ 抛 `TypeError: userRender is not a function`，被包成 `projectionError("render")`。用户视角是「Agent 说改了人设却报错」。自查 DSH 自带插件：**19 个都提供 `render`，只有 2 个没有**（且那 2 个未注册工具）。现补上 `render`，把 `message`（已是完整一句话，含 pending 提议与失败原因）作为给模型读的文本，避免再套一层 `JSON.stringify`
+  - 根因是**校验缺口**：原断言只验到「`defineTool` 不抛错 = 注册成功」，**没走结果渲染那一步** —— 这正是「断言只到注册、没到能用」。现该断言升级为：抽出真实 `defineTool({...})` 定义对象整体求值 → 用真实 `defineTool` 注册 → **再逐种返回值走一遍 `output.render`**，要求返回 `[{ type: 'text', text }]` 且文本非空（4 种：成功 / pending 提议 / 失败 / 无变化）。判断力：删掉 `render` 立刻被拦，报错直指根因
+- **设置页轮询在页面隐藏时仍在跑**：`visibilitychange` 此前只处理了「变可见」这一半（`if (visible) refresh()`），而 `setInterval(refresh, 2000)` 无条件执行 ⇒ 后台标签页每 2s 仍发两个请求（config + personas），实测 250ms 内触发 4 次。修法是把守卫放进 `refresh` 本身（`interval` 与 `focus` 都走它，一处覆盖两条路径、无需重建定时器）。断言钉住「守卫必须在发请求之前」并含防回归（不得把轮询整个删掉当修好）；判断力 3 组变异（去守卫 / 守卫后置 / 删轮询），3/3 被拦
+
 **校验**
 
-- `verify-config` 91 → **93 项**（新增「展示名走 locale/*.json」结构层与「展示名能被宿主真实解析」行为层两条）
+- `verify-config` 91 → **94 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」三条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）
 
 ### v0.7.1（2026-10-10）
 

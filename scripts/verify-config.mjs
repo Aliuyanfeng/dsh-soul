@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 93
+const EXPECTED_ASSERTIONS = 94
 
 let passed = 0
 const failures = []
@@ -870,6 +870,29 @@ check('客户端摘要的默认值表与宿主 DEFAULT_CONFIG 逐项一致', () 
   }
 })
 
+check('客户端轮询在页面不可见时暂停（不只在「变可见」时刷新）', () => {
+  // 此前 `visibilitychange` 只处理了「变可见」这一半（`if (visible) refresh()`），
+  // 而 `setInterval(refresh, 2000)` 无条件执行 ⇒ 后台标签页每 2s 仍发两个请求。
+  // 修法是把守卫放进 refresh 本身（interval 与 focus 都走它，一处覆盖两条路径）。
+  const effect = clientCode.match(/const refresh = \(\) => \{([\s\S]*?)\n\s{8}\}/)
+  assert.ok(effect, '找不到设置页的 refresh 函数')
+  const body = effect[1]
+  assert.ok(
+    /document\.visibilityState !== 'visible'/.test(body),
+    'refresh 必须自己检查页面可见性，否则 setInterval 在后台标签页仍会持续请求'
+  )
+  // 守卫必须在发请求之前
+  const guardAt = body.indexOf("document.visibilityState !== 'visible'")
+  const firstRequest = body.indexOf('controller.loadConfig()')
+  assert.ok(firstRequest > 0, 'refresh 应调用 controller.loadConfig()')
+  assert.ok(
+    guardAt < firstRequest,
+    '可见性守卫必须排在发起请求之前，否则等于没拦'
+  )
+  // 防回归：定时器仍应存在（别把轮询整个删掉当成"修好"）
+  assert.ok(/setInterval\(refresh, 2000\)/.test(clientCode), '设置页应保留 2s 轮询（外部写入路径靠它补齐）')
+})
+
 check('客户端摘要覆盖的字段集合固定', () => {
   const block = clientCode.match(/const META_FIELD_VALUES = \{([\s\S]*?)\}/)
   assert.ok(block, '客户端缺少 META_FIELD_VALUES')
@@ -1323,40 +1346,65 @@ check('set_persona 的输出 schema 能被真实 dsh-tools 的 DSL 接受（注�
   // schema —— 这是「结构对了但 DSL 仍拒收」这类回归的唯一可靠判据。
   // （顶层 await 已解析；本机未装 DSH 时为 null，CI 上走结构层即可。）
   if (defineTool) {
-    // 从真实源码抽出 output.schema 的字面量并求值，保证测的就是插件里那份
-    const literal = outputSchema.slice(outputSchema.indexOf('schema: {'))
-    const open = literal.indexOf('{')
-    let depth = 0
-    let quote = null
-    let end = -1
-    for (let i = open; i < literal.length; i++) {
-      const c = literal[i]
-      if (quote) {
-        if (c === '\\') { i++; continue }
-        if (c === quote) quote = null
-        continue
-      }
-      if (c === "'" || c === '"') { quote = c; continue }
-      if (c === '{') depth++
-      else if (c === '}') { depth--; if (depth === 0) { end = i + 1; break } }
-    }
-    assert.ok(end > 0, '无法从 index.mjs 抽出 output.schema 字面量')
-    let schema
+    // 从真实源码整体抽出 defineTool({...}) 的**定义对象**并求值 —— 不用文本切片去抠
+    // render 的函数体（那种写法对括号/箭头/注释极脆弱，初版就在这里求值失败）。
+    // 抽出的对象含 parameters / output（schema + render）/ execute，求值后即为宿主
+    // 实际会拿到的形状。
+    const defText = extractObject(indexSource, 'defineTool(')
+    assert.ok(defText !== '', '无法从 index.mjs 抽出 defineTool 的定义对象')
+    let definition
     try {
-      schema = new Function(`return (${literal.slice(open, end)})`)()
+      // 定义对象的 enum 引用了宿主常量（STYLE_VALUES / TRAIT_VALUES / …），求值时注入
+      // 真实 import 值 —— 它们本身已由上面「客户端复刻常量 == 宿主定义」那条断言覆盖。
+      // eslint-disable-next-line no-new-func
+      definition = new Function(
+        'STYLE_VALUES', 'TRAIT_VALUES', 'REPLY_LENGTH_VALUES', 'LANGUAGE_VALUES',
+        `return (${defText})`
+      )(STYLE_VALUES, TRAIT_VALUES, REPLY_LENGTH_VALUES, LANGUAGE_VALUES)
     } catch (err) {
-      assert.fail(`output.schema 字面量求值失败：${err.message}`)
+      assert.fail(`defineTool 的定义对象求值失败：${err.message}`)
     }
+    assert.ok(definition?.output?.schema, '定义对象缺少 output.schema')
+    assert.equal(
+      typeof definition.output.render,
+      'function',
+      'set_persona 的 output 必须提供 render（宿主每次工具成功执行后都会无条件调用它）'
+    )
+
+    let tool = null
     assert.doesNotThrow(
-      () => defineTool({
-        name: 'set_persona',
-        description: 'verify-config schema 契约探针',
-        parameters: { nickname: { type: 'string', description: 'probe' } },
-        output: { schema },
-        async execute() { return { ok: true } }
-      }),
+      () => {
+        tool = defineTool({
+          name: 'set_persona',
+          description: 'verify-config schema 契约探针',
+          parameters: definition.parameters,
+          output: definition.output,
+          async execute() { return { ok: true } }
+        })
+      },
       '真实 dsh-tools 的 defineTool 拒绝了 set_persona 的输出 schema（工具将静默注册失败）'
     )
+
+    // 行为层第二段：逐种返回值走一遍 render —— 复刻宿主 createSuccessResult 的必经一步。
+    // 缺 render 时 defineTool 仍会把 undefined 包成函数 ⇒ 注册照样通过，但每次成功
+    // 调用都在渲染阶段抛 `TypeError: userRender is not a function`（被包成
+    // projectionError("render")）—— 这正是「断言只到注册、没到能用」漏掉的那一步。
+    for (const value of [
+      { ok: true, message: '已更新' },
+      { ok: true, message: '提议待确认', pending: true, changes: { style: 'casual' } },
+      { ok: false, message: '操作失败：字段非法' },
+      { ok: true, message: '配置无变化，未做修改' }
+    ]) {
+      let rendered
+      assert.doesNotThrow(
+        () => { rendered = tool.output.render({}, value) },
+        `工具结果渲染失败（值：${JSON.stringify(value)}）—— 宿主每次成功执行都会走这里`
+      )
+      assert.ok(Array.isArray(rendered) && rendered.length > 0, 'output.render 应返回非空数组（DSH 内容块约定）')
+      assert.equal(rendered[0].type, 'text', 'output.render 的首个内容块应为 text')
+      assert.equal(typeof rendered[0].text, 'string', 'output.render 的 text 必须是字符串')
+      assert.ok(rendered[0].text.length > 0, 'output.render 不得返回空文本（模型会看不到任何反馈）')
+    }
     return
   }
   if (!skipNote('verify-config', 1, '本机未安装 @deepseek-ai/dsh-tools，set_persona 仅做结构层校验（行为层需真实 DSL）', '安装 DSH 后重跑即可覆盖行为层')) {

@@ -1256,6 +1256,11 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const refresh = () => {
           if (dirty || saving) return
+          // 页面不可见时不轮询：`visibilitychange` 此前只处理了「变可见」这一半
+          // （`if (visible) refresh()`），而 `setInterval` 无条件执行 ⇒ 后台标签页
+          // 每 2s 仍发两个请求（config + personas）。放在 refresh 里一处修好两条路径
+          // （interval 与 focus 都走它），且无需重建定时器。
+          if (document.visibilityState !== 'visible') return
           void controller.loadConfig()
           void loadPersonas()
         }

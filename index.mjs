@@ -1591,6 +1591,21 @@ function registerTools(ctx) {
               },
             },
           },
+          // 结果渲染：宿主每次工具**成功执行**后都会无条件调用它
+          // （dsh-tools 的 createSuccessResult → tool.output.render(...)）。
+          // 不提供会怎样：defineTool 无条件下包一份 `render(args, value) { return userRender(...) }`，
+          // 而 userRender 是 undefined ⇒ 注册能过（底层 register 校验的是包装后的函数），
+          // 但**每次成功调用都在渲染阶段抛 TypeError: userRender is not a function**，
+          // 宿主把它包成 projectionError("render")，用户视角是「Agent 说改了却报错」。
+          // 自带插件 19 个都提供它。契约：返回 [{ type: 'text', text }]（无损 JSON）。
+          render: (_args, value) => {
+            // 直接把 message 作为给模型读的文本：它已经是完整的一句话（含 pending 提议与
+            // 失败原因），再套一层 JSON.stringify 只会让模型多解析一层转义。
+            const text = typeof value?.message === 'string' && value.message.length > 0
+              ? value.message
+              : (value?.ok === true ? 'ok' : 'failed')
+            return [{ type: 'text', text }]
+          },
         },
         async execute(args) {
           try {
