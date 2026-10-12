@@ -172,6 +172,20 @@ function findAll(tree, predicate) {
   return hits
 }
 
+/**
+ * 按**类名 token 精确匹配**取元素。
+ *
+ * 不要用 `className.includes('soul-persona-card')` 这种子串匹配：它同时命中
+ * `soul-persona-card-head`、`soul-persona-card-pos` —— 实测导致「2 张卡片」被数成
+ * 6 个节点（每个卡片还带着两个同前缀的子元素），断言报出误导性的「渲染了 6 张」。
+ */
+function findAllByClass(tree, cls) {
+  return findAll(tree, (n) => {
+    const c = n.props?.className
+    return typeof c === 'string' && c.split(/\s+/).includes(cls)
+  })
+}
+
 // ==================== 三、沙箱：假 window / document / 定时器 / fetch ====================
 
 const realTimers = {
@@ -632,7 +646,7 @@ try {
     )
   })
 
-  await check('C16 人设行真的按宿主协议渲染，且「当前生效」预设带 ★ 标记', async () => {
+  await check('C16 人设卡片按宿主协议渲染：★ 生效标记、内置徽标、卡片堆叠与翻页', async () => {
     // 这条补的是一个**覆盖空洞**：此前桩返回 `{ personas: [], activePersona: null }`
     // （字段名与类型都与宿主不符），于是人设行渲染与 ★ 标记从未被执行过 —— 把桩改成
     // 真实形状后，整套 C 系列仍全绿（实测），说明没有任何断言吃过这份数据。
@@ -659,24 +673,73 @@ try {
       'activeName 未被写进 store.activePersona —— 字段名与宿主协议不符'
     )
 
-    // ② 两行都渲染出来，且 line 文本各自完整
-    const rows = findAll(tree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('soul-persona-row'))
-    assert.equal(rows.length, 2, `应渲染两行预设，实际 ${rows.length}`)
-    const rowText = rows.map(textOf)
+    // ② 卡片堆叠一次只渲染限定张数（当前 + 左右各一），当前张带 data-current="true"
+    const cards = findAllByClass(tree, 'soul-persona-card')
+    assert.equal(cards.length, 2, `两个预设应渲染 2 张卡片（左右无更多），实际 ${cards.length}`)
+    const current = cards.filter((c) => c.props['data-current'] === 'true')
+    assert.equal(current.length, 1, `应恰好一张当前卡片，实际 ${current.length}`)
+
+    const cardText = cards.map(textOf)
+    const activeCard = cardText.find((t2) => t2.includes('我的自建'))
+    const idleCard = cardText.find((t2) => t2.includes('苏格拉底式提问者'))
+    assert.ok(activeCard, `未渲染「我的自建」卡片：${cardText.join(' | ')}`)
+    assert.ok(idleCard, `未渲染「苏格拉底式提问者」卡片：${cardText.join(' | ')}`)
 
     // ③ 生效预设带 ★，非生效的不带（防空过：两个方向都要断言，否则「恒加★」也会过）
-    const activeRow = rowText.find((t) => t.includes('我的自建'))
-    const idleRow = rowText.find((t) => t.includes('苏格拉底式提问者'))
-    assert.ok(activeRow, `未渲染「我的自建」行：${rowText.join(' | ')}`)
-    assert.ok(idleRow, `未渲染「苏格拉底式提问者」行：${rowText.join(' | ')}`)
-    assert.ok(activeRow.includes('★'), `生效预设应带 ★：${activeRow}`)
-    assert.ok(!idleRow.includes('★'), `非生效预设不应带 ★：${idleRow}`)
+    assert.ok(activeCard.includes('★'), `生效预设应带 ★：${activeCard}`)
+    assert.ok(!idleCard.includes('★'), `非生效预设不应带 ★：${idleCard}`)
 
-    // ④ 内置行带「内置」标记、且不渲染删除按钮；自建行相反
-    assert.ok(idleRow.includes(world.dicts.zh['personas.builtin']), `内置行应带「内置」标记：${idleRow}`)
-    assert.ok(!activeRow.includes(world.dicts.zh['personas.builtin']), `自建行不应带「内置」标记：${activeRow}`)
+    // ④ 内置卡片带「内置」标记、且不渲染删除按钮；自建卡片相反
+    assert.ok(idleCard.includes(world.dicts.zh['personas.builtin']), `内置卡片应带「内置」标记：${idleCard}`)
+    assert.ok(!activeCard.includes(world.dicts.zh['personas.builtin']), `自建卡片不应带「内置」标记：${activeCard}`)
     const deleteButtons = findAll(tree, (n) => n.type === 'button' && textOf(n) === world.dicts.zh['personas.delete'])
-    assert.equal(deleteButtons.length, 1, `只应有一个删除按钮（内置行不得有），实际 ${deleteButtons.length}`)
+    assert.equal(deleteButtons.length, 1, `只应有一个删除按钮（内置卡片不得有），实际 ${deleteButtons.length}`)
+
+    // ⑤ 轮播交互：位置指示、圆点、翻页按钮与边界禁用（一次只见一张，这些是必需的补偿）
+    const nav = findAllByClass(tree, 'soul-persona-navbtn')
+    assert.equal(nav.length, 2, `应有前后两个翻页按钮，实际 ${nav.length}`)
+    const [prev, next] = nav
+    assert.equal(prev.props.disabled, true, '首张（索引 0）时「上一张」应禁用')
+    assert.equal(next.props.disabled, false, '有下一张时「下一张」不应禁用')
+    const dots = findAllByClass(tree, 'soul-persona-dot')
+    assert.equal(dots.length, 2, `圆点数量应等于预设数，实际 ${dots.length}`)
+    assert.equal(dots.filter((d) => d.props['data-active'] === 'true').length, 1, '应恰好一个圆点为激活态')
+    const pos = findAllByClass(tree, 'soul-persona-card-pos')
+    assert.equal(pos.length, 1, `当前卡片应显示位置指示（i / n），实际 ${pos.length}`)
+    assert.equal(textOf(pos[0]), '1 / 2', `位置指示应为「1 / 2」，实际「${textOf(pos[0])}」`)
+
+    // ⑥ 真正点「下一张」→ 索引前移，位置指示与当前卡片内容同步变化
+    const posBefore = textOf(findAllByClass(tree, 'soul-persona-card-pos')[0])
+    const textBefore = textOf(current[0])
+    await next.props.onClick()
+    const tree2 = await renderSettings(world)
+    const cur2 = findAllByClass(tree2, 'soul-persona-card').filter((c) => c.props['data-current'] === 'true')
+    assert.equal(cur2.length, 1, '翻页后仍应恰好一张当前卡片')
+    const posAfter = textOf(findAllByClass(tree2, 'soul-persona-card-pos')[0])
+    assert.notEqual(posAfter, posBefore, `位置指示应随翻页变化（翻页前后都是「${posAfter}」）`)
+    assert.notEqual(textOf(cur2[0]), textBefore, '当前卡片内容应随翻页变化')
+    // 位置指示与当前卡片必须是同一个预设（防止「指示变了但卡片没换」）。
+    // 不硬编码名字与序号的对应关系 —— 顺序由 store 决定，从「翻页前那张」推导即可：
+    // 翻页后指示从 i/2 变成 j/2，卡片内容必须是**另一张**，且两张合起来正好是两个预设。
+    const allNames = ['我的自建', '苏格拉底式提问者']
+    const shown = [textBefore, textOf(cur2[0])]
+    for (const n of allNames) {
+      assert.equal(
+        shown.filter((t2) => t2.includes(n)).length,
+        1,
+        `「${n}」应在翻页前后各出现恰好一次，实际出现在：${shown.map((s) => s.slice(0, 26)).join(' | ')}`
+      )
+    }
+    // 翻到末张后「下一张」应禁用（边界）
+    const nav2 = findAllByClass(tree2, 'soul-persona-navbtn')
+    assert.equal(nav2[1].props.disabled, true, '翻到末张后「下一张」应禁用')
+
+    // ⑦ 点「上一张」可回到前一个预设
+    await nav2[0].props.onClick()
+    const tree3 = await renderSettings(world)
+    const cur3 = findAllByClass(tree3, 'soul-persona-card').filter((c) => c.props['data-current'] === 'true')
+    assert.equal(textOf(findAllByClass(tree3, 'soul-persona-card-pos')[0]), posBefore, '回到首张后位置指示应复位')
+    assert.equal(textOf(cur3[0]), textBefore, '回到首张后卡片内容应复原')
   })
 
   await check('C17 应用预设成功后清掉上一轮的失败提示', async () => {

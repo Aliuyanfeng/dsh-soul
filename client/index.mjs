@@ -599,29 +599,48 @@ window.__ModuleLoader__.load({
       '.soul-dirty{color:var(--dsw-alias-state-warn-primary)}',
       // —— 人设预设行 ——
       // 对齐宿主「模型列表」的行卡片语言（.zGbnIq_rowCard / .zGbnIq_rows）：
-      // 每个预设是一张独立卡片（.5px 描边 + card-fill + radius-xl），卡片之间 gap 8px，
-      // 而不是此前的「共用一个容器 + 虚线分隔」。这样与其它栏目的列表观感一致，
-      // 也天然给出用户要的「每个人设之间有一点间隔」。
-      '.soul-persona-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}',
-      // 三列网格「名称 | 摘要 | 操作」。用网格而非 flex 是为了让操作列**列宽固定并右对齐**
-      // ——内容驱动的 flex 下，自建行多一个「删除」按钮会把「使用」挤左约 34px，
-      // 与内置行的「使用」不在同一竖列（后续已改为图标/文字按钮同规格，但对齐仍需固定列）。
-      '.soul-persona-row{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr) auto;align-items:center;gap:8px;padding:10px 12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-settings-card-fill);font-size:12px;line-height:18px}',
-      // 来源区分交给徽标（宿主也是用 rowTag 标「默认」而非改底色）；行底色保持统一，
-      // 因为宿主**不给行容器加 hover 底色** —— 灰色底在白色卡片群里会被误读成 hover 态。
-      // 这里只把光标语义留给交互元素，行本身不设背景差异。
+      // —— 人设预设：卡片堆叠轮播 ——
+      // 一次只展示一张卡片，左右各留一张做「叠放露边」。三张卡片绝对定位在同一堆叠容器里，
+      // 靠 `transform: translateX + scale` 分层：当前张（offset 0）在最上层且可交互，
+      // ±1 两张缩小并左右偏移，形成卡堆的纵深。用绝对定位而非文档流，是为了让容器高度
+      // 不随可见张数变化（否则切到末张时高度会突然塌下来）。
+      '.soul-persona-carousel{position:relative;display:flex;flex-direction:column;gap:10px}',
+      // 堆叠容器需要左右留白：叠层卡片会向左右各偏移 34px，不留空间会被裁掉。
+      // 高度固定（min-height）以免切换时布局跳动；上下留白给叠层的向下错位。
+      '.soul-persona-stack{position:relative;min-height:118px;padding:0 40px}',
+      // 卡片绝对定位在 stack 的**内容区**（左右各让出 40px 给叠层）。用 inset 的四值写法
+      // 而不是 inset:0，否则卡片会盖住留白、叠层被压在下面看不见。
+      '.soul-persona-card{position:absolute;top:0;bottom:0;left:40px;right:40px;display:flex;flex-direction:column;gap:8px;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-settings-card-fill);box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .28s cubic-bezier(.22,.61,.36,1),opacity .28s ease;transform-origin:center top;will-change:transform}',
+      // 非当前卡片是「背景层」：可点击切过去，但不可抢注意力（透明度由内联 style 控制，
+      // 因为叠层距离是逐张算的）
+      '.soul-persona-card[data-current="false"]{cursor:pointer}',
+      '.soul-persona-card[data-offset="0"]{box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08))}',
+      // 卡片头：名称 + 徽标在左，位置指示（i / n）在右
+      '.soul-persona-card-head{display:flex;align-items:center;gap:8px;min-width:0}',
+      '.soul-persona-card-pos{flex:0 0 auto;margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;font-variant-numeric:tabular-nums}',
+      // 「翻开」动画：切张时当前卡片轻微上浮，给出卡堆被拨动的实感。
+      // 尊重 prefers-reduced-motion（与其它动效同一口径，见文件末尾的 media 规则）。
+      '.soul-persona-card[data-current="true"]{animation:soul-card-in .28s cubic-bezier(.22,.61,.36,1) both}',
+      '@keyframes soul-card-in{from{opacity:.72;transform:translateX(0) scale(.97)}to{opacity:1;transform:translateX(0) scale(1)}}',
+      // 位置指示与翻页：一次只见一张，就必须给出「共几张 / 现在第几张」与可点入口
+      '.soul-persona-nav{display:flex;align-items:center;justify-content:center;gap:10px}',
+      '.soul-persona-navbtn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:16px;line-height:1;cursor:pointer;transition:background-color .15s ease,color .15s ease}',
+      '.soul-persona-navbtn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.soul-persona-navbtn:disabled{cursor:default;opacity:.3}',
+      '.soul-persona-navbtn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      '.soul-persona-dots{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;justify-content:center}',
+      '.soul-persona-dot{width:6px;height:6px;padding:0;border:0;border-radius:50%;background:var(--dsw-alias-label-tertiary);opacity:.35;cursor:pointer;transition:opacity .15s ease,transform .15s ease}',
+      '.soul-persona-dot[data-active="true"]{opacity:1;transform:scale(1.25);background:var(--dsw-alias-brand-primary)}',
+      '.soul-persona-dot:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       // 名称区：名称 + 徽标。徽标弱化（无边框、更小、更淡），避免与「使用 / 删除」抢注意力
       '.soul-persona-name{display:flex;align-items:center;gap:6px;min-width:0;color:var(--dsw-alias-label-primary);font-weight:500}',
       '.soul-persona-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.soul-persona-meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
       // 操作区：固定宽度 + 两个等宽轨道，「使用」永远在第 1 轨、删除位永远在第 2 轨。
-      //
-      // 为什么不能用 `auto` / `minmax()`：每一行的操作区都是**独立的**网格容器，列宽由该行
-      // 自己的内容算出——内置行第 2 轨为空（宽 0），自建行第 2 轨是「删除」的宽度，于是
-      // 两行的「使用」仍不同列。只有把容器宽度与轨道都定死，跨行几何才必然一致。
-      // 间距对齐宿主 .zGbnIq_rowActions 的 gap:4px。
-      '.soul-persona-actions{display:grid;grid-template-columns:1fr 1fr;justify-items:end;align-items:center;gap:4px;width:9.5em;white-space:nowrap}',
-      // 内置行第 2 轨的空占位：只负责让该轨道存在（不是可点控件，所以用 span）
+      // 间距对齐宿主 .zGbnIq_rowActions 的 gap:4px；margin-top:auto 让它贴卡片底部，
+      // 于是不同摘要长度的卡片按钮仍对齐（堆叠容器高度固定，不会被内容撑变）。
+      '.soul-persona-actions{display:grid;grid-template-columns:1fr 1fr;justify-items:end;align-items:center;gap:4px;width:9.5em;white-space:nowrap;margin-top:auto}',
+      // 内置卡片第 2 轨的空占位：只负责让该轨道存在（不是可点控件，所以用 span）
       '.soul-persona-slot{display:block;width:0}',
       // —— 行操作按钮：完全对齐宿主模型列表的两个按钮规格 ——
       // 「使用」对应宿主 .zGbnIq_linkButton：height 28 / radius-sm / padding 0 10 /
@@ -692,7 +711,7 @@ window.__ModuleLoader__.load({
       // 实测（真实 Chrome + --force-prefers-reduced-motion）：内联 animation 属 author
       // 普通声明，样式表的普通声明同样能覆盖；这里仍用 !important 以免将来被内联改动
       // 或选择器顺序变化影响。
-      '@media (prefers-reduced-motion:reduce){.soul-trail-layer{animation:none}.soul-toast{animation:none!important}}'
+      '@media (prefers-reduced-motion:reduce){.soul-trail-layer{animation:none}.soul-toast{animation:none!important}.soul-persona-card{animation:none!important;transition:none}}'
     ].join('')
 
     const tagId = 'dsh-soul/styles.css'
@@ -761,6 +780,8 @@ window.__ModuleLoader__.load({
       'personas.savePlaceholder': '预设名称（1-30 字符）',
       'personas.use': '使用',
       'personas.delete': '删除',
+      'personas.prev': '上一个预设',
+      'personas.next': '下一个预设',
       'personas.confirmDelete': '确定删除预设「{name}」？',
       'personas.empty': '暂无人设预设，保存当前配置后可一键切换',
       // 列表拉取失败（此前是空 catch ⇒ 界面会永远停在「加载中...」）
@@ -889,6 +910,8 @@ window.__ModuleLoader__.load({
       'personas.savePlaceholder': 'Persona name (1-30 chars)',
       'personas.use': 'Use',
       'personas.delete': 'Delete',
+      'personas.prev': 'Previous persona',
+      'personas.next': 'Next persona',
       'personas.confirmDelete': 'Delete persona "{name}"?',
       'personas.empty': 'No personas yet — save the current config to switch with one click',
       // 列表拉取失败（此前是空 catch ⇒ 界面会永远停在「加载中...」）
@@ -1138,6 +1161,11 @@ window.__ModuleLoader__.load({
       const [localTrailSpeed, setLocalTrailSpeed] = React.useState(trailSpeed || 'slow')
       const [localTrailWidth, setLocalTrailWidth] = React.useState(trailWidth || 'thin')
       const [personaName, setPersonaName] = React.useState('')
+      // 卡片堆叠轮播的当前索引（人设预设一次只展示一张，左右可滑动/翻页）。
+      // 索引在预设数组变化后可能越界（删除、加载失败后重取），渲染时统一夹取，
+      // 不在 effect 里回写 —— 回写会多一次渲染，且删除后「看过的那张」位置语义
+      // 本就有歧义（见 personaIndex 的夹取逻辑）。
+      const [personaIndex, setPersonaIndex] = React.useState(0)
       const [toast, setToast] = React.useState(null)
       const [showPrompt, setShowPrompt] = React.useState(false)
       const [promptText, setPromptText] = React.useState('')
@@ -1611,32 +1639,112 @@ window.__ModuleLoader__.load({
                 ? e('div', { className: 'soul-status' }, t('status.loading'))
                 : (personaNames.length === 0
                   ? e('div', { className: 'soul-status' }, t('personas.empty'))
-                  : e('div', { className: 'soul-persona-list' },
-                    ...personaNames.map((name) => {
+                  : (() => {
+                    // —— 卡片堆叠轮播 ——
+                    // 一次只展示一张，左右各留一张做层叠露边。为什么用绝对定位 + transform：
+                    // 三张卡片共存于同一堆叠容器内，若走文档流则容器高度会随张数变化而跳动。
+                    const total = personaNames.length
+                    // 夹取索引：预设可能被删除、或列表刷新后变短，索引会越界。
+                    // 刻意不在 effect 里回写 state —— 那会多一次渲染，且「删除后该看哪张」
+                    // 本就有歧义，渲染时夹取即可保证不越界。
+                    const index = Math.min(Math.max(personaIndex, 0), total - 1)
+                    const go = (next) => setPersonaIndex(Math.min(Math.max(next, 0), total - 1))
+                    const renderCard = (name, offset) => {
                       const entry = personas[name] || {}
                       const builtin = !!entry.builtin
-                      // data-builtin 是回归断言的可断言锚点（来源区分已交给徽标，
-                      // 行底色保持统一，与宿主一致）
-                      return e('div', { className: 'soul-persona-row', key: name, 'data-builtin': builtin ? 'true' : 'false' },
-                        e('span', { className: 'soul-persona-name' },
-                          e('span', { className: 'soul-persona-label' }, name === activePersona ? `★ ${name}` : name),
-                          // 来源徽标紧贴名称：它说明「这个预设从哪来」，属于名称的修饰而非操作，
-                          // 放在操作区会把「使用」挤出竖列
-                          builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin'))
+                      const current = offset === 0
+                      return e('div', {
+                        key: name,
+                        className: 'soul-persona-card',
+                        'data-offset': String(offset),
+                        'data-current': current ? 'true' : 'false',
+                        'data-builtin': builtin ? 'true' : 'false',
+                        style: {
+                          // 叠层几何：当前张居中不动；±1 两张向左/右偏移并缩小。
+                          // 偏移量（34px）要明显大于卡片内边距，否则叠层只露出一条缝、
+                          // 看不出「一叠卡片」；缩放 5.5% 兼顾「缩小」与「仍看得清文字」。
+                          transform: `translate(${offset * 34}px, ${Math.abs(offset) * 6}px) scale(${1 - Math.abs(offset) * 0.055})`,
+                          zIndex: String(10 - Math.abs(offset)),
+                          // 叠层卡片压暗一点，形成前后景深（不能用 filter:brightness，
+                          // 那会连带把文字变灰、看起来像禁用态）
+                          opacity: offset === 0 ? '1' : '0.55'
+                        },
+                        // 非当前卡片不参与交互、也不让读屏念到（否则会念出重复内容）
+                        'aria-hidden': current ? undefined : 'true',
+                        ...(current ? {} : { onClick: () => go(index + offset) })
+                      },
+                        e('div', { className: 'soul-persona-card-head' },
+                          e('span', { className: 'soul-persona-name' },
+                            e('span', { className: 'soul-persona-label' }, name === activePersona ? `★ ${name}` : name),
+                            // 来源徽标紧贴名称：它说明「这个预设从哪来」，属于名称的修饰而非操作
+                            builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin'))
+                          ),
+                          // 位置指示只出现在当前卡片上：左右露边的卡片若也显示「i / n」，
+                          // 三张会同时出现同一个计数，看起来像显示错误。
+                          current && e('span', { className: 'soul-persona-card-pos' }, `${index + 1} / ${total}`)
                         ),
-                        e('span', { className: 'soul-persona-meta' }, personaRowMeta(entry)),
-                        e('span', { className: 'soul-persona-actions' },
+                        e('div', { className: 'soul-persona-meta' }, personaRowMeta(entry)),
+                        e('div', { className: 'soul-persona-actions' },
                           // 按钮规格对齐宿主模型列表：linkButton（使用）/ dangerButton（删除）
-                          e('button', { type: 'button', className: 'soul-persona-action', onClick: () => handleUsePersona(name) }, t('personas.use')),
-                          // 内置预设不提供删除（后端也拒绝）：留一个空占位槽，让「使用」与
-                          // 自建行严格同列。这里刻意不是按钮，避免造出一个点了没反应的控件。
+                          e('button', {
+                            type: 'button',
+                            className: 'soul-persona-action',
+                            onClick: () => handleUsePersona(name)
+                          }, t('personas.use')),
+                          // 内置预设不提供删除（后端也拒绝）：留空占位槽让两类卡片按钮同列。
+                          // 刻意不是按钮，避免造出一个点了没反应的控件。
                           builtin
                             ? e('span', { className: 'soul-persona-slot', 'aria-hidden': true })
-                            : e('button', { type: 'button', className: 'soul-persona-action soul-persona-danger', onClick: () => handleDeletePersona(name) }, t('personas.delete'))
+                            : e('button', {
+                              type: 'button',
+                              className: 'soul-persona-action soul-persona-danger',
+                              onClick: () => handleDeletePersona(name)
+                            }, t('personas.delete'))
                         )
                       )
-                    })
-                  ))
+                    }
+                    const cards = []
+                    for (let offset = -1; offset <= 1; offset++) {
+                      const at = index + offset
+                      if (at < 0 || at >= total) continue
+                      cards.push(renderCard(personaNames[at], offset))
+                    }
+                    return e('div', { className: 'soul-persona-carousel' },
+                      e('div', { className: 'soul-persona-stack' }, ...cards),
+                      // 翻页 + 位置指示：一次只见一张，就必须给出「共几张 / 现在第几张」
+                      // 与可点的翻页入口 —— 列表本可一眼扫完，这几处是对该损失的补偿。
+                      e('div', { className: 'soul-persona-nav' },
+                        e('button', {
+                          type: 'button',
+                          className: 'soul-persona-navbtn',
+                          'data-dir': 'prev',
+                          disabled: index === 0,
+                          'aria-label': t('personas.prev'),
+                          onClick: () => go(index - 1)
+                        }, '‹'),
+                        e('div', { className: 'soul-persona-dots', role: 'tablist' },
+                          ...personaNames.map((n, i) => e('button', {
+                            key: n,
+                            type: 'button',
+                            role: 'tab',
+                            className: 'soul-persona-dot',
+                            'data-active': i === index ? 'true' : 'false',
+                            'aria-selected': i === index ? 'true' : 'false',
+                            'aria-label': `${n}（${i + 1}/${total}）`,
+                            onClick: () => go(i)
+                          }))
+                        ),
+                        e('button', {
+                          type: 'button',
+                          className: 'soul-persona-navbtn',
+                          'data-dir': 'next',
+                          disabled: index === total - 1,
+                          'aria-label': t('personas.next'),
+                          onClick: () => go(index + 1)
+                        }, '›')
+                      )
+                    )
+                  })())
                 )
             ),
             e('div', { className: 'soul-field soul-persona-save' },

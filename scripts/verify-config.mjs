@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 97
+const EXPECTED_ASSERTIONS = 98
 
 let passed = 0
 const failures = []
@@ -920,52 +920,55 @@ check('客户端为内置预设提供中英双语文案键', () => {
   }
 })
 
-check('客户端内置预设行不渲染删除按钮，改为「内置」标记', () => {
-  // 徽标渲染在名称列（紧跟名称），不是操作区 —— 放操作区会把「使用」挤出竖列。
+check('客户端卡片把「内置」徽标放在名称区，不进操作区', () => {
+  // 徽标渲染在名称区（紧跟名称），不是操作区 —— 放操作区会让两类卡片的按钮列错位。
   // 定界必须用括号配平（extractCall），不能用缩进/固定窗口：曾用 `\s{22}` 猜终点，
-  // 而真实闭合是 24 空格 ⇒ 捕获一路吞掉摘要列与操作区，「徽标在名称列」退化成
-  // 「徽标在这一行里」，把徽标挪到摘要列也能通过（变异实验实测，H4）。
+  // 而真实闭合是 24 空格 ⇒ 捕获一路吞掉摘要与操作区，「徽标在名称区」退化成
+  // 「徽标在这一块里」，把徽标挪到摘要区也能通过（变异实验实测，H4）。
   const nameCell = extractCall(clientSource, "e('span', { className: 'soul-persona-name' }")
-  assert.ok(nameCell !== '', '找不到名称列渲染块')
+  assert.ok(nameCell !== '', '找不到名称区渲染块')
   assert.ok(
     /soul-persona-badge/.test(nameCell),
-    '内置标记未渲染在名称列（放操作区会让两类行的「使用」不同列）'
+    '内置标记未渲染在名称区（放操作区会让两类卡片的按钮列错位）'
   )
-  // 名称列不得包含摘要/操作区内容 —— 防止定界再次失效而不自知
+  // 名称区不得包含摘要/操作区内容 —— 防止定界再次失效而不自知
   assert.ok(
     !nameCell.includes('soul-persona-meta') && !nameCell.includes('soul-persona-actions'),
-    '名称列的捕获范围越界（定界用括号配平，不得吞入 meta/actions）'
+    '名称区的捕获范围越界（定界用括号配平，不得吞入 meta/actions）'
   )
   // 徽标不得出现在操作区块里
-  const actionsCell = extractCall(clientSource, "e('span', { className: 'soul-persona-actions' }")
+  const actionsCell = extractCall(clientSource, "e('div', { className: 'soul-persona-actions' }")
   assert.ok(actionsCell !== '', '找不到操作区渲染块')
   assert.equal(
     /soul-persona-badge/.test(actionsCell),
     false,
     '徽标不应出现在操作区（会占掉「使用」的列位）'
   )
-  // 徽标也不得出现在摘要列（把徽标挪进 meta 同样破坏对齐前提）
-  const metaCell = extractCall(clientSource, "e('span', { className: 'soul-persona-meta' }")
-  assert.ok(metaCell !== '', '找不到摘要列渲染块')
+  // 徽标也不得出现在摘要区（把徽标挪进 meta 同样破坏对齐前提）
+  const metaCell = extractCall(clientSource, "e('div', { className: 'soul-persona-meta' }")
+  assert.ok(metaCell !== '', '找不到摘要区渲染块')
   assert.equal(
     /soul-persona-badge/.test(metaCell),
     false,
     '徽标不应出现在摘要列（对齐断言的前提是徽标独占名称列）'
   )
-  // 内置行在操作区第 2 轨放空占位（span，非按钮），自建行才是删除按钮：
-  // 这正是两类行「使用」按钮能严格同列的原因。
+  // 内置卡片在操作区第 2 轨放空占位（span，非按钮），自建卡片才是删除按钮：
+  // 这正是两类卡片「使用」按钮能严格同列的原因。
+  const actionsBlock = extractCall(clientSource, "e('div', { className: 'soul-persona-actions' }")
+  assert.ok(actionsBlock !== '', '找不到操作区渲染块')
   assert.ok(
-    /builtin\s*\?\s*e\('span', \{ className: 'soul-persona-slot'/.test(clientCode),
-    '内置行缺少操作区空占位（会导致「使用」与自建行不同列）'
+    /builtin\s*\n?\s*\?\s*e\('span', \{ className: 'soul-persona-slot'/.test(actionsBlock),
+    '内置分支缺少操作区空占位（会导致「使用」与自建卡片不同列）'
   )
   // 删除按钮的类名由样式层决定（当前是 soul-persona-action + soul-persona-danger，
-  // 对齐宿主 .zGbnIq_dangerButton）。断言只钉「非内置行渲染了一个带 danger 类的按钮」，
+  // 对齐宿主 .zGbnIq_dangerButton）。断言只钉「非内置分支渲染了一个带 danger 类的按钮」，
   // 不绑死完整类名字符串 —— 否则每次调样式都要改断言（初版正是绑死了旧类名而失效）。
-  const actionsBlock = extractCall(clientSource, "e('span', { className: 'soul-persona-actions' }")
-  assert.match(
-    actionsBlock,
-    /e\('button', \{[^}]*soul-persona-danger[^}]*\}/,
-    '删除按钮未渲染（非内置行应在操作区渲染带 soul-persona-danger 的按钮）'
+  // 判定用 includes 而不是跨行正则：按钮定义是多行对象字面量，`[^}]*` 这类写法
+  // 匹配不到含 `}` 的跨行内容（实测踩过）。
+  assert.ok(
+    actionsBlock.includes('soul-persona-action soul-persona-danger') &&
+      actionsBlock.includes('handleDeletePersona(name)'),
+    '删除按钮未渲染（非内置分支应渲染带 soul-persona-danger 的按钮，且绑定 handleDeletePersona）'
   )
   // 空占位必须是 span 而不是 button —— 否则会造出一个点了没反应的控件
   assert.equal(
@@ -1132,35 +1135,78 @@ check('人设行操作按钮规格对齐宿主列表按钮', () => {
     /\.soul-persona-danger:hover:not\(:disabled\)\{[^}]*interactive-bg-hover-danger/.test(cssBlock),
     '删除按钮 hover 应使用 interactive-bg-hover-danger（宿主 dangerButton 同款）'
   )
-  // 列表必须有卡片间隔（用户明确要求「每个人设之间有一点间隔」）
-  const list = cssBlock.match(/\.soul-persona-list\{([^}]*)\}/)?.[1] ?? ''
-  assert.ok(list !== '', '找不到 .soul-persona-list 规则（人设列表容器）')
-  assert.ok(/display:flex/.test(list) && /flex-direction:column/.test(list), '人设列表应为纵向排列')
-  assert.match(list, /gap:\s*[1-9]\d*px/, '人设列表必须有非零 gap（每个人设之间要有间隔）')
-  // 每行是独立卡片（对齐宿主 rowCard），而不是共用容器 + 分隔线
-  const row = cssBlock.match(/\.soul-persona-row\{([^}]*)\}/)?.[1] ?? ''
-  assert.ok(/settings-card-stroke/.test(row), '人设行应为独立卡片（描边用 settings-card-stroke）')
-  assert.ok(/border-radius:var\(--dsw-radius-lg\)/.test(row), '人设行卡片应有圆角')
-  // 来源区分交给徽标，不给行容器加底色（宿主不给行容器加 hover 底色）
+  // 卡片必须是堆叠容器（一次只展示一张），而不是纵向列表
+  const card = cssBlock.match(/\.soul-persona-card\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(card !== '', '找不到 .soul-persona-card 规则')
+  assert.ok(/position:absolute/.test(card), '卡片应绝对定位在堆叠容器里（否则高度会随张数跳动）')
+  assert.ok(/settings-card-stroke/.test(card), '卡片描边应用 settings-card-stroke（与宿主卡片一致）')
+  assert.ok(/border-radius:var\(--dsw-radius-lg\)/.test(card), '卡片应有圆角')
+  const stack = cssBlock.match(/\.soul-persona-stack\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(/position:relative/.test(stack), '堆叠容器应为相对定位（作为卡片的定位基准）')
+  // 高度必须**足够容纳一张卡片**：只断言「有 min-height」不够 —— 改成 0 也能过（实测），
+  // 而 0 会让内容溢出、切换时跳动，因此校验量级。
+  const stackH = Number((stack.match(/min-height:\s*(\d+)px/) ?? [])[1] ?? 0)
+  assert.ok(stackH >= 100, `堆叠容器 min-height 应 ≥100px（当前 ${stackH}px，过小会导致内容溢出/切换跳动）`)
+  // 叠层必须真的错开：偏移量过小就只露一条缝、看不出「一叠卡片」。
+  // 校验内联 transform 里的偏移系数，避免「改了数值而断言没跟上」（实测 0 偏移能骗过旧写法）。
+  const offMatch = clientSource.match(/translate\(\$\{offset \* (\d+)\}px/)
+  assert.ok(offMatch, '找不到卡片叠层偏移的写法（内联 transform）')
+  assert.ok(
+    Number(offMatch[1]) >= 20,
+    `叠层横向偏移应 ≥20px（当前 ${offMatch[1]}px，过小则看不出叠加效果）`
+  )
+  // 滑动过渡必须存在（用户要的「滑动特效」），且要尊重 reduced-motion
+  assert.match(card, /transition:[^;}]*transform/, '卡片应有 transform 过渡（滑动特效）')
+  // reduced-motion 规则里有嵌套的 `{}`（多选择器），用 `[^}]*\}\}` 这类简易正则匹配不到，
+  // 因此改为「取 media 规则起点后的整段，再逐条查」。
+  const rmAt = cssBlock.indexOf('@media (prefers-reduced-motion:reduce)')
+  assert.ok(rmAt > 0, '缺少 prefers-reduced-motion 规则')
+  const rm = cssBlock.slice(rmAt)
+  assert.ok(
+    /\.soul-persona-card\{animation:none!important;transition:none\}/.test(rm),
+    '卡片的滑动/入场动效必须在 prefers-reduced-motion 下关闭'
+  )
+  // 来源区分交给徽标，不给卡片加底色（宿主不给行容器加 hover 底色）
   assert.equal(
-    /\.soul-persona-row\[data-builtin/.test(cssBlock),
+    /\.soul-persona-card\[data-builtin/.test(cssBlock),
     false,
-    '不应给内置行加底色（宿主用 rowTag 区分来源；灰底在白色卡片群里会被误读成 hover 态）'
+    '不应给内置卡片加底色（宿主用 rowTag 区分来源；灰底在白色卡片群里会被误读成 hover 态）'
   )
 })
 
-check('客户端人设行用网格布局保证「使用」按钮跨行同列', () => {
+check('卡片堆叠轮播：一次一张 + 位置指示 + 可点翻页（补偿列表的可扫读性）', () => {
+  // 卡片堆叠的代价是「一次只见一张」——8 个预设要翻 7 次才能看全，而列表本可一眼扫完。
+  // 因此必须同时提供：① 位置指示（i / n）② 可点的前后翻页 ③ 圆点直达。
+  // 这条断言就是钉住这三处补偿，以及「只渲染 3 张」的层叠上限。
+  assert.match(clientSource, /for \(let offset = -1; offset <= 1; offset\+\+\)/, '应只渲染当前张与左右各一张（层叠上限 3）')
+  assert.match(clientSource, /const index = Math\.min\(Math\.max\(personaIndex, 0\), total - 1\)/, '索引必须夹取（预设被删除后可能越界）')
+  assert.match(clientSource, /'aria-label': t\('personas\.prev'\)/, '上一张按钮缺少 aria-label')
+  assert.match(clientSource, /'aria-label': t\('personas\.next'\)/, '下一张按钮缺少 aria-label')
+  assert.match(clientSource, /disabled: index === 0/, '首张时「上一张」应禁用')
+  assert.match(clientSource, /disabled: index === total - 1/, '末张时「下一张」应禁用')
+  assert.match(clientSource, /className: 'soul-persona-card-pos'/, '缺少位置指示（i / n）')
+  assert.match(clientSource, /className: 'soul-persona-dot'/, '缺少圆点直达指示器')
+  assert.match(clientSource, /'aria-selected': i === index/, '圆点应暴露 aria-selected（读屏可知当前项）')
+  // 非当前卡片不得被读屏读到，也不该可点（避免念出重复内容 / 误触）
+  assert.match(clientSource, /'aria-hidden': current \? undefined : 'true'/, '非当前卡片应 aria-hidden')
+  // 词典键必须齐全（zh/en 有逐键对齐断言兜底，但这里先确认被引用）
+  for (const key of ['personas.prev', 'personas.next']) {
+    assert.ok(clientSource.includes(`'${key}'`), `缺少词典键 ${key}`)
+  }
+})
+
+check('客户端卡片用网格布局保证「使用」按钮跨卡同列', () => {
   const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
-  const row = cssBlock.match(/\.soul-persona-row\{([^}]*)\}/)?.[1] ?? ''
-  assert.ok(/display:grid/.test(row), '人设行应使用网格布局（flex 下按钮列会随内容错位）')
   const actions = cssBlock.match(/\.soul-persona-actions\{([^}]*)\}/)?.[1] ?? ''
   assert.ok(/display:grid/.test(actions), '操作区应是网格（两条固定轨道）')
-  // 轨道必须两端等宽：`auto`/`minmax()` 会按各自内容算宽，内置行第 2 轨为空 ⇒ 两行不同列
+  // 轨道必须两端等宽：`auto`/`minmax()` 会按各自内容算宽，内置卡片第 2 轨为空 ⇒ 两类卡片不同列
   assert.ok(
     /grid-template-columns:1fr 1fr/.test(actions),
-    '操作区两条轨道必须等宽固定，否则内置行（第 2 轨为空）与自建行的「使用」不同列'
+    '操作区两条轨道必须等宽固定，否则内置卡片（第 2 轨为空）与自建卡片的「使用」不同列'
   )
-  assert.ok(/width:\s*\d/.test(actions), '操作区需要固定宽度，跨行几何才会一致')
+  assert.ok(/width:\s*\d/.test(actions), '操作区需要固定宽度，跨卡片几何才会一致')
+  // 摘要长短不一时，按钮仍要贴底对齐（卡片高度固定）
+  assert.ok(/margin-top:auto/.test(actions), '操作区应 margin-top:auto 贴底，避免摘要长度不同导致按钮错位')
 })
 
 check('客户端的动效尊重 prefers-reduced-motion（含提示条）', () => {
