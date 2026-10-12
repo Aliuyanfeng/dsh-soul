@@ -147,7 +147,7 @@ dsh --profile desktop --dump-config
 (Get-Item "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-soul").Target
 ```
 
-`package.json` 的 `version`、`client/index.mjs` 的 `VERSION` 常量、`RELEASE_NOTES.md` 三处应一致（本版均为 `0.7.1`）。
+`package.json` 的 `version`、`client/index.mjs` 的 `VERSION` 常量两处必须一致（本版均为 `0.7.2`）；`RELEASE_NOTES.md` 的**最新段落标题**也应对应同一版本号。前两处由 `verify-config` 断言钉住（客户端复刻常量 == 宿主定义），改一处漏另一处会立刻失败。
 
 ### 3) 客户端产物（确认浏览器拿到新代码）
 

@@ -68,6 +68,21 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 
 ## 版本历史
 
+### v0.7.2（2026-10-10）
+
+**新增**
+
+- **插件列表里的展示名可自定义**：新增 `locale/en.json` 与 `locale/zh.json`，把展示名从包名 `dsh-soul` 换成 **Soul**（英文）/ **Soul 人设**（中文）
+  - 机制：宿主的 `readPluginMeta` 先读 `<包>/locale/<语言>.json` 的 `meta.title` / `meta.description`，读不到才回退到 `package.json` 的 `name` / `description`（见 `dsh-app-boot` 的 `readPluginMeta` 与 `dictionariesOf`）；`dictionariesOf` 会扫描 `locale/` 下**所有** `.json`，文件名即语言 id，所以加语言只需加文件
+  - 三处漏任一处都会**静默回退成包名**（不报错、只是显示成 `dsh-soul`），故各配了断言：① `files` 白名单加 `locale`（否则不进发布包）；② `exports` 声明 `"./locale/*.json"`（本包有 `exports` 字段，未声明的子路径会被挡住）；③ JSON 必须是 `{ meta: { title } }` 结构（`dictionariesOf` 读的是 `meta?.title`）
+  - 断言还要求**英文展示名不得等于包名** —— 否则「生效」与「回退」无法区分，等于这条契约没生效
+  - 行为层直接调宿主导出的 `readPluginMeta` 校验解析结果（title 与 `locale/*.json` 一致、且无 `error` 字段）；判断力用 **7 组变异**验证（删 `locale` 目录 / 去 `exports` 子路径 / 拆 `meta` 外层 / title 空串 / 改回包名 / 删 `zh.json` / title 非字符串），7/7 被拦
+  - 顺带修掉一处：手动同步 profile 副本时若漏了 `assets/`，图标解析会失败（`readPluginMeta` 会保留文本但附带 `error`）—— 发布包 21 → **23 个文件**（新增 `locale/en.json`、`locale/zh.json`）
+
+**校验**
+
+- `verify-config` 91 → **93 项**（新增「展示名走 locale/*.json」结构层与「展示名能被宿主真实解析」行为层两条）
+
 ### v0.7.1（2026-10-10）
 
 **新增**
@@ -76,7 +91,6 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - 五条行为规则：**先自己动手**（能读的先读、能查的先查、能验证的先验证掉，确实卡住才提问，并把已排查范围与还缺什么一并说明）；**给出明确判断**（比较方案时指明推荐哪条及理由，不以「都可以，看需求」收尾）；**以可核实的依据为准**（事实 / 接口 / 参数 / 版本先查证再断言，查不到就说不确定，不用听起来合理的说法填空）；**实质优先于形式**（不复述用户已说清的需求、不用开场垫话，礼貌体现在措辞而非铺垫）；**区分两类动作**（读文件 / 检索 / 整理这类内部动作大胆做，发消息 / 提交 / 发布 / 删除这类对外动作先确认）
   - 与既有内置一致：不声明 `nickname` / `occupation` / `bio`（「关于你」是使用者本人的资料，预设不该动）与 `language`（内置是给任何语言用户共用的通用人格，写死会让英文用户应用一次就被切回中文），因此应用它不会动你的昵称职业
   - 名字与被参照的原始预设不同：原名含个人昵称，不适合作内置名，故按行为核心重新命名。原有的自建预设不受影响，两者可并存（★ 各自独立判定）
-- **插件列表里的展示名可自定义**：新增 `locale/en.json` 与 `locale/zh.json`，把展示名从包名 `dsh-soul` 换成 **Soul**（英文）/ **Soul 人设**（中文）。机制是宿主的 `readPluginMeta` 先读 `<包>/locale/<语言>.json` 的 `meta.title` / `meta.description`、读不到才回退到 `package.json` 的 `name` / `description`（见 `dsh-app-boot`）。三处任一漏掉都会**静默回退成包名**（不报错、只是显示成 `dsh-soul`），故各配了断言：① `files` 白名单加上 `locale`（否则不进发布包）；② `exports` 声明 `"./locale/*.json"`（本包有 `exports` 字段，未声明的子路径会被挡住）；③ JSON 必须是 `{ meta: { title } }` 结构（`dictionariesOf` 读的是 `meta?.title`）。断言还要求**英文展示名不得等于包名**——否则「生效」与「回退」无法区分；行为层直接调宿主导出的 `readPluginMeta` 校验解析结果（7 组变异验证判断力：删 locale / 去 exports / 拆 meta 外层 / 空串 / 改回包名 / 删 zh.json / 非字符串，7/7 被拦）
 
 **变更**
 
@@ -133,7 +147,7 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 
 **校验**
 
-- `verify-config` 59 → **93 项**（新增：重置逃生口单一实现、注入失败必须留痕、诊断端点形状、两类问题分开上报、版本号不新增常量、三张双语文案表逐键对齐、`verify` 与 `verify:strict` 两条链同序且逐项带 `--strict`；本版追加「预设范围只含人设」「残留的『关于你』不参与匹配与取值」「`normalizePersonas` 剥离历史快照」「保存与应用只遍历同一份白名单」「客户端预设行摘要不读『关于你』」五项，以及**客户端复刻常量对齐**、**人设行对齐机制**、**set_persona schema 真实 DSL 校验**、**deliveryProblemText 取表方向**、**预设应用单一实现路径 + `invalid` 回报**与**命令层三处行为契约**断言）；`verify-store` 14 → **18 项**（新增 `moveAsideConfigFile` 的四条行为断言）
+- `verify-config` 59 → **91 项**（新增：重置逃生口单一实现、注入失败必须留痕、诊断端点形状、两类问题分开上报、版本号不新增常量、三张双语文案表逐键对齐、`verify` 与 `verify:strict` 两条链同序且逐项带 `--strict`；本版追加「预设范围只含人设」「残留的『关于你』不参与匹配与取值」「`normalizePersonas` 剥离历史快照」「保存与应用只遍历同一份白名单」「客户端预设行摘要不读『关于你』」五项，以及**客户端复刻常量对齐**、**人设行对齐机制**、**set_persona schema 真实 DSL 校验**、**deliveryProblemText 取表方向**、**预设应用单一实现路径 + `invalid` 回报**与**命令层三处行为契约**断言）；`verify-store` 14 → **18 项**（新增 `moveAsideConfigFile` 的四条行为断言）
 - **补上「客户端复刻常量 == 宿主定义」这组断言（4 条）**：浏览器模块表不允许 `client/index.mjs` import `lib/config.mjs`，所以客户端必须复刻一份枚举与字段表；这些常量旁都写着「与 lib/config.mjs 保持一致」，但那只是注释。实测证明此前**完全无人看管**：把 `FIELD_KEYS` 漏掉 `tables`、`STYLE_VALUES` 换掉一项、`REPLY_LENGTH_VALUES` 漏 `detailed`、`LANGUAGE_VALUES` 增 `jp`、乃至把标题徽标的 `VERSION` 改成 `9.9.9`，整套 `npm run verify` **依然全绿**。新断言从两端各取一次真相再比对（宿主用 import 到的真实值，客户端按源文本解析），覆盖 `STYLE_VALUES` / `TRAIT_VALUES` / `REPLY_LENGTH_VALUES` / `LANGUAGE_VALUES` / `FIELD_KEYS`（须与 `DEFAULT_CONFIG` 字段集完全相同且无重复）/ `VERSION`（须等于 `package.json`）/ 「版本常量唯一」。判断力用 **8 组破坏对照**逐一验证（上面五类漂移 + 两档 `TRAIT_VALUES` + `FIELD_KEYS` 重复字段 + 新增第二个版本常量），8/8 被拦下且报错指出具体漂移内容
 - **人设行对齐机制断言（1 条 + 原有 1 条改写）**：钉住「徽标在名称列、不在操作区」「内置行有操作区空占位且必须是 `span` 而非按钮」「人设行与操作区都用网格」「两条轨道等宽固定且操作区有固定宽度」。判断力用 **5 组破坏对照**验证（徽标搬回操作区 / 空占位改成 button / 轨道退回 `auto` / 取消固定宽度 / 人设行退回 flex），5/5 被拦下。定界统一改用**括号配平**（`extractCall`）：原先的缩进定界（`\s{22}`）与真实闭合（24 空格）不符，捕获越界吞掉摘要列与操作区，把徽标挪到摘要列也能通过（变异实测）——为此新增了自检断言「名称列捕获不得含 meta/actions」，定界一旦再次失效会先在自家测试里炸出来
 - **源码契约断言全面去注释化**：所有对 `index.mjs` / 链上脚本源文本的正则断言改为先 `stripComments()` 再匹配（长度保持不变的注释剥离），堵住「把真实调用注释掉、在注释里留同样字样」这类绕过（M5 类漏洞，`writeConfigFile` 与链守护两处变异实测修复前可绕过、修复后被拦）。链守护同步加严：① **链覆盖与 scripts 目录对账**（对称删掉一个脚本不再被静默放过）；② `assertCount` 必须是**被消费的结果**（`if (!assertCount(...))` 或 `skipExit(..., NOMINAL_ASSERTIONS, ...)`），返回值丢弃 / 只剩注释均不算
