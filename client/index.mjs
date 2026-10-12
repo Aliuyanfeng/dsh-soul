@@ -646,20 +646,24 @@ window.__ModuleLoader__.load({
       // 操作区：固定宽度 + 两个等宽轨道，「使用」永远在第 1 轨、删除位永远在第 2 轨。
       // 间距对齐宿主 .zGbnIq_rowActions 的 gap:4px；margin-top:auto 让它贴卡片底部，
       // 于是不同摘要长度的卡片按钮仍对齐（堆叠容器高度固定，不会被内容撑变）。
-      '.soul-persona-actions{display:grid;grid-template-columns:1fr 1fr;justify-items:end;align-items:center;gap:4px;width:9.5em;white-space:nowrap;margin-top:auto}',
-      // 内置卡片第 2 轨的空占位：只负责让该轨道存在（不是可点控件，所以用 span）
-      '.soul-persona-slot{display:block;width:0}',
-      // —— 行操作按钮：完全对齐宿主模型列表的两个按钮规格 ——
-      // 「使用」对应宿主 .zGbnIq_linkButton：height 28 / radius-sm / padding 0 10 /
-      //   12px-18px / 色 label-tertiary / 透明底无边框（hover 提亮到 label-primary）
-      // 「删除」对应宿主 .zGbnIq_dangerButton 的窄档：同尺寸同圆角，色 state-error-primary，
-      //   hover 时底色 interactive-bg-hover-danger
-      '.soul-persona-action{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap;transition:background-color .15s ease,color .15s ease}',
-      '.soul-persona-action:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-      '.soul-persona-action:disabled{cursor:default;opacity:.4}',
-      '.soul-persona-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
-      '.soul-persona-danger{color:var(--dsw-alias-state-error-primary)}',
-      '.soul-persona-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}',
+      // 操作区：「使用」是卡牌主操作（要突出），弹性占满可用宽度；
+      // 「删除」是次要破坏性操作，定宽小按钮，不抢主次。
+      // 内置预设无删除 ⇒ 不渲染删除按钮，「使用」自然占满整行。
+      '.soul-persona-actions{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:2px}',
+      // 主按钮：走主题的主按钮色族（brand 底 + 反色前景）。
+      // 为什么不再沿用「对齐宿主 linkButton」的 28px 透明底：那是**列表行**里的
+      // 文字按钮规格，而卡牌的主操作需要更强的视觉权重（样张里也是实心主色按钮）。
+      '.soul-persona-action{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:5px;height:36px;padding:0 14px;border:0;border-radius:var(--dsw-radius-md,12px);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font:inherit;font-size:13px;font-weight:600;line-height:20px;cursor:pointer;white-space:nowrap;flex:1 1 auto;min-width:0;transition:filter .15s ease}',
+      '.soul-persona-action:hover:not(:disabled){filter:brightness(1.08)}',
+      '.soul-persona-action:active:not(:disabled){filter:brightness(0.96)}',
+      '.soul-persona-action:disabled{cursor:default;opacity:.5}',
+      '.soul-persona-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
+      // 删除：定宽描边式危险按钮（43px），明显小于「使用」，形成主次对比
+      '.soul-persona-danger{flex:0 0 43px;background:transparent;color:var(--dsw-alias-state-error-primary);border:.5px solid var(--dsw-alias-state-error-primary);font-size:12px;font-weight:500}',
+      '.soul-persona-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger);filter:none}',
+      // 内置预设：不渲染删除按钮（后端也拒绝删除），「使用」占满整行。
+      // 类名保留是为了兼容既有断言与「空占位不能是可点控件」这条历史契约。
+      '.soul-persona-slot{display:none}',
       // 徽标：对齐宿主的 rowTag 规格（.5px 描边、radius-xs、11px/16px）
       '.soul-persona-badge{border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-xs);color:var(--dsw-alias-label-secondary);flex:none;padding:0 6px;font-size:11px;line-height:16px;white-space:nowrap}',
       '.soul-persona-save{display:flex;gap:8px}',

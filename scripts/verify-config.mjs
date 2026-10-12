@@ -1091,42 +1091,45 @@ check('设置页样式对齐宿主栏目：无外层盒子，分组用卡片', (
   )
 })
 
-check('人设行操作按钮规格对齐宿主列表按钮', () => {
-  // 宿主「模型列表」的行操作按钮是一套固定规格：
-  //   .zGbnIq_linkButton   height 28 / radius-sm / padding 0 10 / 12px-18px /
-  //                        color label-tertiary / 透明底无边框 / hover 提亮
-  //   .zGbnIq_dangerButton 同尺寸同圆角，color state-error-primary，
-  //                        hover 用 interactive-bg-hover-danger
-  // 我们此前用的是「下划线文字链接」样式，与宿主列表操作不一致。
+check('卡牌操作按钮：主操作突出（实心主色），删除为次要小按钮', () => {
+  // 卡牌的主操作是「使用」——它需要足够的视觉权重（实心主按钮 + 较大高度），
+  // 而不是列表行里那种 28px 透明底的文字按钮（那是**列表**的规格，
+  // 卡牌上会显得太小、不够突出）。
+  // 「删除」是次要的破坏性操作：定宽小按钮 + 描边危险色，形成主次对比。
   const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
   const btn = cssBlock.match(/\.soul-persona-action\{([^}]*)\}/)?.[1] ?? ''
   assert.ok(btn !== '', '找不到 .soul-persona-action 规则')
   for (const [pattern, why] of [
-    [/height:28px/, '高度应为 28px（与宿主行按钮一致）'],
-    [/border-radius:var\(--dsw-radius-sm\)/, '圆角应为 radius-sm（宿主 button 用 sm）'],
-    [/padding:0 10px/, '横向内边距应为 0 10px（与宿主一致）'],
-    [/font-size:12px/, '字号应为 12px'],
-    [/line-height:18px/, '行高应为 18px'],
-    [/background:transparent/, '默认透明底'],
-    [/border:0/, '无边框']
+    [/background:var\(--dsw-alias-button-primary-fill\)/, '「使用」应为实心主按钮底（用主题主按钮 token）'],
+    [/color:var\(--dsw-alias-label-primary-foreground\)/, '主按钮文字应为反色前景（保证对比度）'],
+    [/flex:1 1 auto/, '主按钮应弹性占满可用宽度（卡牌主操作要显眼）'],
+    [/font-weight:600/, '主按钮字重应为 600（突出主操作）']
   ]) {
     assert.ok(pattern.test(btn), why)
   }
-  assert.ok(
-    /color:var\(--dsw-alias-label-tertiary\)/.test(btn),
-    '「使用」按钮默认色应为 label-tertiary（宿主 linkButton 同色）'
-  )
-  // hover / danger 两态
-  assert.ok(
-    /\.soul-persona-action:hover:not\(:disabled\)\{[^}]*interactive-bg-hover/.test(cssBlock),
-    '按钮 hover 应使用 interactive-bg-hover 底色'
-  )
+  // 高度必须足够大：按钮偏小是这一版明确修过的问题 ⇒ 校验量级而非「有 height」
+  const h = Number((btn.match(/height:(\d+)px/) ?? [])[1] ?? 0)
+  assert.ok(h >= 32, `主按钮高度应 ≥32px（当前 ${h}px，卡牌上过小会不突出且难点）`)
+  const fs = Number((btn.match(/font-size:(\d+)px/) ?? [])[1] ?? 0)
+  assert.ok(fs >= 13, `主按钮字号应 ≥13px（当前 ${fs}px）`)
+  // hover 反馈必须存在
+  assert.match(cssBlock, /\.soul-persona-action:hover:not\(:disabled\)\{[^}]*filter:brightness/, '主按钮应有 hover 反馈')
+  // 删除：定宽（不占满）+ 描边危险色，明显小于主按钮
   const danger = cssBlock.match(/\.soul-persona-danger\{([^}]*)\}/)?.[1] ?? ''
   assert.ok(/state-error-primary/.test(danger), '删除按钮色应为 state-error-primary')
+  assert.match(danger, /flex:0 0 \d+px/, '删除按钮应定宽（不占满，避免与主操作抢视觉权重）')
+  assert.match(danger, /background:transparent/, '删除按钮应为透明底（次要操作）')
+  assert.match(danger, /border:\.5px solid/, '删除按钮应有描边（次要按钮的视觉语言）')
   assert.ok(
     /\.soul-persona-danger:hover:not\(:disabled\)\{[^}]*interactive-bg-hover-danger/.test(cssBlock),
-    '删除按钮 hover 应使用 interactive-bg-hover-danger（宿主 dangerButton 同款）'
+    '删除按钮 hover 应使用 interactive-bg-hover-danger'
   )
+  // 操作区应为 flex（主按钮弹性 + 删除定宽），不再是两条固定轨道的网格
+  const actions = cssBlock.match(/\.soul-persona-actions\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(actions, /display:flex/, '操作区应为弹性布局（主按钮占满、删除定宽）')
+  // 内置预设不渲染删除按钮，「使用」自然占满
+  assert.match(cssBlock, /\.soul-persona-slot\{display:none\}/, '内置预设的删除位应完全不占空间（.soul-persona-slot 隐藏）')
+
   // 卡片必须是堆叠容器（一次只展示一张），而不是纵向列表
   const card = cssBlock.match(/\.soul-persona-card\{([^}]*)\}/)?.[1] ?? ''
   assert.ok(card !== '', '找不到 .soul-persona-card 规则')
@@ -1304,18 +1307,20 @@ check('人设插画：竖版卡牌（插画为主视觉），自定义预设用�
   assert.match(clientSource, /const personaEffectText = /, '缺少效果栏文本函数')
 })
 
-check('客户端卡片用网格布局保证「使用」按钮跨卡同列', () => {
+check('操作区贴底对齐（摘要长短不一时按钮不错位）', () => {
+  // 摘要（效果栏）行数可能 1~3 行，卡片高度固定 ⇒ 操作区必须贴底，
+  // 否则效果栏短的那张卡按钮会浮在中间，与其它卡不齐。
   const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
   const actions = cssBlock.match(/\.soul-persona-actions\{([^}]*)\}/)?.[1] ?? ''
-  assert.ok(/display:grid/.test(actions), '操作区应是网格（两条固定轨道）')
-  // 轨道必须两端等宽：`auto`/`minmax()` 会按各自内容算宽，内置卡片第 2 轨为空 ⇒ 两类卡片不同列
-  assert.ok(
-    /grid-template-columns:1fr 1fr/.test(actions),
-    '操作区两条轨道必须等宽固定，否则内置卡片（第 2 轨为空）与自建卡片的「使用」不同列'
-  )
-  assert.ok(/width:\s*\d/.test(actions), '操作区需要固定宽度，跨卡片几何才会一致')
-  // 摘要长短不一时，按钮仍要贴底对齐（卡片高度固定）
-  assert.ok(/margin-top:auto/.test(actions), '操作区应 margin-top:auto 贴底，避免摘要长度不同导致按钮错位')
+  assert.ok(/margin-top:auto/.test(actions), '操作区应 margin-top:auto 贴底，避免效果栏长短导致按钮错位')
+  // 效果栏本身要能撑开剩余空间、且限制行数（保证卡片高度可预期）
+  const eff = cssBlock.match(/\.soul-persona-eff\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(eff, /-webkit-line-clamp:(\d+)/, '效果栏应限制行数')
+  const clamp = Number((eff.match(/-webkit-line-clamp:(\d+)/) ?? [])[1] ?? 0)
+  assert.ok(clamp >= 2 && clamp <= 4, `效果栏行数应在 2~4 之间（当前 ${clamp}）`)
+  // 信息区应能纵向撑满卡片（否则 margin-top:auto 无参照）
+  const body = cssBlock.match(/\.soul-persona-body\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(body, /flex:1/, '信息区应 flex:1 撑满卡片剩余高度')
 })
 
 check('客户端的动效尊重 prefers-reduced-motion（含提示条）', () => {
