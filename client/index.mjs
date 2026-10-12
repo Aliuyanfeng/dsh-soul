@@ -597,45 +597,52 @@ window.__ModuleLoader__.load({
       '.soul-hint:focus-visible .soul-hint-tip{opacity:1;visibility:visible}',
       '.soul-status{margin-top:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       '.soul-dirty{color:var(--dsw-alias-state-warn-primary)}',
-      // —— 人设预设行 ——
-      // 对齐宿主「模型列表」的行卡片语言（.zGbnIq_rowCard / .zGbnIq_rows）：
-      // —— 人设预设：卡片堆叠轮播 ——
-      // 一次只展示一张卡片，左右各留一张做「叠放露边」。三张卡片绝对定位在同一堆叠容器里，
-      // 靠 `transform: translateX + scale` 分层：当前张（offset 0）在最上层且可交互，
-      // ±1 两张缩小并左右偏移，形成卡堆的纵深。用绝对定位而非文档流，是为了让容器高度
-      // 不随可见张数变化（否则切到末张时高度会突然塌下来）。
-      '.soul-persona-carousel{position:relative;display:flex;flex-direction:column;gap:10px}',
-      // 堆叠容器需要左右留白：叠层卡片会向左右各偏移 34px，不留空间会被裁掉。
-      // 高度固定（min-height）以免切换时布局跳动；上下留白给叠层的向下错位。
-      '.soul-persona-stack{position:relative;min-height:118px;padding:0 40px}',
-      // 卡片绝对定位在 stack 的**内容区**（左右各让出 40px 给叠层）。用 inset 的四值写法
-      // 而不是 inset:0，否则卡片会盖住留白、叠层被压在下面看不见。
-      '.soul-persona-card{position:absolute;top:0;bottom:0;left:40px;right:40px;display:flex;flex-direction:column;gap:8px;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-settings-card-fill);box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .28s cubic-bezier(.22,.61,.36,1),opacity .28s ease;transform-origin:center top;will-change:transform}',
-      // 非当前卡片是「背景层」：可点击切过去，但不可抢注意力（透明度由内联 style 控制，
-      // 因为叠层距离是逐张算的）
+      // —— 人设预设：竖版卡牌 + 堆叠轮播 ——
+      // 方案 B：插画是卡面主视觉（方形满铺），名称与摘要压在图上由渐变承接，
+      // 效果与按钮在下方的白色信息区。卡牌竖版后「一次只见一张」的代价更大，
+      // 因此保留位置指示、圆点与左右翻页（见 .soul-persona-nav）。
+      '.soul-persona-carousel{position:relative;display:flex;flex-direction:column;gap:12px}',
+      // 堆叠容器：卡牌绝对定位其中，容器高度固定 ⇒ 切换时不跳动。
+      // 竖版卡牌高度 = 插画 260（等于卡宽的正方形）+ 信息区约 92 + 边框 ⇒ 取 372。
+      // 左右留白不需要 padding：卡片以 margin:auto 居中，±92px 的两张展开后总宽约 430px，
+      // 远小于容器宽度（设置页 max-width 760px），不会溢出。
+      '.soul-persona-stack{position:relative;min-height:372px}',
+      // 卡牌：固定宽度居中（left/right:0 + margin auto），靠 transform 做叠层位移与缩放。
+      // top/bottom:0 让三张卡等高 —— 内容长短不同的卡片高度一致，堆叠才整齐。
+      '.soul-persona-card{position:absolute;top:0;bottom:0;left:0;right:0;width:260px;margin:0 auto;display:flex;flex-direction:column;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;transform-origin:center top;will-change:transform}',
+      // 插画区：正方形主视觉。非内置预设没有配套插画，用主题色渐变兜底
+      // （data-builtin="false" 时不出图，见下）。
+      '.soul-persona-art{position:relative;width:100%;aspect-ratio:1/1;flex:none;overflow:hidden;background:linear-gradient(150deg,color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,var(--dsw-alias-bg-module-platform)),var(--dsw-alias-bg-module-platform))}',
+      '.soul-persona-art-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;user-select:none}',
+      // 底部渐变：让压在图上的名称/摘要有足够对比度（浅色插画上白字会糊）
+      '.soul-persona-art-veil{position:absolute;inset:auto 0 0 0;height:62%;background:linear-gradient(180deg,rgba(10,14,35,0),rgba(10,14,35,.62) 55%,rgba(10,14,35,.86));pointer-events:none}',
+      // 名称 + 摘要压在图底部
+      '.soul-persona-art-title{position:absolute;left:12px;right:12px;bottom:10px;display:flex;flex-direction:column;gap:2px;min-width:0}',
+      '.soul-persona-name{display:flex;align-items:center;gap:6px;min-width:0;color:var(--dsw-static-neutral-bluish-00,#fff);font-size:14px;font-weight:600;line-height:20px}',
+      '.soul-persona-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 1px 6px rgba(0,0,0,.5)}',
+      '.soul-persona-meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-static-neutral-bluish-100,#d3dbf5);font-size:11px;line-height:16px;text-shadow:0 1px 6px rgba(0,0,0,.5)}',
+      // 内置徽标：图上用半透明玻璃底（白底徽标在深色图上会太跳）
+      '.soul-persona-badge{position:absolute;top:10px;left:10px;flex:none;padding:2px 7px;border-radius:999px;border:1px solid rgba(255,255,255,.34);background:rgba(255,255,255,.2);color:var(--dsw-static-neutral-bluish-00,#fff);font-size:10px;font-weight:600;line-height:14px;letter-spacing:.3px;backdrop-filter:blur(8px)}',
+      // 位置指示：图上右上角的胶囊
+      '.soul-persona-card-pos{position:absolute;top:10px;right:10px;padding:2px 7px;border-radius:999px;background:rgba(10,14,35,.5);color:var(--dsw-static-neutral-bluish-00,#fff);font-size:10px;line-height:14px;font-variant-numeric:tabular-nums;backdrop-filter:blur(8px)}',
+      // 信息区：效果说明 + 操作按钮
+      '.soul-persona-body{display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;padding:10px 12px 12px}',
+      '.soul-persona-eff{color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}',
+      // 非当前卡片是「背景层」：可点击切过去，但不可抢注意力
       '.soul-persona-card[data-current="false"]{cursor:pointer}',
-      '.soul-persona-card[data-offset="0"]{box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08))}',
-      // 卡片头：名称 + 徽标在左，位置指示（i / n）在右
-      '.soul-persona-card-head{display:flex;align-items:center;gap:8px;min-width:0}',
-      '.soul-persona-card-pos{flex:0 0 auto;margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;font-variant-numeric:tabular-nums}',
-      // 「翻开」动画：切张时当前卡片轻微上浮，给出卡堆被拨动的实感。
-      // 尊重 prefers-reduced-motion（与其它动效同一口径，见文件末尾的 media 规则）。
-      '.soul-persona-card[data-current="true"]{animation:soul-card-in .28s cubic-bezier(.22,.61,.36,1) both}',
-      '@keyframes soul-card-in{from{opacity:.72;transform:translateX(0) scale(.97)}to{opacity:1;transform:translateX(0) scale(1)}}',
-      // 位置指示与翻页：一次只见一张，就必须给出「共几张 / 现在第几张」与可点入口
-      '.soul-persona-nav{display:flex;align-items:center;justify-content:center;gap:10px}',
-      '.soul-persona-navbtn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:16px;line-height:1;cursor:pointer;transition:background-color .15s ease,color .15s ease}',
+      // 「翻开」动画：切张时当前卡片轻微放大，给出卡牌被拨动的实感
+      '.soul-persona-card[data-current="true"]{animation:soul-card-in .3s cubic-bezier(.22,.61,.36,1) both}',
+      '@keyframes soul-card-in{from{opacity:.72;transform:translateX(0) scale(.96)}to{opacity:1;transform:translateX(0) scale(1)}}',
+      // 位置指示与翻页：竖版卡牌一次只见一张，这三处是对该损失的补偿
+      '.soul-persona-nav{display:flex;align-items:center;justify-content:center;gap:12px}',
+      '.soul-persona-navbtn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-settings-card-fill);color:var(--dsw-alias-label-secondary);font:inherit;font-size:16px;line-height:1;cursor:pointer;transition:background-color .15s ease,color .15s ease}',
       '.soul-persona-navbtn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
       '.soul-persona-navbtn:disabled{cursor:default;opacity:.3}',
       '.soul-persona-navbtn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.soul-persona-dots{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;justify-content:center}',
       '.soul-persona-dot{width:6px;height:6px;padding:0;border:0;border-radius:50%;background:var(--dsw-alias-label-tertiary);opacity:.35;cursor:pointer;transition:opacity .15s ease,transform .15s ease}',
-      '.soul-persona-dot[data-active="true"]{opacity:1;transform:scale(1.25);background:var(--dsw-alias-brand-primary)}',
+      '.soul-persona-dot[data-active="true"]{opacity:1;transform:scale(1.3);background:var(--dsw-alias-brand-primary)}',
       '.soul-persona-dot:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
-      // 名称区：名称 + 徽标。徽标弱化（无边框、更小、更淡），避免与「使用 / 删除」抢注意力
-      '.soul-persona-name{display:flex;align-items:center;gap:6px;min-width:0;color:var(--dsw-alias-label-primary);font-weight:500}',
-      '.soul-persona-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.soul-persona-meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary)}',
       // 操作区：固定宽度 + 两个等宽轨道，「使用」永远在第 1 轨、删除位永远在第 2 轨。
       // 间距对齐宿主 .zGbnIq_rowActions 的 gap:4px；margin-top:auto 让它贴卡片底部，
       // 于是不同摘要长度的卡片按钮仍对齐（堆叠容器高度固定，不会被内容撑变）。
@@ -1470,6 +1477,20 @@ window.__ModuleLoader__.load({
         return parts.join(' · ')
       }
 
+      // 卡牌效果栏文本：优先用预设的 customInstructions（它是人格差异的主要载体），
+      // 没有则退回维度摘要。为什么取 customInstructions 而不是摘要：摘要只说
+      // 「专业严谨 · 默认」这类档位，而卡牌需要一句话说清「这个预设会怎么回答」。
+      //
+      // 截断到第一句或 60 字：卡面空间有限，CSS 侧还有 3 行 line-clamp 兜底。
+      const personaEffectText = (entry) => {
+        const raw = typeof (entry || {}).customInstructions === 'string' ? entry.customInstructions.trim() : ''
+        if (raw === '') return personaRowMeta(entry)
+        // 按中文句号/分号/换行切第一句；无标点时整段交给 CSS 截断
+        const firstSentence = raw.split(/[。；;\n]/)[0] || raw
+        const text = firstSentence.length > 60 ? `${firstSentence.slice(0, 60)}…` : firstSentence
+        return text
+      }
+
       return e('div', { className: 'soul-section' },
         e('div', { className: 'soul-title-row' },
           e('h3', null, t('settings.title')),
@@ -1663,7 +1684,10 @@ window.__ModuleLoader__.load({
                           // 叠层几何：当前张居中不动；±1 两张向左/右偏移并缩小。
                           // 偏移量（34px）要明显大于卡片内边距，否则叠层只露出一条缝、
                           // 看不出「一叠卡片」；缩放 5.5% 兼顾「缩小」与「仍看得清文字」。
-                          transform: `translate(${offset * 34}px, ${Math.abs(offset) * 6}px) scale(${1 - Math.abs(offset) * 0.055})`,
+                          // 叠层几何：竖版卡牌宽 260px，偏移要足够大才能看出「左右两张卡」，
+                          // 太小会与当前卡重叠成一坨。92px 偏移 + 6% 缩小，叠层露出的
+                          // 是一条完整的卡边（约 40px 可见宽度）。
+                          transform: `translateX(${offset * 92}px) translateY(${Math.abs(offset) * 10}px) scale(${1 - Math.abs(offset) * 0.06})`,
                           zIndex: String(10 - Math.abs(offset)),
                           // 叠层卡片压暗一点，形成前后景深（不能用 filter:brightness，
                           // 那会连带把文字变灰、看起来像禁用态）
@@ -1673,33 +1697,54 @@ window.__ModuleLoader__.load({
                         'aria-hidden': current ? undefined : 'true',
                         ...(current ? {} : { onClick: () => go(index + offset) })
                       },
-                        e('div', { className: 'soul-persona-card-head' },
-                          e('span', { className: 'soul-persona-name' },
-                            e('span', { className: 'soul-persona-label' }, name === activePersona ? `★ ${name}` : name),
-                            // 来源徽标紧贴名称：它说明「这个预设从哪来」，属于名称的修饰而非操作
-                            builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin'))
-                          ),
+                        // 插画区（方案 B 的卡面主视觉）：只在有配套插画时可出图。
+                        // 图由宿主路由按人设名提供，缺图时宿主回退官方鲸鱼占位图，
+                        // 但仍留 onError 兜底隐藏，避免路由不可用时留下破图图标。
+                        // 自定义预设没有插画，此区退化为主题色渐变底 + 名称摘要。
+                        e('div', { className: 'soul-persona-art' },
+                          builtin && e('img', {
+                            className: 'soul-persona-art-img',
+                            src: new URL(`/api/soul/persona-art/${encodeURIComponent(name)}`, hostBase()).href,
+                            alt: '',
+                            loading: 'lazy',
+                            decoding: 'async',
+                            draggable: 'false',
+                            onError: (ev) => { ev.target.style.display = 'none' }
+                          }),
+                          // 渐变遮罩：让压在图上的名称/摘要有足够对比度
+                          e('div', { className: 'soul-persona-art-veil', 'aria-hidden': true }),
+                          builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
                           // 位置指示只出现在当前卡片上：左右露边的卡片若也显示「i / n」，
                           // 三张会同时出现同一个计数，看起来像显示错误。
-                          current && e('span', { className: 'soul-persona-card-pos' }, `${index + 1} / ${total}`)
+                          current && e('span', { className: 'soul-persona-card-pos' }, `${index + 1} / ${total}`),
+                          // 名称与摘要压在图上
+                          e('div', { className: 'soul-persona-art-title' },
+                            e('span', { className: 'soul-persona-name' },
+                              e('span', { className: 'soul-persona-label' }, name === activePersona ? `★ ${name}` : name)
+                            ),
+                            e('div', { className: 'soul-persona-meta' }, personaRowMeta(entry))
+                          )
                         ),
-                        e('div', { className: 'soul-persona-meta' }, personaRowMeta(entry)),
-                        e('div', { className: 'soul-persona-actions' },
-                          // 按钮规格对齐宿主模型列表：linkButton（使用）/ dangerButton（删除）
-                          e('button', {
-                            type: 'button',
-                            className: 'soul-persona-action',
-                            onClick: () => handleUsePersona(name)
-                          }, t('personas.use')),
-                          // 内置预设不提供删除（后端也拒绝）：留空占位槽让两类卡片按钮同列。
-                          // 刻意不是按钮，避免造出一个点了没反应的控件。
-                          builtin
-                            ? e('span', { className: 'soul-persona-slot', 'aria-hidden': true })
-                            : e('button', {
+                        e('div', { className: 'soul-persona-body' },
+                          // 效果栏：卡牌的核心信息（这个预设会怎么回答）
+                          e('div', { className: 'soul-persona-eff' }, personaEffectText(entry)),
+                          e('div', { className: 'soul-persona-actions' },
+                            // 按钮规格对齐宿主模型列表：linkButton（使用）/ dangerButton（删除）
+                            e('button', {
                               type: 'button',
-                              className: 'soul-persona-action soul-persona-danger',
-                              onClick: () => handleDeletePersona(name)
-                            }, t('personas.delete'))
+                              className: 'soul-persona-action',
+                              onClick: () => handleUsePersona(name)
+                            }, t('personas.use')),
+                            // 内置预设不提供删除（后端也拒绝）：留空占位槽让两类卡片按钮同列。
+                            // 刻意不是按钮，避免造出一个点了没反应的控件。
+                            builtin
+                              ? e('span', { className: 'soul-persona-slot', 'aria-hidden': true })
+                              : e('button', {
+                                type: 'button',
+                                className: 'soul-persona-action soul-persona-danger',
+                                onClick: () => handleDeletePersona(name)
+                              }, t('personas.delete'))
+                          )
                         )
                       )
                     }

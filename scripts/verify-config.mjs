@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 98
+const EXPECTED_ASSERTIONS = 101
 
 let passed = 0
 const failures = []
@@ -920,21 +920,19 @@ check('客户端为内置预设提供中英双语文案键', () => {
   }
 })
 
-check('客户端卡片把「内置」徽标放在名称区，不进操作区', () => {
-  // 徽标渲染在名称区（紧跟名称），不是操作区 —— 放操作区会让两类卡片的按钮列错位。
+check('客户端卡牌把「内置」徽标放在插画区，不进操作区', () => {
+  // 竖版卡牌（方案 B）的结构是：
+  //   .soul-persona-art  插画区 —— 图 + 渐变遮罩 + 徽标 + 位置指示 + 名称/摘要
+  //   .soul-persona-body 信息区 —— 效果栏 + 操作按钮
+  // 徽标属于「这个预设从哪来」的信息，应随名称在插画区；放操作区会占掉按钮列位。
   // 定界必须用括号配平（extractCall），不能用缩进/固定窗口：曾用 `\s{22}` 猜终点，
-  // 而真实闭合是 24 空格 ⇒ 捕获一路吞掉摘要与操作区，「徽标在名称区」退化成
-  // 「徽标在这一块里」，把徽标挪到摘要区也能通过（变异实验实测，H4）。
-  const nameCell = extractCall(clientSource, "e('span', { className: 'soul-persona-name' }")
-  assert.ok(nameCell !== '', '找不到名称区渲染块')
+  // 而真实闭合是 24 空格 ⇒ 捕获吞掉后续内容，断言退化成「徽标在这一块里」（H4）。
+  const artCell = extractCall(clientSource, "e('div', { className: 'soul-persona-art' }")
+  assert.ok(artCell !== '', '找不到插画区渲染块')
+  assert.ok(/soul-persona-badge/.test(artCell), '内置标记未渲染在插画区（应随名称展示）')
   assert.ok(
-    /soul-persona-badge/.test(nameCell),
-    '内置标记未渲染在名称区（放操作区会让两类卡片的按钮列错位）'
-  )
-  // 名称区不得包含摘要/操作区内容 —— 防止定界再次失效而不自知
-  assert.ok(
-    !nameCell.includes('soul-persona-meta') && !nameCell.includes('soul-persona-actions'),
-    '名称区的捕获范围越界（定界用括号配平，不得吞入 meta/actions）'
+    /soul-persona-name/.test(artCell) && /soul-persona-meta/.test(artCell),
+    '名称与摘要应压在插画上（方案 B 的卡面构图）'
   )
   // 徽标不得出现在操作区块里
   const actionsCell = extractCall(clientSource, "e('div', { className: 'soul-persona-actions' }")
@@ -944,18 +942,12 @@ check('客户端卡片把「内置」徽标放在名称区，不进操作区', (
     false,
     '徽标不应出现在操作区（会占掉「使用」的列位）'
   )
-  // 徽标也不得出现在摘要区（把徽标挪进 meta 同样破坏对齐前提）
-  const metaCell = extractCall(clientSource, "e('div', { className: 'soul-persona-meta' }")
-  assert.ok(metaCell !== '', '找不到摘要区渲染块')
-  assert.equal(
-    /soul-persona-badge/.test(metaCell),
-    false,
-    '徽标不应出现在摘要列（对齐断言的前提是徽标独占名称列）'
-  )
+  // 效果栏必须在信息区内（放插画区会压在图上看不清）
+  const bodyCell = extractCall(clientSource, "e('div', { className: 'soul-persona-body' }")
+  assert.ok(/soul-persona-eff/.test(bodyCell), '效果栏应在信息区（.soul-persona-body）内')
   // 内置卡片在操作区第 2 轨放空占位（span，非按钮），自建卡片才是删除按钮：
   // 这正是两类卡片「使用」按钮能严格同列的原因。
-  const actionsBlock = extractCall(clientSource, "e('div', { className: 'soul-persona-actions' }")
-  assert.ok(actionsBlock !== '', '找不到操作区渲染块')
+  const actionsBlock = actionsCell
   assert.ok(
     /builtin\s*\n?\s*\?\s*e\('span', \{ className: 'soul-persona-slot'/.test(actionsBlock),
     '内置分支缺少操作区空占位（会导致「使用」与自建卡片不同列）'
@@ -1140,7 +1132,7 @@ check('人设行操作按钮规格对齐宿主列表按钮', () => {
   assert.ok(card !== '', '找不到 .soul-persona-card 规则')
   assert.ok(/position:absolute/.test(card), '卡片应绝对定位在堆叠容器里（否则高度会随张数跳动）')
   assert.ok(/settings-card-stroke/.test(card), '卡片描边应用 settings-card-stroke（与宿主卡片一致）')
-  assert.ok(/border-radius:var\(--dsw-radius-lg\)/.test(card), '卡片应有圆角')
+  assert.match(card, /border-radius:var\(--dsw-radius-xl\)/, '卡片应用 radius-xl 圆角（卡牌观感，与宿主卡片一致）')
   const stack = cssBlock.match(/\.soul-persona-stack\{([^}]*)\}/)?.[1] ?? ''
   assert.ok(/position:relative/.test(stack), '堆叠容器应为相对定位（作为卡片的定位基准）')
   // 高度必须**足够容纳一张卡片**：只断言「有 min-height」不够 —— 改成 0 也能过（实测），
@@ -1149,11 +1141,18 @@ check('人设行操作按钮规格对齐宿主列表按钮', () => {
   assert.ok(stackH >= 100, `堆叠容器 min-height 应 ≥100px（当前 ${stackH}px，过小会导致内容溢出/切换跳动）`)
   // 叠层必须真的错开：偏移量过小就只露一条缝、看不出「一叠卡片」。
   // 校验内联 transform 里的偏移系数，避免「改了数值而断言没跟上」（实测 0 偏移能骗过旧写法）。
-  const offMatch = clientSource.match(/translate\(\$\{offset \* (\d+)\}px/)
+  const offMatch = clientSource.match(/translateX\(\$\{offset \* (\d+)\}px\)/)
   assert.ok(offMatch, '找不到卡片叠层偏移的写法（内联 transform）')
+  // 竖版卡牌宽 260px，偏移要更大才能露出完整的卡边 ⇒ 下限提高到 60px
   assert.ok(
-    Number(offMatch[1]) >= 20,
-    `叠层横向偏移应 ≥20px（当前 ${offMatch[1]}px，过小则看不出叠加效果）`
+    Number(offMatch[1]) >= 60,
+    `叠层横向偏移应 ≥60px（当前 ${offMatch[1]}px，过小则叠层与当前卡重叠成一坨）`
+  )
+  // 叠层容器的竖直错位（让背景卡稍微下沉，形成卡堆纵深）
+  assert.match(
+    clientSource,
+    /translateY\(\$\{Math\.abs\(offset\) \* \d+\}px\)/,
+    '叠层应有竖直错位（背景卡下沉，形成卡堆纵深）'
   )
   // 滑动过渡必须存在（用户要的「滑动特效」），且要尊重 reduced-motion
   assert.match(card, /transition:[^;}]*transform/, '卡片应有 transform 过渡（滑动特效）')
@@ -1166,11 +1165,15 @@ check('人设行操作按钮规格对齐宿主列表按钮', () => {
     /\.soul-persona-card\{animation:none!important;transition:none\}/.test(rm),
     '卡片的滑动/入场动效必须在 prefers-reduced-motion 下关闭'
   )
-  // 来源区分交给徽标，不给卡片加底色（宿主不给行容器加 hover 底色）
-  assert.equal(
-    /\.soul-persona-card\[data-builtin/.test(cssBlock),
-    false,
-    '不应给内置卡片加底色（宿主用 rowTag 区分来源；灰底在白色卡片群里会被误读成 hover 态）'
+  // 来源区分交给徽标，不给卡片加底色（宿主不给行容器加 hover 底色）。
+  // 判定要**只看背景声明**：`[data-builtin]` 选择器还承担布局用途
+  // （无插画的自定义预设改单列），若只按选择器存在与否判断会误报。
+  const builtinRules = cssBlock.match(/\.soul-persona-card\[data-builtin[^{]*\{[^}]*\}/g) ?? []
+  const builtinBackgrounds = builtinRules.filter((r) => /background/.test(r))
+  assert.deepEqual(
+    builtinBackgrounds,
+    [],
+    `不应给内置卡片加底色（宿主用 rowTag 区分来源；灰底在白色卡片群里会被误读成 hover 态）：${builtinBackgrounds.join(' ')}`
   )
 })
 
@@ -1193,6 +1196,112 @@ check('卡片堆叠轮播：一次一张 + 位置指示 + 可点翻页（补偿�
   for (const key of ['personas.prev', 'personas.next']) {
     assert.ok(clientSource.includes(`'${key}'`), `缺少词典键 ${key}`)
   }
+})
+
+check('人设插画：宿主路由存在、只服务内置人设名、缺图回退占位', () => {
+  // 图放 assets/personas/<人设名>.<ext>，客户端按名请求 /api/soul/persona-art/<名>。
+  // 三条安全/健壮性契约：
+  //   ① 路由必须是 prefix（路径里带名字），且只接受 GET；
+  //   ② 名字经 isBuiltinPersona 白名单校验 —— 这是防路径穿越的**结构手段**
+  //      （用户可控的名字若不校验，`../package.json` 就能读到包内任意文件）；
+  //   ③ 缺图回退 placeholder.svg，而不是 404/破图。
+  assert.ok(/path: '\/api\/soul\/persona-art'/.test(indexCode), 'index.mjs 未注册人设插画路由')
+  // 用**剥过注释**的 indexCode 定位：原始源码的文件头注释里也写了同一路径用作说明，
+  // 直接 indexOf/lastIndexOf 会命中注释、把断言判错（初版就这样误报过）。
+  const regAt = indexCode.lastIndexOf("path: '/api/soul/persona-art'")
+  assert.ok(regAt > 0, '找不到插画路由的注册处')
+  const regStart = indexCode.lastIndexOf('register(', regAt)
+  const artRoute = indexCode.slice(Math.max(0, regStart), regAt + 1400)
+  assert.match(artRoute, /kind: 'prefix'/, '插画路由应为 prefix（路径含人设名）')
+  assert.match(artRoute, /req\.method !== 'GET'/, '插画路由应校验方法')
+  assert.ok(
+    /!isBuiltinPersona\(name\)/.test(indexCode),
+    'resolvePersonaArt 必须用 isBuiltinPersona 做白名单校验（防路径穿越的结构手段）'
+  )
+  assert.ok(/placeholder\.svg/.test(indexCode), '缺少缺图回退（placeholder.svg）')
+  assert.ok(/ART_MIME/.test(indexCode), '应显式给出 MIME 表（否则浏览器可能按 octet-stream 下载）')
+  assert.equal(
+    /join\(dir, name\)/.test(indexCode),
+    false,
+    '不得用未经白名单校验的请求名直接拼路径'
+  )
+})
+
+check('人设插画：文件规格达标（≤256KiB / 命名与人设一致 / 无孤儿文件）', () => {
+  // 宿主对插件资源有 256KiB 上限；文件名必须与内置人设名完全一致，
+  // 否则运行时查不到、静默回退占位图。
+  const artDir = resolve(packageRoot, 'assets/personas')
+  assert.equal(existsSync(artDir), true, '缺少 assets/personas 目录')
+  assert.equal(existsSync(resolve(artDir, 'placeholder.svg')), true, '缺少 placeholder.svg（缺图时要回退到它）')
+  const files = readdirSync(artDir)
+  const names = builtinPersonaNames()
+  const withArt = names.filter((n) => files.some((f) => f.startsWith(`${n}.`)))
+  assert.ok(withArt.length > 0, '至少要有一个内置人设配了插画（否则这条契约没有样本）')
+  for (const n of withArt) {
+    const file = files.find((f) => f.startsWith(`${n}.`))
+    const size = statSync(resolve(artDir, file)).size
+    assert.ok(size <= 256 * 1024, `assets/personas/${file} 为 ${size} 字节，超过宿主上限 262144 字节`)
+    assert.ok(size > 0, `assets/personas/${file} 是空文件`)
+    const ext = extname(file).toLowerCase()
+    assert.ok(
+      ['.webp', '.png', '.jpg', '.jpeg', '.svg'].includes(ext),
+      `assets/personas/${file} 的扩展名不在宿主白名单内`
+    )
+  }
+  // 目录里不得有多余文件（拼错的名字永远不会被用到，属于静默垃圾）
+  const allowed = new Set([
+    ...names.flatMap((n) => ['.webp', '.png', '.jpg', '.jpeg', '.svg'].map((e) => `${n}${e}`)),
+    'placeholder.svg'
+  ])
+  const orphan = files.filter((f) => !allowed.has(f))
+  assert.deepEqual(orphan, [], `assets/personas 下有未被使用到的文件（名字拼错？）：${orphan.join(', ')}`)
+})
+
+check('人设插画：竖版卡牌（插画为主视觉），自定义预设用渐变兜底', () => {
+  // 方案 B：卡牌竖版 —— 插画占卡面顶部的正方形主视觉，名称/摘要压在其上，
+  // 效果与按钮在下方的信息区。自定义预设没有配套插画，插画区退化为主题色渐变底
+  // （而不是留一块空白或破图）。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  const card = cssBlock.match(/\.soul-persona-card\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(card, /flex-direction:column/, '卡牌应为纵向布局（竖版卡：上插画下信息）')
+  assert.match(card, /overflow:hidden/, '卡牌应裁掉溢出（插画贴圆角，否则四角会露直角）')
+  // 插画区：正方形 + 渐变兜底底
+  const art = cssBlock.match(/\.soul-persona-art\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(art !== '', '找不到 .soul-persona-art 规则')
+  assert.match(art, /aspect-ratio:1\/1/, '插画区应为正方形（卡面主视觉）')
+  assert.match(art, /width:100%/, '插画区应占满卡宽')
+  assert.match(art, /background:linear-gradient/, '插画区应有渐变兜底底（自定义预设无图时不留空白）')
+  assert.match(art, /overflow:hidden/, '插画区应裁掉溢出部分')
+  const img = cssBlock.match(/\.soul-persona-art-img\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(img, /object-fit:cover/, 'img 应用 object-fit:cover（否则非方形图会变形）')
+  assert.match(img, /position:absolute/, 'img 应绝对定位铺满插画区')
+  // 渐变遮罩：名称压在图上必须有对比度保证
+  const veil = cssBlock.match(/\.soul-persona-art-veil\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(veil, /linear-gradient/, '插画底部应有渐变遮罩（否则浅色插画上白字看不清）')
+  // 名称压在插画上，用主题的固定白（不是硬编码 #fff）
+  const nameRule = cssBlock.match(/\.soul-persona-name\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(nameRule, /color:var\(--dsw-static-neutral-bluish-00/, '图上文字应用主题固定白 token（不得硬编码 #fff）')
+  // 信息区：效果栏 + 操作区
+  const body = cssBlock.match(/\.soul-persona-body\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(body, /flex-direction:column/, '信息区应纵向排列')
+  const eff = cssBlock.match(/\.soul-persona-eff\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(eff !== '', '找不到效果栏规则 .soul-persona-eff')
+  assert.match(eff, /-webkit-line-clamp/, '效果栏应限制行数（卡面空间有限）')
+  // 客户端侧：只给内置人设渲染 img，且带 onError 兜底与懒加载
+  assert.match(
+    clientSource,
+    /builtin && e\('img', \{[\s\S]{0,60}className: 'soul-persona-art-img'/,
+    '应只给内置人设渲染插画（自定义预设走渐变底）'
+  )
+  assert.match(
+    clientSource,
+    /\/api\/soul\/persona-art\/\$\{encodeURIComponent\(name\)\}/,
+    '插画 URL 应对人设名做 encodeURIComponent'
+  )
+  assert.match(clientSource, /onError: \(ev\) => \{ ev\.target\.style\.display = 'none' \}/, 'img 需要 onError 兜底（路由不可用时不显示破图）')
+  assert.match(clientSource, /loading: 'lazy'/, '插画应懒加载（打开设置页时不必一次请求全部图）')
+  // 效果栏文本来源：优先 customInstructions（人格差异的主要载体）
+  assert.match(clientSource, /const personaEffectText = /, '缺少效果栏文本函数')
 })
 
 check('客户端卡片用网格布局保证「使用」按钮跨卡同列', () => {

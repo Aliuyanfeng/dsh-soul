@@ -19,6 +19,7 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
   DEFAULT_CONFIG,
@@ -33,7 +34,7 @@ import {
   sanitizePersonaName
 } from './lib/config.mjs'
 import { createInjectionSource } from './lib/injection.mjs'
-import { isBuiltinPersona, mergePersonas, personaMatches, resolvePersona, declaredPersonaKeys } from './lib/personas.mjs'
+import { isBuiltinPersona, builtinPersonaNames, mergePersonas, personaMatches, resolvePersona, declaredPersonaKeys } from './lib/personas.mjs'
 import { configWriteRefusal, describeConfigFailure, moveAsideConfigFile, readConfigFile, writeConfigFile } from './lib/store.mjs'
 
 const name = 'soul'
@@ -55,6 +56,84 @@ function pluginVersion() {
     return null
   }
 }
+
+// ==================== 人设插画（方案 C：卡片左侧方图） ====================
+//
+// 图放 assets/personas/<内置人设名>.webp，随包发布；客户端按人设名请求
+// `/api/soul/persona-art/<name>`，宿主读文件返回。三条设计取舍：
+//
+//   ① **不进客户端包**：客户端模块由宿主注入，把 7 张图内联成 data URL 会让
+//      客户端包从 114KB 涨到 1MB+；走路由则按需加载、可缓存。
+//   ② **缺图回退占位而不是报错**：只有部分人设配了图时，其余显示官方鲸鱼轮廓的
+//      占位图。用户看到的是「一只鲸鱼」而不是破图，且新增人设不必同时补图。
+//   ③ **只服务内置人设名**：文件名由人设名构成，必须经白名单校验 —— 否则
+//      `/api/soul/persona-art/../../package.json` 这类路径穿越能读到包内任意文件。
+
+const PERSONA_ART_DIR = 'assets/personas'
+// 允许的图片扩展名（宿主对插件资源的白名单：SVG / PNG / JPEG / WebP）
+const ART_EXTENSIONS = ['.webp', '.png', '.jpg', '.jpeg', '.svg']
+// MIME 表：必须显式给出，否则浏览器可能按 octet-stream 下载而不是渲染
+const ART_MIME = {
+  '.webp': 'image/webp',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml'
+}
+const PLACEHOLDER_FILE = 'placeholder.svg'
+
+// 包根目录下的 assets/personas 绝对路径
+function personaArtDir() {
+  try {
+    const pkgDir = createRequire(import.meta.url).resolve('./package.json').replace(/[\\/]package\.json$/, '')
+    return join(pkgDir, PERSONA_ART_DIR)
+  } catch {
+    return null
+  }
+}
+
+// 解析某个内置人设的插画（返回文件名，或回退到占位图；都不可用返回 null）
+//
+// 白名单校验用 isBuiltinPersona：人设名因此只能是既定 7 个之一，不含 / 与 ..，
+// 路径穿越从结构上不可能发生（而不是靠字符串替换去猜）。
+function resolvePersonaArt(name) {
+  const dir = personaArtDir()
+  if (!dir || typeof name !== 'string' || !isBuiltinPersona(name)) return null
+  for (const ext of ART_EXTENSIONS) {
+    const file = join(dir, `${name}${ext}`)
+    if (existsSync(file)) return { file, mime: ART_MIME[ext] }
+  }
+  const fallback = join(dir, PLACEHOLDER_FILE)
+  if (existsSync(fallback)) return { file: fallback, mime: ART_MIME['.svg'] }
+  return null
+}
+
+// 已配图的人设名列表（诊断端点用：一眼看出哪几个还缺图）
+function personasWithArt() {
+  const dir = personaArtDir()
+  if (!dir || !existsSync(dir)) return []
+  let files = []
+  try {
+    files = readdirSync(dir)
+  } catch {
+    return []
+  }
+  const out = []
+  for (const name of builtinPersonaNamesSafe()) {
+    if (ART_EXTENSIONS.some((ext) => files.includes(`${name}${ext}`))) out.push(name)
+  }
+  return out
+}
+
+// builtinPersonaNames 的容错包装：诊断路径不应因为导入异常而失败
+function builtinPersonaNamesSafe() {
+  try {
+    return builtinPersonaNames()
+  } catch {
+    return []
+  }
+}
+
 
 // ==================== 提示词文案与构建器 ====================
 
@@ -976,6 +1055,45 @@ function registerPersonaRoutes(ctx) {
           send(res, 200, { ok: true, ...personaLibrary(updated) })
         } catch (err) {
           send(res, 500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
+
+    // 人设插画：/api/soul/persona-art/<内置人设名>
+    //
+    // 用 prefix 路由（WebRouteKind 支持 'exact' | 'prefix'）而不是 query 参数：
+    // 路径里直接带人设名，浏览器可对每个 URL 独立缓存与复用连接。
+    // 名字必须命中内置人设白名单（isBuiltinPersona），路径穿越因此不可能发生。
+    wsCtx.webServer.register({
+      kind: 'prefix',
+      path: '/api/soul/persona-art',
+      handler: async (req, res) => {
+        try {
+          if (req.method !== 'GET') {
+            res.writeHead(405, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ ok: false, error: 'Method not allowed' }))
+            return
+          }
+          const raw = String(req.url || '').split('?')[0]
+          const name = decodeURIComponent(raw.slice('/api/soul/persona-art'.length).replace(/^\/+/, ''))
+          const art = resolvePersonaArt(name)
+          if (!art) {
+            // 图与占位图都没有（理论上只会在 assets 被外部删空时出现）
+            res.writeHead(404, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ ok: false, error: `没有可用的插画：${name || '(空)'}` }))
+            return
+          }
+          const body = readFileSync(art.file)
+          res.writeHead(200, {
+            'content-type': art.mime,
+            'content-length': String(body.length),
+            // 图随包发布、路径即内容标识 ⇒ 可长期缓存；换图必然伴随版本号变化
+            'cache-control': 'public, max-age=86400'
+          })
+          res.end(body)
+        } catch (err) {
+          res.writeHead(500, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: String(err.message || err) }))
         }
       }
     })
