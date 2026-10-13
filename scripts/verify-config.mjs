@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 105
+const EXPECTED_ASSERTIONS = 106
 
 let passed = 0
 const failures = []
@@ -2076,6 +2076,45 @@ check('删除预设用内联二次确认，不得用原生 confirm', () => {
   // 中英文案键各一份
   assert.match(clientSource, /'personas\.confirmDeleteShort': '确认删除？'/, '缺中文待确认文案')
   assert.match(clientSource, /'personas\.confirmDeleteShort': 'Confirm delete\?'/, '缺英文待确认文案')
+})
+
+check('输入框上方（dock）展示当前人设标签，可点切换；底栏开关缀人设名', () => {
+  // 需求（用户反馈「输入框位置有点紧张」）：
+  //   A. 主位置放 dock（输入框卡片**之上**的独立一行）—— 不参与底栏横向排布，零挤压
+  //   B. 底栏的「个性化已启用」顺手缀上当前人设名，与 A 互相印证
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  // ① 必须注册到 dock（而不是塞进已被占满的 left）
+  assert.match(clientSource, /ctx\.slots\.inject\('conversation\.input\.dock'/, '人设标签应注册到 conversation.input.dock（底栏 left 已被附件/权限/模型等占满）')
+  assert.match(clientSource, /id: 'soul-persona-chip'/, 'dock 槽位注册缺少稳定 id')
+  // ② 只在「个性化已启用 + 有预设」时渲染 —— 否则会挂着一整行空白
+  assert.match(clientSource, /if \(!enabled \|\| !personas\) return null/, '标签应在「未启用」或「预设未就绪」时不渲染')
+  // ③ 可点：点开弹出预设列表
+  assert.match(clientSource, /const \[open, setOpen\] = React\.useState\(false\)/, '缺少标签展开状态')
+  assert.match(clientSource, /soul-chip-menu/, '缺少弹出的预设列表')
+  assert.match(clientSource, /aria-haspopup/, '标签应声明 aria-haspopup（读屏要能知道会弹列表）')
+  assert.match(clientSource, /'aria-expanded': open/, '标签应声明 aria-expanded')
+  assert.match(clientSource, /'aria-selected': current/, '列表项应声明 aria-selected')
+  // ④ 点选即应用，且必须刷新 store（否则标签与 ★ 不会更新）
+  assert.match(clientSource, /await controller\.usePersona\(name\)/, '点选应调用 usePersona')
+  assert.match(clientSource, /await controller\.fetchPersonas\(\)/, '应用后应重新拉预设列表')
+  assert.match(clientSource, /s\.activePersona = payload\.activeName/, '拉取后必须写回 activePersona（否则标签不更新）')
+  // ⑤ 必须能关闭：点空白
+  assert.match(clientSource, /soul-chip-backdrop/, '缺少「点空白关闭」的透明层')
+  assert.match(cssBlock, /\.soul-chip-backdrop\{position:fixed;inset:0;z-index:\d+/, '透明层应铺满并低于菜单层级')
+  // ⑥ B：底栏开关缀人设名，且只在启用时显示
+  assert.match(clientSource, /soul-quick-toggle-name/, '底栏开关缺少人设名')
+  assert.match(clientSource, /enabled && activePersona && e\('span', \{ className: 'soul-quick-toggle-name' \}/, '底栏开关的人设名应仅在「已启用且匹配到预设」时显示（关闭时挂着会误导）')
+  // ⑦ 名字可能很长（自建预设 30 字）：两处都必须单行省略，避免撑宽布局
+  assert.match(cssBlock.match(/\.soul-chip-name\{([^}]*)\}/)?.[1] ?? '', /text-overflow:ellipsis/, '标签名应单行省略')
+  assert.match(cssBlock.match(/\.soul-quick-toggle-name\{([^}]*)\}/)?.[1] ?? '', /max-width:9em/, '底栏开关的人设名必须限宽（否则长名会把底栏撑开）')
+  // ⑧ 中英文案键各一份
+  for (const [k, zh, en] of [
+    ['chip.current', '当前人设：{name}　点击切换', 'Current persona: {name}　Click to switch'],
+    ['chip.none', '未匹配预设', 'No persona matched']
+  ]) {
+    assert.ok(clientSource.includes(`'${k}': '${zh}'`), `缺中文文案 ${k}`)
+    assert.ok(clientSource.includes(`'${k}': '${en}'`), `缺英文文案 ${k}`)
+  }
 })
 
 check('卡背（详情面）展示全部维度与全文，且不动卡片 transform', () => {
