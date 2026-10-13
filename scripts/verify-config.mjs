@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 101
+const EXPECTED_ASSERTIONS = 102
 
 let passed = 0
 const failures = []
@@ -1177,6 +1177,46 @@ check('卡牌操作按钮：主操作突出（实心主色），删除为次要�
     builtinBackgrounds,
     [],
     `不应给内置卡片加底色（宿主用 rowTag 区分来源；灰底在白色卡片群里会被误读成 hover 态）：${builtinBackgrounds.join(' ')}`
+  )
+})
+
+check('当前生效的人设：按钮文字变「使用中」且样式区别于其它卡片', () => {
+  // 起因：点「使用」后再次进入设置页，只有名称前的 ★ 能表明哪张卡是当前配置，
+  // 而按钮一律写「使用」，不够醒目。现改为当前生效那张的按钮文字变「使用中」+
+  // 描边式样式（透明底 + 品牌色），与其它卡片的实心主色按钮形成对比。
+  // 三重标识：★（名称前）+「使用中」文字 + 描边样式。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  // ① 词典键必须中英各一份（双语对齐断言只保证键集一致，不保证此键存在）
+  assert.match(clientSource, /'personas\.active': '使用中'/, '缺少中文「使用中」文案键')
+  assert.match(clientSource, /'personas\.active': 'Active'/, '缺少英文「Active」文案键')
+  // ② 按钮文字按 activePersona 切换
+  assert.match(
+    clientSource,
+    /name === activePersona \? t\('personas\.active'\) : t\('personas\.use'\)/,
+    '生效中的预设应把按钮文字换成「使用中」（否则与其它卡片无从区分）'
+  )
+  // ③ 生效中的按钮加独立类名，且该类名按 activePersona 切换
+  assert.match(
+    clientSource,
+    /className: name === activePersona \? 'soul-persona-action soul-persona-active' : 'soul-persona-action'/,
+    '生效中的按钮应带 soul-persona-active 类（供样式区分）'
+  )
+  // ④ 该类名的样式必须真的区分：透明底 + 品牌色文字（不是照抄实心主色）
+  const active = cssBlock.match(/\.soul-persona-active\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(active !== '', '找不到 .soul-persona-active 规则')
+  assert.match(active, /background:transparent/, '「使用中」按钮应为透明底（区别于实心主色）')
+  assert.match(active, /color:var\(--dsw-alias-brand-primary\)/, '「使用中」按钮文字应用品牌色')
+  assert.match(active, /box-shadow:inset/, '用 inset box-shadow 画描边（基类 border:0，加 border 会让尺寸变化导致布局跳动）')
+  assert.equal(
+    /border:/.test(active),
+    false,
+    '不得用 border 画描边（会改变盒模型尺寸，「使用中」与其它按钮不等高）'
+  )
+  // ⑤ 仍然可点击（不是 disabled）—— 重复应用是无副作用的幂等操作
+  assert.equal(
+    /soul-persona-active[^}]*cursor:default/.test(cssBlock),
+    false,
+    '「使用中」按钮不应显示为不可点击（重复应用是幂等的，禁用会让人以为卡住）'
   )
 })
 

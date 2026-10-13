@@ -658,6 +658,12 @@ window.__ModuleLoader__.load({
       '.soul-persona-action:active:not(:disabled){filter:brightness(0.96)}',
       '.soul-persona-action:disabled{cursor:default;opacity:.5}',
       '.soul-persona-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
+      // 当前生效的预设：按钮文字为「使用中」，样式改为**描边式**（透明底 + 品牌色边框与文字），
+      // 与其它卡片的实心主色按钮形成对比 —— 这样即使不看名称前的 ★，也能一眼认出当前配置。
+      // 仍可点击（再点一次是无变化的幂等操作，宿主会回「配置无变化」），不刻意禁用：
+      // 禁用会让用户以为卡住了，而这里并无副作用。
+      '.soul-persona-active{background:transparent;color:var(--dsw-alias-brand-primary);box-shadow:inset 0 0 0 .5px var(--dsw-alias-brand-primary)}',
+      '.soul-persona-active:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);filter:none}',
       // 删除：定宽描边式危险按钮（43px），明显小于「使用」，形成主次对比
       '.soul-persona-danger{flex:0 0 43px;background:transparent;color:var(--dsw-alias-state-error-primary);border:.5px solid var(--dsw-alias-state-error-primary);font-size:12px;font-weight:500}',
       '.soul-persona-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger);filter:none}',
@@ -790,6 +796,7 @@ window.__ModuleLoader__.load({
       'personas.save': '保存当前为预设',
       'personas.savePlaceholder': '预设名称（1-30 字符）',
       'personas.use': '使用',
+      'personas.active': '使用中',
       'personas.delete': '删除',
       'personas.prev': '上一个预设',
       'personas.next': '下一个预设',
@@ -920,6 +927,7 @@ window.__ModuleLoader__.load({
       'personas.save': 'Save current as persona',
       'personas.savePlaceholder': 'Persona name (1-30 chars)',
       'personas.use': 'Use',
+      'personas.active': 'Active',
       'personas.delete': 'Delete',
       'personas.prev': 'Previous persona',
       'personas.next': 'Next persona',
@@ -1733,12 +1741,13 @@ window.__ModuleLoader__.load({
                           // 效果栏：卡牌的核心信息（这个预设会怎么回答）
                           e('div', { className: 'soul-persona-eff' }, personaEffectText(entry)),
                           e('div', { className: 'soul-persona-actions' },
-                            // 按钮规格对齐宿主模型列表：linkButton（使用）/ dangerButton（删除）
+                            // 当前生效的人设：按钮文字变「使用中」+ 描边式样式（区别于实心主色），
+                            // 一眼就能看出哪张卡是当前配置。名称前的 ★ 保留，双重标识互相强化。
                             e('button', {
                               type: 'button',
-                              className: 'soul-persona-action',
+                              className: name === activePersona ? 'soul-persona-action soul-persona-active' : 'soul-persona-action',
                               onClick: () => handleUsePersona(name)
-                            }, t('personas.use')),
+                            }, name === activePersona ? t('personas.active') : t('personas.use')),
                             // 内置预设不提供删除（后端也拒绝）：留空占位槽让两类卡片按钮同列。
                             // 刻意不是按钮，避免造出一个点了没反应的控件。
                             builtin
