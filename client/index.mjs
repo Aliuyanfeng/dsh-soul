@@ -1456,6 +1456,32 @@ window.__ModuleLoader__.load({
           return aBuiltin - bBuiltin
         })
         : null
+
+      // 展开「人设预设」分组时，轮播自动定位到**当前生效**的那张，而不是永远停在第 1 张。
+      //
+      // 为什么需要：卡片一次只展示一张，若固定从第 1 张开始，用户点开分组后要翻好几下
+      // 才能看到自己正在用的是哪个（内置项排在前面，自建/生效项往往在后面）。
+      //
+      // 三个边界都要处理：
+      //   ① **只在「展开」这一刻定位**，不在展开期间持续定位 —— 否则 2s 轮询刷新 personas
+      //      会把用户手动翻到的位置拽回去。用 ref 记住「本次展开已定位过」。
+      //   ② **折叠时重置标记** —— 下次展开要重新定位（这正是需求本身）。
+      //   ③ **数据未就绪时不下手** —— personas 还在加载（null）时定位会误判成第 0 张，
+      //      等数据到了、effect 依赖变化会自然补上（标记此时仍为 false）。
+      const autoPositionedRef = React.useRef(false)
+      React.useEffect(() => {
+        if (openSection !== 'personas') {
+          // 折叠状态：清掉标记，让下次展开能重新定位
+          autoPositionedRef.current = false
+          return
+        }
+        if (autoPositionedRef.current) return
+        if (!personaNames || personaNames.length === 0) return
+        // 当前无生效人设（或名字对不上任何一项）时退回第 0 张 —— 总要给个确定的落点
+        const at = activePersona ? personaNames.indexOf(activePersona) : -1
+        setPersonaIndex(at >= 0 ? at : 0)
+        autoPositionedRef.current = true
+      }, [openSection, personaNames, activePersona])
       const aboutFilled = [localNickname, localOccupation, localBio].filter(Boolean).length
       const aboutSummary = aboutFilled > 0 ? `${aboutFilled}/3 ${t('accordion.filled')}` : t('accordion.empty')
       const traitsSummary = t(`style.${localStyle}`)

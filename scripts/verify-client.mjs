@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 17
+const EXPECTED_ASSERTIONS = 18
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -696,22 +696,28 @@ try {
     assert.equal(deleteButtons.length, 1, `只应有一个删除按钮（内置卡片不得有），实际 ${deleteButtons.length}`)
 
     // ⑤ 轮播交互：位置指示、圆点、翻页按钮与边界禁用（一次只见一张，这些是必需的补偿）
+    //
+    // 注意：**展开分组时轮播会自动定位到当前生效的那张**（新功能），因此这里一进来
+    // 就已经停在「我的自建」（数组第 2 项 ⇒ 索引 1），而不是首张。位置指示应为 2 / 2。
     const nav = findAllByClass(tree, 'soul-persona-navbtn')
     assert.equal(nav.length, 2, `应有前后两个翻页按钮，实际 ${nav.length}`)
+    const pos0 = findAllByClass(tree, 'soul-persona-card-pos')
+    assert.equal(pos0.length, 1, `当前卡片应显示位置指示（i / n），实际 ${pos0.length}`)
     const [prev, next] = nav
-    assert.equal(prev.props.disabled, true, '首张（索引 0）时「上一张」应禁用')
-    assert.equal(next.props.disabled, false, '有下一张时「下一张」不应禁用')
+    assert.equal(textOf(pos0[0]), '2 / 2', `展开后应定位到生效项（末张），位置指示应为「2 / 2」，实际「${textOf(pos0[0])}」`)
+    assert.equal(prev.props.disabled, false, '已定位到末张时「上一张」应可用')
+    assert.equal(next.props.disabled, true, '已定位到末张时「下一张」应禁用')
     const dots = findAllByClass(tree, 'soul-persona-dot')
     assert.equal(dots.length, 2, `圆点数量应等于预设数，实际 ${dots.length}`)
     assert.equal(dots.filter((d) => d.props['data-active'] === 'true').length, 1, '应恰好一个圆点为激活态')
-    const pos = findAllByClass(tree, 'soul-persona-card-pos')
-    assert.equal(pos.length, 1, `当前卡片应显示位置指示（i / n），实际 ${pos.length}`)
-    assert.equal(textOf(pos[0]), '1 / 2', `位置指示应为「1 / 2」，实际「${textOf(pos[0])}」`)
+    // 激活的圆点必须是生效项那个索引（1），而不是恒为第 0 个
+    assert.equal(dots[1].props['data-active'], 'true', '激活圆点应落在生效项（索引 1）上')
+    assert.equal(dots[0].props['data-active'], 'false', '非生效项的圆点不应是激活态')
 
-    // ⑥ 真正点「下一张」→ 索引前移，位置指示与当前卡片内容同步变化
+    // ⑥ 点「上一张」→ 索引前移，位置指示与当前卡片内容同步变化
     const posBefore = textOf(findAllByClass(tree, 'soul-persona-card-pos')[0])
     const textBefore = textOf(current[0])
-    await next.props.onClick()
+    await prev.props.onClick()
     const tree2 = await renderSettings(world)
     const cur2 = findAllByClass(tree2, 'soul-persona-card').filter((c) => c.props['data-current'] === 'true')
     assert.equal(cur2.length, 1, '翻页后仍应恰好一张当前卡片')
@@ -730,16 +736,142 @@ try {
         `「${n}」应在翻页前后各出现恰好一次，实际出现在：${shown.map((s) => s.slice(0, 26)).join(' | ')}`
       )
     }
-    // 翻到末张后「下一张」应禁用（边界）
+    // 翻到首张后「上一张」应禁用（边界）
     const nav2 = findAllByClass(tree2, 'soul-persona-navbtn')
-    assert.equal(nav2[1].props.disabled, true, '翻到末张后「下一张」应禁用')
+    assert.equal(nav2[0].props.disabled, true, '翻到首张后「上一张」应禁用')
+  })
 
-    // ⑦ 点「上一张」可回到前一个预设
-    await nav2[0].props.onClick()
-    const tree3 = await renderSettings(world)
-    const cur3 = findAllByClass(tree3, 'soul-persona-card').filter((c) => c.props['data-current'] === 'true')
-    assert.equal(textOf(findAllByClass(tree3, 'soul-persona-card-pos')[0]), posBefore, '回到首张后位置指示应复位')
-    assert.equal(textOf(cur3[0]), textBefore, '回到首张后卡片内容应复原')
+  await check('C18 展开「人设预设」时自动定位到当前生效的那张（而不是永远第 1 张）', async () => {
+    // 需求背景：卡片一次只展示一张，内置项排在前面，生效项（尤其是自建）往往在后面。
+    // 若固定从第 1 张开始，用户点开分组后要翻好几下才能看到自己在用哪个。
+    //
+    // 这里用**行为**验证（不看源码）：生效项排在第 2 位 ⇒ 展开后应直接停在 2 / 2。
+    const personaLib = {
+      ok: true,
+      personas: {
+        苏格拉底式提问者: { style: 'professional', builtin: true },
+        我的自建: { style: 'roast', emoji: 'more' }
+      },
+      activeName: '我的自建'   // ← 生效项是第 2 个（内置排前面）
+    }
+    const open = async (w) => {
+      const closed = await renderSettings(w)
+      const trigger = findAll(closed, (n) => n.type === 'button' && textOf(n).includes(w.dicts.zh['group.personas']))
+      await trigger[0].props.onClick()
+      return renderSettings(w)
+    }
+    // ① 展开即定位到生效项
+    const w1 = await boot({}, personaLib)
+    const t1 = await open(w1)
+    assert.equal(
+      textOf(findAllByClass(t1, 'soul-persona-card-pos')[0]),
+      '2 / 2',
+      '展开后应定位到生效项（第 2 张），而不是停在首张'
+    )
+    // ② 定位的是**生效项本身**，不是碰巧的末张 —— 换个生效项再验一次
+    const w2 = await boot({}, {
+      ok: true,
+      personas: personaLib.personas,
+      activeName: '苏格拉底式提问者'   // ← 生效项改成第 1 个
+    })
+    const t2 = await open(w2)
+    assert.equal(
+      textOf(findAllByClass(t2, 'soul-persona-card-pos')[0]),
+      '1 / 2',
+      '生效项换到第 1 个时应定位到 1 / 2（证明是按生效项定位，而不是恒取末张）'
+    )
+    // ③ 无生效项（都不匹配）时退回首张 —— 总要给个确定落点
+    const w3 = await boot({}, { ok: true, personas: personaLib.personas, activeName: null })
+    const t3 = await open(w3)
+    assert.equal(
+      textOf(findAllByClass(t3, 'soul-persona-card-pos')[0]),
+      '1 / 2',
+      '没有生效项时应退回第 1 张'
+    )
+    // ④ 手动翻页后**不能被轮询拽回** —— 展开期间刷新 personas 不应重置位置
+    //    （实现上用 autoPositionedRef 记住「本次展开已定位过」）
+    const moved = await (async () => {
+      const nav = findAllByClass(t1, 'soul-persona-navbtn')
+      await nav[0].props.onClick()   // 生效项在末张 ⇒ 点「上一张」翻到首张
+      return renderSettings(w1)
+    })()
+    assert.equal(
+      textOf(findAllByClass(moved, 'soul-persona-card-pos')[0]),
+      '1 / 2',
+      '手动翻页后应停在 1 / 2'
+    )
+    // 触发一次「轮询刷新 personas」（内容不变）后位置必须还在 1 / 2
+    await w1.controller.fetchPersonas?.()
+    for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+    const afterRefresh = await renderSettings(w1)
+    assert.equal(
+      textOf(findAllByClass(afterRefresh, 'soul-persona-card-pos')[0]),
+      '1 / 2',
+      '展开期间轮询刷新不应把手动翻到的位置拽回生效项'
+    )
+    // ⑤ 折叠再展开 ⇒ 重新定位回生效项（需求原文：「每次点击开」都要展示当前使用的）
+    const collapsed = await renderSettings(w1)
+    const trigger2 = findAll(collapsed, (n) => n.type === 'button' && textOf(n).includes(w1.dicts.zh['group.personas']))
+    await trigger2[0].props.onClick()   // 折叠
+    await renderSettings(w1)
+    const reopened = await open(w1)
+    assert.equal(
+      textOf(findAllByClass(reopened, 'soul-persona-card-pos')[0]),
+      '2 / 2',
+      '折叠后再次展开应重新定位到生效项'
+    )
+    // ⑥ **展开时数据尚未就绪**（personas 仍是 null）不得抛错 —— 等数据到了再定位。
+    //    这条专防「去掉空值守卫」：无守卫时 personaNames 为 null，
+    //    `null.indexOf(...)` 会抛 TypeError，直接把设置页渲染打断。
+    //    桩用一个**永不 resolve** 的 promise 把 personas 钉在「加载中」。
+    const w4 = loadClient({
+      '/api/soul/config': (call) => (call.method === 'GET' ? { ok: true, config: { ...CONFIG } } : { ok: true, config: { ...CONFIG }, changed: [] }),
+      '/api/soul/config/reset': () => ({ ok: true, config: { ...CONFIG }, changed: [], backupPath: null }),
+      '/api/soul/personas': () => new Promise(() => {}),
+      '/api/soul/prompt': () => ({ ok: true, prompt: 'P', enabled: true })
+    })
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    assert.equal(
+      w4.controller.store.getSnapshot().personas,
+      null,
+      '前置条件：personas 应停在加载中（null）'
+    )
+    const closed4 = await renderSettings(w4)
+    const trigger4 = findAll(closed4, (n) => n.type === 'button' && textOf(n).includes(w4.dicts.zh['group.personas']))
+    await trigger4[0].props.onClick()
+    const loadingTree = await renderSettings(w4)   // 不应抛错
+    assert.ok(loadingTree, '展开时数据未就绪不应导致渲染失败')
+    assert.equal(
+      findAllByClass(loadingTree, 'soul-persona-card-pos').length,
+      0,
+      '数据未就绪时不应出现位置指示（此时还没有任何卡片）'
+    )
+    // ⑦ 更刁的组合：**personas 加载中（null）但 activePersona 已有值**。
+    //    真实场景：先应用过某个预设（配置与它匹配），随后刷新页面 —— 配置先到、
+    //    预设列表还在路上。此时若去掉 `!personaNames` 守卫，
+    //    `personaNames.indexOf(...)` 会对 null 调用而抛 TypeError，直接打断设置页渲染。
+    //    （上面 ⑥ 的桩里 activePersona 为 null，走的是 `: -1` 分支，覆盖不到这一条。）
+    const w5 = loadClient({
+      // 配置与桩里那个预签名一致 ⇒ 宿主会回报 activeName
+      '/api/soul/config': (call) => (call.method === 'GET' ? { ok: true, config: { ...CONFIG } } : { ok: true, config: { ...CONFIG }, changed: [] }),
+      '/api/soul/config/reset': () => ({ ok: true, config: { ...CONFIG }, changed: [], backupPath: null }),
+      '/api/soul/personas': () => new Promise(() => {}),
+      '/api/soul/prompt': () => ({ ok: true, prompt: 'P', enabled: true })
+    })
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    // 直接往 store 里塞一个非空 activePersona，复刻「配置先到、预设列表未到」
+    w5.controller.store.update((s) => { s.activePersona = '苏格拉底式提问者' })
+    for (let i = 0; i < 4; i++) await new Promise((r) => drainTick(r))
+    const closed5 = await renderSettings(w5)
+    const trigger5 = findAll(closed5, (n) => n.type === 'button' && textOf(n).includes(w5.dicts.zh['group.personas']))
+    await trigger5[0].props.onClick()
+    const tree5 = await renderSettings(w5)   // ← 去掉守卫时这里会抛 TypeError
+    assert.ok(tree5, '预设列表加载中但已有生效人设时，展开分组不应抛错')
+    assert.equal(
+      findAllByClass(tree5, 'soul-persona-card-pos').length,
+      0,
+      '预设列表未就绪时不应出现位置指示'
+    )
   })
 
   await check('C17 应用预设成功后清掉上一轮的失败提示', async () => {
