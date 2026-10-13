@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 104
+const EXPECTED_ASSERTIONS = 105
 
 let passed = 0
 const failures = []
@@ -2076,6 +2076,67 @@ check('删除预设用内联二次确认，不得用原生 confirm', () => {
   // 中英文案键各一份
   assert.match(clientSource, /'personas\.confirmDeleteShort': '确认删除？'/, '缺中文待确认文案')
   assert.match(clientSource, /'personas\.confirmDeleteShort': 'Confirm delete\?'/, '缺英文待确认文案')
+})
+
+check('卡背（详情面）展示全部维度与全文，且不动卡片 transform', () => {
+  // 需求：正面效果栏是截断的（首句 + 60 字 + 3 行 clamp），用户要「全部展示」，
+  // 故加卡背展示 6 个维度 + customInstructions 全文。
+  //
+  // 最关键的架构约束：**卡背不得是轮播的第 N+1 张**，而是当前卡的另一种「面」——
+  // 否则 total 要变 2N，位置指示/圆点/go() 全要改。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  const frontIdx = clientSource.indexOf("className: 'soul-persona-face soul-persona-face-front'")
+  const backIdx = clientSource.indexOf("className: 'soul-persona-face soul-persona-face-back'")
+  assert.ok(frontIdx > 0, '缺少正面 face')
+  assert.ok(backIdx > frontIdx, '缺少背面 face')
+  const backBlock = clientSource.slice(backIdx, backIdx + 2600)
+  // ① 翻面状态绑人设名（不是索引）：删除/刷新后同名卡仍是同一张，绑索引会翻错面
+  assert.match(clientSource, /const \[flippedName, setFlippedName\] = React\.useState\(null\)/, '翻面状态应绑人设名')
+  // ② 卡片自身 transform 必须保持叠层偏移原样，且**不得**出现 rotateY
+  //    （真 3D 翻转就因此被否掉，改用淡入淡出 + 轻微 rotateY 暗示，rotateY 只放 face 上）
+  assert.match(clientSource, /transform: `translateX\(\$\{offset \* 92\}px\) translateY/, '叠层偏移 transform 应保持原样')
+  const cardRule = cssBlock.match(/\.soul-persona-card\{([^}]*)\}/)?.[1] ?? ''
+  assert.equal(/rotateY/.test(cardRule), false, '卡片规则不得含 rotateY（会与叠层偏移抢同一个 transform）')
+  assert.match(
+    cssBlock,
+    /\[data-flipped="true"\] \.soul-persona-face-front\{[^}]*rotateY\(-12deg\)/,
+    '翻面时正面应轻微侧转（rotateY 只在 face 上）'
+  )
+  // ③ 背面必须由维度 key 列表驱动渲染（写死易漏项）
+  assert.match(clientSource, /const PERSONA_DIM_KEYS = \['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language'\]/, '缺少维度 key 列表')
+  assert.match(backBlock, /PERSONA_DIM_KEYS\.map/, '背面应由 PERSONA_DIM_KEYS 驱动渲染')
+  // ④ 全文**不截断**（正面才截断）
+  const fullFn = clientSource.match(/const personaFullText = \(entry\) => \{[\s\S]*?\n      \}/)?.[0] ?? ''
+  assert.ok(fullFn !== '', '找不到 personaFullText 实现')
+  assert.equal(/slice\(/.test(fullFn), false, '全文函数不得做 slice 截断（截断是正面效果栏的行为）')
+  // ⑤ 滚动必须落在全文块自己身上，不能放 face 上
+  //    （放 face 上会让「返回」按钮跟着滚出视野 —— 实测确认）
+  const backFace = cssBlock.match(/\.soul-persona-face-back\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(backFace, /overflow:hidden/, '背面 face 应 overflow:hidden（滚动交给全文块）')
+  assert.equal(/overflow-y:auto/.test(backFace), false, '滚动不得放在 face 上（会把返回按钮滚出视野）')
+  assert.match(
+    cssBlock.match(/\.soul-persona-fulltext\{([^}]*)\}/)?.[1] ?? '',
+    /overflow-y:auto/,
+    '全文块自己应可滚动（339 字占 272px，卡片仅 372px）'
+  )
+  // ⑥ 背面只阅读：不得有使用/删除，但必须有「返回」
+  assert.equal(/handleUsePersona|handleDeletePersona/.test(backBlock), false, '背面不应放使用/删除按钮（阅读态且已无余量）')
+  assert.ok(backBlock.includes('setFlippedName(null)'), '背面缺少「返回」')
+  // ⑦ 卡背徽标必须重置为 static：.soul-persona-badge 是 absolute（为压插画而设），
+  //    在卡背 flex 行里会脱离流与名称重叠（实测徽标 [44,77] 压住名称）
+  assert.match(
+    cssBlock,
+    /\.soul-persona-back-head \.soul-persona-badge\{position:static/,
+    '卡背徽标必须重置 position:static（否则与名称重叠）'
+  )
+  // ⑧ 名称宽度自适应：flex:1 会撑满整行并把徽标挤到同一位置
+  assert.match(
+    cssBlock.match(/\.soul-persona-back-name\{([^}]*)\}/)?.[1] ?? '',
+    /flex:0 1 auto/,
+    '卡背名称应 flex:0 1 auto（flex:1 会撑满整行导致徽标重叠）'
+  )
+  // ⑨ 详情入口只在当前卡上出现（叠层两张不给点）
+  assert.match(clientSource, /current && e\('button', \{[\s\S]{0,200}?soul-persona-details/, '「详情」入口应只在当前卡上渲染')
 })
 
 check('「存为预设」入口与「保存设置」并列，且点开才问名字', () => {

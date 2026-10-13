@@ -610,6 +610,51 @@ window.__ModuleLoader__.load({
       // 卡牌：固定宽度居中（left/right:0 + margin auto），靠 transform 做叠层位移与缩放。
       // top/bottom:0 让三张卡等高 —— 内容长短不同的卡片高度一致，堆叠才整齐。
       '.soul-persona-card{position:absolute;top:0;bottom:0;left:0;right:0;width:260px;margin:0 auto;display:flex;flex-direction:column;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;transform-origin:center top;will-change:transform}',
+      // —— 卡牌的两面（正面 = 卡面，背面 = 详情）——
+      //
+      // 为什么用「一个卡片内叠两个绝对定位的 face」而不是真 3D 翻转：
+      // 卡片的 transform 已被**叠层偏移**（translateX/translateY/scale 内联）占用，
+      // 若把 rotateY(180deg) 也写进去，两者必须合成同一个 transform 字符串 ⇒
+      // 叠层几何会变脆。这里外层 transform 完全不动，翻面只作用于内层 face：
+      // 淡入淡出 + 轻微 rotateY(±12deg) 做「翻面」暗示（不是真翻转，观感自然）。
+      '.soul-persona-face{position:absolute;inset:0;display:flex;flex-direction:column;border-radius:inherit;backface-visibility:hidden;transition:opacity .18s ease,transform .18s ease}',
+      // 正面：未翻面时在位；翻到背面时淡出并向左轻微侧转
+      '.soul-persona-face-front{opacity:1;transform:none}',
+      '.soul-persona-card[data-flipped="true"] .soul-persona-face-front{opacity:0;transform:rotateY(-12deg);pointer-events:none}',
+      // 背面：默认淡出并向右轻微侧转；翻面后回到正中
+      // ⚠️ 滚动必须落在**全文块自己**身上（见 .soul-persona-fulltext），
+      // 不能放在 face 上 —— 放 face 上会让「返回」按钮跟着一起滚出视野（实测确认）。
+      '.soul-persona-face-back{gap:6px;padding:10px;box-sizing:border-box;overflow:hidden;opacity:0;transform:rotateY(12deg);pointer-events:none}',
+      '.soul-persona-card[data-flipped="true"] .soul-persona-face-back{opacity:1;transform:none;pointer-events:auto}',
+      // 背面头部：名称 + 内置徽标。
+      // 名称用 flex:0 1 auto（**不是** flex:1 1 auto）：后者会把它撑满整行，
+      // 于是徽标与名称**重叠在同一位置**（实测：名称 [44,272]、徽标 [44,77]，
+      // 视觉上徽标盖住了名称开头，看起来像被截成了「协作者」）。
+      // 现在名称按内容取宽、仅在过长时收缩（min-width:0 + ellipsis 兜底），
+      // 徽标 flex:none 紧随其后。
+      '.soul-persona-back-head{display:flex;align-items:center;gap:6px;flex:none}',
+      '.soul-persona-back-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;line-height:18px}',
+      // 卡背里的徽标必须**重置定位**：.soul-persona-badge 为压在插画上而设了
+      // position:absolute（见该规则），在卡背的 flex 行里它脱离流 ⇒ 与名称重叠
+      // （实测：名称 [44,75]、徽标 [44,77]，视觉上徽标盖住名称开头）。
+      // 这里改回 static 让它正常参与 flex 布局。
+      '.soul-persona-back-head .soul-persona-badge{position:static;flex:none}',
+      // 维度列表：label 左、值右，两列对齐
+      '.soul-persona-dims{display:flex;flex-direction:column;gap:2px;flex:none}',
+      '.soul-persona-dim{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:11px;line-height:16px}',
+      '.soul-persona-dim span{flex:none;color:var(--dsw-alias-label-tertiary)}',
+      '.soul-persona-dim b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-weight:500}',
+      '.soul-persona-back-label{flex:none;margin-top:2px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}',
+      // 全文：**不截断**（正面效果栏才截断）。
+      // 滚动放在**这一块自己**身上（不是 face），这样「返回」按钮始终贴在卡底可见 ——
+      // 实测把 overflow-y 放 face 上时，长文本会把按钮一起推出视野并被文字压住。
+      // 需要的背景：卡片高度固定 372px，而实测 339 字占 272px（17 行 × 16px），
+      // 加头部/维度/按钮后已无余量，稍长就必然要滚。
+      '.soul-persona-fulltext{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px;white-space:pre-wrap;word-break:break-word}',
+      // 背面的「返回」：贴底按钮，做成描边式（不抢视觉，但必须好点）
+      '.soul-persona-back-btn{flex:none;margin-top:auto}',
+      '.soul-persona-details{flex:0 0 auto;padding:0 10px;background:transparent;color:var(--dsw-alias-label-secondary);box-shadow:inset 0 0 0 .5px var(--dsw-alias-settings-card-stroke);font-size:12px;font-weight:500}',
+      '.soul-persona-details:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);filter:none}',
       // 插画区：正方形主视觉。非内置预设没有配套插画，用主题色渐变兜底
       // （data-builtin="false" 时不出图，见下）。
       '.soul-persona-art{position:relative;width:100%;aspect-ratio:1/1;flex:none;overflow:hidden;background:linear-gradient(150deg,color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,var(--dsw-alias-bg-module-platform)),var(--dsw-alias-bg-module-platform))}',
@@ -816,6 +861,13 @@ window.__ModuleLoader__.load({
       'personas.saveCovers': '将保存：回复风格和语调、特质、回复长度、输出语言、自定义指令',
       'personas.saveExcludes': '不含：昵称、职业、介绍（这些属于「关于你」，预设不动它们）',
       'personas.confirmDeleteShort': '确认删除？',
+      // —— 卡背（详情面）——
+      'personas.details': '详情',
+      'personas.flipBack': '返回',
+      'personas.dims': '人设维度',
+      'personas.customInstructions': '自定义指令',
+      'personas.dimDefault': '默认',
+      'personas.noCustomInstructions': '这个人设没有额外的自定义指令',
       'personas.savePlaceholder': '预设名称（1-30 字符）',
       'personas.use': '使用',
       'personas.active': '使用中',
@@ -954,6 +1006,12 @@ window.__ModuleLoader__.load({
       'personas.saveCovers': 'Saves: reply style & tone, traits, reply length, reply language, custom instructions',
       'personas.saveExcludes': 'Excludes: nickname, occupation, bio (those are "About you" — personas never touch them)',
       'personas.confirmDeleteShort': 'Confirm delete?',
+      'personas.details': 'Details',
+      'personas.flipBack': 'Back',
+      'personas.dims': 'Persona dimensions',
+      'personas.customInstructions': 'Custom instructions',
+      'personas.dimDefault': 'Default',
+      'personas.noCustomInstructions': 'This persona adds no custom instructions',
       'personas.savePlaceholder': 'Persona name (1-30 chars)',
       'personas.use': 'Use',
       'personas.active': 'Active',
@@ -1233,6 +1291,16 @@ window.__ModuleLoader__.load({
       // 不在 effect 里回写 —— 回写会多一次渲染，且删除后「看过的那张」位置语义
       // 本就有歧义（见 personaIndex 的夹取逻辑）。
       const [personaIndex, setPersonaIndex] = React.useState(0)
+      // 卡背（详情面）状态：存「哪一张卡被翻到了背面」。
+      //
+      // 设计要点（这是 E 方案最容易做错的地方）：
+      //   **卡背不是轮播的第 N+1 张，而是当前卡的另一种「面」** —— 所以索引
+      //   index/total/go()/自动定位全部不用改，翻页翻的是「卡」，翻面翻的是「面」。
+      //   若把卡背也算一张，total 要变 2N、位置指示与圆点全要跟着改，得不偿失。
+      //
+      //   状态绑定在**人设名**而不是索引：删除/刷新后同名的卡仍是同一张，
+      //   绑索引会在列表变短时翻错面。
+      const [flippedName, setFlippedName] = React.useState(null)
       const [toast, setToast] = React.useState(null)
       const [showPrompt, setShowPrompt] = React.useState(false)
       const [promptText, setPromptText] = React.useState('')
@@ -1513,6 +1581,39 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(timer)
       }, [pendingDelete])
 
+      // —— 卡背（详情面）用到的三个辅助 ——
+      //
+      // 列出「一个人设完整的六个维度」。顺序与设置页表单一致（风格 → 标题列表 →
+      // 表情 → 表格 → 回复长度 → 语言），这样卡背读起来与设置页对得上。
+      const PERSONA_DIM_KEYS = ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language']
+
+      // 单个维度的「值」文案。刻意**不把与默认相同的项留空**：设置页里 trait 的默认值
+      // 就是 'default'，而卡背要回答的是「这个人设改了什么」—— 统一标成「默认」比留空
+      // 更清楚（留空会让人以为渲染坏了）。
+      // 语言维度复用 LANGUAGE_OPTIONS 的标签（'中文' / 'English' 两种语言下同名，
+      // 本来就是语言自称，无需翻译）。
+      const personaDimLabel = (entry, dim) => {
+        const row = entry || {}
+        const value = row[dim]
+        if (dim === 'language') {
+          const opt = LANGUAGE_OPTIONS.find((o) => o.value === value)
+          return opt ? opt.label : t('personas.dimDefault')
+        }
+        if (dim === 'style') {
+          return STYLE_VALUES.includes(value) ? t(`style.${value}`) : t('personas.dimDefault')
+        }
+        return TRAIT_VALUES.includes(value) ? t(`trait.${dim}.${value}`) : t('personas.dimDefault')
+      }
+
+      // 卡背的全文：这一次**不截断**（正面效果栏才截断）。
+      // 预设没写自定义指令时给一句说明，而不是留空 —— 留空会让人以为渲染坏了。
+      const personaFullText = (entry) => {
+        const raw = typeof (entry || {}).customInstructions === 'string'
+          ? entry.customInstructions.trim()
+          : ''
+        return raw === '' ? t('personas.noCustomInstructions') : raw
+      }
+
       const styleOptions = STYLE_VALUES.map((value) => ({ value, label: t(`style.${value}`) }))
       const headingListsOptions = TRAIT_VALUES.map((value) => ({ value, label: t(`trait.headingLists.${value}`) }))
       const emojiOptions = TRAIT_VALUES.map((value) => ({ value, label: t(`trait.emoji.${value}`) }))
@@ -1783,19 +1884,25 @@ window.__ModuleLoader__.load({
                       const entry = personas[name] || {}
                       const builtin = !!entry.builtin
                       const current = offset === 0
+                      // 只有当前卡能翻面（叠层两张不参与交互）
+                      const flipped = current && flippedName === name
                       return e('div', {
                         key: name,
                         className: 'soul-persona-card',
                         'data-offset': String(offset),
                         'data-current': current ? 'true' : 'false',
                         'data-builtin': builtin ? 'true' : 'false',
+                        'data-flipped': flipped ? 'true' : 'false',
                         style: {
                           // 叠层几何：当前张居中不动；±1 两张向左/右偏移并缩小。
-                          // 偏移量（34px）要明显大于卡片内边距，否则叠层只露出一条缝、
-                          // 看不出「一叠卡片」；缩放 5.5% 兼顾「缩小」与「仍看得清文字」。
-                          // 叠层几何：竖版卡牌宽 260px，偏移要足够大才能看出「左右两张卡」，
+                          // 竖版卡牌宽 260px，偏移要足够大才能看出「左右两张卡」，
                           // 太小会与当前卡重叠成一坨。92px 偏移 + 6% 缩小，叠层露出的
                           // 是一条完整的卡边（约 40px 可见宽度）。
+                          //
+                          // ⚠️ 这个 transform 归**叠层偏移**所有，卡背的翻面动效一律
+                          // 作用在内层的 .soul-persona-face 上（见 CSS），绝不可写进这里
+                          // —— 两者合成同一个 transform 会让偏移几何变脆（真 3D 翻转
+                          // 就因此被否掉，改用淡入淡出 + 轻微 rotateY 暗示）。
                           transform: `translateX(${offset * 92}px) translateY(${Math.abs(offset) * 10}px) scale(${1 - Math.abs(offset) * 0.06})`,
                           zIndex: String(10 - Math.abs(offset)),
                           // 叠层卡片压暗一点，形成前后景深（不能用 filter:brightness，
@@ -1806,61 +1913,105 @@ window.__ModuleLoader__.load({
                         'aria-hidden': current ? undefined : 'true',
                         ...(current ? {} : { onClick: () => go(index + offset) })
                       },
-                        // 插画区（方案 B 的卡面主视觉）：只在有配套插画时可出图。
-                        // 图由宿主路由按人设名提供，缺图时宿主回退官方鲸鱼占位图，
-                        // 但仍留 onError 兜底隐藏，避免路由不可用时留下破图图标。
-                        // 自定义预设没有插画，此区退化为主题色渐变底 + 名称摘要。
-                        e('div', { className: 'soul-persona-art' },
-                          builtin && e('img', {
-                            className: 'soul-persona-art-img',
-                            src: new URL(`/api/soul/persona-art/${encodeURIComponent(name)}`, hostBase()).href,
-                            alt: '',
-                            loading: 'lazy',
-                            decoding: 'async',
-                            draggable: 'false',
-                            onError: (ev) => { ev.target.style.display = 'none' }
-                          }),
-                          // 渐变遮罩：让压在图上的名称/摘要有足够对比度
-                          e('div', { className: 'soul-persona-art-veil', 'aria-hidden': true }),
-                          builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
-                          // 位置指示只出现在当前卡片上：左右露边的卡片若也显示「i / n」，
-                          // 三张会同时出现同一个计数，看起来像显示错误。
-                          current && e('span', { className: 'soul-persona-card-pos' }, `${index + 1} / ${total}`),
-                          // 名称与摘要压在图上
-                          e('div', { className: 'soul-persona-art-title' },
-                            e('span', { className: 'soul-persona-name' },
-                              e('span', { className: 'soul-persona-label' }, name === activePersona ? `★ ${name}` : name)
-                            ),
-                            e('div', { className: 'soul-persona-meta' }, personaRowMeta(entry))
+                        // —— 正面 ——
+                        e('div', {
+                          className: 'soul-persona-face soul-persona-face-front',
+                          // 翻到背面时正面要彻底退出交互与读屏（否则 Tab 会落到看不见的按钮上）
+                          'aria-hidden': flipped ? 'true' : undefined,
+                          ...(flipped ? { inert: '' } : {})
+                        },
+                          // 插画区（方案 B 的卡面主视觉）：只在有配套插画时可出图。
+                          // 图由宿主路由按人设名提供，缺图时宿主回退官方鲸鱼占位图，
+                          // 但仍留 onError 兜底隐藏，避免路由不可用时留下破图图标。
+                          // 自定义预设没有插画，此区退化为主题色渐变底 + 名称摘要。
+                          e('div', { className: 'soul-persona-art' },
+                            builtin && e('img', {
+                              className: 'soul-persona-art-img',
+                              src: new URL(`/api/soul/persona-art/${encodeURIComponent(name)}`, hostBase()).href,
+                              alt: '',
+                              loading: 'lazy',
+                              decoding: 'async',
+                              draggable: 'false',
+                              onError: (ev) => { ev.target.style.display = 'none' }
+                            }),
+                            // 渐变遮罩：让压在图上的名称/摘要有足够对比度
+                            e('div', { className: 'soul-persona-art-veil', 'aria-hidden': true }),
+                            builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
+                            // 位置指示只出现在当前卡片上：左右露边的卡片若也显示「i / n」，
+                            // 三张会同时出现同一个计数，看起来像显示错误。
+                            current && e('span', { className: 'soul-persona-card-pos' }, `${index + 1} / ${total}`),
+                            // 名称与摘要压在图上
+                            e('div', { className: 'soul-persona-art-title' },
+                              e('span', { className: 'soul-persona-name' },
+                                e('span', { className: 'soul-persona-label' }, name === activePersona ? `★ ${name}` : name)
+                              ),
+                              e('div', { className: 'soul-persona-meta' }, personaRowMeta(entry))
+                            )
+                          ),
+                          e('div', { className: 'soul-persona-body' },
+                            // 效果栏：卡牌的核心信息（这个预设会怎么回答）
+                            e('div', { className: 'soul-persona-eff' }, personaEffectText(entry)),
+                            e('div', { className: 'soul-persona-actions' },
+                              // 当前生效的人设：按钮文字变「使用中」+ 描边式样式（区别于实心主色），
+                              // 一眼就能看出哪张卡是当前配置。名称前的 ★ 保留，双重标识互相强化。
+                              e('button', {
+                                type: 'button',
+                                className: name === activePersona ? 'soul-persona-action soul-persona-active' : 'soul-persona-action',
+                                onClick: () => handleUsePersona(name)
+                              }, name === activePersona ? t('personas.active') : t('personas.use')),
+                              // 内置预设不提供删除（后端也拒绝）：留空占位槽让两类卡片按钮同列。
+                              // 刻意不是按钮，避免造出一个点了没反应的控件。
+                              builtin
+                                ? e('span', { className: 'soul-persona-slot', 'aria-hidden': true })
+                                : e('button', {
+                                  type: 'button',
+                                  // 二次确认态：按钮变实心危险色 + 文案改为「确认删除？」，
+                                  // 与普通态（描边、文案「删除」）形成明显区别，避免误点。
+                                  className: pendingDelete === name
+                                    ? 'soul-persona-action soul-persona-danger soul-persona-danger-armed'
+                                    : 'soul-persona-action soul-persona-danger',
+                                  'data-armed': pendingDelete === name ? 'true' : 'false',
+                                  title: t('personas.confirmDelete', { name }),
+                                  onClick: () => handleDeletePersona(name)
+                                }, pendingDelete === name ? t('personas.confirmDeleteShort') : t('personas.delete')),
+                              // 详情入口：只在当前卡上出现（叠层两张不给点）。
+                              // 放在操作区最右、做成定宽小按钮，避免与「使用」抢视觉。
+                              current && e('button', {
+                                type: 'button',
+                                className: 'soul-persona-action soul-persona-details',
+                                title: t('personas.details'),
+                                onClick: () => setFlippedName(name)
+                              }, t('personas.details'))
+                            )
                           )
                         ),
-                        e('div', { className: 'soul-persona-body' },
-                          // 效果栏：卡牌的核心信息（这个预设会怎么回答）
-                          e('div', { className: 'soul-persona-eff' }, personaEffectText(entry)),
-                          e('div', { className: 'soul-persona-actions' },
-                            // 当前生效的人设：按钮文字变「使用中」+ 描边式样式（区别于实心主色），
-                            // 一眼就能看出哪张卡是当前配置。名称前的 ★ 保留，双重标识互相强化。
-                            e('button', {
-                              type: 'button',
-                              className: name === activePersona ? 'soul-persona-action soul-persona-active' : 'soul-persona-action',
-                              onClick: () => handleUsePersona(name)
-                            }, name === activePersona ? t('personas.active') : t('personas.use')),
-                            // 内置预设不提供删除（后端也拒绝）：留空占位槽让两类卡片按钮同列。
-                            // 刻意不是按钮，避免造出一个点了没反应的控件。
-                            builtin
-                              ? e('span', { className: 'soul-persona-slot', 'aria-hidden': true })
-                              : e('button', {
-                                type: 'button',
-                                // 二次确认态：按钮变实心危险色 + 文案改为「确认删除？」，
-                                // 与普通态（描边、文案「删除」）形成明显区别，避免误点。
-                                className: pendingDelete === name
-                                  ? 'soul-persona-action soul-persona-danger soul-persona-danger-armed'
-                                  : 'soul-persona-action soul-persona-danger',
-                                'data-armed': pendingDelete === name ? 'true' : 'false',
-                                title: t('personas.confirmDelete', { name }),
-                                onClick: () => handleDeletePersona(name)
-                              }, pendingDelete === name ? t('personas.confirmDeleteShort') : t('personas.delete'))
-                          )
+                        // —— 背面（详情）——
+                        // 只读信息面：列全部维度 + customInstructions 全文。
+                        // 不放「使用/删除」按钮：这是阅读态，且实测卡背内容已占 370/372px，
+                        // 再放 36px 的按钮必然溢出（按钮留在正面即可，翻面后仍可返回）。
+                        e('div', {
+                          className: 'soul-persona-face soul-persona-face-back',
+                          'aria-hidden': flipped ? undefined : 'true',
+                          ...(flipped ? {} : { inert: '' })
+                        },
+                          e('div', { className: 'soul-persona-back-head' },
+                            e('span', { className: 'soul-persona-back-name' }, name),
+                            builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin'))
+                          ),
+                          e('div', { className: 'soul-persona-dims' },
+                            ...PERSONA_DIM_KEYS.map((dim) => e('div', { className: 'soul-persona-dim', key: dim },
+                              e('span', null, t(`field.${dim}`)),
+                              e('b', null, personaDimLabel(entry, dim))
+                            ))
+                          ),
+                          e('div', { className: 'soul-persona-back-label' }, t('personas.customInstructions')),
+                          e('div', { className: 'soul-persona-fulltext' }, personaFullText(entry)),
+                          // 返回：背面唯一的可点元素（放在底部，与正面的按钮区呼应）
+                          e('button', {
+                            type: 'button',
+                            className: 'soul-persona-action soul-persona-back-btn',
+                            onClick: () => setFlippedName(null)
+                          }, t('personas.flipBack'))
                         )
                       )
                     }
