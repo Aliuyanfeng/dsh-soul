@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 102
+const EXPECTED_ASSERTIONS = 104
 
 let passed = 0
 const failures = []
@@ -2042,6 +2042,75 @@ check('校验链与 --strict 链覆盖同一组脚本，且严格语义真在各
       false,
       `${file} 不得自己解析 --strict（必须走 skip-report 的 strictMode()，否则两处判定会漂移）`
     )
+  }
+})
+
+check('删除预设用内联二次确认，不得用原生 confirm', () => {
+  // 原生 window.confirm 在 webview 里可能把文档焦点留在异常状态 —— 症状是
+  // 「页面看得见却点不动、下拉框与输入框都失效」，最小化再恢复才好（用户实测）。
+  // 宿主自己的设置页也不用原生 confirm。故改为内联二次确认。
+  assert.equal(
+    /globalThis\.confirm\s*\(|window\.confirm\s*\(/.test(clientCode),
+    false,
+    '不得调用原生 confirm（webview 里会留下焦点异常，改用内联二次确认）'
+  )
+  // 必须存在待确认状态，且第一次点击只进入待确认、不真删
+  assert.match(clientSource, /const \[pendingDelete, setPendingDelete\] = React\.useState\(null\)/, '缺少 pendingDelete 状态')
+  assert.match(
+    clientSource,
+    /if \(pendingDelete !== name\) \{[\s\S]{0,80}?setPendingDelete\(name\)[\s\S]{0,40}?return/,
+    '首次点击应只进入待确认态并返回（不得直接删除）'
+  )
+  // 必须有超时复位兜底：否则「确认删除？」会一直挂着，用户过一会儿随手一点就真删了
+  assert.match(
+    clientSource,
+    /setTimeout\(\(\) => setPendingDelete\(null\), \d+\)/,
+    '二次确认需要超时复位（否则待确认态会一直挂着，容易误删）'
+  )
+  // 按钮要有可见的待确认反馈（文案 + 独立类名）
+  assert.match(clientSource, /t\('personas\.confirmDeleteShort'\)/, '待确认态按钮缺少文案')
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  assert.ok(/soul-persona-danger-armed/.test(cssBlock), '待确认态按钮应有独立样式（描边→实心危险色），否则与普通「删除」无从区分')
+  const armed = cssBlock.match(/\.soul-persona-danger-armed\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(armed, /state-error-primary/, '待确认态应使用实心危险色')
+  // 中英文案键各一份
+  assert.match(clientSource, /'personas\.confirmDeleteShort': '确认删除？'/, '缺中文待确认文案')
+  assert.match(clientSource, /'personas\.confirmDeleteShort': 'Confirm delete\?'/, '缺英文待确认文案')
+})
+
+check('「存为预设」入口与「保存设置」并列，且点开才问名字', () => {
+  // 用户反馈原位置「比较迷茫」：它被塞在预设列表最下面，而用户此时的心理模型是
+  // 「我在看别人的预设」；真正保存的却是「关于你/特质」里的字段（在别的分组里）。
+  // 方案 A：移到「保存设置」旁做同级动作，点开才问名字，并明确列出保存范围。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  // ① 预设列表里不得再有那个输入框（旧位置已移除）
+  assert.equal(/soul-persona-save/.test(cssBlock), false, '预设列表里的「保存为预设」输入框样式应已移除（入口已移到保存按钮旁）')
+  // ② 与「保存设置」并排出现
+  const buttons = extractCall(clientSource, "e('div', { className: 'soul-buttons' }")
+  assert.ok(buttons !== '', '找不到保存按钮区')
+  assert.match(buttons, /t\('button\.save'\)/, '保存按钮区应有「保存设置」')
+  assert.match(buttons, /t\('personas\.saveAs'\)/, '「存为预设…」应与「保存设置」并列（同一按钮区）')
+  // ③ 点开才问名字：按钮点击只打开弹层，不直接保存
+  assert.match(
+    clientSource,
+    /onClick: \(\) => \{ setPersonaName\(''\); setShowSavePersona\(true\) \}/,
+    '「存为预设…」应只打开命名弹层（不是先填名字才能点）'
+  )
+  assert.match(clientSource, /showSavePersona && e\('div', \{/, '缺少命名弹层渲染分支')
+  // ④ 弹层必须说明「会保存什么 / 不会保存什么」—— 这是消除困惑的关键
+  assert.match(clientSource, /t\('personas\.saveCovers'\)/, '弹层应说明会保存哪些字段')
+  assert.match(clientSource, /t\('personas\.saveExcludes'\)/, '弹层应说明不含「关于你」（这正是困惑来源）')
+  // ⑤ 弹层要能关闭：遮罩点击 + 取消按钮 + Esc
+  assert.match(clientSource, /onClick: \(\) => \{ setShowSavePersona\(false\); setPersonaName\(''\) \}/, '弹层应可关闭（遮罩/取消）')
+  assert.match(clientSource, /ev\.key === 'Escape'/, '弹层应支持 Esc 关闭')
+  // ⑥ 中英文案键齐备
+  for (const [k, zh, en] of [
+    ['personas.saveAs', '存为预设…', 'Save as persona…'],
+    ['personas.saveConfirm', '保存', 'Save'],
+    ['button.cancel', '取消', 'Cancel']
+  ]) {
+    assert.ok(clientSource.includes(`'${k}': '${zh}'`), `缺中文文案 ${k}`)
+    assert.ok(clientSource.includes(`'${k}': '${en}'`), `缺英文文案 ${k}`)
   }
 })
 

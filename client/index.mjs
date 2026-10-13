@@ -672,8 +672,23 @@ window.__ModuleLoader__.load({
       '.soul-persona-slot{display:none}',
       // 徽标：对齐宿主的 rowTag 规格（.5px 描边、radius-xs、11px/16px）
       '.soul-persona-badge{border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-xs);color:var(--dsw-alias-label-secondary);flex:none;padding:0 6px;font-size:11px;line-height:16px;white-space:nowrap}',
-      '.soul-persona-save{display:flex;gap:8px}',
-      '.soul-persona-save input[type=text]{flex:1}',
+      // ——「存为新预设」命名弹层（方案 A）——
+      // 遮罩用 fixed 全屏 + 半透明；层级要低于 toast（toast 是 10000），
+      // 因为保存成功后 toast 要能盖在弹层之上被看到。
+      '.soul-modal-mask{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;background:rgba(10,14,35,.42);padding:24px}',
+      '.soul-modal{box-sizing:border-box;width:100%;max-width:380px;display:flex;flex-direction:column;gap:14px;padding:18px;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv3,0 12px 32px rgba(0,0,0,.18))}',
+      '.soul-modal-title{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:22px}',
+      '.soul-modal .soul-field{margin-bottom:0}',
+      // 「将保存 / 不含」两行说明：这是消除「不知道存了哪些值」的关键，用弱化样式但仍可读
+      '.soul-modal-note{display:flex;flex-direction:column;gap:4px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      '.soul-modal-note-excl{color:var(--dsw-alias-label-tertiary)}',
+      '.soul-modal-actions{display:flex;justify-content:flex-end;gap:8px}',
+      // 二次确认态：描边 → 实心危险色，**并放宽按钮**。
+      // 放宽是必须的：普通态按「删除」两字定宽 43px，而「确认删除？」是五个字，
+      // 沿用 43px 会把文字挤到贴边/溢出（实测截图确认）。此时它是需要用户看清的
+      // 关键动作，宽度优先于「不与主按钮抢视觉」这条次要原则。
+      '.soul-persona-danger-armed{flex:0 0 auto;padding:0 10px;background:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-label-primary-foreground);border-color:var(--dsw-alias-state-error-primary)}',
+      '.soul-persona-danger-armed:hover:not(:disabled){background:var(--dsw-alias-state-error-primary);filter:brightness(1.08)}',
       // 提示词预览：宿主用 bg-module-platform 表达「内嵌代码/只读区」
       '.soul-prompt-pre{margin:8px 0 0 0;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;font-family:var(--ds-font-family-code,Consolas,Menlo,monospace);text-align:left;width:100%;box-sizing:border-box}',
       // 提示条：颜色全部走主题 token（原先硬编码 #f6ffed/#52c41a 等，深色主题下不可用）
@@ -794,6 +809,13 @@ window.__ModuleLoader__.load({
       'field.instructionsPlaceholder': '输入自定义指令，可以是其他行为、回复风格和语调等偏好设置',
       'group.personas': '人设预设',
       'personas.save': '保存当前为预设',
+      // 方案 A：入口移出预设列表，与「保存设置」并列（文案用「存为预设…」表示会再问一步）
+      'personas.saveAs': '存为预设…',
+      'personas.saveNameLabel': '新预设名称',
+      'personas.saveConfirm': '保存',
+      'personas.saveCovers': '将保存：回复风格和语调、特质、回复长度、输出语言、自定义指令',
+      'personas.saveExcludes': '不含：昵称、职业、介绍（这些属于「关于你」，预设不动它们）',
+      'personas.confirmDeleteShort': '确认删除？',
       'personas.savePlaceholder': '预设名称（1-30 字符）',
       'personas.use': '使用',
       'personas.active': '使用中',
@@ -839,6 +861,7 @@ window.__ModuleLoader__.load({
       'hint.toolConfirm': '开启后，Agent 通过 set_persona 工具做出的修改不会立即生效，需在会话中使用 /soul confirm 确认或 /soul reject 拒绝。',
       'button.save': '保存设置',
       'button.saving': '保存中...',
+      'button.cancel': '取消',
       'button.reset': '重置默认',
       'status.loading': '加载中...',
       'status.unsaved': '有未保存的更改',
@@ -925,6 +948,12 @@ window.__ModuleLoader__.load({
       'field.instructionsPlaceholder': 'Custom instructions — other behaviors, style or tone preferences',
       'group.personas': 'Personas',
       'personas.save': 'Save current as persona',
+      'personas.saveAs': 'Save as persona…',
+      'personas.saveNameLabel': 'New persona name',
+      'personas.saveConfirm': 'Save',
+      'personas.saveCovers': 'Saves: reply style & tone, traits, reply length, reply language, custom instructions',
+      'personas.saveExcludes': 'Excludes: nickname, occupation, bio (those are "About you" — personas never touch them)',
+      'personas.confirmDeleteShort': 'Confirm delete?',
       'personas.savePlaceholder': 'Persona name (1-30 chars)',
       'personas.use': 'Use',
       'personas.active': 'Active',
@@ -970,6 +999,7 @@ window.__ModuleLoader__.load({
       'hint.toolConfirm': 'When enabled, changes made by the agent through the set_persona tool do not apply immediately — confirm with /soul confirm or reject with /soul reject in the conversation.',
       'button.save': 'Save Settings',
       'button.saving': 'Saving...',
+      'button.cancel': 'Cancel',
       'button.reset': 'Reset to Default',
       'status.loading': 'Loading...',
       'status.unsaved': 'You have unsaved changes',
@@ -1180,6 +1210,24 @@ window.__ModuleLoader__.load({
       const [localTrailSpeed, setLocalTrailSpeed] = React.useState(trailSpeed || 'slow')
       const [localTrailWidth, setLocalTrailWidth] = React.useState(trailWidth || 'thin')
       const [personaName, setPersonaName] = React.useState('')
+      // 「存为预设」的命名弹层是否打开。
+      //
+      // 方案 A：把「保存当前为预设」从预设列表里**移出来**，做成「保存设置」旁的同级动作，
+      // 点开才问名字。原因（用户反馈「比较迷茫」）：
+      //   ① 它原先被塞在预设列表最下面，而用户此时的心理模型是「我在看别人的预设」，
+      //      突然出现「保存当前」的输入框，说不清「当前」指什么；
+      //   ② 真正被保存的是「关于你/特质」里的字段，那些字段在**别的分组**里，
+      //      用户在预设区输入名字，不知道到底存了哪些值；
+      //   ③ 「保存设置」与「保存当前为预设」两个保存并列，语义没区分；
+      //      且名字要先想好才能点（disabled 依赖非空），交互顺序也别扭。
+      const [showSavePersona, setShowSavePersona] = React.useState(false)
+      // 待删除的预设名（null = 没有待确认的删除）。
+      //
+      // 替代原生 window.confirm：原生模态框在 webview 里可能把文档焦点留在异常状态
+      // （表现为「页面看得见却点不动、打不了字」，最小化再恢复才好）。宿主自己的设置页
+      // 也不用原生 confirm，这里改为**内联二次确认**：第一次点「删除」把按钮切换成
+      // 「确认删除？」，再点一次才真删；点别处或超时则复位。
+      const [pendingDelete, setPendingDelete] = React.useState(null)
       // 卡片堆叠轮播的当前索引（人设预设一次只展示一张，左右可滑动/翻页）。
       // 索引在预设数组变化后可能越界（删除、加载失败后重取），渲染时统一夹取，
       // 不在 effect 里回写 —— 回写会多一次渲染，且删除后「看过的那张」位置语义
@@ -1399,12 +1447,15 @@ window.__ModuleLoader__.load({
         // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
       }
 
+      // 存为预设：把「关于你/特质」里的**当前设置**存成一个新预设。
+      // 名字来自命名弹层；成功后关闭弹层并清空输入。
       const handleSavePersona = async () => {
         const name = personaName.trim()
         if (!name) return
         try {
           await controller.savePersona(name)
           setPersonaName('')
+          setShowSavePersona(false)
           await loadPersonas()
           setToast({ text: t('toast.personaSaved'), kind: 'success' })
         } catch (err) {
@@ -1431,8 +1482,20 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // 删除预设：**内联二次确认**，不用原生 window.confirm。
+      //
+      // 为什么换掉：原生模态框在 webview 里可能把文档焦点留在异常状态 —— 症状正是用户
+      // 报的「删除后页面看得见却点不动、下拉框与输入框都无法操作」，而最小化再恢复
+      // （触发 focus/visibilitychange）就变好。宿主自己的设置页也不用原生 confirm。
+      //
+      // 交互：第一次点「删除」→ 该按钮变成「确认删除？」且进入待确认态；再点一次才真删。
+      // 期间点别处 / 切换卡片 / 超时（见下方 effect）都会复位，避免误删。
       const handleDeletePersona = async (name) => {
-        if (typeof globalThis.confirm === 'function' && !globalThis.confirm(t('personas.confirmDelete', { name }))) return
+        if (pendingDelete !== name) {
+          setPendingDelete(name)
+          return
+        }
+        setPendingDelete(null)
         try {
           await controller.deletePersona(name)
           await loadPersonas()
@@ -1441,6 +1504,14 @@ window.__ModuleLoader__.load({
           setToast({ text: messageOf(err), kind: 'error' })
         }
       }
+
+      // 二次确认的超时复位：进入待确认态后 5 秒内没有再次点击就取消。
+      // 没有这道兜底，「确认删除？」会一直挂着 —— 用户过一会儿回来随手一点就真删了。
+      React.useEffect(() => {
+        if (pendingDelete === null) return
+        const timer = setTimeout(() => setPendingDelete(null), 5000)
+        return () => clearTimeout(timer)
+      }, [pendingDelete])
 
       const styleOptions = STYLE_VALUES.map((value) => ({ value, label: t(`style.${value}`) }))
       const headingListsOptions = TRAIT_VALUES.map((value) => ({ value, label: t(`trait.headingLists.${value}`) }))
@@ -1780,9 +1851,15 @@ window.__ModuleLoader__.load({
                               ? e('span', { className: 'soul-persona-slot', 'aria-hidden': true })
                               : e('button', {
                                 type: 'button',
-                                className: 'soul-persona-action soul-persona-danger',
+                                // 二次确认态：按钮变实心危险色 + 文案改为「确认删除？」，
+                                // 与普通态（描边、文案「删除」）形成明显区别，避免误点。
+                                className: pendingDelete === name
+                                  ? 'soul-persona-action soul-persona-danger soul-persona-danger-armed'
+                                  : 'soul-persona-action soul-persona-danger',
+                                'data-armed': pendingDelete === name ? 'true' : 'false',
+                                title: t('personas.confirmDelete', { name }),
                                 onClick: () => handleDeletePersona(name)
-                              }, t('personas.delete'))
+                              }, pendingDelete === name ? t('personas.confirmDeleteShort') : t('personas.delete'))
                           )
                         )
                       )
@@ -1830,19 +1907,6 @@ window.__ModuleLoader__.load({
                     )
                   })())
                 )
-            ),
-            e('div', { className: 'soul-field soul-persona-save' },
-              e('input', {
-                type: 'text',
-                value: personaName,
-                maxLength: 30,
-                onChange: (ev) => setPersonaName(ev.target.value),
-                placeholder: t('personas.savePlaceholder')
-              }),
-              e(ui.Button, {
-                onClick: handleSavePersona,
-                disabled: saving || !personaName.trim()
-              }, t('personas.save'))
             ),
             e('div', { className: 'soul-status' }, t('personas.hint'))
           ),
@@ -1971,10 +2035,66 @@ window.__ModuleLoader__.load({
             onClick: handleSave,
             disabled: saving || !dirty
           }, saving ? t('button.saving') : t('button.save')),
+          // 方案 A：「保存当前为预设」从预设列表移到这里，与「保存设置」并列为同级动作。
+          // 两个保存动作放在一起，差异一眼可见（就地生效 vs 另存一份），
+          // 且按钮就贴在刚编辑过的表单旁 ⇒ 用户自然理解「存的是我刚才编的」。
+          e(ui.Button, {
+            onClick: () => { setPersonaName(''); setShowSavePersona(true) },
+            disabled: saving
+          }, t('personas.saveAs')),
           e(ui.Button, {
             onClick: handleReset,
             disabled: saving
           }, t('button.reset'))
+        ),
+
+        // ——「存为新预设」命名弹层 ——
+        // 点开才问名字（而不是原先「先填名字、按钮才可点」的别扭顺序），
+        // 并**明确列出会保存什么 / 不会保存什么** —— 这直接消灭了
+        // 「不知道到底存了哪些值」这个困惑。
+        showSavePersona && e('div', {
+          className: 'soul-modal-mask',
+          role: 'presentation',
+          onClick: () => { setShowSavePersona(false); setPersonaName('') }
+        },
+          e('div', {
+            className: 'soul-modal',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': t('personas.saveAs'),
+            onClick: (ev) => ev.stopPropagation()
+          },
+            e('div', { className: 'soul-modal-title' }, t('personas.saveAs')),
+            e('div', { className: 'soul-field' },
+              e('label', { htmlFor: 'soul-new-persona-name' }, t('personas.saveNameLabel')),
+              e('input', {
+                id: 'soul-new-persona-name',
+                type: 'text',
+                value: personaName,
+                maxLength: 30,
+                placeholder: t('personas.savePlaceholder'),
+                onChange: (ev) => setPersonaName(ev.target.value),
+                onKeyDown: (ev) => {
+                  if (ev.key === 'Enter' && personaName.trim() && !saving) void handleSavePersona()
+                  if (ev.key === 'Escape') { setShowSavePersona(false); setPersonaName('') }
+                }
+              })
+            ),
+            e('div', { className: 'soul-modal-note' },
+              e('div', null, t('personas.saveCovers')),
+              e('div', { className: 'soul-modal-note-excl' }, t('personas.saveExcludes'))
+            ),
+            e('div', { className: 'soul-modal-actions' },
+              e(ui.Button, {
+                onClick: () => { setShowSavePersona(false); setPersonaName('') }
+              }, t('button.cancel')),
+              e(ui.Button, {
+                variant: 'primary',
+                onClick: handleSavePersona,
+                disabled: saving || !personaName.trim()
+              }, saving ? t('button.saving') : t('personas.saveConfirm'))
+            )
+          )
         ),
 
         dirty && !saving && e('div', { className: 'soul-status soul-dirty' }, t('status.unsaved')),
