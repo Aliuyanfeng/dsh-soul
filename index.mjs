@@ -787,6 +787,15 @@ function registerRoutes(ctx) {
           res.end(JSON.stringify(body))
         }
 
+        // 方法校验：这是**破坏性写**入口（重置配置、必要时丢弃并备份损坏文件），
+        // 缺了它任何 HTTP 方法都能触发 —— 而 GET 是浏览器预取、爬虫、<img src>、
+        // 链接预览都会发出的方法，一个 GET 就能重置用户配置。
+        // 同期的 personas/save、personas/delete 都有此校验，此处属遗漏。
+        if (req.method !== 'POST') {
+          send(405, { ok: false, error: 'Method not allowed' })
+          return
+        }
+
         try {
           // 经由逃生口：配置损坏时这是设置页唯一还能成功的写操作。
           // backupPath 非 null 说明刚才确实丢弃了一份损坏的配置（已备份），

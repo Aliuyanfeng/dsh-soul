@@ -11,7 +11,7 @@
 #
 # 覆盖范围（ubuntu runner 自带 Chrome，所以浏览器那两套在这里是**真跑**，不像本机
 # 沙箱里恒跳过）：
-#   纯函数/契约  verify-config（114 项）
+#   纯函数/契约  verify-config（115 项）
 #   持久化行为    verify-store（18 项）
 #   客户端行为    verify-client（23 项）
 #   端到端        verify-e2e-prompt（38 项）

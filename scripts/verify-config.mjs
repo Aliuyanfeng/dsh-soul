@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 114
+const EXPECTED_ASSERTIONS = 115
 
 let passed = 0
 const failures = []
@@ -1369,6 +1369,43 @@ check('人设插画：自建预设走专用默认贴图，且名字不参与路�
     readFileSync(resolve(packageRoot, 'assets/personas/placeholder.svg')).length,
     '自建预设贴图不得与内置缺图占位相同（两者语义不同：自己配的 vs 官方提供）'
   )
+})
+
+check('所有破坏性端点都校验 HTTP 方法（GET 不得触发写入）', () => {
+  // 发版前安全收口时实测发现的真实缺陷：/api/soul/config/reset **完全没有**方法
+  // 校验，任何 HTTP 方法都会执行破坏性写入（重置配置、必要时丢弃并备份损坏文件）。
+  //
+  // 为什么这条风险等级不低：**GET 不是「安全」的同义词** —— 浏览器预取、爬虫、
+  // <img src>、链接预览、代理探测都会发 GET。缺少校验意味着一个 GET 就能重置
+  // 用户配置。同期的 personas/save、personas/delete 都有校验，此处属遗漏。
+  //
+  // 两类端点的判定方式不同，必须分开校验（用同一把尺子会误报）：
+  //   ① 读写复用（/api/soul/config）：显式 `if (method === 'GET') … else if (POST)'
+  //      —— 未覆盖的方法自然落空，不需前置 405；
+  //   ② 纯写（reset / save / use / delete）：必须**前置**拦截非 POST 并回 405，
+  //      否则任何方法都会执行写入。
+  const bodyOf = (path) => {
+    const at = indexCode.indexOf(`path: '${path}'`)
+    assert.ok(at > 0, `找不到路由 ${path}`)
+    const next = indexCode.indexOf("path: '/api/soul/", at + 10)
+    return indexCode.slice(at, next > at ? next : at + 4000)
+  }
+
+  // ① 读写复用端点的契约：两条分支都在
+  const cfgBody = bodyOf('/api/soul/config')
+  assert.match(cfgBody, /if \(req\.method === 'GET'\) \{/, '/api/soul/config 应有显式 GET 分支')
+  assert.match(cfgBody, /\} else if \(req\.method === 'POST'\) \{/, '/api/soul/config 应有显式 POST 分支')
+
+  // ② 纯写端点的契约：前置拦截非 POST 且回 405
+  for (const path of ['/api/soul/config/reset', '/api/soul/personas/save', '/api/soul/personas/use', '/api/soul/personas/delete']) {
+    const body = bodyOf(path)
+    assert.match(
+      body,
+      /if \(req\.method !== 'POST'\) \{/,
+      `${path} 是纯写端点，必须前置校验 req.method !== 'POST'（否则 GET 也能触发写入）`
+    )
+    assert.match(body, /405/, `${path} 的方法校验应返回 405`)
+  }
 })
 
 check('人设插画：文件规格达标（≤256KiB / 命名与人设一致 / 无孤儿文件）', () => {
