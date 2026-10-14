@@ -81,9 +81,10 @@ const ART_MIME = {
   '.svg': 'image/svg+xml'
 }
 const PLACEHOLDER_FILE = 'placeholder.svg'
-// 自定义（自建）预设的默认贴图：与内置缺图占位区分开 ——
-// 鲸鱼 = 官方提供的人格，调色板 = 你自己配的。缺图时也回退到它。
-const CUSTOM_ART_FILE = 'custom-placeholder.svg'
+// 自定义（自建）预设的默认贴图：鲸鱼剪影 + 装饰元素，用户提供的品牌插画。
+// 与内置插画同为 512×512 WebP、视觉重量一致，但形态是无五官的剪影 ——
+// 内置是有具体人格的具象插画，自建是「还没定制」的中性底图，一眼可区分。
+const CUSTOM_ART_FILE = 'custom-placeholder.webp'
 
 // 包根目录下的 assets/personas 绝对路径
 function personaArtDir() {
@@ -109,7 +110,10 @@ function resolvePersonaArt(name) {
   // 非内置名一律返回固定文件，路径穿越依然不可能发生。
   if (!isBuiltinPersona(name)) {
     const custom = join(dir, CUSTOM_ART_FILE)
-    return existsSync(custom) ? { file: custom, mime: ART_MIME['.svg'] } : null
+    // MIME 按扩展名取，不写死 —— 贴图格式变过一次（svg → webp），
+    // 写死会让浏览器把它当 octet-stream 下载而不是渲染。
+    const ext = CUSTOM_ART_FILE.slice(CUSTOM_ART_FILE.lastIndexOf('.'))
+    return existsSync(custom) ? { file: custom, mime: ART_MIME[ext] } : null
   }
   for (const ext of ART_EXTENSIONS) {
     const file = join(dir, `${name}${ext}`)

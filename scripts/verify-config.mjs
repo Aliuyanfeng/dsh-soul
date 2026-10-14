@@ -1307,7 +1307,7 @@ check('人设插画：自建预设走专用默认贴图，且名字不参与路�
   assert.ok(fnAt > 0, '找不到 resolvePersonaArt 定义')
   const artRoute = indexCode.slice(fnAt, indexCode.indexOf('function personasWithArt('))
   // ① 常量存在
-  assert.match(indexCode, /const CUSTOM_ART_FILE = 'custom-placeholder\.svg'/, '缺少自建预设默认贴图的文件名常量')
+  assert.match(indexCode, /const CUSTOM_ART_FILE = 'custom-placeholder\.webp'/, '缺少自建预设默认贴图的文件名常量')
   // ② 非内置名分支：返回 CUSTOM_ART_FILE，且**不**用 name 拼路径
   const branchAt = artRoute.indexOf('!isBuiltinPersona(name)')
   assert.ok(branchAt > 0, '缺少「非内置名」判据')
@@ -1321,16 +1321,23 @@ check('人设插画：自建预设走专用默认贴图，且名字不参与路�
     false,
     '非内置名分支不得用 name 拼路径（否则路径穿越可能）'
   )
-  // ③ 文件真实存在且是合法 SVG（否则静默回退、卡片一片空白）
-  const customFile = resolve(packageRoot, 'assets/personas/custom-placeholder.svg')
-  assert.equal(existsSync(customFile), true, '缺少 assets/personas/custom-placeholder.svg')
-  const svg = readFileSync(customFile, 'utf8')
-  assert.match(svg, /^<svg[\s>]/, 'custom-placeholder.svg 应是 SVG')
-  assert.match(svg, /viewBox="0 0 512 512"/, '贴图应为 512×512（与内置插画同规格）')
+  // ③ 文件真实存在且规格与内置插画一致（否则静默回退、卡片一片空白）
+  const customFile = resolve(packageRoot, 'assets/personas/custom-placeholder.webp')
+  assert.equal(existsSync(customFile), true, '缺少 assets/personas/custom-placeholder.webp')
+  // WebP 文件头：RIFF....WEBP（不引入图像库解析，头部足够确认格式）
+  const head = readFileSync(customFile).subarray(0, 12)
+  assert.equal(head.subarray(0, 4).toString('ascii'), 'RIFF', 'custom-placeholder.webp 不是 RIFF 容器')
+  assert.equal(head.subarray(8, 12).toString('ascii'), 'WEBP', 'custom-placeholder.webp 不是 WebP')
+  // MIME 必须按扩展名取，不能写死（格式变过一次：svg → webp）
+  assert.match(
+    indexCode,
+    /const ext = CUSTOM_ART_FILE\.slice\(CUSTOM_ART_FILE\.lastIndexOf\('\.'\)\)/,
+    '自定义贴图的 MIME 应按扩展名取（写死会在换格式后让浏览器下载而非渲染）'
+  )
   // ④ 与内置缺图占位必须区分（同图会让「官方提供」与「自己配的」无从分辨）
   assert.notEqual(
-    readFileSync(customFile, 'utf8'),
-    readFileSync(resolve(packageRoot, 'assets/personas/placeholder.svg'), 'utf8'),
+    readFileSync(customFile).length,
+    readFileSync(resolve(packageRoot, 'assets/personas/placeholder.svg')).length,
     '自建预设贴图不得与内置缺图占位相同（两者语义不同：自己配的 vs 官方提供）'
   )
 })
@@ -1361,7 +1368,7 @@ check('人设插画：文件规格达标（≤256KiB / 命名与人设一致 / �
     ...names.flatMap((n) => ['.webp', '.png', '.jpg', '.jpeg', '.svg'].map((e) => `${n}${e}`)),
     // 两张兜底图：内置缺图 → 鲸鱼；自建预设 → 调色板（形态区分来源）
     'placeholder.svg',
-    'custom-placeholder.svg'
+    'custom-placeholder.webp'
   ])
   const orphan = files.filter((f) => !allowed.has(f))
   assert.deepEqual(orphan, [], `assets/personas 下有未被使用到的文件（名字拼错？）：${orphan.join(', ')}`)
