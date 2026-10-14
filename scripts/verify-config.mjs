@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 110
+const EXPECTED_ASSERTIONS = 112
 
 let passed = 0
 const failures = []
@@ -1274,6 +1274,67 @@ check('人设插画：宿主路由存在、只服务内置人设名、缺图回�
   )
 })
 
+check('人设插画：客户端对所有卡片都渲染 img（不再限定内置）', () => {
+  // 此前渲染是 `builtin && e('img', ...)` —— 自建预设完全不出图。
+  // 本版统一出图；若哪天又被加上条件，自建卡会退回空白渐变底。
+  const artIdx = clientSource.indexOf("'soul-persona-art' }")
+  assert.ok(artIdx > 0, '找不到插画区渲染处')
+  const artSlice = clientSource.slice(artIdx, artIdx + 900)
+  assert.equal(
+    /builtin && e\('img', \{[\s\S]{0,60}className: 'soul-persona-art-img'/.test(artSlice),
+    false,
+    '不得再用 builtin 条件限制出图（自建预设也要显示默认贴图）'
+  )
+  assert.match(
+    artSlice,
+    /e\('img', \{[\s\S]{0,80}className: 'soul-persona-art-img'/,
+    '所有卡片都应渲染插画 img'
+  )
+  // onError 兜底仍须保留（路由不可用时退化为渐变底而非破图）
+  assert.match(artSlice, /onError:/, '插画应保留 onError 兜底隐藏')
+})
+
+check('人设插画：自建预设走专用默认贴图，且名字不参与路径拼接', () => {
+  // 本版只做样式调整：自建预设此前完全不出图（只有渐变底），现在统一出图，
+  // 由宿主对**非内置名**返回固定贴图。用户上传本地图片是后续版本功能。
+  //
+  // 安全不变量：非内置名**一律返回固定文件**，名字不参与 join ⇒
+  // 路径穿越从结构上不可能（不是靠字符串替换去猜）。
+  // ⚠️ 按**函数定义**定位，不能按路由注册处切：resolvePersonaArt 定义在文件前部
+  // （插画常量区），而路由注册在文件后部的 apply 里 —— 按注册处切片会截掉函数体，
+  // 断言于是「找不到判据」而误报（初版正是如此）。
+  const fnAt = indexCode.indexOf('function resolvePersonaArt(')
+  assert.ok(fnAt > 0, '找不到 resolvePersonaArt 定义')
+  const artRoute = indexCode.slice(fnAt, indexCode.indexOf('function personasWithArt('))
+  // ① 常量存在
+  assert.match(indexCode, /const CUSTOM_ART_FILE = 'custom-placeholder\.svg'/, '缺少自建预设默认贴图的文件名常量')
+  // ② 非内置名分支：返回 CUSTOM_ART_FILE，且**不**用 name 拼路径
+  const branchAt = artRoute.indexOf('!isBuiltinPersona(name)')
+  assert.ok(branchAt > 0, '缺少「非内置名」判据')
+  // 该分支的结束位置：按名拼路径的循环开始处
+  const loopAt = artRoute.indexOf('for (const ext of ART_EXTENSIONS)')
+  assert.ok(loopAt > branchAt, '「非内置名」分支应在按名查找之前')
+  const customBranch = artRoute.slice(branchAt, loopAt)
+  assert.match(customBranch, /CUSTOM_ART_FILE/, '非内置名分支应返回专用默认贴图')
+  assert.equal(
+    /join\([^)]*name/.test(customBranch),
+    false,
+    '非内置名分支不得用 name 拼路径（否则路径穿越可能）'
+  )
+  // ③ 文件真实存在且是合法 SVG（否则静默回退、卡片一片空白）
+  const customFile = resolve(packageRoot, 'assets/personas/custom-placeholder.svg')
+  assert.equal(existsSync(customFile), true, '缺少 assets/personas/custom-placeholder.svg')
+  const svg = readFileSync(customFile, 'utf8')
+  assert.match(svg, /^<svg[\s>]/, 'custom-placeholder.svg 应是 SVG')
+  assert.match(svg, /viewBox="0 0 512 512"/, '贴图应为 512×512（与内置插画同规格）')
+  // ④ 与内置缺图占位必须区分（同图会让「官方提供」与「自己配的」无从分辨）
+  assert.notEqual(
+    readFileSync(customFile, 'utf8'),
+    readFileSync(resolve(packageRoot, 'assets/personas/placeholder.svg'), 'utf8'),
+    '自建预设贴图不得与内置缺图占位相同（两者语义不同：自己配的 vs 官方提供）'
+  )
+})
+
 check('人设插画：文件规格达标（≤256KiB / 命名与人设一致 / 无孤儿文件）', () => {
   // 宿主对插件资源有 256KiB 上限；文件名必须与内置人设名完全一致，
   // 否则运行时查不到、静默回退占位图。
@@ -1298,16 +1359,18 @@ check('人设插画：文件规格达标（≤256KiB / 命名与人设一致 / �
   // 目录里不得有多余文件（拼错的名字永远不会被用到，属于静默垃圾）
   const allowed = new Set([
     ...names.flatMap((n) => ['.webp', '.png', '.jpg', '.jpeg', '.svg'].map((e) => `${n}${e}`)),
-    'placeholder.svg'
+    // 两张兜底图：内置缺图 → 鲸鱼；自建预设 → 调色板（形态区分来源）
+    'placeholder.svg',
+    'custom-placeholder.svg'
   ])
   const orphan = files.filter((f) => !allowed.has(f))
   assert.deepEqual(orphan, [], `assets/personas 下有未被使用到的文件（名字拼错？）：${orphan.join(', ')}`)
 })
 
-check('人设插画：竖版卡牌（插画为主视觉），自定义预设用渐变兜底', () => {
-  // 方案 B：卡牌竖版 —— 插画占卡面顶部的正方形主视觉，名称/摘要压在其上，
-  // 效果与按钮在下方的信息区。自定义预设没有配套插画，插画区退化为主题色渐变底
-  // （而不是留一块空白或破图）。
+check('人设插画：竖版卡牌（插画为主视觉），自定义预设用专用默认贴图', () => {
+  // 卡牌竖版 —— 插画占卡面顶部的正方形主视觉，名称/摘要压在其上，
+  // 效果与按钮在下方的信息区。**所有卡片都出图**：内置按人设名查找，自建用宿主
+  // 返回的专用默认贴图（调色板，与官方鲸鱼区分来源）；图未就绪时露出渐变底。
   const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
   const card = cssBlock.match(/\.soul-persona-card\{([^}]*)\}/)?.[1] ?? ''
   assert.match(card, /flex-direction:column/, '卡牌应为纵向布局（竖版卡：上插画下信息）')
@@ -1328,7 +1391,7 @@ check('人设插画：竖版卡牌（插画为主视觉），自定义预设用�
   assert.ok(art !== '', '找不到 .soul-persona-art 规则')
   assert.match(art, /aspect-ratio:1\/1/, '插画区应为正方形（卡面主视觉）')
   assert.match(art, /width:100%/, '插画区应占满卡宽')
-  assert.match(art, /background:linear-gradient/, '插画区应有渐变兜底底（自定义预设无图时不留空白）')
+  assert.match(art, /background:linear-gradient/, '插画区应有渐变兜底底（图未就绪/加载失败时不留空白）')
   assert.match(art, /overflow:hidden/, '插画区应裁掉溢出部分')
   const img = cssBlock.match(/\.soul-persona-art-img\{([^}]*)\}/)?.[1] ?? ''
   assert.match(img, /object-fit:cover/, 'img 应用 object-fit:cover（否则非方形图会变形）')
@@ -1348,8 +1411,10 @@ check('人设插画：竖版卡牌（插画为主视觉），自定义预设用�
   // 客户端侧：只给内置人设渲染 img，且带 onError 兜底与懒加载
   assert.match(
     clientSource,
-    /builtin && e\('img', \{[\s\S]{0,60}className: 'soul-persona-art-img'/,
-    '应只给内置人设渲染插画（自定义预设走渐变底）'
+    // 所有卡片都出图：内置走按名查找的插画，自建走宿主返回的专用默认贴图。
+    // （此前只在 builtin 时才渲染 img —— 本版改为统一出图，仅样式调整。）
+    /e\('img', \{[\s\S]{0,80}className: 'soul-persona-art-img'/,
+    '所有预设都应渲染插画（自建预设由宿主返回专用默认贴图）'
   )
   assert.match(
     clientSource,

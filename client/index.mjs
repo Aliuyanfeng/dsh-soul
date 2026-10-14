@@ -694,7 +694,7 @@ window.__ModuleLoader__.load({
       '.soul-persona-details{flex:0 0 auto;padding:0 10px;background:transparent;color:var(--dsw-alias-label-secondary);box-shadow:inset 0 0 0 .5px var(--dsw-alias-settings-card-stroke);font-size:12px;font-weight:500}',
       '.soul-persona-details:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);filter:none}',
       // 插画区：正方形主视觉。非内置预设没有配套插画，用主题色渐变兜底
-      // （data-builtin="false" 时不出图，见下）。
+      // 所有卡片都出图（自建预设由宿主返回专用默认贴图）；图未就绪时露出渐变底。
       '.soul-persona-art{position:relative;width:100%;aspect-ratio:1/1;flex:none;overflow:hidden;background:linear-gradient(150deg,color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,var(--dsw-alias-bg-module-platform)),var(--dsw-alias-bg-module-platform))}',
       '.soul-persona-art-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;user-select:none}',
       // 底部渐变：让压在图上的名称/摘要有足够对比度（浅色插画上白字会糊）
@@ -2090,12 +2090,15 @@ window.__ModuleLoader__.load({
                           // cursor 由 CSS 给整面（含插画区），提示可点。
                           onClick: (current && !flipped) ? () => setFlippedName(name) : undefined
                         },
-                          // 插画区（方案 B 的卡面主视觉）：只在有配套插画时可出图。
-                          // 图由宿主路由按人设名提供，缺图时宿主回退官方鲸鱼占位图，
-                          // 但仍留 onError 兜底隐藏，避免路由不可用时留下破图图标。
-                          // 自定义预设没有插画，此区退化为主题色渐变底 + 名称摘要。
+                          // 插画区（卡面主视觉）：**所有卡片都出图**。
+                          //
+                          // 内置预设：宿主按人设名返回 assets/personas/<名>.webp；
+                          // 自建预设：宿主返回专用默认贴图（调色板，与官方的鲸鱼区分
+                          // 「你自己配的」与「官方提供的」）。本版只做样式调整 ——
+                          // 允许用户上传本地图片作插画是后续版本功能。
+                          // 仍留 onError 兜底隐藏：路由不可用时退化为渐变底而非破图。
                           e('div', { className: 'soul-persona-art' },
-                            builtin && e('img', {
+                            e('img', {
                               className: 'soul-persona-art-img',
                               src: new URL(`/api/soul/persona-art/${encodeURIComponent(name)}`, hostBase()).href,
                               alt: '',

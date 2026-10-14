@@ -81,6 +81,9 @@ const ART_MIME = {
   '.svg': 'image/svg+xml'
 }
 const PLACEHOLDER_FILE = 'placeholder.svg'
+// 自定义（自建）预设的默认贴图：与内置缺图占位区分开 ——
+// 鲸鱼 = 官方提供的人格，调色板 = 你自己配的。缺图时也回退到它。
+const CUSTOM_ART_FILE = 'custom-placeholder.svg'
 
 // 包根目录下的 assets/personas 绝对路径
 function personaArtDir() {
@@ -98,7 +101,16 @@ function personaArtDir() {
 // 路径穿越从结构上不可能发生（而不是靠字符串替换去猜）。
 function resolvePersonaArt(name) {
   const dir = personaArtDir()
-  if (!dir || typeof name !== 'string' || !isBuiltinPersona(name)) return null
+  if (!dir || typeof name !== 'string') return null
+  // 自建预设没有配套插画 ⇒ 用专用默认贴图（本版只做样式调整；
+  // 允许用户上传本地图片作为插画是后续版本的功能）。
+  //
+  // 这里**仍不接受任意名字拼路径**：只有内置名会走下面的按名查找，
+  // 非内置名一律返回固定文件，路径穿越依然不可能发生。
+  if (!isBuiltinPersona(name)) {
+    const custom = join(dir, CUSTOM_ART_FILE)
+    return existsSync(custom) ? { file: custom, mime: ART_MIME['.svg'] } : null
+  }
   for (const ext of ART_EXTENSIONS) {
     const file = join(dir, `${name}${ext}`)
     if (existsSync(file)) return { file, mime: ART_MIME[ext] }
