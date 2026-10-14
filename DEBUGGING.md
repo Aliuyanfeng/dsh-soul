@@ -198,7 +198,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | --- | --- | --- | --- |
 | 纯函数 / 契约 | `verify-config` | 107 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
-| 客户端行为 | `verify-client` | 19 | 否 |
+| 客户端行为 | `verify-client` | 20 | 否 |
 | 端到端（保存 → 两条通道都拿到新文本） | `verify-e2e-prompt` | 38 | 否 |
 | 宿主实现 | `verify-live-prompt` | 20 | 定位不到 DSH 时整脚本跳过 |
 | 版本兼容 | `verify-compat` | 10（声明数；未执行项按 `skipNote` 从声明数里下修后对账） | 定位不到 DSH 时整脚本跳过 |

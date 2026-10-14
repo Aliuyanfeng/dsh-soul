@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 19
+const EXPECTED_ASSERTIONS = 20
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -852,6 +852,60 @@ try {
       polledSelects[0].props.value,
       'casual',
       '用户正在编辑的字段不得被外部写入覆盖（无条件跟随 store 会把它改回 store 值）'
+    )
+  })
+
+  await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限定当前卡）', async () => {
+    // 用户实测 bug：点侧边卡切换下一个人设后，新当前卡直接以【背面】出现。
+    // 根因：整面翻面的 onClick 挂在了【所有卡】的正面 face 上 —— 点侧边卡时，
+    // 事件先冒泡到它的 face onClick（setFlippedName(侧边卡名)），再冒泡到卡片的
+    // go() 翻页 ⇒ 翻页后它成了当前卡 ⇒ flippedName === 它 ⇒ 一上来就是背面。
+    // 修法：face 的 onClick 限定 current；cursor:pointer 同理只给当前卡。
+    const world = await boot({}, {
+      ok: true,
+      personas: {
+        苏格拉底式提问者: { style: 'professional', builtin: true },
+        极简主义者: { style: 'efficient', builtin: true },
+        资深架构师: { style: 'professional', headingLists: 'more', builtin: true }
+      },
+      activeName: null
+    })
+    const closed = await renderSettings(world)
+    const trigger = findAll(closed, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.personas']))
+    await trigger[0].props.onClick()
+    const tree = await renderSettings(world)
+
+    // ① 叠层侧边卡的正面 face 不得挂 onClick（否则点击会先翻面再翻页）
+    const side = findAllByClass(tree, 'soul-persona-card')
+      .find((c) => c.props['data-current'] === 'false' && typeof c.props.onClick === 'function')
+    assert.ok(side, '前置条件：应存在可点的叠层侧边卡')
+    const sideFront = findAll(side, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-persona-face-front'))
+    assert.equal(
+      Boolean(sideFront[0] && sideFront[0].props.onClick),
+      false,
+      '叠层侧边卡的正面不得挂翻面 onClick（会与翻页冲突，导致新当前卡以背面出现）'
+    )
+    // ② 点它 ⇒ 只翻页
+    await side.props.onClick()
+    for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+    const after = await renderSettings(world)
+    const cur = findAllByClass(after, 'soul-persona-card').filter((c) => c.props['data-current'] === 'true')
+    assert.equal(cur.length, 1, '翻页后应恰好一张当前卡')
+    assert.equal(cur[0].props['data-flipped'], 'false', '翻页后新当前卡必须是正面（bug 症状：直接背面）')
+    // ③ 当前卡的正面仍必须可点翻面（修复不能把功能一并去掉）
+    const curFront = findAll(cur[0], (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-persona-face-front'))
+    assert.ok(curFront[0] && typeof curFront[0].props.onClick === 'function', '当前卡正面应保留整面点击翻面')
+    // ④ 翻到背面后，正面的整面点击必须撤掉（否则背面点击会再次触发翻面回调）
+    await curFront[0].props.onClick()   // 翻到背面
+    for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+    const flippedTree = await renderSettings(world)
+    const flippedCard = findAllByClass(flippedTree, 'soul-persona-card').find((c) => c.props['data-flipped'] === 'true')
+    assert.ok(flippedCard, '前置条件：应有一张卡处于背面')
+    const flippedFront = findAll(flippedCard, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-persona-face-front'))
+    assert.equal(
+      Boolean(flippedFront[0] && flippedFront[0].props.onClick),
+      false,
+      '背面状态下正面不得再挂整面点击（否则会重复触发翻面）'
     )
   })
 

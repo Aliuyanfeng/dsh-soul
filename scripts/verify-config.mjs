@@ -2295,18 +2295,22 @@ check('卡背（详情面）展示全部维度与全文，且不动卡片 transf
     /flex:1 1 auto/,
     '「返回」应在卡背按钮行里弹性占满（删除定宽并行）'
   )
-  // ⑪ 整面点击翻面：正面 face 自带 onClick（任意处点击翻到卡背，用户需求）；
-  //    「使用」按钮必须 stopPropagation（点了就该用，不能顺带翻面），cursor:pointer 提示。
+  // ⑪ 整面点击翻面：正面 face 自带 onClick（当前卡任意处点击翻到卡背，用户需求）；
+  //    「使用」按钮必须 stopPropagation（点了就该用，不能顺带翻面）。
+  //    ⚠️ onClick 必须限定 current —— 否则点叠层侧边卡时，点击先冒泡到它 face 的
+  //    setFlippedName(侧边卡名)，再冒泡到卡片 go() 翻页 ⇒ 翻页后它成了当前卡 ⇒
+  //    直接以背面姿态出现（用户实测：切下一个人设时自动翻面了）。
   const frontFace = clientSource.slice(
     clientSource.indexOf("className: 'soul-persona-face soul-persona-face-front'"),
     clientSource.indexOf("className: 'soul-persona-face soul-persona-face-back'")
   )
-  assert.match(frontFace, /onClick: flipped \? undefined : \(\) => setFlippedName\(name\)/, '正面应整面可点翻面（onClick 在 face 上）')
+  assert.match(frontFace, /onClick: \(current && !flipped\)/, '整面点击必须限定当前卡（否则点侧边卡翻页后会以背面出现）')
   assert.match(frontFace, /ev\?\.stopPropagation\(\)/, '「使用」按钮应 stopPropagation（点使用不能顺带翻面）')
+  // cursor:pointer 只提示当前卡（叠层卡点击是翻页，不是翻面）
   assert.match(
-    cssBlock.match(/\.soul-persona-face-front\{([^}]*)\}/)?.[1] ?? '',
-    /cursor:pointer/,
-    '正面应有 cursor:pointer（整面可点的可点性提示）'
+    cssBlock,
+    /\.soul-persona-card\[data-current="true"\]:not\(\[data-flipped="true"\]\) \.soul-persona-face-front\{cursor:pointer\}/,
+    'cursor:pointer 应只给当前卡的正面（叠层卡的点击是翻页）'
   )
 })
 

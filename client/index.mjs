@@ -676,7 +676,9 @@ window.__ModuleLoader__.load({
       // 两个面：各自裁圆角 + 隐藏背面，构成标准 3D 翻转
       '.soul-persona-face{position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;border-radius:inherit;backface-visibility:hidden;-webkit-backface-visibility:hidden;transition:opacity .18s ease}',
       // 整面可点（任意处点击翻到卡背）：cursor 提示可点性
-      '.soul-persona-face-front{opacity:1;cursor:pointer}',
+      '.soul-persona-face-front{opacity:1}',
+      // 当前卡整面可点翻背（cursor 提示）；叠层侧边卡的点击是翻页，不提示翻面
+      '.soul-persona-card[data-current="true"]:not([data-flipped="true"]) .soul-persona-face-front{cursor:pointer}',
       // 背面预先转到 180°，随 flipper 一起转回正面
       '.soul-persona-face-back{gap:6px;padding:10px;box-sizing:border-box;transform:rotateY(180deg);opacity:1}',
       // 未翻面时背面整层不可点、也不被读屏念到（它虽被 backface 隐藏，但仍在树里）
@@ -2183,10 +2185,15 @@ window.__ModuleLoader__.load({
                           'aria-hidden': flipped ? 'true' : undefined,
                           ...(flipped ? { inert: '' } : {}),
                           // 整面点击翻到卡背（用户期望：任意处点击都能翻面）。
+                          // ⚠️ 只对【当前卡】生效（current 条件）：叠层侧边卡的点击
+                          // 必须留给卡片的 go() 翻页 —— 否则点击先冒泡到 face 的
+                          // setFlippedName(侧边卡名)，再冒泡到卡片的 go() 翻页，
+                          // 翻页后它成了当前卡 ⇒ flippedName === 它 ⇒ 直接以背面
+                          // 姿态出现（用户实测：切下一个人设时自动翻面了）。
                           // 面上的控件用 stopPropagation 自己接管：「使用」点了就该用，
                           // 不能顺带翻面；「详情」的语义本来就是翻面，不拦（双保险）。
                           // cursor 由 CSS 给整面（含插画区），提示可点。
-                          onClick: flipped ? undefined : () => setFlippedName(name)
+                          onClick: (current && !flipped) ? () => setFlippedName(name) : undefined
                         },
                           // 插画区（方案 B 的卡面主视觉）：只在有配套插画时可出图。
                           // 图由宿主路由按人设名提供，缺图时宿主回退官方鲸鱼占位图，
