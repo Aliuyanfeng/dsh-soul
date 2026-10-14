@@ -588,7 +588,22 @@ window.__ModuleLoader__.load({
       '@media (prefers-reduced-motion:reduce){.soul-quick-toggle[data-enabled="true"] .soul-quick-toggle-dot{animation:none}.soul-quick-toggle[data-enabled="true"]:hover::before,.soul-quick-toggle[data-enabled="false"]:hover::before{animation:none;transform:none}}',
       // —— 输入框上方（dock 行）的人设标签 ——
       // 该行是独立的（宿主自己在里面放 goal 状态），故这里不参与底栏的横向挤压。
-      '.soul-chip-row{position:relative;display:flex;align-items:center;width:100%}',
+      //
+      // ⚠️ 对齐必须跟随输入框卡片，不能用 width:100% + 默认左对齐：
+      //    宿主的 composerStack 是纵向 flex（align-items 默认 stretch），
+      //    而**输入框卡片自身是居中 + 有最大宽度**的（--dsh-composer-card-max-width）。
+      //    此前 width:100% 让本行铺满 composerStack 全宽 ⇒ 标签贴最左，
+      //    与居中的输入框错位（用户实测「漂移到左侧、离 sidebar 很近」）。
+      //    修复：复用宿主同一组 CSS 变量（card-max-width + side-clearance），
+      //    max-width 相同 ⇒ 左缘自然与输入框卡片对齐。
+      //    对齐公式直接复用宿主 InputBar root 的同款（源码 .lXshSW_root）：
+      //      width    = 100% - side-clearance*2 - dock-inset*4
+      //      max-width = card-max-width - dock-inset*4
+      //      margin: 0 auto（居中，不靠 align-self）
+      //    dock-inset(8px)*4 是宿主 dock 槽位（goal 等）留下的水平缩进，
+      //    与输入框卡片左缘严格对齐就是这么算出来的 —— 近似值（纯 padding）
+      //    实测会差出几十像素。
+      '.soul-chip-row{position:relative;display:flex;align-items:center;box-sizing:border-box;width:calc(100% - var(--dsh-composer-side-clearance,16px)*2 - var(--dsh-composer-dock-inset,8px)*4);max-width:calc(var(--dsh-composer-card-max-width,952px) - var(--dsh-composer-dock-inset,8px)*4);margin:0 auto}',
       // 标签容器 relative ⇒ 弹出菜单以它为定位基准（菜单不推挤输入框）
       '.soul-chip-wrap{position:relative;display:inline-flex;min-width:0;max-width:100%}',
       '.soul-chip{box-sizing:border-box;display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;height:24px;padding:0 8px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:999px;background:var(--dsw-alias-settings-card-fill);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;transition:border-color .15s ease,color .15s ease,background-color .15s ease}',
