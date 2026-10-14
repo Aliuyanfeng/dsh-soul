@@ -586,49 +586,6 @@ window.__ModuleLoader__.load({
       '@keyframes soul-toggle-green-sweep{from{transform:translateX(100%)}to{transform:translateX(-100%)}}',
       '@keyframes soul-status-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--dsw-alias-state-success-primary) 35%,transparent);opacity:.75}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--dsw-alias-state-success-primary) 0%,transparent);opacity:1}}',
       '@media (prefers-reduced-motion:reduce){.soul-quick-toggle[data-enabled="true"] .soul-quick-toggle-dot{animation:none}.soul-quick-toggle[data-enabled="true"]:hover::before,.soul-quick-toggle[data-enabled="false"]:hover::before{animation:none;transform:none}}',
-      // —— 输入框上方（dock 行）的人设标签 ——
-      // 该行是独立的（宿主自己在里面放 goal 状态），故这里不参与底栏的横向挤压。
-      //
-      // ⚠️ 对齐必须跟随输入框卡片，不能用 width:100% + 默认左对齐：
-      //    宿主的 composerStack 是纵向 flex（align-items 默认 stretch），
-      //    而**输入框卡片自身是居中 + 有最大宽度**的（--dsh-composer-card-max-width）。
-      //    此前 width:100% 让本行铺满 composerStack 全宽 ⇒ 标签贴最左，
-      //    与居中的输入框错位（用户实测「漂移到左侧、离 sidebar 很近」）。
-      //    修复：复用宿主同一组 CSS 变量（card-max-width + side-clearance），
-      //    max-width 相同 ⇒ 左缘自然与输入框卡片对齐。
-      //    对齐公式直接复用宿主 InputBar root 的同款（源码 .lXshSW_root）：
-      //      width    = 100% - side-clearance*2 - dock-inset*4
-      //      max-width = card-max-width - dock-inset*4
-      //      margin: 0 auto（居中，不靠 align-self）
-      //    dock-inset(8px)*4 是宿主 dock 槽位（goal 等）留下的水平缩进，
-      //    与输入框卡片左缘严格对齐就是这么算出来的 —— 近似值（纯 padding）
-      //    实测会差出几十像素。
-      '.soul-chip-row{position:relative;display:flex;align-items:center;box-sizing:border-box;width:calc(100% - var(--dsh-composer-side-clearance,16px)*2 - var(--dsh-composer-dock-inset,8px)*4);max-width:calc(var(--dsh-composer-card-max-width,952px) - var(--dsh-composer-dock-inset,8px)*4);margin:0 auto}',
-      // 标签容器 relative ⇒ 弹出菜单以它为定位基准（菜单不推挤输入框）
-      '.soul-chip-wrap{position:relative;display:inline-flex;min-width:0;max-width:100%}',
-      '.soul-chip{box-sizing:border-box;display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;height:24px;padding:0 8px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:999px;background:var(--dsw-alias-settings-card-fill);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;transition:border-color .15s ease,color .15s ease,background-color .15s ease}',
-      '.soul-chip:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
-      '.soul-chip[data-open="true"]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary)}',
-      '.soul-chip:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
-      // 名字可能很长（自建预设 30 字）⇒ 单行省略，标签宽度受限于容器
-      '.soul-chip-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.soul-chip-caret{flex:none;opacity:.7;font-size:10px;line-height:1}',
-      // 鲸鱼标记：用 currentColor 走 mask 画一个极简鲸鱼轮廓，不引入图片（避免额外请求）。
-      // mask 里的颜色只取 **alpha 通道**（黑/白等价），但 CSS 里仍不得出现硬编码色值
-      // —— 断言会拦（实测被拦过一次）。故用 currentColor 自身作为不透明填充，
-      // 配合 mask-composite 挖出白肚与眼睛。
-      '.soul-chip-whale{flex:none;width:12px;height:12px;background:currentColor;-webkit-mask:radial-gradient(circle at 62% 42%,currentColor 34%,transparent 38%),radial-gradient(ellipse at 38% 78%,currentColor 40%,transparent 44%),radial-gradient(ellipse 60% 34% at 50% 50%,currentColor 100%,transparent 100%);-webkit-mask-composite:source-in;mask:radial-gradient(circle at 62% 42%,currentColor 34%,transparent 38%),radial-gradient(ellipse at 38% 78%,currentColor 40%,transparent 44%),radial-gradient(ellipse 60% 34% at 50% 50%,currentColor 100%,transparent 100%)}',
-      // 弹出菜单：absolute 挂在标签下方，最高 240px 可滚动（预设可能很多）
-      '.soul-chip-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:30;display:flex;flex-direction:column;gap:1px;min-width:180px;max-width:280px;max-height:240px;overflow-y:auto;overscroll-behavior:contain;padding:4px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-md,12px);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv3,0 12px 32px rgba(0,0,0,.18))}',
-      // 点空白关闭的透明层：压在菜单之下（z-index 更低）、页面之上
-      '.soul-chip-backdrop{position:fixed;inset:0;z-index:20;background:transparent}',
-      '.soul-chip-item{box-sizing:border-box;display:flex;align-items:center;gap:6px;width:100%;padding:6px 8px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;text-align:left;cursor:pointer}',
-      '.soul-chip-item:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-      '.soul-chip-item:disabled{cursor:wait;opacity:.6}',
-      '.soul-chip-item-current{color:var(--dsw-alias-brand-primary);font-weight:600}',
-      '.soul-chip-item-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}',
-      '.soul-chip-item .soul-persona-badge{position:static;flex:none;border-color:var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary)}',
-      '.soul-chip-item-mark{flex:none;color:var(--dsw-alias-brand-primary);font-size:11px}',
       // 快捷开关里追加的人设名（B）：同样单行省略，避免把底栏撑宽
       '.soul-quick-toggle-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:9em;opacity:.85}',
       // 错误提示：颜色改用宿主真实存在的 state-error-primary（原先引用不存在的 token ⇒ 渲染成黑色）
@@ -814,7 +771,14 @@ window.__ModuleLoader__.load({
       // color:var(--dsw-alias-state-success-primary)、margin:0、12px/18px。
       // 位置也一致：标题区之后、分组列表之前。生命周期不自动消失，
       // 由下一次编辑（dirty）清除 —— 见组件里的 effect。
-      '.soul-saved-notice{margin:0;color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:18px}',
+      // 「已偏离任何预设」的出口：一行提示 + 一个行动按钮。
+      // 用与宿主一致的弱化文字色 + 品牌色可点文字（不是实心按钮 —— 它是提示性的
+      // 建议动作，不该与「使用」抢视觉权重）。
+      '.soul-drift{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px;padding:8px 12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
+      '.soul-drift-text{min-width:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      '.soul-drift-action{box-sizing:border-box;display:inline-flex;align-items:center;height:24px;padding:0 10px;border:.5px solid var(--dsw-alias-brand-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
+      '.soul-drift-action:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-drift-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',      '.soul-saved-notice{margin:0;color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:18px}',
       // 失败红字：规格照抄宿主 .zGbnIq_error（state-error-primary、margin:0、12px/18px），
       // role=alert。与绿字同位互斥（失败压过成功），都不自动消失。
       '.soul-error-notice{margin:0;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px}',
@@ -901,10 +865,6 @@ window.__ModuleLoader__.load({
       'quick.disable': '关闭个性化',
       'quick.statusEnabled': '个性化已启用',
       'quick.statusDisabled': '个性化已关闭',
-      // 输入框上方的人设标签（dock 行）
-      'chip.current': '当前人设：{name}　点击切换',
-      'chip.none': '未匹配预设',
-      'chip.switchTo': '切换到「{name}」',
       // 快捷开关保存失败时的兜底文案（有服务端 error 时优先显示它）
       'quick.toggleFailed': '保存失败，请重试',
       'group.aboutYou': '关于你',
@@ -958,6 +918,8 @@ window.__ModuleLoader__.load({
       'personas.loadFailed': '人设预设加载失败：{reason}',
       'personas.builtin': '内置',
       'personas.default': '默认',
+      'personas.drift': '当前配置与任何预设都不一致。',
+      'personas.driftAction': '存为新预设',
       'personas.hint': '预设只保存 Agent 的人设（风格 / 特质 / 回复长度 / 输出语言 / 自定义指令），不含「关于你」；内置预设随插件提供，不可删除',
       'style.professional': '专业严谨',
       'style.casual': '轻松自然',
@@ -1064,10 +1026,6 @@ window.__ModuleLoader__.load({
       'quick.disable': 'Disable personalization',
       'quick.statusEnabled': 'Personalization enabled',
       'quick.statusDisabled': 'Personalization disabled',
-      // Persona chip above the input (dock row)
-      'chip.current': 'Current persona: {name}　Click to switch',
-      'chip.none': 'No persona matched',
-      'chip.switchTo': 'Switch to "{name}"',
       // 快捷开关保存失败时的兜底文案（有服务端 error 时优先显示它）
       'quick.toggleFailed': 'Save failed, please retry',
       'group.aboutYou': 'About you',
@@ -1119,6 +1077,8 @@ window.__ModuleLoader__.load({
       'personas.loadFailed': 'Failed to load personas: {reason}',
       'personas.builtin': 'Built-in',
       'personas.default': 'Default',
+      'personas.drift': 'The current config matches no preset.',
+      'personas.driftAction': 'Save as new preset',
       'personas.hint': 'A persona saves the agent personality only (style / traits / reply length / reply language / custom instructions), never your own identity fields; built-ins ship with the plugin and cannot be deleted',
       'style.professional': 'Professional',
       'style.casual': 'Casual',
@@ -1354,102 +1314,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // 输入框**上方**（conversation.input.dock）的人设标签：显示当前生效人设，点开可切换。
-    //
-    // 为什么放 dock 而不是底栏 left：
-    //   底栏被「+ 附件 / 完全权限 / 模型 / 推理等级 / 积分 / 发送」塞满，再塞会继续挤压；
-    //   dock 是输入框卡片**之上的独立一行**（宿主自己在里面放 goal 状态），
-    //   不参与底栏的水平排布 ⇒ 零挤压，且抬眼即见。
-    //
-    // 只在「个性化已启用」时出现：关掉个性化还挂着人设名会误导（当前并不生效）。
-    function SoulPersonaChip(props) {
-      const { useSoulController, controller } = props
-      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
-      const state = useSoulController((s) => s)
-      const enabled = state.enabled === true
-      const personas = state.personas
-      const activeName = state.activePersona
-      const [open, setOpen] = React.useState(false)
-      const [busyName, setBusyName] = React.useState(null)
-
-      // 关掉个性化 / 还没有预设列表时不渲染（避免占据一整行空白）
-      if (!enabled || !personas) return null
-
-      // 排序与设置页一致：内置在前，用户预设随后（稳定排序保持原顺序）
-      const names = Object.keys(personas).sort((a, b) => {
-        const ab = personas[a] && personas[a].builtin ? 0 : 1
-        const bb = personas[b] && personas[b].builtin ? 0 : 1
-        return ab - bb
-      })
-      if (names.length === 0) return null
-
-      const use = async (name) => {
-        if (busyName) return
-        setBusyName(name)
-        try {
-          await controller.usePersona(name)
-          // 应用后必须重新拉预设列表，activePersona（决定标签与 ★）才会更新。
-          // 注意：controller 上只有 fetchPersonas（纯请求），设置页里的 loadPersonas
-          // 是那个组件内部的闭包（负责写 store）—— 标签组件也要写 store，所以这里
-          // 自己拉 + 自己更新，保持与设置页同一份 store。
-          const payload = await controller.fetchPersonas()
-          controller.store.update((s) => {
-            s.personas = payload.personas
-            s.activePersona = payload.activeName
-          })
-        } finally {
-          setBusyName(null)
-          setOpen(false)
-        }
-      }
-
-      return e('div', { className: 'soul-chip-row' },
-        e('div', { className: 'soul-chip-wrap' },
-          e('button', {
-            type: 'button',
-            className: 'soul-chip',
-            'data-open': open ? 'true' : 'false',
-            'aria-expanded': open,
-            'aria-haspopup': 'listbox',
-            // 标签文案分两段：前缀（当前人设）+ 名字（可能很长 ⇒ 单独省略）
-            title: activeName ? t('chip.current', { name: activeName }) : t('chip.none'),
-            onClick: () => setOpen((v) => !v)
-          },
-            e('span', { className: 'soul-chip-whale', 'aria-hidden': true }),
-            e('span', { className: 'soul-chip-name' }, activeName || t('chip.none')),
-            e('span', { className: 'soul-chip-caret', 'aria-hidden': true }, '⌄')
-          ),
-          // 弹出列表：点选即应用。用 absolute 定位挂在标签下方，不推挤输入框。
-          open && e('div', { className: 'soul-chip-menu', role: 'listbox' },
-            ...names.map((name) => {
-              const entry = personas[name] || {}
-              const current = name === activeName
-              return e('button', {
-                key: name,
-                type: 'button',
-                className: current ? 'soul-chip-item soul-chip-item-current' : 'soul-chip-item',
-                role: 'option',
-                'aria-selected': current,
-                disabled: busyName !== null,
-                onClick: () => use(name)
-              },
-                e('span', { className: 'soul-chip-item-name' }, name),
-                entry.builtin && e('span', { className: 'soul-persona-badge' }, name === '默认' ? t('personas.default') : t('personas.builtin')),
-                current && e('span', { className: 'soul-chip-item-mark' }, '★')
-              )
-            })
-          )
-        ),
-        // 点空白处关闭：透明的全屏层压在菜单之下、页面之上
-        open && e('div', {
-          className: 'soul-chip-backdrop',
-          'aria-hidden': true,
-          onClick: () => setOpen(false)
-        })
-      )
-    }
-
-    function SoulSettings(props) {
+        function SoulSettings(props) {
       const { useSoulController, controller } = props
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
@@ -2368,6 +2233,23 @@ window.__ModuleLoader__.load({
                   })())
                 )
             ),
+            // —— 「已偏离任何预设」的出口 ——
+            //
+            // 每个内置预设现在都声明全部 6 个人格维度，所以**改任何特质都会丢 ★**
+            // （不再匹配任何预设）。这是个诚实但**没有出路**的状态：用户刚调出来的
+            // 这套配置无处安放。这里给一个明确落点：一句话说明 + 直接打开命名弹层存为新预设。
+            //
+            // 判据：activePersona === null（不匹配任何预设）且 personas 已就绪
+            // （加载中/失败不算偏离）。全部为默认值时命中的是「默认」预设，
+            // activeName 不为 null，不会走到这里。
+            (activePersona === null && personaNames !== null && !personasError) && e('div', { className: 'soul-drift' },
+              e('span', { className: 'soul-drift-text' }, t('personas.drift')),
+              e('button', {
+                type: 'button',
+                className: 'soul-drift-action',
+                onClick: () => { setPersonaName(''); setShowSavePersona(true) }
+              }, t('personas.driftAction'))
+            ),
             e('div', { className: 'soul-status' }, t('personas.hint'))
           ),
 
@@ -2872,23 +2754,6 @@ window.__ModuleLoader__.load({
         })
       }, SoulQuickToggle))
 
-      // 输入框**上方**的独立一行（dock）放当前人设标签。
-      //
-      // 为什么不用底栏 left：那一条已被「+ 附件 / 完全权限 / 模型 / 推理等级 / 积分 /
-      // 发送」占满，再塞人设名会继续挤压（这正是用户反馈「输入框位置有点紧张」）。
-      // dock 是输入框卡片之上的独立行（宿主自己在里面放 goal 状态），不参与横向排布。
-      ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
-        name: 'conversation.input.dock',
-        id: 'soul-persona-chip',
-        order: 60,
-        locale: NS,
-        inject: () => ({
-          hooks: {
-            soulController: controller.store
-          },
-          controller
-        })
-      }, SoulPersonaChip))
 
       // 输入框光轨：注册到输入框卡片内部的 overlay 槽位。
       // 组件不渲染可见内容——它按会话运行态在最近的输入框卡片上挂载/隐藏 SVG 环；

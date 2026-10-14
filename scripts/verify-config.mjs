@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 107
+const EXPECTED_ASSERTIONS = 108
 
 let passed = 0
 const failures = []
@@ -2141,43 +2141,70 @@ check('删除预设用内联二次确认，不得用原生 confirm', () => {
   assert.match(clientSource, /'personas\.confirmDeleteShort': 'Confirm delete\?'/, '缺英文待确认文案')
 })
 
-check('输入框上方（dock）展示当前人设标签，可点切换；底栏开关缀人设名', () => {
-  // 需求（用户反馈「输入框位置有点紧张」）：
-  //   A. 主位置放 dock（输入框卡片**之上**的独立一行）—— 不参与底栏横向排布，零挤压
-  //   B. 底栏的「个性化已启用」顺手缀上当前人设名，与 A 互相印证
-  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
-  // ① 必须注册到 dock（而不是塞进已被占满的 left）
-  assert.match(clientSource, /ctx\.slots\.inject\('conversation\.input\.dock'/, '人设标签应注册到 conversation.input.dock（底栏 left 已被附件/权限/模型等占满）')
-  assert.match(clientSource, /id: 'soul-persona-chip'/, 'dock 槽位注册缺少稳定 id')
-  // ② 只在「个性化已启用 + 有预设」时渲染 —— 否则会挂着一整行空白
-  assert.match(clientSource, /if \(!enabled \|\| !personas\) return null/, '标签应在「未启用」或「预设未就绪」时不渲染')
-  // ③ 可点：点开弹出预设列表
-  assert.match(clientSource, /const \[open, setOpen\] = React\.useState\(false\)/, '缺少标签展开状态')
-  assert.match(clientSource, /soul-chip-menu/, '缺少弹出的预设列表')
-  assert.match(clientSource, /aria-haspopup/, '标签应声明 aria-haspopup（读屏要能知道会弹列表）')
-  assert.match(clientSource, /'aria-expanded': open/, '标签应声明 aria-expanded')
-  assert.match(clientSource, /'aria-selected': current/, '列表项应声明 aria-selected')
-  // ④ 点选即应用，且必须刷新 store（否则标签与 ★ 不会更新）
-  assert.match(clientSource, /await controller\.usePersona\(name\)/, '点选应调用 usePersona')
-  assert.match(clientSource, /await controller\.fetchPersonas\(\)/, '应用后应重新拉预设列表')
-  assert.match(clientSource, /s\.activePersona = payload\.activeName/, '拉取后必须写回 activePersona（否则标签不更新）')
-  // ⑤ 必须能关闭：点空白
-  assert.match(clientSource, /soul-chip-backdrop/, '缺少「点空白关闭」的透明层')
-  assert.match(cssBlock, /\.soul-chip-backdrop\{position:fixed;inset:0;z-index:\d+/, '透明层应铺满并低于菜单层级')
-  // ⑥ B：底栏开关缀人设名，且只在启用时显示
-  assert.match(clientSource, /soul-quick-toggle-name/, '底栏开关缺少人设名')
-  assert.match(clientSource, /enabled && activePersona && e\('span', \{ className: 'soul-quick-toggle-name' \}/, '底栏开关的人设名应仅在「已启用且匹配到预设」时显示（关闭时挂着会误导）')
-  // ⑦ 名字可能很长（自建预设 30 字）：两处都必须单行省略，避免撑宽布局
-  assert.match(cssBlock.match(/\.soul-chip-name\{([^}]*)\}/)?.[1] ?? '', /text-overflow:ellipsis/, '标签名应单行省略')
-  assert.match(cssBlock.match(/\.soul-quick-toggle-name\{([^}]*)\}/)?.[1] ?? '', /max-width:9em/, '底栏开关的人设名必须限宽（否则长名会把底栏撑开）')
-  // ⑧ 中英文案键各一份
-  for (const [k, zh, en] of [
-    ['chip.current', '当前人设：{name}　点击切换', 'Current persona: {name}　Click to switch'],
-    ['chip.none', '未匹配预设', 'No persona matched']
-  ]) {
-    assert.ok(clientSource.includes(`'${k}': '${zh}'`), `缺中文文案 ${k}`)
-    assert.ok(clientSource.includes(`'${k}': '${en}'`), `缺英文文案 ${k}`)
+
+check('每个内置预设都声明全 6 个人格维度（language 豁免）', () => {
+  // 声明列表同时驱动应用与匹配，两者需求相反：应用希望「少声明不越权」，
+  // 匹配希望「全声明才严格」。早期只声明要改的维度 ⇒ 匹配退化成宽松比较：
+  // 改一个未声明的特质后 ★ 仍挂着，且同一动作结果随预设而变（实测：改 emoji
+  // 在「极简主义者」上丢 ★、在「苏格拉底式提问者」上不丢）⇒ 用户无法形成稳定预期。
+  // 现统一为全量声明，语义单一：**改任何特质 ⇒ 不再属于该预设**。
+  const DIMS = ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'customInstructions']
+  const view = mergePersonas(null)
+  for (const name of builtinPersonaNames()) {
+    const declared = declaredPersonaKeys(view[name]).filter((k) => k !== 'language')
+    for (const dim of DIMS) {
+      assert.ok(declared.includes(dim), `${name} 未声明 ${dim}（全量声明才能保证「改任何特质都丢 ★」）`)
+    }
+    // language 仍必须豁免（跨语言共用的通用人格）
+    assert.equal('language' in view[name], false, `${name} 不应声明 language（会把另一种语言的用户切走）`)
   }
+  // 行为闭环：应用后匹配自己，改任何一个特质维度都失去匹配
+  for (const name of builtinPersonaNames()) {
+    const entry = view[name]
+    const applied = { ...DEFAULT_CONFIG }
+    for (const dim of DIMS) applied[dim] = entry[dim]
+    assert.equal(personaMatches(entry, applied), true, `${name} 应用后应匹配自己`)
+    for (const dim of DIMS) {
+      if (dim === 'customInstructions') continue
+      const edited = { ...applied, [dim]: applied[dim] === 'default' ? 'more' : 'default' }
+      assert.equal(
+        personaMatches(entry, edited),
+        false,
+        `${name}：改 ${dim} 后应失去匹配（★ 必须消失）`
+      )
+    }
+    // language 改了不该丢 ★（豁免）
+    assert.equal(
+      personaMatches(entry, { ...applied, language: applied.language === 'zh' ? 'en' : 'zh' }),
+      true,
+      `${name}：改 language 不应失去匹配（内置预设不声明它）`
+    )
+  }
+})
+
+check('配置偏离任何预设时，卡片区给出「存为新预设」出口', () => {
+  // 全量声明后「改任何特质都丢 ★」⇒ activeName=null 成为常见状态。
+  // 它诚实但没有出路：用户刚调出来的配置无处安放。故在预设分组里给
+  // 一句话说明 + 直接打开命名弹层的入口。
+  assert.match(clientSource, /activePersona === null && personaNames !== null && !personasError/, '偏离判据：无匹配且列表已就绪（加载中/失败不算）')
+  assert.match(clientSource, /className: 'soul-drift'/, '缺少偏离提示块')
+  assert.match(clientSource, /'personas\.drift'/, '缺少偏离说明文案')
+  assert.match(clientSource, /t\('personas\.driftAction'\)/, '缺少「存为新预设」按钮')
+  // 按钮必须复用已有的命名弹层（不是另造一套保存流程）
+  assert.match(
+    clientSource,
+    /onClick: \(\) => \{ setPersonaName\(''\); setShowSavePersona\(true\) \}/,
+    '出口按钮应打开已有的命名弹层（复用 setShowSavePersona）'
+  )
+  // 文案键双语齐备
+  assert.ok(clientSource.includes("'personas.drift': '当前配置与任何预设都不一致。'"), '缺中文偏离文案')
+  assert.ok(clientSource.includes("'personas.driftAction': '存为新预设'"), '缺中文按钮文案')
+  assert.ok(clientSource.includes("'personas.drift': 'The current config matches no preset.'"), '缺英文偏离文案')
+  assert.ok(clientSource.includes("'personas.driftAction': 'Save as new preset'"), '缺英文按钮文案')
+  // 样式：弱化提示条 + 描边式次要按钮（不与「使用」抢视觉）
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  assert.match(cssBlock, /\.soul-drift\{[^}]*background:var\(--dsw-alias-bg-module-platform\)/, '偏离提示应用内嵌底（与宿主只读区同款）')
+  assert.match(cssBlock, /\.soul-drift-action\{[^}]*border:\.5px solid var\(--dsw-alias-brand-primary\)/, '出口按钮应为描边式次要按钮')
 })
 
 check('卡背（详情面）展示全部维度与全文，且不动卡片 transform', () => {
