@@ -367,6 +367,17 @@ window.__ModuleLoader__.load({
         this.fetcher = fetcher
         this.store = createSnapshotStore(INITIAL)
         this.disposed = false
+        // 外部轮询的暂停标记（由设置页在「有未保存编辑」时置位）。
+        //
+        // 为什么放在 controller 上而不是组件 state：轮询已从设置页组件**上移到
+        // apply()**（见那里的注释），装配层读不到组件的 dirty/saving。而「编辑中
+        // 不覆盖用户输入」这条语义仍必须保留，所以在共享的 controller 上开一个口。
+        this.paused = false
+      }
+
+      // 是否允许外部轮询写入 store
+      canRefresh() {
+        return !this.disposed && !this.paused
       }
 
       // 把服务端返回的完整配置映射进 store
@@ -461,6 +472,32 @@ window.__ModuleLoader__.load({
       // 人设预设：列表 / 保存 / 使用 / 删除
       async fetchPersonas() {
         return await this.postJSON('/api/soul/personas', null, { method: 'GET' })
+      }
+
+      // 拉取预设列表并写入 store。
+      //
+      // 从 SoulSettings 组件**下沉**到这里：全局轮询（apply 层）与设置页都要用它，
+      // 逻辑留在组件里会导致装配层无法调用、只能重写一遍 ⇒ 两套写 store 的代码。
+      async loadPersonas() {
+        if (this.disposed) return
+        try {
+          const payload = await this.fetchPersonas()
+          this.store.update((s) => {
+            // 内容相同就保留旧引用：每 2s 轮询都会重新解析出**新对象**，若直接赋值，
+            // store 的浅比较永远判为「变了」⇒ 去重失效，整页仍每 2s 白重渲染。
+            s.personas = samePersonas(s.personas, payload.personas) ? s.personas : payload.personas
+            s.activePersona = payload.activeName
+            // 拉取成功：清掉上一次的失败痕迹（否则失败后即便恢复，提示会一直挂着）
+            s.personasError = null
+          })
+        } catch (err) {
+          // 预设列表加载失败不打断主配置界面 —— 但必须**留下痕迹**：
+          // 否则 personas 永远是 null，摘要与面板一直显示「加载中...」，
+          // 与「真的还没有预设」无从区分，也没有任何失败提示。
+          this.store.update((s) => {
+            s.personasError = messageOf(err)
+          })
+        }
       }
 
       async savePersona(name) {
@@ -1549,53 +1586,27 @@ window.__ModuleLoader__.load({
       // 展开/收起只切状态；编译由下方 effect 统一驱动（唯一入口，避免重复请求）
       const togglePrompt = () => setShowPrompt((open) => !open)
 
-      const loadPersonas = async () => {
-        try {
-          const payload = await controller.fetchPersonas()
-          controller.store.update((s) => {
-            // 内容相同就保留旧引用：每 2s 轮询都会重新解析出**新对象**，若直接赋值，
-            // store 的浅比较永远判为「变了」⇒ 上面那层去重失效，整页仍每 2s 白重渲染。
-            s.personas = samePersonas(s.personas, payload.personas) ? s.personas : payload.personas
-            s.activePersona = payload.activeName
-            // 拉取成功：清掉上一次的失败痕迹（否则失败后即便恢复，提示会一直挂着）
-            s.personasError = null
-          })
-        } catch (err) {
-          // 预设列表加载失败不打断主配置界面 —— 但必须**留下痕迹**：
-          // 此前是空 catch，personas 永远是 null，摘要与面板就一直显示「加载中...」，
-          // 与「真的还没有预设」无从区分，也没有任何失败提示。
-          controller.store.update((s) => {
-            s.personasError = messageOf(err)
-          })
-        }
-      }
+      // 逻辑已下沉到 controller.loadPersonas（全局轮询与设置页共用一份实现）。
+      const loadPersonas = () => controller.loadPersonas()
 
-      // 设置页打开后重新读取宿主配置，补齐 /soul 命令等外部写入路径。
-      // 表单 dirty 或正在保存时暂停，避免远端刷新覆盖用户未保存的输入。
+      // 定时轮询已**上移到 apply()**（全局一份，与设置页是否挂载无关）——
+      // 这里只负责告诉它「现在别刷」：有未保存编辑或正在保存时暂停，
+      // 否则远端刷新会把用户正在改的值拽回去。
+      //
+      // 用 effect 而不是渲染期直接赋值：赋值要放在提交后（且卸载时必须复位，
+      // 否则关掉设置页会永久暂停轮询 —— 那正是这次要修的 bug 的镜像）。
       React.useEffect(() => {
-        const refresh = () => {
-          if (dirty || saving) return
-          // 页面不可见时不轮询：`visibilitychange` 此前只处理了「变可见」这一半
-          // （`if (visible) refresh()`），而 `setInterval` 无条件执行 ⇒ 后台标签页
-          // 每 2s 仍发两个请求（config + personas）。放在 refresh 里一处修好两条路径
-          // （interval 与 focus 都走它），且无需重建定时器。
-          if (document.visibilityState !== 'visible') return
-          void controller.loadConfig()
-          void loadPersonas()
-        }
-        const onVisibilityChange = () => {
-          if (document.visibilityState === 'visible') refresh()
-        }
-        refresh()
-        window.addEventListener('focus', refresh)
-        document.addEventListener('visibilitychange', onVisibilityChange)
-        const timer = setInterval(refresh, 2000)
-        return () => {
-          window.removeEventListener('focus', refresh)
-          document.removeEventListener('visibilitychange', onVisibilityChange)
-          clearInterval(timer)
-        }
+        controller.paused = dirty || saving
+        return () => { controller.paused = false }
       }, [controller, dirty, saving])
+
+      // 进入设置页时立即对齐一次宿主状态（补齐 /soul 命令等外部写入路径），
+      // 不必等下一个 2s 轮询周期。
+      React.useEffect(() => {
+        if (!controller.canRefresh()) return
+        void controller.loadConfig()
+        void controller.loadPersonas()
+      }, [controller])
 
       // 提示词预览的编译入口（唯一）。
       // 展开时立即编译一次；此后只要影响编译的字段或脏状态变化，停止 400ms 再编译 —
@@ -2610,6 +2621,36 @@ window.__ModuleLoader__.load({
       }, 'dsh-soul: browser lifecycle')
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-soul: dictionaries')
 
+      // —— 全局轮询：让**不打开设置页**时底栏也能跟上宿主侧的变化 ——
+      //
+      // 修掉的 bug：用户用 /soul confirm 确认人设变更后，宿主已写盘（配置文件正确），
+      // 但底栏「个性化已启用 · 人设名」仍显示旧值。根因是三条刷新路径
+      // （setInterval / focus / visibilitychange）**全部注册在 SoulSettings 组件内**，
+      // 设置页没挂载时它们都不存在 ⇒ 底栏读的 store 无人刷新。
+      //
+      // 底栏（conversation.input.left）是常驻组件，它的数据链路不该依赖另一个
+      // 组件的生命周期。放到装配层后：注册一次、全生命周期有效，且天然只有一份
+      // 定时器（不会与设置页的重复 ⇒ 请求翻倍）。
+      ctx.effect(() => {
+        const refresh = () => {
+          // 页面不可见时不轮询：后台标签页不必发请求
+          if (document.visibilityState !== 'visible') return
+          // 有未保存编辑时暂停（由设置页置位）—— 否则会把用户正在改的值拽回去
+          if (!controller.canRefresh()) return
+          void controller.loadConfig()
+          void controller.loadPersonas()
+        }
+        refresh()
+        window.addEventListener('focus', refresh)
+        document.addEventListener('visibilitychange', refresh)
+        const timer = setInterval(refresh, 2000)
+        return () => {
+          window.removeEventListener('focus', refresh)
+          document.removeEventListener('visibilitychange', refresh)
+          clearInterval(timer)
+        }
+      }, 'dsh-soul: global refresh polling')
+
       // 暗色适配说明：原生 <select> 的弹出选项列表由浏览器按 color-scheme 渲染。
       // 宿主主题呈现器会把 html 的 color-scheme 与 body[data-ds-dark-theme] 随主题
       // 投影到 document（见 dsh-client-ui-layout ThemePresenter），因此这里用纯 CSS
@@ -2815,8 +2856,8 @@ window.__ModuleLoader__.load({
         })
       }, SoulSettings))
 
-      // 加载初始配置
-      controller.loadConfig()
+      // 初始配置的拉取已并入上面的全局轮询 —— 它的 refresh() 在注册时立即执行一次
+      // （含 loadConfig + loadPersonas），这里再调一次就是同一次装配发两个相同请求。
     }
 
     exports.apply = apply

@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 22
+const EXPECTED_ASSERTIONS = 23
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -129,6 +129,20 @@ function createRuntime() {
     React,
     jsx,
     Fragment,
+    /**
+     * 卸载：执行所有已注册 effect 的清理函数。
+     *
+     * 为什么需要：垫片原先只在**依赖变化**时跑清理（见 settle 里的 previous()），
+     * 组件卸载时从不执行 —— 于是「卸载时必须复位某状态」这类契约在测试台里根本
+     * 无法触发（判断力验证实测：变异「卸载不复位 paused」漏网，底栏会永久停摆）。
+     * 这不是产品缺陷而是测试台能力缺口，故补在这里。
+     */
+    unmount() {
+      for (const fn of cleanups.values()) if (typeof fn === 'function') fn()
+      cleanups.clear()
+      dirty = false
+      queue = []
+    },
     /** 渲染 + 跑本轮 effect，直到状态不再变化（含 effect / handler 里已 resolve 的 promise）。 */
     async settle(root) {
       for (let pass = 0; pass < 40; pass++) {
@@ -247,7 +261,7 @@ function loadClient(routes) {
   })
   const windowStub = {
     __ModuleLoader__: { load: (m) => { factory = m.factory } },
-    addEventListener() {},
+    addEventListener: (type) => { captured.events.window.push(type) },
     removeEventListener() {},
     location: { origin: 'http://dsh.test' }
   }
@@ -255,7 +269,7 @@ function loadClient(routes) {
     visibilityState: 'visible',
     body: domNode(),
     head: domNode(),
-    addEventListener() {},
+    addEventListener: (type) => { captured.events.document.push(type) },
     removeEventListener() {},
     // 插件在装配时会把样式表插到 head（用 querySelector 判重），导航图标那一层还会
     // 挂 MutationObserver —— 这里只需让这些调用成立；本脚本断言的是行为，不是 DOM。
@@ -301,7 +315,10 @@ function loadClient(routes) {
   new Function('window', source)(windowStub)
   const module = factory(requireStub)
 
-  const captured = { provide: {}, sections: [], dicts: null, runtime }
+  // events：window/document 上注册过的事件名。用于断言「轮询与页面级监听挂在
+  // **装配层**」—— 此前它们全在 SoulSettings 组件内，设置页没挂载时全部失效
+  // （底栏人设名因此不刷新）。stub 原本是空实现，这里让它可观测。
+  const captured = { provide: {}, sections: [], dicts: null, runtime, events: { window: [], document: [] } }
   const ctx = {
     provide: (name, value) => { captured.provide[name] = value },
     effect: (fn) => { const dispose = fn(); if (typeof dispose === 'function') captured.sections.push({ dispose }) },
@@ -957,6 +974,62 @@ try {
     flippedCount(await renderSettings(w5)),
     0,
     '折叠后重新展开不得记得上次的翻面态（自动定位落回同一张卡时）'
+  )
+})
+
+await check('C23 全局轮询注册在装配层（底栏不依赖设置页是否挂载）', async () => {
+  // 用户实测：用 /soul confirm 确认人设变更后（宿主已写盘，配置文件正确），
+  // 底栏「个性化已启用 · 人设名」仍显示旧值。
+  //
+  // 根因：三条刷新路径（setInterval / focus / visibilitychange）**全部注册在
+  // SoulSettings 组件内** —— 设置页没挂载时它们都不存在，底栏读的 store 无人刷新。
+  // 底栏是常驻组件，其数据链路不该依赖另一个组件的生命周期。
+  //
+  // 这里断言三件事：
+  //   ① 定时器只在装配层注册（全客户端仅一处 setInterval）
+  //   ② 装配层注册了页面级事件监听（focus / visibilitychange）
+  //   ③ 设置页不再自己起定时器，只同步「暂停标记」
+  const world = await boot()
+  // ① 装配期即已注册（boot 会执行 ctx.effect）
+  const intervals = timerQueue.filter((t) => t.repeat === true)
+  assert.ok(intervals.length >= 1, '装配层应注册轮询定时器（interval）')
+
+  // ② 事件监听挂在 window/document 上（而非仅在设置页组件内）
+  //    测试台的 window/document stub 记录了 addEventListener 调用
+  assert.ok(
+    world.captured.events.window.includes('focus'),
+    '装配层应监听 window focus（切回窗口立即刷新，不必等下一个轮询周期）'
+  )
+  assert.ok(
+    world.captured.events.document.includes('visibilitychange'),
+    '装配层应监听 document visibilitychange'
+  )
+
+  // ③ 设置页只同步暂停标记：不打开它时轮询照常，打开且编辑时暂停
+  const before = world.controller.paused
+  assert.equal(before, false, '初始不应处于暂停态')
+  const tree = await renderSettings(world)
+  // 渲染设置页后（无改动）仍不应暂停
+  assert.equal(world.controller.paused, false, '无未保存编辑时不应暂停轮询')
+
+  // ④ 暂停语义：置位后 canRefresh 应为 false（编辑中不被远端覆盖）
+  world.controller.paused = true
+  assert.equal(world.controller.canRefresh(), false, 'paused 时不应允许刷新')
+  world.controller.paused = false
+  assert.equal(world.controller.canRefresh(), true, '复位后应恢复刷新')
+
+  // ⑤ 卸载复位：设置页卸载时必须把 paused 复原，否则**底栏永久停摆** ——
+  //    这正是本次 bug 的镜像形态（一个组件的生命周期管住了常驻组件的刷新）。
+  //    这条是判断力验证补出来的：变异「卸载时不复位 paused」首轮漏网，
+  //    同时暴露了测试台缺口（垫片原先只在依赖变化时跑清理，卸载时从不执行）。
+  const w2 = await boot()
+  await renderSettings(w2)
+  w2.controller.paused = true      // 模拟「编辑中被卸载」这一最坏情形
+  w2.runtime.unmount()
+  assert.equal(
+    w2.controller.paused,
+    false,
+    '设置页卸载后必须复位 paused（否则外部轮询永久停摆，底栏不再刷新）'
   )
 })
 
