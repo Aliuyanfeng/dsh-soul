@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 113
+const EXPECTED_ASSERTIONS = 114
 
 let passed = 0
 const failures = []
@@ -931,6 +931,35 @@ check('客户端为内置预设提供中英双语文案键', () => {
     const hits = clientSource.split(`'${key}':`).length - 1
     assert.equal(hits, 2, `${key} 应在 zh / en 各出现一次，实际 ${hits} 次`)
   }
+})
+
+check('「人设变更需确认」提示如实描述审批面板与完全权限下的建议', () => {
+  // 该提示曾经过时：主路径已从「/soul confirm 文本确认」改为**宿主审批面板**
+  // （composer takeover，Enter 允许 / Esc 拒绝），文案却仍只说文本流程。
+  //
+  // 三条必须同时出现，否则用户会被误导：
+  //   ① 主路径是审批面板（而不是只有文本确认）
+  //   ② 通道不可用（策略 never）时退化为文本确认
+  //   ③ 完全权限下建议关闭本开关 —— 因为此时面板不会出现、每次都要手输命令
+  const all = [...clientSource.matchAll(/'hint\.toolConfirm':\s*'([^']*)'/g)].map((m) => m[1])
+  assert.equal(all.length, 2, `hint.toolConfirm 应中英各一份，实际 ${all.length} 份`)
+  const [zh, en] = all
+  // ① 审批面板
+  assert.match(zh, /审批面板/, '中文提示应说明主路径是审批面板（否则用户不知道会弹面板）')
+  assert.match(en, /approval panel/, '英文提示应说明主路径是审批面板')
+  // ② 退化路径
+  assert.match(zh, /\/soul confirm/, '中文提示应说明通道不可用时退化为 /soul confirm')
+  assert.match(en, /\/soul confirm/, '英文提示应说明退化路径')
+  assert.match(zh, /never/, '中文提示应点明触发退化的策略（never）')
+  assert.match(en, /never/, '英文提示应点明触发退化的策略（never）')
+  // ③ 完全权限下的建议
+  assert.match(zh, /建议关闭/, '中文提示应给出「完全权限下建议关闭」的建议')
+  assert.match(en, /turning this switch off is recommended/, '英文提示应给出同样的建议')
+  // 长度上限：tooltip 是向上弹出的浮层，过长会盖住大半个分组。
+  // 实测（chrome 渲染）：124 字 ≈ 108px 高。这里按字符数设一条粗粒度上限，
+  // 防止后续追加内容把浮层撑到不可用。
+  assert.ok(zh.length <= 160, `中文提示过长（${zh.length} 字），实测每 19 字一行，超过 160 字会盖住大半个分组`)
+  assert.ok(en.length <= 400, `英文提示过长（${en.length} 字符）`)
 })
 
 check('客户端卡牌把「内置」徽标放在插画区，不进操作区', () => {
