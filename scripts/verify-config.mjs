@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 106
+const EXPECTED_ASSERTIONS = 107
 
 let passed = 0
 const failures = []
@@ -1307,7 +1307,18 @@ check('人设插画：竖版卡牌（插画为主视觉），自定义预设用�
   const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
   const card = cssBlock.match(/\.soul-persona-card\{([^}]*)\}/)?.[1] ?? ''
   assert.match(card, /flex-direction:column/, '卡牌应为纵向布局（竖版卡：上插画下信息）')
-  assert.match(card, /overflow:hidden/, '卡牌应裁掉溢出（插画贴圆角，否则四角会露直角）')
+  // 卡片**不能**有 overflow:hidden —— CSS 规范规定 overflow != visible 会强制
+  // transform-style: flat，真 3D 翻转会被压平。裁切职责已下沉到 face。
+  assert.equal(
+    /overflow/.test(card),
+    false,
+    '卡牌不得有 overflow（会强制 transform-style:flat，3D 翻转失效）；裁切应交给 .soul-persona-face'
+  )
+  assert.match(
+    cssBlock.match(/\.soul-persona-face\{([^}]*)\}/)?.[1] ?? '',
+    /overflow:hidden/,
+    'face 应承接裁切职责（overflow:hidden + border-radius:inherit）'
+  )
   // 插画区：正方形 + 渐变兜底底
   const art = cssBlock.match(/\.soul-persona-art\{([^}]*)\}/)?.[1] ?? ''
   assert.ok(art !== '', '找不到 .soul-persona-art 规则')
@@ -1363,23 +1374,71 @@ check('操作区贴底对齐（摘要长短不一时按钮不错位）', () => {
   assert.match(body, /flex:1/, '信息区应 flex:1 撑满卡片剩余高度')
 })
 
-check('客户端的动效尊重 prefers-reduced-motion（含提示条）', () => {
+check('保存/失败提示用宿主的 ui.Toast，不自绘样式', () => {
+  // 需求：提示要与宿主全局风格统一。宿主导出 Toast 组件（lib/index.js 的 283 个导出
+  // 之一），其规格为：顶部居中 top:40px、深色底 --dsw-alias-toast-bg（两种主题下都是
+  // bluish-800）、标签固定白 bluish-00、radius-lg、shadow-lv3、14px/22px、
+  // 成功态自带绿勾、z-index 1100、3s 停留 + 1s 淡出、通过 onDone 通知卸载。
+  // 自绘版本在位置（屏幕正中）、配色（跟主题卡片色）、字号（13px）、层级（10000）
+  // 上都与全局不一致，故改为直接复用宿主组件。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  // ① 必须使用宿主 Toast，而不是自绘 div + 类名
+  assert.match(clientSource, /e\(ui\.Toast, \{/, '提示条应使用宿主的 ui.Toast 组件')
+  assert.match(clientSource, /onDone: \(\) => setToast\(null\)/, '应通过 onDone 卸载（生命周期归宿主 Toast）')
+  // ② 不得残留自绘提示条的样式与动画
+  assert.equal(/\.soul-toast/.test(cssBlock), false, '不应残留自绘的 .soul-toast 样式')
+  assert.equal(/fadeInOut/.test(clientSource), false, '不应残留自绘的 fadeInOut 动画')
+  // ③ 不得自己起消失定时器（宿主按 holdMs 管生命周期；两处各管一次必然漂移）
+  assert.equal(
+    /setTimeout\(\(\) => setToast\(null\)/.test(clientSource),
+    false,
+    '不应自己给提示条起消失定时器（宿主 Toast 已按 holdMs 负责）'
+  )
+  // ④ 成功态用宿主的绿勾（tone='success'），失败态给警告图标并延长停留
+  assert.match(clientSource, /tone: toast\.kind === 'error' \? undefined : 'success'/, '成功态应交由宿主的 tone="success" 渲染绿勾')
+  assert.match(clientSource, /holdMs: toast\.kind === 'error' \? 5000 : 3000/, '失败提示应停留更久（要读得完失败原因）')
+  // ⑤ key 必须带「每次自增的序号」：宿主文档要求同样文案再次触发时能重播动画
+  assert.match(clientSource, /key: `\$\{toast\.kind\}:\$\{toast\.text\}:\$\{toast\.seq\}`/, 'key 应含每次自增的序号')
+  assert.match(clientSource, /toastSeqRef\.current \+= 1/, '缺少自增序号')
+  // ⑥ 序号要统一注入（不能只改部分调用点 —— 那样早晚会漏）
+  // 刻意**不用** useCallback：showToast 只在事件处理器里调用（不进 effect 依赖），
+  // memo 化无收益；且客户端此前只依赖 useState/useEffect/useRef 三个 hook
+  // （测试台的 React 垫片也只实现这三个），少一个 hook 就少一处离线/线上差异面。
+  assert.match(clientSource, /const showToast = \(next\) => \{/, '应有统一的 showToast 包装来注入序号')
+  // 用**剥掉注释**的 clientCode 判定：这条断言本身就在注释里提到了 useCallback，
+  // 扫原文会自己把自己绊倒（实测踩过一次）。
+  assert.equal(
+    /React\.useCallback/.test(clientCode),
+    false,
+    '不应引入 useCallback（无收益，且会扩大与测试台垫片的实现差异）'
+  )
+  assert.equal(
+    /[^w]setToast\(\{/.test(clientSource.replace(/showToast\(/g, '')),
+    false,
+    '不应有绕过 showToast 的 setToast({...}) 调用（会丢掉序号 ⇒ 同样文案不重播）'
+  )
+})
+
+check('客户端的动效尊重 prefers-reduced-motion（光轨 / 圆点）', () => {
   const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
   const reduced = cssBlock.match(/@media \(prefers-reduced-motion:reduce\)\{([\s\S]*?)\}\}/g) ?? []
   assert.ok(reduced.length > 0, '客户端没有任何 prefers-reduced-motion 规则')
   const all = reduced.join('')
-  // 三处会动的元素都必须在 reduced-motion 下停：光轨层、快捷开关圆点、提示条。
-  // 提示条此前被漏掉 —— 它用的是**内联** animation，只查样式表容易漏看。
+  // 自绘动效的元素必须自己停：光轨层、快捷开关圆点。
+  // 提示条**不在此列** —— 已改用宿主的 ui.Toast，它的 Toast.module.css 自带
+  // reduced-motion 分支（去掉滑入、保留延迟淡出）。所以这里反向断言：
+  // 只要还存在 .soul-toast 规则，就说明有人在自绘提示条。
   for (const [needle, why] of [
     ['.soul-trail-layer', '光轨流动'],
-    ['.soul-quick-toggle', '快捷开关圆点的脉冲'],
-    ['.soul-toast', '保存/失败提示条的淡出']
+    ['.soul-quick-toggle', '快捷开关圆点的脉冲']
   ]) {
     assert.ok(all.includes(needle), `prefers-reduced-motion 未覆盖 ${needle}（${why}）`)
   }
-  // 提示条那条要能压过内联声明（实测：普通声明也有效，但 !important 更稳）
-  const toastRule = (all.match(/\.soul-toast\{[^}]*\}/) ?? [''])[0]
-  assert.ok(/animation:none/.test(toastRule), '提示条在 reduced-motion 下必须 animation:none')
+  assert.equal(
+    /\.soul-toast/.test(cssBlock),
+    false,
+    '不应再自绘提示条（.soul-toast）—— 已改用宿主 ui.Toast，动效与 reduced-motion 由宿主负责'
+  )
 })
 
 check('客户端预设行摘要不读「关于你」', () => {
@@ -2132,15 +2191,33 @@ check('卡背（详情面）展示全部维度与全文，且不动卡片 transf
   // ① 翻面状态绑人设名（不是索引）：删除/刷新后同名卡仍是同一张，绑索引会翻错面
   assert.match(clientSource, /const \[flippedName, setFlippedName\] = React\.useState\(null\)/, '翻面状态应绑人设名')
   // ② 卡片自身 transform 必须保持叠层偏移原样，且**不得**出现 rotateY
-  //    （真 3D 翻转就因此被否掉，改用淡入淡出 + 轻微 rotateY 暗示，rotateY 只放 face 上）
+  //    （翻转交给中间的 .soul-persona-flipper，见下 —— 写进卡片就会与叠层偏移
+  //     抢同一个 transform，偏移几何会变脆）
   assert.match(clientSource, /transform: `translateX\(\$\{offset \* 92\}px\) translateY/, '叠层偏移 transform 应保持原样')
   const cardRule = cssBlock.match(/\.soul-persona-card\{([^}]*)\}/)?.[1] ?? ''
   assert.equal(/rotateY/.test(cardRule), false, '卡片规则不得含 rotateY（会与叠层偏移抢同一个 transform）')
+  // 真 3D 翻转：翻转发生在中间的 .soul-persona-flipper 上（职责分离），
+  // 卡片管叠层位置、flipper 管翻到哪一面。
+  assert.match(
+    cssBlock.match(/\.soul-persona-flipper\{([^}]*)\}/)?.[1] ?? '',
+    /transform-style:preserve-3d/,
+    '翻转容器必须 preserve-3d（否则两个面无法构成 3D 空间）'
+  )
   assert.match(
     cssBlock,
-    /\[data-flipped="true"\] \.soul-persona-face-front\{[^}]*rotateY\(-12deg\)/,
-    '翻面时正面应轻微侧转（rotateY 只在 face 上）'
+    /\[data-flipped="true"\] \.soul-persona-flipper\{transform:rotateY\(180deg\)\}/,
+    '翻面应把 flipper 转到 rotateY(180deg)'
   )
+  // perspective 必须在翻转元素的父级（卡片）上才生效
+  assert.match(cardRule, /perspective:/, '卡片应设 perspective（3D 景深必须挂在翻转元素的父级）')
+  // 背面要预先转 180°，两个面才各朝一边
+  assert.match(
+    cssBlock.match(/\.soul-persona-face-back\{([^}]*)\}/)?.[1] ?? '',
+    /transform:rotateY\(180deg\)/,
+    '背面应预先 rotateY(180deg)（否则两面同向、翻转后看到镜像）'
+  )
+  // 两个面都要隐藏背面，否则会看到反面内容的镜像
+  assert.match(cssBlock.match(/\.soul-persona-face\{([^}]*)\}/)?.[1] ?? '', /backface-visibility:hidden/, '面须 backface-visibility:hidden')
   // ③ 背面必须由维度 key 列表驱动渲染（写死易漏项）
   assert.match(clientSource, /const PERSONA_DIM_KEYS = \['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language'\]/, '缺少维度 key 列表')
   assert.match(backBlock, /PERSONA_DIM_KEYS\.map/, '背面应由 PERSONA_DIM_KEYS 驱动渲染')
@@ -2149,10 +2226,16 @@ check('卡背（详情面）展示全部维度与全文，且不动卡片 transf
   assert.ok(fullFn !== '', '找不到 personaFullText 实现')
   assert.equal(/slice\(/.test(fullFn), false, '全文函数不得做 slice 截断（截断是正面效果栏的行为）')
   // ⑤ 滚动必须落在全文块自己身上，不能放 face 上
-  //    （放 face 上会让「返回」按钮跟着滚出视野 —— 实测确认）
+  //    （放 face 上会让「返回」按钮跟着滚出视野 —— 实测确认）。
+  //    face 的裁切/背面隐藏由公共 .soul-persona-face 规则提供，背面专属规则
+  //    只管 padding/排布，不能把两者混为一谈（以前误把 overflow:hidden 断言
+  //    钉在 back 专属规则，真 3D 改造后裁切移回公共 face 规则就误报了）。
+  const faceRule = cssBlock.match(/\.soul-persona-face\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(faceRule, /overflow:hidden/, '每一面自身应裁切内容（圆角图片/卡背滚动边界）')
+  assert.match(faceRule, /backface-visibility:hidden/, '每一面应隐藏自己的背面（避免镜像内容漏出）')
   const backFace = cssBlock.match(/\.soul-persona-face-back\{([^}]*)\}/)?.[1] ?? ''
-  assert.match(backFace, /overflow:hidden/, '背面 face 应 overflow:hidden（滚动交给全文块）')
-  assert.equal(/overflow-y:auto/.test(backFace), false, '滚动不得放在 face 上（会把返回按钮滚出视野）')
+  assert.ok(backFace !== '', '找不到背面专属规则')
+  assert.equal(/overflow-y:auto|overflow:auto/.test(backFace), false, '滚动不得放在 face 上（会让「返回」一起滚出视野）')
   assert.match(
     cssBlock.match(/\.soul-persona-fulltext\{([^}]*)\}/)?.[1] ?? '',
     /overflow-y:auto/,
@@ -2176,6 +2259,21 @@ check('卡背（详情面）展示全部维度与全文，且不动卡片 transf
   )
   // ⑨ 详情入口只在当前卡上出现（叠层两张不给点）
   assert.match(clientSource, /current && e\('button', \{[\s\S]{0,200}?soul-persona-details/, '「详情」入口应只在当前卡上渲染')
+  // ⑩ 「返回」按钮的选择器必须带祖先前缀（提高权重），不能只写单类。
+  //    原因：基类 .soul-persona-action 有 flex:1 1 auto，而单类选择器权重相同 ⇒
+  //    后声明者胜；本规则排在基类之前，于是 flex:none 被覆盖，按钮变成弹性元素。
+  //    后果（实测）：自定义预设指令较短时剩余空间把按钮**拉伸到 98px**（正常 35px）；
+  //    长文本时又被压缩到 21px。加前缀后与声明顺序无关。
+  assert.match(
+    cssBlock,
+    /\.soul-persona-face-back \.soul-persona-back-btn\{flex:none/,
+    '「返回」按钮选择器须带祖先前缀（单类会被基类的 flex:1 1 auto 按声明顺序覆盖）'
+  )
+  assert.equal(
+    /^[^.]*\.soul-persona-back-btn\{/.test(cssBlock) ,
+    false,
+    '不应存在无前缀的裸 .soul-persona-back-btn 规则（会与基类同权重、受声明顺序影响）'
+  )
 })
 
 check('「存为预设」入口与「保存设置」并列，且点开才问名字', () => {

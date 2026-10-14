@@ -639,23 +639,34 @@ window.__ModuleLoader__.load({
       '.soul-persona-stack{position:relative;min-height:372px}',
       // 卡牌：固定宽度居中（left/right:0 + margin auto），靠 transform 做叠层位移与缩放。
       // top/bottom:0 让三张卡等高 —— 内容长短不同的卡片高度一致，堆叠才整齐。
-      '.soul-persona-card{position:absolute;top:0;bottom:0;left:0;right:0;width:260px;margin:0 auto;display:flex;flex-direction:column;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;transform-origin:center top;will-change:transform}',
-      // —— 卡牌的两面（正面 = 卡面，背面 = 详情）——
       //
-      // 为什么用「一个卡片内叠两个绝对定位的 face」而不是真 3D 翻转：
-      // 卡片的 transform 已被**叠层偏移**（translateX/translateY/scale 内联）占用，
-      // 若把 rotateY(180deg) 也写进去，两者必须合成同一个 transform 字符串 ⇒
-      // 叠层几何会变脆。这里外层 transform 完全不动，翻面只作用于内层 face：
-      // 淡入淡出 + 轻微 rotateY(±12deg) 做「翻面」暗示（不是真翻转，观感自然）。
-      '.soul-persona-face{position:absolute;inset:0;display:flex;flex-direction:column;border-radius:inherit;backface-visibility:hidden;transition:opacity .18s ease,transform .18s ease}',
-      // 正面：未翻面时在位；翻到背面时淡出并向左轻微侧转
-      '.soul-persona-face-front{opacity:1;transform:none}',
-      '.soul-persona-card[data-flipped="true"] .soul-persona-face-front{opacity:0;transform:rotateY(-12deg);pointer-events:none}',
-      // 背面：默认淡出并向右轻微侧转；翻面后回到正中
-      // ⚠️ 滚动必须落在**全文块自己**身上（见 .soul-persona-fulltext），
-      // 不能放在 face 上 —— 放 face 上会让「返回」按钮跟着一起滚出视野（实测确认）。
-      '.soul-persona-face-back{gap:6px;padding:10px;box-sizing:border-box;overflow:hidden;opacity:0;transform:rotateY(12deg);pointer-events:none}',
-      '.soul-persona-card[data-flipped="true"] .soul-persona-face-back{opacity:1;transform:none;pointer-events:auto}',
+      // ⚠️ 卡片**不能**有 overflow:hidden：CSS 规范规定 overflow != visible 会强制
+      //    transform-style: flat，3D 翻转会被压平。裁切职责已下沉到 .soul-persona-face
+      //    （它带 overflow:hidden + border-radius:inherit，效果等价）。
+      '.soul-persona-card{position:absolute;top:0;bottom:0;left:0;right:0;width:260px;margin:0 auto;display:flex;flex-direction:column;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;transform-origin:center top;will-change:transform;perspective:1000px}',
+      // —— 卡牌的两面（正面 = 卡面，背面 = 详情）：真 3D 翻转 ——
+      //
+      // 三层职责分离（这是能做真 3D 而不伤叠层几何的关键）：
+      //   .soul-persona-card      叠层位置（translateX/Y/scale，内联）
+      //   .soul-persona-flipper   翻到哪一面（rotateY 0 ↔ 180）
+      //   .soul-persona-face-*    两个面各自的内容
+      // 若把 rotateY 写进卡片，就要和叠层偏移合成同一个 transform 字符串 ⇒
+      // 偏移几何变脆。
+      //
+      // ⚠️ perspective 已并入上面的 .soul-persona-card 规则（单条规则，便于断言核对）：
+      //    它必须挂在**翻转元素的父级**（卡片）上才生效。
+      '.soul-persona-card{perspective:1000px}',
+      '.soul-persona-flipper{position:absolute;inset:0;transform-style:preserve-3d;transition:transform .5s cubic-bezier(.2,.7,.3,1);border-radius:inherit}',
+      '.soul-persona-card[data-flipped="true"] .soul-persona-flipper{transform:rotateY(180deg)}',
+      // 两个面：各自裁圆角 + 隐藏背面，构成标准 3D 翻转
+      '.soul-persona-face{position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;border-radius:inherit;backface-visibility:hidden;-webkit-backface-visibility:hidden;transition:opacity .18s ease}',
+      '.soul-persona-face-front{opacity:1}',
+      // 背面预先转到 180°，随 flipper 一起转回正面
+      '.soul-persona-face-back{gap:6px;padding:10px;box-sizing:border-box;transform:rotateY(180deg);opacity:1}',
+      // 未翻面时背面整层不可点、也不被读屏念到（它虽被 backface 隐藏，但仍在树里）
+      '.soul-persona-card:not([data-flipped="true"]) .soul-persona-face-back{pointer-events:none}',
+      // 尊重「减少动态效果」：不做 3D 位移，直接切换
+      '@media (prefers-reduced-motion:reduce){.soul-persona-flipper{transition:none}}',
       // 背面头部：名称 + 内置徽标。
       // 名称用 flex:0 1 auto（**不是** flex:1 1 auto）：后者会把它撑满整行，
       // 于是徽标与名称**重叠在同一位置**（实测：名称 [44,272]、徽标 [44,77]，
@@ -681,8 +692,15 @@ window.__ModuleLoader__.load({
       // 需要的背景：卡片高度固定 372px，而实测 339 字占 272px（17 行 × 16px），
       // 加头部/维度/按钮后已无余量，稍长就必然要滚。
       '.soul-persona-fulltext{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px;white-space:pre-wrap;word-break:break-word}',
-      // 背面的「返回」：贴底按钮，做成描边式（不抢视觉，但必须好点）
-      '.soul-persona-back-btn{flex:none;margin-top:auto}',
+      // 背面的「返回」：贴底按钮，做成描边式（不抢视觉，但必须好点）。
+      //
+      // ⚠️ 选择器必须带 .soul-persona-face-back 前缀（提高权重），不能只写
+      // `.soul-persona-back-btn`：基类 `.soul-persona-action` 有 `flex:1 1 auto`，
+      // 而两者都是单类选择器（权重相同）⇒ **后声明者胜**。本规则在源码里排在
+      // 基类之前，于是基类的 flex:1 覆盖了这里的 flex:none —— 后果是自定义预设
+      // 指令较短时，剩余空间把「返回」按钮**拉伸到 98px 高**（实测：短文本 98px
+      // vs 长文本 21px）。加前缀后权重更高，与声明顺序无关。
+      '.soul-persona-face-back .soul-persona-back-btn{flex:none;margin-top:auto}',
       '.soul-persona-details{flex:0 0 auto;padding:0 10px;background:transparent;color:var(--dsw-alias-label-secondary);box-shadow:inset 0 0 0 .5px var(--dsw-alias-settings-card-stroke);font-size:12px;font-weight:500}',
       '.soul-persona-details:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);filter:none}',
       // 插画区：正方形主视觉。非内置预设没有配套插画，用主题色渐变兜底
@@ -766,11 +784,13 @@ window.__ModuleLoader__.load({
       '.soul-persona-danger-armed:hover:not(:disabled){background:var(--dsw-alias-state-error-primary);filter:brightness(1.08)}',
       // 提示词预览：宿主用 bg-module-platform 表达「内嵌代码/只读区」
       '.soul-prompt-pre{margin:8px 0 0 0;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;font-family:var(--ds-font-family-code,Consolas,Menlo,monospace);text-align:left;width:100%;box-sizing:border-box}',
-      // 提示条：颜色全部走主题 token（原先硬编码 #f6ffed/#52c41a 等，深色主题下不可用）
-      '.soul-toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:9px 16px;border-radius:var(--dsw-radius-lg);font-size:13px;font-weight:500;line-height:20px;z-index:10000;box-shadow:var(--dsw-shadow-lv2,0 4px 12px rgba(0,0,0,0.1));pointer-events:none;text-align:center;min-width:auto;white-space:nowrap;max-width:min(80vw,420px)}',
-      '.soul-toast-success{background:var(--dsw-alias-bg-module-platform);border:.5px solid var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary)}',
-      '.soul-toast-error{background:var(--dsw-alias-bg-module-platform);border:.5px solid var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}',
-      '@keyframes fadeInOut{0%{opacity:0;transform:translate(-50%,-50%) scale(0.9)}15%{opacity:1;transform:translate(-50%,-50%) scale(1)}85%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-50%) scale(0.9)}}',
+      // 提示条：改用宿主自己的 Toast 组件（ui.Toast），不再自绘。
+      // 理由：宿主 Toast 是「设计平台的提示条」——顶部居中、深色底（两种主题下都是
+      // bluish-800，标签固定为 bluish-00 白）、radius-lg、shadow-lv3、14px/22px、
+      // 成功态自带绿勾图标、z-index 1100（在图片灯箱之上）。自绘的版本在位置
+      // （屏幕正中）、配色（跟随主题卡片色）、字号（13px）上都与全局不一致。
+      // 生命周期也交给它：holdMs 后淡出，通过 onDone 通知我们卸载。
+      // 详见 client 里 renderToast() 的用法。
       // —— 输入框光轨 ——
       // 几何规则（position/尺寸/contain）同时内联在元素上，见 mountTrailRing；
       // 这里保留一份等价声明作为兜底，并让样式可读、可被第三方主题安全覆盖（仅颜色/速度/粗细）
@@ -813,12 +833,10 @@ window.__ModuleLoader__.load({
       '.soul-trail-preview{position:relative;margin-top:6px;padding:16px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill)}',
       '.soul-trail-preview[data-soul-trail="on"]{border-color:transparent}',
       '.soul-trail-preview-text{font-size:12px;color:var(--dsw-alias-label-tertiary)}',
-      // 开了「减少动态效果」时：光轨层停动画；提示条（.soul-toast，内联 fadeInOut）
-      // 也要停 —— 它此前被漏掉了，于是每次保存/失败都会平移缩放淡出。
-      // 实测（真实 Chrome + --force-prefers-reduced-motion）：内联 animation 属 author
-      // 普通声明，样式表的普通声明同样能覆盖；这里仍用 !important 以免将来被内联改动
-      // 或选择器顺序变化影响。
-      '@media (prefers-reduced-motion:reduce){.soul-trail-layer{animation:none}.soul-toast{animation:none!important}.soul-persona-card{animation:none!important;transition:none}}'
+      // 开了「减少动态效果」时：光轨层与卡片停动画。
+      // 提示条不再需要在这里特殊照顾 —— 它已改用宿主的 ui.Toast，
+      // 而宿主的 Toast.module.css 自带 reduced-motion 分支（去掉滑入、保留淡出）。
+      '@media (prefers-reduced-motion:reduce){.soul-trail-layer{animation:none}.soul-persona-card{animation:none!important;transition:none}}'
     ].join('')
 
     const tagId = 'dsh-soul/styles.css'
@@ -1440,6 +1458,19 @@ window.__ModuleLoader__.load({
       //   绑索引会在列表变短时翻错面。
       const [flippedName, setFlippedName] = React.useState(null)
       const [toast, setToast] = React.useState(null)
+      // 提示条的自增序号：宿主 Toast 要求「同样文案再次触发时能重新播一遍动画」，
+      // 做法是用 key 承载一个每次自增的序号（见渲染处的 key）。
+      // 统一在这里注入，而不是改 10 个 setToast 调用点 —— 后者早晚会漏。
+      //
+      // 刻意用普通函数而不是 React.useCallback：showToast 只在事件处理器里被调用
+      // （不进任何 effect 的依赖数组），memo 化没有收益；而客户端此前只依赖
+      // useState/useEffect/useRef 三个 hook（测试台的 React 垫片也只实现这三个），
+      // 少引入一个 hook 就少一处「离线能过、线上不同」的差异面。
+      const toastSeqRef = React.useRef(0)
+      const showToast = (next) => {
+        toastSeqRef.current += 1
+        setToast(next === null ? null : { ...next, seq: toastSeqRef.current })
+      }
       const [showPrompt, setShowPrompt] = React.useState(false)
       const [promptText, setPromptText] = React.useState('')
       const [promptLoading, setPromptLoading] = React.useState(false)
@@ -1492,13 +1523,9 @@ window.__ModuleLoader__.load({
         setLocalTrailWidth(trailWidth || 'thin')
       }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth])
 
-      // toast 自动消失
-      React.useEffect(() => {
-        if (toast) {
-          const timer = setTimeout(() => setToast(null), 2000)
-          return () => clearTimeout(timer)
-        }
-      }, [toast])
+      // toast 的消失交给宿主 Toast 组件自己（holdMs 后淡出并回调 onDone）。
+      // 此前这里有个 2s 定时器 + 自绘 CSS 动画，两者时长必须手工对齐，
+      // 且与全局提示条的 3s + 1s 淡出不一致 ⇒ 已删除。
 
       // dirty 检测：本地表单与已保存配置逐字段比较。
       //
@@ -1625,10 +1652,10 @@ window.__ModuleLoader__.load({
         const payload = await controller.saveConfig(localMap)
         // saveConfig 失败时内部已记录 error 并返回 undefined：给出失败提示，而非误报「无变化」
         if (!payload) {
-          setToast({ text: t('toast.saveFailed'), kind: 'error' })
+          showToast({ text: t('toast.saveFailed'), kind: 'error' })
           return
         }
-        setToast({
+        showToast({
           text: Array.isArray(payload.changed) && payload.changed.length > 0 ? t('toast.saved') : t('toast.noChanges'),
           kind: 'success'
         })
@@ -1642,10 +1669,10 @@ window.__ModuleLoader__.load({
         // 没成功」这件事藏了起来。
         const payload = await controller.resetConfig()
         if (!payload) {
-          setToast({ text: t('toast.resetFailed'), kind: 'error' })
+          showToast({ text: t('toast.resetFailed'), kind: 'error' })
           return
         }
-        setToast({
+        showToast({
           text: payload.backupPath ? t('toast.resetRecovered') : t('toast.reset'),
           kind: 'success'
         })
@@ -1663,9 +1690,9 @@ window.__ModuleLoader__.load({
           setPersonaName('')
           setShowSavePersona(false)
           await loadPersonas()
-          setToast({ text: t('toast.personaSaved'), kind: 'success' })
+          showToast({ text: t('toast.personaSaved'), kind: 'success' })
         } catch (err) {
-          setToast({ text: messageOf(err), kind: 'error' })
+          showToast({ text: messageOf(err), kind: 'error' })
         }
       }
 
@@ -1680,11 +1707,11 @@ window.__ModuleLoader__.load({
             : (payload && payload.unchanged
               ? { text: t('toast.personaUnchanged'), kind: 'success' }
               : { text: t('toast.personaUsed'), kind: 'success' })
-          setToast(toast)
+          showToast(toast)
           // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
         // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
         } catch (err) {
-          setToast({ text: messageOf(err), kind: 'error' })
+          showToast({ text: messageOf(err), kind: 'error' })
         }
       }
 
@@ -1705,9 +1732,9 @@ window.__ModuleLoader__.load({
         try {
           await controller.deletePersona(name)
           await loadPersonas()
-          setToast({ text: t('toast.personaDeleted'), kind: 'success' })
+          showToast({ text: t('toast.personaDeleted'), kind: 'success' })
         } catch (err) {
-          setToast({ text: messageOf(err), kind: 'error' })
+          showToast({ text: messageOf(err), kind: 'error' })
         }
       }
 
@@ -2037,10 +2064,11 @@ window.__ModuleLoader__.load({
                           // 太小会与当前卡重叠成一坨。92px 偏移 + 6% 缩小，叠层露出的
                           // 是一条完整的卡边（约 40px 可见宽度）。
                           //
-                          // ⚠️ 这个 transform 归**叠层偏移**所有，卡背的翻面动效一律
-                          // 作用在内层的 .soul-persona-face 上（见 CSS），绝不可写进这里
-                          // —— 两者合成同一个 transform 会让偏移几何变脆（真 3D 翻转
-                          // 就因此被否掉，改用淡入淡出 + 轻微 rotateY 暗示）。
+                          // ⚠️ 这个 transform 归**叠层偏移**所有，绝不可把翻转的
+                          // rotateY 写进来 —— 两者合成同一个 transform 字符串会让
+                          // 偏移几何变脆。翻转交给中间的 .soul-persona-flipper
+                          // （它有自己的 rotateY 0↔180，见 CSS），职责分离：
+                          // 卡片管「叠层位置」，flipper 管「翻到哪一面」。
                           transform: `translateX(${offset * 92}px) translateY(${Math.abs(offset) * 10}px) scale(${1 - Math.abs(offset) * 0.06})`,
                           zIndex: String(10 - Math.abs(offset)),
                           // 叠层卡片压暗一点，形成前后景深（不能用 filter:brightness，
@@ -2051,7 +2079,14 @@ window.__ModuleLoader__.load({
                         'aria-hidden': current ? undefined : 'true',
                         ...(current ? {} : { onClick: () => go(index + offset) })
                       },
-                        // —— 正面 ——
+                        // —— 3D 翻转容器（中间层）——
+                        //
+                        // 为什么需要这一层：卡片的 transform 归**叠层偏移**所有
+                        // （translateX/translateY/scale 内联在卡片上），翻转的
+                        // rotateY(180deg) 必须落在**另一层**，否则两者要合成同一个
+                        // transform 字符串，偏移几何会随之变脆。
+                        // 现在职责分离：卡片管「叠层位置」，flipper 管「翻到哪一面」。
+                        e('div', { className: 'soul-persona-flipper', 'aria-hidden': undefined },
                         e('div', {
                           className: 'soul-persona-face soul-persona-face-front',
                           // 翻到背面时正面要彻底退出交互与读屏（否则 Tab 会落到看不见的按钮上）
@@ -2151,6 +2186,7 @@ window.__ModuleLoader__.load({
                             onClick: () => setFlippedName(null)
                           }, t('personas.flipBack'))
                         )
+                        )   // ← 关闭 .soul-persona-flipper
                       )
                     }
                     const cards = []
@@ -2388,16 +2424,20 @@ window.__ModuleLoader__.load({
 
         dirty && !saving && e('div', { className: 'soul-status soul-dirty' }, t('status.unsaved')),
 
-        toast && e('div', {
-          className: `soul-toast ${toast.kind === 'error' ? 'soul-toast-error' : 'soul-toast-success'}`,
-          // 读屏播报：toast 2s 后自动移除（见上方计时器），没有 aria-live 时
-          // 保存成功 / 失败对读屏用户等于没有发生。
-          role: toast.kind === 'error' ? 'alert' : 'status',
-          'aria-live': toast.kind === 'error' ? 'assertive' : 'polite',
-          style: {
-            animation: 'fadeInOut 2s ease-in-out'
-          }
-        }, toast.text)
+        // 提示条：直接用宿主的 ui.Toast —— 与全局提示（顶部居中、深色底、
+        // 成功态绿勾、radius-lg、shadow-lv3、1100 层级）完全同源，
+        // 不做任何自绘样式覆盖。生命周期也归它：holdMs 后淡出，onDone 通知卸载。
+        // key 用「文本 + 次数」：同样文案再次触发时要能重新播一遍动画
+        // （宿主文档明确要求 key it by a per-show sequence）。
+        toast && e(ui.Toast, {
+          key: `${toast.kind}:${toast.text}:${toast.seq}`,
+          text: toast.text,
+          // 成功态由宿主渲染设计稿的绿勾；失败态给一个警告图标（宿主 icon 座位默认 warning 色）
+          tone: toast.kind === 'error' ? undefined : 'success',
+          icon: toast.kind === 'error' ? '⚠' : undefined,
+          holdMs: toast.kind === 'error' ? 5000 : 3000,
+          onDone: () => setToast(null)
+        })
       )
     }
 

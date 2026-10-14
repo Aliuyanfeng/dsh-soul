@@ -290,9 +290,10 @@ function loadClient(routes) {
     if (spec === 'react') return runtime.React
     if (spec === 'react/jsx-runtime') return { jsx: runtime.jsx, jsxs: runtime.jsx, Fragment }
     if (spec === '@deepseek-ai/dsh-client-ui-primitives') {
-      // ui.Button 单独换成宿主元素标记：这样它连同 onClick / children 原样留在渲染树里，
-      // 断言就能像用户一样「找到那个按钮并点它」，而不是去猜某个闭包。
-      return { Button: 'ui-button' }
+      // ui.Button / ui.Toast 单独换成宿主元素标记：这样它们连同 onClick / text /
+      // tone / holdMs / onDone 原样留在渲染树里，断言就能像用户一样
+      // 「找到那个按钮并点它」、「读出提示条的文案与色调」，而不是去猜某个闭包。
+      return { Button: 'ui-button', Toast: 'ui-toast' }
     }
     throw new Error(`未预料的 require：${spec}`)
   }
@@ -415,11 +416,14 @@ async function clickButton(world, labelKey) {
   assert.equal(buttons.length, 1, `期望恰好一个「${label}」按钮，实际 ${buttons.length} 个`)
   await buttons[0].props.onClick()
   const after = await renderSettings(world)
-  const toasts = findAll(after, (n) => typeof n.props?.className === 'string' && n.props.className.includes('soul-toast'))
+  // 提示条已改用宿主的 ui.Toast（不再是自绘的 .soul-toast div），
+  // 所以这里按宿主元素标记查找，并直接读它的 text / tone。
+  const toasts = findAll(after, (n) => n.type === 'ui-toast')
   assert.equal(toasts.length, 1, `期望恰好一个 toast，实际 ${toasts.length} 个`)
   return {
-    text: textOf(toasts[0]),
-    kind: toasts[0].props.className.includes('soul-toast-error') ? 'error' : 'success'
+    text: String(toasts[0].props.text ?? ''),
+    // tone='success' ⇒ 宿主渲染绿勾；否则走 icon 座位（失败态）
+    kind: toasts[0].props.tone === 'success' ? 'success' : 'error'
   }
 }
 

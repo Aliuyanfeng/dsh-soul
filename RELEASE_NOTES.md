@@ -146,9 +146,19 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - 名字可能很长（自建预设上限 30 字）⇒ 标签与底栏缀名**都单行省略**，底栏额外限宽 `max-width:9em`，避免把底栏撑开
   - 鲸鱼标记用 `currentColor` + `mask` 绘制（不引图片、避免额外请求）；初版用了 `#000` 被「CSS 不得硬编码颜色」断言拦下，已改
   - 新增断言（钉住注册在 dock 而非 left、未启用时不渲染、点选后必须写回 store、可关闭、两处都必须单行省略、文案键中英各一份）；判断力 **6/6** 组变异被拦
+- **卡背改为真 3D 翻转**：此前的「淡入淡出 + 轻微 `rotateY(±12deg)` 暗示」效果一般，改为标准 3D 翻转
+  - **三层职责分离**是能做真 3D 而不伤叠层几何的关键：`.soul-persona-card`（叠层位置 translateX/Y/scale）→ `.soul-persona-flipper`（rotateY 0↔180）→ `.soul-persona-face-*`（两个面）。若把 rotateY 写进卡片，就要与叠层偏移合成同一个 transform 字符串，偏移几何会变脆
+  - `perspective:1000px` 挂在卡片上（必须挂在**翻转元素的父级**才生效）；`.soul-persona-flipper` 用 `transform-style:preserve-3d`；背面预先 `rotateY(180deg)`，两面均 `backface-visibility:hidden`
+  - **卡片的 `overflow:hidden` 已移除**：CSS 规范规定 `overflow != visible` 会强制 `transform-style: flat`，3D 会被压平。裁切职责下沉到 `.soul-persona-face`（带 `overflow:hidden` + `border-radius:inherit`，效果等价）
+  - 几何自检（真实 Chrome 固定角度渲染）：**90° 时两个面都不可见**（完全空白）——这正是真 3D 的判据（两面同时侧立于视线）；45°/135° 出现透视收缩。若是平面淡入淡出，90° 必然有一面可见
+  - 未翻面时背面 `pointer-events:none`（它被 backface 隐藏但仍在树里）；`prefers-reduced-motion` 下去掉翻转过渡
+  - 断言相应改写（钉住 flipper 的 preserve-3d、翻转 180°、卡片 perspective、背面预转 180°、两面 backface-visibility、卡片不得有 overflow）；判断力 **6/6** 组变异被拦
+- **修掉卡背「返回」按钮高度异常**（新建预设指令较短时按钮被拉伸到 98px）
+  - 根因是 **CSS 选择器权重与声明顺序**：`.soul-persona-back-btn{flex:none}` 与基类 `.soul-persona-action{flex:1 1 auto}` 都是单类选择器（权重相同）⇒ **后声明者胜**；本规则排在基类之前，于是 `flex:none` 被覆盖，按钮变成弹性元素。短文本时剩余空间把它拉伸到 98px（正常 35px），长文本时又被压缩到 21px
+  - 修法：选择器加祖先前缀 `.soul-persona-face-back .soul-persona-back-btn` 提高权重，**与声明顺序解耦**（挪顺序易被后续编辑打乱，治标不治本）
 **校验**
 
-- `verify-config` 91 → **106 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」、「CSS token 存在性」、「样式对齐宿主栏目」、「人设行操作按钮规格对齐宿主列表按钮」六条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）。样式相关的 13 组变异全部被拦（不存在 token / 加回 padding / 分组退回旧边框 / 标题字重 600 / 标签字号 13px / 硬编码颜色 / 按钮高度 36px / 圆角 6px / 列表 gap 归零 / 行改回共用容器 / 加回行底色 / 删 render / 轮询去掉守卫）
+- `verify-config` 91 → **107 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」、「CSS token 存在性」、「样式对齐宿主栏目」、「人设行操作按钮规格对齐宿主列表按钮」六条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）。样式相关的 13 组变异全部被拦（不存在 token / 加回 padding / 分组退回旧边框 / 标题字重 600 / 标签字号 13px / 硬编码颜色 / 按钮高度 36px / 圆角 6px / 列表 gap 归零 / 行改回共用容器 / 加回行底色 / 删 render / 轮询去掉守卫）
 
 ### v0.7.1（2026-10-10）
 
@@ -242,6 +252,16 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - 名字可能很长（自建预设上限 30 字）⇒ 标签与底栏缀名**都单行省略**，底栏额外限宽 `max-width:9em`，避免把底栏撑开
   - 鲸鱼标记用 `currentColor` + `mask` 绘制（不引图片、避免额外请求）；初版用了 `#000` 被「CSS 不得硬编码颜色」断言拦下，已改
   - 新增断言（钉住注册在 dock 而非 left、未启用时不渲染、点选后必须写回 store、可关闭、两处都必须单行省略、文案键中英各一份）；判断力 **6/6** 组变异被拦
+- **卡背改为真 3D 翻转**：此前的「淡入淡出 + 轻微 `rotateY(±12deg)` 暗示」效果一般，改为标准 3D 翻转
+  - **三层职责分离**是能做真 3D 而不伤叠层几何的关键：`.soul-persona-card`（叠层位置 translateX/Y/scale）→ `.soul-persona-flipper`（rotateY 0↔180）→ `.soul-persona-face-*`（两个面）。若把 rotateY 写进卡片，就要与叠层偏移合成同一个 transform 字符串，偏移几何会变脆
+  - `perspective:1000px` 挂在卡片上（必须挂在**翻转元素的父级**才生效）；`.soul-persona-flipper` 用 `transform-style:preserve-3d`；背面预先 `rotateY(180deg)`，两面均 `backface-visibility:hidden`
+  - **卡片的 `overflow:hidden` 已移除**：CSS 规范规定 `overflow != visible` 会强制 `transform-style: flat`，3D 会被压平。裁切职责下沉到 `.soul-persona-face`（带 `overflow:hidden` + `border-radius:inherit`，效果等价）
+  - 几何自检（真实 Chrome 固定角度渲染）：**90° 时两个面都不可见**（完全空白）——这正是真 3D 的判据（两面同时侧立于视线）；45°/135° 出现透视收缩。若是平面淡入淡出，90° 必然有一面可见
+  - 未翻面时背面 `pointer-events:none`（它被 backface 隐藏但仍在树里）；`prefers-reduced-motion` 下去掉翻转过渡
+  - 断言相应改写（钉住 flipper 的 preserve-3d、翻转 180°、卡片 perspective、背面预转 180°、两面 backface-visibility、卡片不得有 overflow）；判断力 **6/6** 组变异被拦
+- **修掉卡背「返回」按钮高度异常**（新建预设指令较短时按钮被拉伸到 98px）
+  - 根因是 **CSS 选择器权重与声明顺序**：`.soul-persona-back-btn{flex:none}` 与基类 `.soul-persona-action{flex:1 1 auto}` 都是单类选择器（权重相同）⇒ **后声明者胜**；本规则排在基类之前，于是 `flex:none` 被覆盖，按钮变成弹性元素。短文本时剩余空间把它拉伸到 98px（正常 35px），长文本时又被压缩到 21px
+  - 修法：选择器加祖先前缀 `.soul-persona-face-back .soul-persona-back-btn` 提高权重，**与声明顺序解耦**（挪顺序易被后续编辑打乱，治标不治本）
 **校验**
 
 - `verify-config` 59 → **91 项**（新增：重置逃生口单一实现、注入失败必须留痕、诊断端点形状、两类问题分开上报、版本号不新增常量、三张双语文案表逐键对齐、`verify` 与 `verify:strict` 两条链同序且逐项带 `--strict`；本版追加「预设范围只含人设」「残留的『关于你』不参与匹配与取值」「`normalizePersonas` 剥离历史快照」「保存与应用只遍历同一份白名单」「客户端预设行摘要不读『关于你』」五项，以及**客户端复刻常量对齐**、**人设行对齐机制**、**set_persona schema 真实 DSL 校验**、**deliveryProblemText 取表方向**、**预设应用单一实现路径 + `invalid` 回报**与**命令层三处行为契约**断言）；`verify-store` 14 → **18 项**（新增 `moveAsideConfigFile` 的四条行为断言）
