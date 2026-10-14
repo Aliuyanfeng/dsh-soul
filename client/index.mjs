@@ -864,6 +864,7 @@ window.__ModuleLoader__.load({
       'quick.enable': '开启个性化',
       'quick.disable': '关闭个性化',
       'quick.statusEnabled': '个性化已启用',
+      'quick.custom': '自定义',
       'quick.statusDisabled': '个性化已关闭',
       // 快捷开关保存失败时的兜底文案（有服务端 error 时优先显示它）
       'quick.toggleFailed': '保存失败，请重试',
@@ -917,7 +918,6 @@ window.__ModuleLoader__.load({
       // 列表拉取失败（此前是空 catch ⇒ 界面会永远停在「加载中...」）
       'personas.loadFailed': '人设预设加载失败：{reason}',
       'personas.builtin': '内置',
-      'personas.default': '默认',
       'personas.drift': '当前配置与任何预设都不一致。',
       'personas.driftAction': '存为新预设',
       'personas.hint': '预设只保存 Agent 的人设（风格 / 特质 / 回复长度 / 输出语言 / 自定义指令），不含「关于你」；内置预设随插件提供，不可删除',
@@ -1025,6 +1025,7 @@ window.__ModuleLoader__.load({
       'quick.enable': 'Enable personalization',
       'quick.disable': 'Disable personalization',
       'quick.statusEnabled': 'Personalization enabled',
+      'quick.custom': 'Custom',
       'quick.statusDisabled': 'Personalization disabled',
       // 快捷开关保存失败时的兜底文案（有服务端 error 时优先显示它）
       'quick.toggleFailed': 'Save failed, please retry',
@@ -1076,7 +1077,6 @@ window.__ModuleLoader__.load({
       // 列表拉取失败（此前是空 catch ⇒ 界面会永远停在「加载中...」）
       'personas.loadFailed': 'Failed to load personas: {reason}',
       'personas.builtin': 'Built-in',
-      'personas.default': 'Default',
       'personas.drift': 'The current config matches no preset.',
       'personas.driftAction': 'Save as new preset',
       'personas.hint': 'A persona saves the agent personality only (style / traits / reply length / reply language / custom instructions), never your own identity fields; built-ins ship with the plugin and cannot be deleted',
@@ -1308,9 +1308,15 @@ window.__ModuleLoader__.load({
       },
         e('span', { className: 'soul-quick-toggle-dot', 'aria-hidden': true }),
         enabled ? t('quick.statusEnabled') : t('quick.statusDisabled'),
-        // B：启用时把当前人设名缀在后面，与输入框上方的标签互相印证。
-        // 只在启用且确实匹配到预设时显示 —— 关闭个性化时挂着人设名会误导。
-        enabled && activePersona && e('span', { className: 'soul-quick-toggle-name' }, `· ${activePersona}`)
+        // 启用时**始终**缀上「当前是哪套人设」：匹配到预设显示预设名，
+        // 未匹配（手改过特质、或纯自定义配置）显示「自定义」。
+        //
+        // 为什么不再留空：留空等于「我现在用的到底是什么」没有答案，而
+        // 「未匹配预设」这种说法听着像报错。底栏这里是输入框旁唯一的常驻状态，
+        // 必须给确定的落点 —— 有名字就是那个预设，没名字就是自定义。
+        // 关闭个性化时不显示（人设此时不生效，挂名字会误导）。
+        enabled && e('span', { className: 'soul-quick-toggle-name' },
+          `· ${activePersona || t('quick.custom')}`)
       )
     }
 
@@ -2078,7 +2084,7 @@ window.__ModuleLoader__.load({
                             }),
                             // 渐变遮罩：让压在图上的名称/摘要有足够对比度
                             e('div', { className: 'soul-persona-art-veil', 'aria-hidden': true }),
-                            builtin && e('span', { className: 'soul-persona-badge' }, name === '默认' ? t('personas.default') : t('personas.builtin')),
+                            builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
                             // 位置指示只出现在当前卡片上：左右露边的卡片若也显示「i / n」，
                             // 三张会同时出现同一个计数，看起来像显示错误。
                             current && e('span', { className: 'soul-persona-card-pos' }, `${index + 1} / ${total}`),
@@ -2144,7 +2150,7 @@ window.__ModuleLoader__.load({
                         },
                           e('div', { className: 'soul-persona-back-head' },
                             e('span', { className: 'soul-persona-back-name' }, name),
-                            builtin && e('span', { className: 'soul-persona-badge' }, name === '默认' ? t('personas.default') : t('personas.builtin'))
+                            builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin'))
                           ),
                           e('div', { className: 'soul-persona-dims' },
                             ...PERSONA_DIM_KEYS.map((dim) => e('div', { className: 'soul-persona-dim', key: dim },

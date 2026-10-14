@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 108
+const EXPECTED_ASSERTIONS = 109
 
 let passed = 0
 const failures = []
@@ -661,11 +661,6 @@ check('内置人设不声明「关于你」、输出语言与总开关', () => {
     for (const key of [...PROFILE_FIELDS, 'language', 'enabled']) {
       assert.equal(key in view[name], false, `${name} 不应声明 ${key}`)
     }
-  }
-  // 默认人设额外契约：声明全部 6 个人格维度（language 豁免）——
-  // 这使「改任何特质 ⇒ 丢 ★」的严格语义成立（用户需求）。
-  for (const key of ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'customInstructions']) {
-    assert.ok(key in view['默认'], `默认人设应声明 ${key}`)
   }
 })
 
@@ -2180,6 +2175,30 @@ check('每个内置预设都声明全 6 个人格维度（language 豁免）', (
       `${name}：改 language 不应失去匹配（内置预设不声明它）`
     )
   }
+})
+
+check('底栏开关始终展示当前人设（未匹配时显示「自定义」）', () => {
+  // 需求：底栏「个性化已启用」后面必须给出「现在用的是哪套人设」。
+  // 此前只有匹配到预设才缀名字，未匹配（手改过特质）就留空 —— 等于没回答；
+  // 而「未匹配预设」这种说法听着像报错。现在：有匹配显示预设名，否则「自定义」。
+  assert.match(clientSource, /enabled && e\('span', \{ className: 'soul-quick-toggle-name' \}/, '底栏应始终（启用时）渲染人设名')
+  assert.match(
+    clientSource,
+    /activePersona \|\| t\('quick\.custom'\)/,
+    '未匹配到预设时应回退显示「自定义」（不能留空）'
+  )
+  // 关闭个性化时不显示（人设此刻不生效，挂名字会误导）
+  assert.match(clientSource, /enabled && e\('span', \{ className: 'soul-quick-toggle-name' \}/, '关闭个性化时不得显示人设名')
+  // 名字限宽（自建预设上限 30 字，不限宽会撑开底栏）
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  assert.match(
+    cssBlock.match(/\.soul-quick-toggle-name\{([^}]*)\}/)?.[1] ?? '',
+    /max-width:9em/,
+    '底栏人设名必须限宽（否则长名会撑开底栏）'
+  )
+  // 文案键双语齐备
+  assert.ok(clientSource.includes("'quick.custom': '自定义'"), '缺中文「自定义」文案')
+  assert.ok(clientSource.includes("'quick.custom': 'Custom'"), '缺英文「Custom」文案')
 })
 
 check('配置偏离任何预设时，卡片区给出「存为新预设」出口', () => {

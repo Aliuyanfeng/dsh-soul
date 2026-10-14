@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 20
+const EXPECTED_ASSERTIONS = 21
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -855,7 +855,64 @@ try {
     )
   })
 
-  await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限定当前卡）', async () => {
+  await check('C21 底栏展示当前人设，未匹配时显示「自定义」', async () => {
+  // 需求：底栏「个性化已启用」后必须回答「现在用的是哪套人设」。
+  // 此前只有匹配到预设才缀名字，手改过特质后留空 —— 等于没回答。
+  // 现在：匹配到预设显示预设名，否则显示「自定义」。
+  const personaLib = (activeName) => ({
+    ok: true,
+    personas: {
+      苏格拉底式提问者: {
+        style: 'professional', builtin: true, headingLists: 'default', emoji: 'default',
+        tables: 'default', replyLength: 'normal', customInstructions: ''
+      },
+      极简主义者: { style: 'efficient', builtin: true }
+    },
+    activeName
+  })
+
+  // ① 匹配到预设 ⇒ 缀预设名
+  const w1 = await boot({}, personaLib('苏格拉底式提问者'))
+  // 人设列表由**设置页组件挂载后的 refresh** 拉取（apply 阶段只拉 config）。
+  // 快捷开关单独渲染不会触发它 —— 先渲染一次设置页把人设灌进 store，
+  // 否则下面读到的 activePersona 恒为 null（此前踩过：断言读到「自定义」）。
+  await renderSettings(w1)
+  const btn1 = await w1.runtime.settle(quickToggleElement(w1))
+  const name1 = findAll(btn1, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-quick-toggle-name'))
+  assert.equal(name1.length, 1, `启用时应有一个人设名节点，实际 ${name1.length}`)
+  assert.ok(
+    textOf(name1[0]).includes('苏格拉底式提问者'),
+    `匹配到预设时应显示预设名，实际：「${textOf(name1[0])}」`
+  )
+
+  // ② 未匹配（手改过特质）⇒ 显示「自定义」，不能留空
+  const w2 = await boot({}, personaLib(null))
+  await renderSettings(w2)
+  const btn2 = await w2.runtime.settle(quickToggleElement(w2))
+  const name2 = findAll(btn2, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-quick-toggle-name'))
+  assert.equal(name2.length, 1, '未匹配时也应有人设名节点（回退为「自定义」）')
+  assert.ok(
+    textOf(name2[0]).includes(w2.dicts.zh['quick.custom']),
+    `未匹配时应显示「${w2.dicts.zh['quick.custom']}」，实际：「${textOf(name2[0])}」`
+  )
+
+  // ③ 关闭个性化 ⇒ 整块人设名不显示（此刻人设不生效，挂名字会误导）
+  const w3 = await boot({}, personaLib('苏格拉底式提问者'))
+  // 关闭个性化：必须让 GET 与 POST 都返回 enabled:false —— boot 的 configPayload
+  // 只展开进 GET 的响应，POST 分支仍是 {...CONFIG}（enabled:true），
+  // 直接 boot({enabled:false}) 会被后续 refresh 覆盖回 true（此前踩过）。
+  const disabledConfig = { ...CONFIG, enabled: false }
+  w3.routes['/api/soul/config'] = (call) => (call.method === 'GET'
+    ? { ok: true, config: { ...disabledConfig }, configError: null, deliveryWarning: null }
+    : { ok: true, config: { ...disabledConfig }, changed: [] })
+  await renderSettings(w3)
+  w3.controller.store.update((s) => { s.enabled = false })
+  const btn3 = await w3.runtime.settle(quickToggleElement(w3))
+  const name3 = findAll(btn3, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-quick-toggle-name'))
+  assert.equal(name3.length, 0, '关闭个性化时不应显示人设名')
+})
+
+await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限定当前卡）', async () => {
     // 用户实测 bug：点侧边卡切换下一个人设后，新当前卡直接以【背面】出现。
     // 根因：整面翻面的 onClick 挂在了【所有卡】的正面 face 上 —— 点侧边卡时，
     // 事件先冒泡到它的 face onClick（setFlippedName(侧边卡名)），再冒泡到卡片的
