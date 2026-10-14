@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 18
+const EXPECTED_ASSERTIONS = 19
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -743,6 +743,115 @@ try {
     // 翻到首张后「上一张」应禁用（边界）
     const nav2 = findAllByClass(tree2, 'soul-persona-navbtn')
     assert.equal(nav2[0].props.disabled, true, '翻到首张后「上一张」应禁用')
+  })
+
+  await check('C19 应用预设后表单必须跟随 store，保存按钮不得误亮', async () => {
+    // 用户实测：点「使用」显示正常，但「保存设置」亮起；一点保存，刚应用的预设
+    // 被本地旧表单整体覆盖回旧配置（activeName 变回默认）。
+    //
+    // 根因：回填 effect 原是「dirty || saving 就整体不回填」。应用预设后 store 先变、
+    // 本地表单还是旧值 ⇒ 那一次渲染 dirty 恒为 true ⇒ 回填被挡 ⇒ 表单停在旧值 ⇒
+    // 「保存」把旧值整体 POST 上去覆盖预设。
+    //
+    // 修法：按字段判断（本地值 == 上次同步快照 ⇒ 用户没动过 ⇒ 回填）。
+    // 本断言验证行为：应用预设后（未手改任何字段）dirty 必须为 false。
+    const world = await boot({}, {
+      ok: true,
+      personas: {
+        苏格拉底式提问者: { style: 'professional', builtin: true },
+        资深架构师: { style: 'professional', headingLists: 'more', tables: 'more', replyLength: 'detailed', builtin: true }
+      },
+      activeName: '苏格拉底式提问者'
+    })
+    // 找到「使用」按钮所在卡（资深架构师）并应用它 —— 用卡片按钮而不是直接调 controller，
+    // 这样测的是用户真实路径（handleUsePersona → store → 回填 effect）。
+    // 注意：「人设预设」分组默认折叠，必须先展开（与 C16 同样的前置）。
+    //
+    // boot 默认桩没有 /personas/use 路由（点了会 404、被 catch 吞掉、store 不变），
+    // 那样本断言会得到「保存按钮不亮」的**假阳性** —— 所以这里覆盖该路由，
+    // 让它返回真实的「应用预设后的完整配置」（宿主行为：usePersona 会改活动配置）。
+    // 同时 GET /config 也必须跟随 —— 否则 2s 轮询会把 store 打回旧值；
+    // 真实宿主的 GET /config 本来就返回当前配置，测试桩此前没有模拟这一点。
+    let appliedPersona = false
+    const appliedConfig = () => ({ ...CONFIG, headingLists: 'more', tables: 'more', replyLength: 'detailed' })
+    world.routes['/api/soul/config'] = (call) => (call.method === 'GET'
+      ? { ok: true, config: appliedPersona ? appliedConfig() : { ...CONFIG }, configError: null, deliveryWarning: null }
+      : { ok: true, config: { ...CONFIG }, changed: [] })
+    world.routes['/api/soul/personas/use'] = () => {
+      appliedPersona = true
+      return { ok: true, config: appliedConfig(), changed: ['headingLists', 'tables', 'replyLength'], invalid: [] }
+    }
+    const tree0 = await renderSettings(world)
+    const trigger0 = findAll(tree0, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.personas']))
+    await trigger0[0].props.onClick()
+    const treeOpen = await renderSettings(world)
+    const useBtns = findAll(treeOpen, (n) => n.type === 'button' && textOf(n) === world.dicts.zh['personas.use'])
+    assert.ok(useBtns.length >= 1, '应存在「使用」按钮（前置条件）')
+    // 资深架构师与苏格拉底式提问者的 style 相同但 headingLists/tables/replyLength 不同，
+    // 应用后 store 的这些字段必然变化 —— 足以检验回填。
+    // 点按钮是 fire-and-forget（handleUsePersona 内部 await），必须排空微任务，
+    // store 才会被 usePersona 的响应写入（排空后还要再排空一次：写入触发的渲染链）。
+    await useBtns[useBtns.length - 1].props.onClick()
+    for (let i = 0; i < 10; i++) await new Promise((r) => drainTick(r))
+    const tree1 = await renderSettings(world)
+    // ① 保存按钮必须**不亮**（disabled）—— 用户什么都没改
+    const saveBtn = findAll(tree1, (n) => n.type === 'ui-button' && textOf(n) === world.dicts.zh['button.save'])
+    assert.equal(saveBtn.length, 1, `应恰好一个「保存设置」按钮，实际 ${saveBtn.length}`)
+    assert.equal(
+      saveBtn[0].props.disabled,
+      true,
+      '应用预设后（未手改字段）「保存设置」应禁用 —— 亮起说明表单没跟上 store（本 bug 的第一症状）'
+    )
+    // ② store 与「已保存配置」一致（usePersona 已写回）
+    const snap = world.controller.store.getSnapshot()
+    assert.equal(snap.headingLists, 'more', '应用后 store.headingLists 应为预设值 more')
+    assert.equal(snap.replyLength, 'detailed', '应用后 store.replyLength 应为预设值 detailed')
+    // ③ 关键回归点：本地表单必须与 store 一致（dirty 的两侧相等）
+    //    通过「不再有未保存提示」与保存按钮禁用间接验证（树里没有 dirty 标记）
+    const dirtyHint = findAll(tree1, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-dirty'))
+    assert.equal(dirtyHint.length, 0, '不应出现「未保存的更改」提示')
+    // ④ 编辑某字段后 dirty 仍应正常亮起（确认按字段判断没有把保护一并去掉）。
+    //    折叠分组是**互斥**的（toggleSection 会关掉人设分组），先切回「特质」分组。
+    const triggerTraits = findAll(tree1, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.traits']))
+    assert.ok(triggerTraits.length > 0, '应存在「特质」分组标题（前置条件）')
+    await triggerTraits[0].props.onClick()
+    const treeTraits = await renderSettings(world)
+    const styleSelects = findAll(treeTraits, (n) => n.type === 'select')
+    assert.ok(styleSelects.length > 0, '应存在风格下拉框（前置条件）')
+    await styleSelects[0].props.onChange({ target: { value: 'roast' } })
+    const tree2 = await renderSettings(world)
+    const saveBtn2 = findAll(tree2, (n) => n.type === 'ui-button' && textOf(n) === world.dicts.zh['button.save'])
+    assert.equal(
+      saveBtn2[0].props.disabled,
+      false,
+      '手动改动字段后「保存设置」应恢复可用（按字段保护不能连编辑检测一起丢掉）'
+    )
+    // ⑤ 按字段保护的**另一半**：用户正在编辑的字段，不能被外部写入（loadConfig 的
+    //    applyConfig，等价于 2s 轮询干的事）覆盖。若去掉按字段判断（无条件跟随
+    //    store），这里会失败 —— C19 前半段只测「跟随」，测不出这个方向的回归
+    //    （判断力验证实测 ②③ 漏网）。
+    //    注意：不要指望 fake timer 的轮询自己跑 —— settle 不推进 timerQueue，
+    //    直接调 loadConfig 才是确定性的等价写入。
+    await styleSelects[0].props.onChange({ target: { value: 'casual' } })   // 用户正在编辑 style
+    // 外部写入（轮询的等价物）必须真的改变 store —— effect 的依赖是 store 值，
+    // 若 loadConfig 返回与 store 相同的值，effect 根本不跑，变异（无条件跟随）
+    // 就探测不到差异（判断力验证实测 ②③ 漏网的原因）。这里模拟「别处把风格
+    // 改成了 humorous」：store 即将变为 humorous，而用户手里还捏着 casual。
+    world.routes['/api/soul/config'] = (call) => (call.method === 'GET'
+      ? { ok: true, config: { ...CONFIG, style: 'humorous' }, configError: null, deliveryWarning: null }
+      : { ok: true, config: { ...CONFIG }, changed: [] })
+    await world.controller.loadConfig()
+    // 渲染两轮：effect 按字段判断后的 setState 要到下一轮渲染才反映到树里
+    // （测试台的 set 只标记 dirty，下一帧 render() 才提交；单帧树读到的是旧值）
+    await renderSettings(world)
+    const treePolled = await renderSettings(world)
+    const polledSelects = findAll(treePolled, (n) => n.type === 'select')
+    assert.ok(polledSelects.length > 0, '轮询后仍应有风格下拉框（前置条件）')
+    assert.equal(
+      polledSelects[0].props.value,
+      'casual',
+      '用户正在编辑的字段不得被外部写入覆盖（无条件跟随 store 会把它改回 store 值）'
+    )
   })
 
   await check('C18 展开「人设预设」时自动定位到当前生效的那张（而不是永远第 1 张）', async () => {

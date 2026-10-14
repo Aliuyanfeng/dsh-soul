@@ -1497,30 +1497,60 @@ window.__ModuleLoader__.load({
       }, [openSection])
 
       // 同步状态
-      // 用 store 回填本地表单。
+      // 用 store 回填本地表单 —— 但**按字段**决定，而不是一刀切。
       //
-      // **dirty 期间不回填**：否则任何客户端侧对共享 store 的写入（例如快捷开关成功后
-      // 的 applyConfig）都会让依赖变化、本 effect 重跑，把用户正在编辑、尚未保存的
-      // 内容整片覆盖 —— 且没有任何提示。轮询路径（下方 refresh）已有 `if (dirty ||
-      // saving) return` 的保护，这里此前漏了同一道保护。
+      // 此前是「dirty || saving 就整体不回填」：点「使用」应用预设后，store 先变、
+      // 本地表单还是旧值 ⇒ 那一次渲染 dirty 恒为 true ⇒ 回填被挡 ⇒ 表单停在旧值。
+      // 之后「保存设置」亮起（用户没改任何东西也亮），一点保存就把**旧表单值**
+      // 整体 POST 上去，把刚应用的预设覆盖回旧配置 —— 正是「使用后人设变回默认」。
+      //
+      // 现在的判据：记录「上次与 store 同步时的本地快照」。某字段的当前本地值
+      // 仍等于快照 ⇒ 用户没动过它 ⇒ 安全回填新值；不等于 ⇒ 用户正在编辑 ⇒ 保留。
+      // 既有保护（轮询不覆盖正在编辑的内容）逐字段保留，语义不变。
+      //
+      // saving 期间仍然整体跳过：保存流程自身会带着响应回填（见 saveConfig →
+      // applyConfig → 本 effect），中途再插一次写入只会造成闪烁。
+      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
+      const lastSyncRef = React.useRef(null)
+      // 判断某字段是否被用户动过：与「上次同步的快照」比。没有快照（首帧）时
+      // 一律视为未动过 —— 首帧本地值本来就来自 store，无从谈起「编辑过」。
+      const userEdited = (key) => {
+        const snap = lastSyncRef.current
+        if (!snap) return false
+        return !sameValue(localValues[key], snap[key])
+      }
       React.useEffect(() => {
-        if (dirty || saving) return
-        setLocalEnabled(enabled)
-        setLocalNickname(nickname || '')
-        setLocalOccupation(occupation || '')
-        setLocalBio(bio || '')
-        setLocalStyle(style)
-        setLocalHeadingLists(headingLists)
-        setLocalEmoji(emoji)
-        setLocalTables(tables)
-        setLocalReplyLength(replyLength)
-        setLocalLanguage(language || 'zh')
-        setLocalInstructions(customInstructions)
-        setLocalToolConfirm(requireToolConfirmation === true)
-        setLocalTrailEnabled(trailEnabled === true)
-        setLocalTrailColor(trailColor || TRAIL_COLOR_FALLBACK)
-        setLocalTrailSpeed(trailSpeed || 'slow')
-        setLocalTrailWidth(trailWidth || 'thin')
+        if (saving) return
+        const next = {}
+        let changed = false
+        for (const key of formKeys) {
+          // 用户改过的字段一律保留；没动过的字段跟随 store
+          const target = userEdited(key) ? localValues[key] : serverValues[key]
+          next[key] = target
+          if (!sameValue(target, localValues[key])) changed = true
+        }
+        lastSyncRef.current = next
+        if (!changed) return
+        setLocalEnabled(next.enabled)
+        setLocalNickname(next.nickname)
+        setLocalOccupation(next.occupation)
+        setLocalBio(next.bio)
+        setLocalStyle(next.style)
+        setLocalHeadingLists(next.headingLists)
+        setLocalEmoji(next.emoji)
+        setLocalTables(next.tables)
+        setLocalReplyLength(next.replyLength)
+        setLocalLanguage(next.language)
+        setLocalInstructions(next.customInstructions)
+        setLocalToolConfirm(next.requireToolConfirmation)
+        setLocalTrailEnabled(next.trailEnabled)
+        setLocalTrailColor(next.trailColor)
+        setLocalTrailSpeed(next.trailSpeed)
+        setLocalTrailWidth(next.trailWidth)
+        // 依赖与 serverValues 的来源一致；localValues/sameValue 每次渲染都是新的，
+        // 但只在「某字段真要写」时才 setState，故不会形成死循环。
       }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth])
 
       // toast 的消失交给宿主 Toast 组件自己（holdMs 后淡出并回调 onDone）。
