@@ -269,9 +269,20 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - 新增 **C23**（5 个场景：定时器在装配层 / focus 监听 / visibilitychange 监听 / 暂停语义 / 卸载复位）；**测试台补齐 unmount() 能力** —— 垫片原先只在依赖变化时跑清理、卸载时从不执行，导致「卸载必须复位」这类契约根本无法触发
   - 判断力 **5/5**：全局轮询被删 / 不监听 focus / 不注册 interval / paused 守卫失效 / 卸载不复位 —— 全部被拦
   - verify-client 22 → 23 项
+- **人设变更确认改为宿主原生审批面板**（用户需求：不再手敲 /soul confirm，而是弹出选项框）
+  - 查证结论：宿主**已内置**完整审批能力 —— 宿主侧 `dsh-user-approval`（`ApprovalService`，dsh 主包直接依赖）、客户端 `dsh-client-ui-approval`（**已在 dsh-web-app 默认依赖清单里**，自己注册了 `approval/request` 的应答者）。事件 `approval/request` 在 `API_REMOTE_FORWARDED_EVENTS` 白名单里（`mode: waterfall`）
+  - **因此本插件只作为 asker 发起请求，客户端无需改一行** —— 不注册 answerer，避免与宿主应答者形成 waterfall 竞争
+  - 三态映射（`approvalOutcomeOf`）：`allowed-once` → 继续落盘；`rejected` → 不落盘并如实告知；`cancelled` / `unavailable` → 归为不可用走退化
+  - **退化路径保留**：`exec.agent` 缺失（宿主客户端靠 agent 解析会话归属，拿不到会放弃应答）、宿主未装审批服务、纯 TUI 无应答者 ⇒ 退化为原有的 `/soul confirm` 文本流程。删掉它会让这些场景彻底无法确认
+  - 不设超时（用户决定）：用户不点就一直等，与宿主其它审批一致 —— 加超时会产生「只是没来得及点就被自动拒绝」这种难以解释的行为
+  - 关键实现点：`execute(args, exec)` 接住工具执行上下文（`dsh-tools` 的调用形态是 `tool.execute(exec.arguments, exec)`，`exec` 含 `agent` / `callId` / `signal`）；服务经 `ctx.get('approval')` 可选获取
+  - 行为验证 **6/6**（隔离进程）：批准 ⇒ 落盘 / 拒绝 ⇒ 不落盘 / 无审批服务 ⇒ 退化 / 无 agent ⇒ 退化 / 审批抛异常 ⇒ 退化 / 确认模式关闭 ⇒ 不经审批直接落盘
+  - 判断力 **6/6**：execute 不接 exec / agent 缺失时硬发请求 / **cancelled 被当作批准** / rejected 被误当作批准 / 去掉 catch 兜底 / 退化路径被删 —— 全部被拦
+  - 其中③⑥ 首轮**漏网**（判断力只有 4/6），暴露断言过弱：只钉了三态映射的片段，未逐字校验整个函数（cancelled 若返回 allowed，撤回的请求会被应用）；只钉了 `pendingPersonaProposal` 赋值，未验证退化分支真实可达（改成 `if (false)` 能悄悄删掉它）。已改为切片逐字校验
+  - verify-config 112 → 113 项
 **校验**
 
-- `verify-config` 91 → **112 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」、「CSS token 存在性」、「样式对齐宿主栏目」、「人设行操作按钮规格对齐宿主列表按钮」六条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）。样式相关的 13 组变异全部被拦（不存在 token / 加回 padding / 分组退回旧边框 / 标题字重 600 / 标签字号 13px / 硬编码颜色 / 按钮高度 36px / 圆角 6px / 列表 gap 归零 / 行改回共用容器 / 加回行底色 / 删 render / 轮询去掉守卫）
+- `verify-config` 91 → **113 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」、「CSS token 存在性」、「样式对齐宿主栏目」、「人设行操作按钮规格对齐宿主列表按钮」六条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）。样式相关的 13 组变异全部被拦（不存在 token / 加回 padding / 分组退回旧边框 / 标题字重 600 / 标签字号 13px / 硬编码颜色 / 按钮高度 36px / 圆角 6px / 列表 gap 归零 / 行改回共用容器 / 加回行底色 / 删 render / 轮询去掉守卫）
 
 ### v0.7.1（2026-10-10）
 
@@ -488,6 +499,17 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - 新增 **C23**（5 个场景：定时器在装配层 / focus 监听 / visibilitychange 监听 / 暂停语义 / 卸载复位）；**测试台补齐 unmount() 能力** —— 垫片原先只在依赖变化时跑清理、卸载时从不执行，导致「卸载必须复位」这类契约根本无法触发
   - 判断力 **5/5**：全局轮询被删 / 不监听 focus / 不注册 interval / paused 守卫失效 / 卸载不复位 —— 全部被拦
   - verify-client 22 → 23 项
+- **人设变更确认改为宿主原生审批面板**（用户需求：不再手敲 /soul confirm，而是弹出选项框）
+  - 查证结论：宿主**已内置**完整审批能力 —— 宿主侧 `dsh-user-approval`（`ApprovalService`，dsh 主包直接依赖）、客户端 `dsh-client-ui-approval`（**已在 dsh-web-app 默认依赖清单里**，自己注册了 `approval/request` 的应答者）。事件 `approval/request` 在 `API_REMOTE_FORWARDED_EVENTS` 白名单里（`mode: waterfall`）
+  - **因此本插件只作为 asker 发起请求，客户端无需改一行** —— 不注册 answerer，避免与宿主应答者形成 waterfall 竞争
+  - 三态映射（`approvalOutcomeOf`）：`allowed-once` → 继续落盘；`rejected` → 不落盘并如实告知；`cancelled` / `unavailable` → 归为不可用走退化
+  - **退化路径保留**：`exec.agent` 缺失（宿主客户端靠 agent 解析会话归属，拿不到会放弃应答）、宿主未装审批服务、纯 TUI 无应答者 ⇒ 退化为原有的 `/soul confirm` 文本流程。删掉它会让这些场景彻底无法确认
+  - 不设超时（用户决定）：用户不点就一直等，与宿主其它审批一致 —— 加超时会产生「只是没来得及点就被自动拒绝」这种难以解释的行为
+  - 关键实现点：`execute(args, exec)` 接住工具执行上下文（`dsh-tools` 的调用形态是 `tool.execute(exec.arguments, exec)`，`exec` 含 `agent` / `callId` / `signal`）；服务经 `ctx.get('approval')` 可选获取
+  - 行为验证 **6/6**（隔离进程）：批准 ⇒ 落盘 / 拒绝 ⇒ 不落盘 / 无审批服务 ⇒ 退化 / 无 agent ⇒ 退化 / 审批抛异常 ⇒ 退化 / 确认模式关闭 ⇒ 不经审批直接落盘
+  - 判断力 **6/6**：execute 不接 exec / agent 缺失时硬发请求 / **cancelled 被当作批准** / rejected 被误当作批准 / 去掉 catch 兜底 / 退化路径被删 —— 全部被拦
+  - 其中③⑥ 首轮**漏网**（判断力只有 4/6），暴露断言过弱：只钉了三态映射的片段，未逐字校验整个函数（cancelled 若返回 allowed，撤回的请求会被应用）；只钉了 `pendingPersonaProposal` 赋值，未验证退化分支真实可达（改成 `if (false)` 能悄悄删掉它）。已改为切片逐字校验
+  - verify-config 112 → 113 项
 **校验**
 
 - `verify-config` 59 → **91 项**（新增：重置逃生口单一实现、注入失败必须留痕、诊断端点形状、两类问题分开上报、版本号不新增常量、三张双语文案表逐键对齐、`verify` 与 `verify:strict` 两条链同序且逐项带 `--strict`；本版追加「预设范围只含人设」「残留的『关于你』不参与匹配与取值」「`normalizePersonas` 剥离历史快照」「保存与应用只遍历同一份白名单」「客户端预设行摘要不读『关于你』」五项，以及**客户端复刻常量对齐**、**人设行对齐机制**、**set_persona schema 真实 DSL 校验**、**deliveryProblemText 取表方向**、**预设应用单一实现路径 + `invalid` 回报**与**命令层三处行为契约**断言）；`verify-store` 14 → **18 项**（新增 `moveAsideConfigFile` 的四条行为断言）

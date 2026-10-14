@@ -209,6 +209,7 @@ const PROMPT_TEXT = {
     toolNoChanges: '没有要更改的设置',
     toolValidationFailed: '配置校验失败：',
     toolProposal: '已收到人设变更请求（确认模式已开启，尚未生效）：',
+    toolRejected: '你在审批面板中拒绝了这次人设变更，未做任何修改。',
     toolProposalHint: '在用户确认前不会生效；用户可用 /soul confirm 确认，或 /soul reject 拒绝。'
   },
   en: {
@@ -264,6 +265,7 @@ const PROMPT_TEXT = {
     toolNoChanges: 'No settings to change',
     toolValidationFailed: 'Config validation failed: ',
     toolProposal: 'Persona change requested (confirmation mode is on — not applied yet):',
+    toolRejected: 'You rejected this persona change in the approval panel — nothing was modified.',
     toolProposalHint: 'It stays pending until the user confirms with /soul confirm or rejects with /soul reject.'
   }
 }
@@ -1630,6 +1632,64 @@ function registerSystemPrompt(ctx) {
   })
 }
 
+// ==================== 人设变更的宿主审批 ====================
+//
+// 确认模式开启时，人设变更走**宿主的原生审批交互**（输入框处的
+// 「允许一次 / 拒绝」面板），而不是让用户手敲 /soul confirm。
+//
+// 为什么复用宿主审批而不是自绘弹框：
+//   · 面板、键盘（Enter 允许 / Esc 拒绝）、读屏、一次性授权语义都由宿主实现；
+//   · ask / decided 会写入会话审计日志（谁在何时批准了什么人设变更）；
+//   · 多个插件同时要审批时由 waterfall 自然排队，不会出现两个弹框抢焦点。
+//
+// 返回三态，调用方据此决定继续落盘 / 拒绝 / 退化：
+//   'allowed'    —— 用户批准，调用方继续写盘
+//   'rejected'   —— 用户拒绝，调用方返回失败
+//   'unavailable'—— 拿不到审批能力（无 agent、宿主未装审批服务、无 Web UI 应答者），
+//                    调用方退化到 /soul confirm 文本流程
+//
+// 刻意**不加超时**：用户不点就一直等，与宿主其它审批一致。
+// 加超时会产生「只是没来得及点就被自动拒绝」这种难以解释的行为。
+function approvalOutcomeOf(outcome) {
+  if (outcome === 'allowed-once') return 'allowed'
+  if (outcome === 'rejected') return 'rejected'
+  // 'cancelled'（请求被撤回）与 'unavailable'（无应答者）都归为「审批不可用」，
+  // 交由文本流程兜底 —— 用户仍有机会通过 /soul confirm 应用这次变更。
+  return 'unavailable'
+}
+
+async function requestToolApproval(ctx, exec, changes) {
+  try {
+    // agent 是必须的：宿主客户端表单靠它解析会话归属，拿不到就会放弃应答
+    //（dsh-client-ui-approval 里 scopeOf(owner) === undefined 时直接 next()）。
+    const agent = exec && exec.agent
+    if (!agent) return 'unavailable'
+    const approval = typeof ctx.get === 'function' ? ctx.get('approval') : undefined
+    if (!approval || typeof approval.request !== 'function') return 'unavailable'
+
+    const detail = Object.entries(changes)
+      .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+      .join(', ')
+    const outcome = await approval.request({
+      agent,
+      toolName: 'set_persona',
+      ...(exec && exec.callId !== undefined ? { callId: exec.callId } : {}),
+      ...(exec && exec.signal !== undefined ? { signal: exec.signal } : {}),
+      reason: '人设变更需要你的确认',
+      // 中英并列：宿主按当前 UI 语言选取，审计日志里仍保留 reason 原文
+      displayReason: {
+        en: 'Persona change requires your confirmation',
+        zh: '人设变更需要你的确认',
+        'zh-Hans': '人设变更需要你的确认'
+      }
+    })
+    return approvalOutcomeOf(outcome)
+  } catch {
+    // 审批链路任何异常都不应让人设变更彻底失败 —— 退化为文本确认
+    return 'unavailable'
+  }
+}
+
 // ==================== Agent 可调用工具 ====================
 
 // tools 是可选 host 服务且 ABI 版本敏感（同 dsh-share-page 的守卫）。
@@ -1741,7 +1801,7 @@ function registerTools(ctx) {
             return [{ type: 'text', text }]
           },
         },
-        async execute(args) {
+        async execute(args, exec) {
           try {
             // 与 HTTP 保存共用同一套校验（白名单 / 类型 / 长度 / 枚举）
             const { patch, errors } = sanitizeConfig(args)
@@ -1754,7 +1814,17 @@ function registerTools(ctx) {
               return { ok: true, message: T0.toolNoChanges }
             }
 
-            // 确认模式：不落盘，返回待确认提议（/soul confirm 应用、/soul reject 拒绝）
+            // 确认模式：先走**宿主的原生审批交互**（输入框处的「允许一次 / 拒绝」面板）。
+            //
+            // 三态处理：
+            //   allowed     → 用户已批准，继续往下走写盘（故这里不 return）
+            //   rejected    → 用户拒绝，返回失败且不落盘
+            //   unavailable → 拿不到审批能力（无 agent / 宿主未装审批服务 /
+            //                 客户端没有应答者），退化到原有的 /soul confirm 文本流程
+            //
+            // 退化路径必须保留：纯 TUI 或无 Web UI 的场景没有应答者，审批会返回
+            // 'unavailable'，此时文本流程是唯一可用的确认途径。删掉它会让这些场景
+            // 彻底无法确认人设变更。
             const snapshot = await loadConfig()
             if (snapshot.requireToolConfirmation) {
               const T0 = promptTextOf(snapshot)
@@ -1763,14 +1833,21 @@ function registerTools(ctx) {
                 return { ok: true, message: T0.toolNoChanges }
               }
               const proposalChanges = Object.fromEntries(pendingKeys.map((key) => [key, patch[key]]))
-              pendingPersonaProposal = { patch: proposalChanges, proposedAt: new Date().toISOString() }
-              const detail = pendingKeys.map((key) => `${key}=${JSON.stringify(patch[key])}`).join(', ')
-              return {
-                ok: true,
-                pending: true,
-                changes: proposalChanges,
-                message: `${T0.toolProposal}\n${detail}\n${T0.toolProposalHint}`
+              const verdict = await requestToolApproval(ctx, exec, proposalChanges)
+              if (verdict === 'rejected') {
+                return { ok: false, message: T0.toolRejected }
               }
+              if (verdict === 'unavailable') {
+                pendingPersonaProposal = { patch: proposalChanges, proposedAt: new Date().toISOString() }
+                const detail = pendingKeys.map((key) => `${key}=${JSON.stringify(patch[key])}`).join(', ')
+                return {
+                  ok: true,
+                  pending: true,
+                  changes: proposalChanges,
+                  message: `${T0.toolProposal}\n${detail}\n${T0.toolProposalHint}`
+                }
+              }
+              // verdict === 'allowed' ⇒ 落到下面的写盘路径
             }
 
             // 写队列内合并，避免与其他写入方（Web UI、/soul 命令）竞态；

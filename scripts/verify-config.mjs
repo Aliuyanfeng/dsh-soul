@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 112
+const EXPECTED_ASSERTIONS = 113
 
 let passed = 0
 const failures = []
@@ -2208,6 +2208,106 @@ check('删除预设用内联二次确认，不得用原生 confirm', () => {
   assert.match(clientSource, /'personas\.confirmDeleteShort': 'Confirm delete\?'/, '缺英文待确认文案')
 })
 
+
+check('set_persona 接入宿主原生审批（三态 + 文本退化）', () => {
+  // 需求：确认模式不要再让用户手敲 /soul confirm，而是走宿主原生的审批面板
+  //（输入框处的「允许一次 / 拒绝」）。
+  //
+  // 为什么复用宿主审批：面板、键盘（Enter 允许 / Esc 拒绝）、读屏、一次性授权
+  // 语义都由宿主实现，且 ask/decided 会写入会话审计日志。自绘弹框要把这些全部
+  // 重做一遍且必然有差异。
+  //
+  // 关键：**客户端无需注册 answerer** —— dsh-web-app 的默认依赖里已包含
+  // @deepseek-ai/dsh-client-ui-approval，它自己注册了 approval/request 的应答者。
+  // 本插件只作为 asker 发起请求。
+  //
+  // 三态：
+  //   allowed-once → 'allowed'     ⇒ 继续落盘
+  //   rejected     → 'rejected'    ⇒ 不落盘并如实告知
+  //   cancelled / unavailable → 'unavailable' ⇒ 退化到 /soul confirm 文本流程
+
+  // ① 工具 execute 必须接住第二个参数 exec（agent / callId / signal 都在里面）
+  assert.match(
+    indexCode,
+    /async execute\(args, exec\) \{/,
+    'execute 必须接住 exec 参数（否则拿不到 agent，审批无法路由到会话）'
+  )
+  // ② 服务获取用 ctx.get('approval')（可选依赖：拿不到就退化）
+  assert.match(indexCode, /ctx\.get\('approval'\)/, '应通过 ctx.get(\'approval\') 取审批服务')
+  // ③ agent 缺失时必须退化而不是硬发请求 —— 宿主客户端靠 agent 解析会话归属，
+  //    拿不到会放弃应答（dsh-client-ui-approval 里 scopeOf(owner) === undefined ⇒ next()）
+  assert.match(
+    indexCode,
+    /const agent = exec && exec\.agent\s*\n\s*if \(!agent\) return 'unavailable'/,
+    'exec.agent 缺失时必须退化为文本流程（否则审批必然无人应答）'
+  )
+  // ④ 三态映射：只有 allowed-once 算批准；rejected 单独处理；其余（含 cancelled）退化
+  // 逐字校验映射函数的**完整实现**（只钉片段会让「cancelled 被当作批准」这类
+  // 严重语义错误漏网 —— 判断力验证实测）
+  const mapAt = indexCode.indexOf('function approvalOutcomeOf(')
+  assert.ok(mapAt > 0, '缺少 approvalOutcomeOf')
+  const mapEnd = indexCode.indexOf('\n}', mapAt)
+  const mapFn = indexCode.slice(mapAt, mapEnd > mapAt ? mapEnd : mapAt + 600)
+  assert.match(mapFn, /if \(outcome === 'allowed-once'\) return 'allowed'/, 'allowed-once 应映射为 allowed')
+  assert.match(mapFn, /if \(outcome === 'rejected'\) return 'rejected'/, 'rejected 应映射为 rejected')
+  assert.match(mapFn, /return 'unavailable'/, '其余结果应归为 unavailable 以走退化')
+  // 关键：只有 allowed-once 能返回 'allowed'（approvalOutcomeOf 内 'allowed' 只应出现一次）
+  assert.equal(
+    (mapFn.match(/return 'allowed'/g) || []).length,
+    1,
+    "approvalOutcomeOf 里只允许 allowed-once 返回 'allowed'（cancelled 若也返回 allowed，撤回的请求会被应用）"
+  )
+  assert.equal(
+    /cancelled[^\n]*return 'allowed'/.test(mapFn),
+    false,
+    'cancelled 绝不能映射为 allowed'
+  )
+  // ⑤ 请求字段必须完整：agent 必传，callId / signal 有则传，reason + displayReason 齐备
+  assert.match(indexCode, /toolName: 'set_persona'/, '审批请求应带上工具名')
+  assert.match(indexCode, /displayReason: \{/, '应提供 displayReason（宿主按 UI 语言选取）')
+  assert.ok(indexCode.includes("zh: '人设变更需要你的确认'"), '缺中文 displayReason')
+  assert.ok(indexCode.includes("en: 'Persona change requires your confirmation'"), '缺英文 displayReason')
+  // ⑥ 异常不得让人设变更彻底失败，必须退化
+  // 用切片判断（catch 块内的注释行数不固定，跨行正则太脆）
+  const fnAt = indexCode.indexOf('async function requestToolApproval')
+  const fnEnd = indexCode.indexOf('\n}', fnAt)
+  const approvalFn = indexCode.slice(fnAt, fnEnd > fnAt ? fnEnd : fnAt + 2000)
+  const catchAt = approvalFn.indexOf('} catch {')
+  assert.ok(catchAt > 0, 'requestToolApproval 应有 catch 兜底')
+  assert.match(
+    approvalFn.slice(catchAt),
+    /return 'unavailable'/,
+    '审批链路异常应退化为文本流程，而不是让变更失败'
+  )
+  // ⑦ 退化路径必须保留 /soul confirm 提议（纯 TUI / 无 Web UI 场景唯一的确认途径）
+  assert.match(indexCode, /pendingPersonaProposal = \{ patch: proposalChanges/, '退化时必须保留 /soul confirm 提议')
+  // ⑧ 拒绝与退化都要有对应文案，且中英各一份
+  assert.match(indexCode, /return \{ ok: false, message: T0\.toolRejected \}/, 'rejected 应返回失败并说明原因')
+  assert.equal((indexCode.match(/toolRejected:/g) || []).length, 2, 'toolRejected 文案应中英各一份')
+  // ⑨ 确认模式关闭时不得调用审批
+  const decideAt = indexCode.indexOf('const verdict = await requestToolApproval')
+  const guardAt = indexCode.lastIndexOf('if (snapshot.requireToolConfirmation) {', decideAt)
+  assert.ok(guardAt > 0 && guardAt < decideAt, '审批调用必须在 requireToolConfirmation 分支内')
+  // 退化分支必须**真实可达**：判据是非 allowed/rejected 的结果，而不是恒假条件
+  //（判断力验证实测：把判据改成 if (false) 能悄悄删掉退化路径，纯 TUI 场景
+  //  就再也没有确认途径了）
+  const branchSlice = indexCode.slice(decideAt, decideAt + 1400)
+  assert.match(
+    branchSlice,
+    /if \(verdict === 'rejected'\)/,
+    '应有 rejected 分支（用户拒绝 ⇒ 不落盘并告知）'
+  )
+  assert.match(
+    branchSlice,
+    /if \(verdict === 'unavailable'\) \{/,
+    '应有 unavailable 分支（退化到 /soul confirm 文本流程，纯 TUI 场景唯一途径）'
+  )
+  assert.equal(
+    /if \(false\)/.test(branchSlice),
+    false,
+    '退化分支不得是恒假条件'
+  )
+})
 
 check('每个内置预设都声明全 6 个人格维度（language 豁免）', () => {
   // 声明列表同时驱动应用与匹配，两者需求相反：应用希望「少声明不越权」，
