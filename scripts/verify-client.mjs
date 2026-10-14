@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 21
+const EXPECTED_ASSERTIONS = 22
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -855,7 +855,112 @@ try {
     )
   })
 
-  await check('C21 底栏展示当前人设，未匹配时显示「自定义」', async () => {
+  await check('C22 翻页会复位翻面态：切走再切回不得自动是背面', async () => {
+  // 用户实测：翻开 A 卡背面 → 切到 B → 再切回 A，A 仍以背面出现。
+  //
+  // 根因：flippedName 记住了「哪张卡被翻开过」，而 go() 只改索引、不清它 ⇒
+  // 切回来时 current && flippedName === name 又成立，于是「记得」上次的面。
+  //
+  // 语义：翻面是「看这张卡背面」的**临时阅读动作**，翻页是「换一张看」——
+  // 注意力已重置。记住它会让用户以为这张卡「默认就是背面」。
+  // 故三处换卡入口都要清：go() / 展开自动定位 / 折叠分组。
+  const lib = {
+    ok: true,
+    personas: {
+      苏格拉底式提问者: { style: 'professional', builtin: true, headingLists: 'default', emoji: 'default', tables: 'default', replyLength: 'normal', customInstructions: '' },
+      极简主义者: { style: 'efficient', builtin: true, headingLists: 'default', emoji: 'default', tables: 'default', replyLength: 'normal', customInstructions: '' },
+      资深架构师: { style: 'professional', builtin: true, headingLists: 'more', emoji: 'default', tables: 'more', replyLength: 'detailed', customInstructions: 'x' }
+    },
+    activeName: '苏格拉底式提问者'
+  }
+  const world = await boot({}, lib)
+  const closed = await renderSettings(world)
+  await findAll(closed, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.personas']))[0].props.onClick()
+  const tree0 = await renderSettings(world)
+
+  const flippedCount = (tree) => findAllByClass(tree, 'soul-persona-card').filter((c) => c.props['data-flipped'] === 'true').length
+  const currentCard = (tree) => findAllByClass(tree, 'soul-persona-card').find((c) => c.props['data-current'] === 'true')
+
+  // ① 翻开当前卡背面
+  const front = findAll(currentCard(tree0), (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-persona-face-front'))
+  assert.ok(front[0] && typeof front[0].props.onClick === 'function', '前置条件：当前卡正面应可点翻面')
+  await front[0].props.onClick()
+  for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+  const tree1 = await renderSettings(world)
+  assert.equal(flippedCount(tree1), 1, '前置条件：点整面后应有 1 张处于背面')
+
+  // ② 点侧边卡切到下一张 ⇒ 无卡处于背面
+  const side = findAllByClass(tree1, 'soul-persona-card').find((c) => c.props['data-current'] === 'false' && typeof c.props.onClick === 'function')
+  assert.ok(side, '前置条件：应存在可点的叠层侧边卡')
+  await side.props.onClick()
+  for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+  const tree2 = await renderSettings(world)
+  assert.equal(flippedCount(tree2), 0, '翻页后不应有卡处于背面')
+
+  // ③ 切回原来那张 ⇒ 必须是正面（bug 时这里会是背面）
+  const side2 = findAllByClass(tree2, 'soul-persona-card').find((c) => c.props['data-current'] === 'false' && typeof c.props.onClick === 'function')
+  await side2.props.onClick()
+  for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+  const tree3 = await renderSettings(world)
+  assert.equal(
+    flippedCount(tree3),
+    0,
+    '切回原来那张时不得记住翻面态（应显示正面；bug 症状：仍以背面出现）'
+  )
+
+  // ④ 圆点导航同样要复位（不能只修侧边卡这一条路径）
+  await front[0].props.onClick()
+  for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+  const dots = findAll(await renderSettings(world), (n) => n.props?.role === 'tab')
+  assert.ok(dots.length > 1, '前置条件：应有多个位置圆点')
+  await dots[1].props.onClick()
+  for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+  assert.equal(flippedCount(await renderSettings(world)), 0, '圆点导航换卡也应复位翻面态')
+
+  // ⑤ 折叠 → 重新展开：也不得带出上次的背面
+  //
+  // ⚠️ 这一场景必须让「自动定位」落回**同一张卡**才有判别力：
+  //    自动定位会把 index 设为 activePersona 的位置。若翻的是另一张卡，
+  //    重新展开后当前卡已换人 ⇒ flippedName 天然不匹配 ⇒ 即使不清理也显示正面，
+  //    测试就成了「永远通过」（初版正因如此漏掉了这个分支 —— 判断力验证发现）。
+  //    故用独立 world，让 activeName 就是被翻的那张。
+  const w5 = await boot({}, {
+    ok: true,
+    personas: {
+      苏格拉底式提问者: { style: 'professional', builtin: true },
+      极简主义者: { style: 'efficient', builtin: true }
+    },
+    // activeName 取列表第 0 项 ⇒ 展开时自动定位回第 0 张
+    activeName: '苏格拉底式提问者'
+  })
+  const closed5 = await renderSettings(w5)
+  await findAll(closed5, (n) => n.type === 'button' && textOf(n).includes(w5.dicts.zh['group.personas']))[0].props.onClick()
+  let t5 = await renderSettings(w5)
+
+  // 翻开**第 0 张**（= activeName 指向的那张，自动定位会回到它）
+  const card0 = currentCard(t5)
+  assert.ok(card0, '前置条件：应有当前卡')
+  const front5 = findAll(card0, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-persona-face-front'))
+  await front5[0].props.onClick()
+  for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+  t5 = await renderSettings(w5)
+  assert.equal(flippedCount(t5), 1, '前置条件：应已翻到背面')
+
+  // 折叠
+  await findAll(t5, (n) => n.type === 'button' && textOf(n).includes(w5.dicts.zh['group.personas']))[0].props.onClick()
+  for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+  // 重新展开（自动定位会回到第 0 张 = 刚被翻的那张）
+  t5 = await renderSettings(w5)
+  await findAll(t5, (n) => n.type === 'button' && textOf(n).includes(w5.dicts.zh['group.personas']))[0].props.onClick()
+  for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+  assert.equal(
+    flippedCount(await renderSettings(w5)),
+    0,
+    '折叠后重新展开不得记得上次的翻面态（自动定位落回同一张卡时）'
+  )
+})
+
+await check('C21 底栏展示当前人设，未匹配时显示「自定义」', async () => {
   // 需求：底栏「个性化已启用」后必须回答「现在用的是哪套人设」。
   // 此前只有匹配到预设才缀名字，手改过特质后留空 —— 等于没回答。
   // 现在：匹配到预设显示预设名，否则显示「自定义」。

@@ -1781,7 +1781,12 @@ window.__ModuleLoader__.load({
       const autoPositionedRef = React.useRef(false)
       React.useEffect(() => {
         if (openSection !== 'personas') {
-          // 折叠状态：清掉标记，让下次展开能重新定位
+          // 折叠状态：清掉标记，让下次展开能重新定位。
+          //
+          // 刻意**不在这里**清翻面态：折叠期间 body 不渲染，翻面态在 UI 上不可观测，
+          // 清与不清行为等价（判断力验证证实：删掉它所有用例仍通过）。可观测的点是
+          // 「重新展开」那一刻，由下方 autoPositionedRef 分支的 setFlippedName(null)
+          // 承担 —— 职责归属唯一，避免两处重复同一件事、日后改动只更新一处。
           autoPositionedRef.current = false
           return
         }
@@ -1789,6 +1794,9 @@ window.__ModuleLoader__.load({
         if (!personaNames || personaNames.length === 0) return
         // 当前无生效人设（或名字对不上任何一项）时退回第 0 张 —— 总要给个确定的落点
         const at = activePersona ? personaNames.indexOf(activePersona) : -1
+        // 自动定位同样是一次「换一张看」：清掉翻面态，避免定位到的那张
+        // 恰好是上次翻过面的卡而以背面出现
+        setFlippedName(null)
         setPersonaIndex(at >= 0 ? at : 0)
         autoPositionedRef.current = true
       }, [openSection, personaNames, activePersona])
@@ -2017,7 +2025,13 @@ window.__ModuleLoader__.load({
                     // 刻意不在 effect 里回写 state —— 那会多一次渲染，且「删除后该看哪张」
                     // 本就有歧义，渲染时夹取即可保证不越界。
                     const index = Math.min(Math.max(personaIndex, 0), total - 1)
-                    const go = (next) => setPersonaIndex(Math.min(Math.max(next, 0), total - 1))
+                    // 翻页时**同时清掉翻面态**：翻面是「看这张卡背面」的临时阅读动作，
+                    // 翻页是「换一张看」—— 用户的注意力已经重置。若记住它，切回来时
+                    // 这张卡会以背面出现，看起来像「它默认就是背面」（用户实测反馈）。
+                    const go = (next) => {
+                      setFlippedName(null)
+                      setPersonaIndex(Math.min(Math.max(next, 0), total - 1))
+                    }
                     const renderCard = (name, offset) => {
                       const entry = personas[name] || {}
                       const builtin = !!entry.builtin
