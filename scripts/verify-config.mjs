@@ -2191,7 +2191,11 @@ check('卡背（详情面）展示全部维度与全文，且不动卡片 transf
   const backIdx = clientSource.indexOf("className: 'soul-persona-face soul-persona-face-back'")
   assert.ok(frontIdx > 0, '缺少正面 face')
   assert.ok(backIdx > frontIdx, '缺少背面 face')
-  const backBlock = clientSource.slice(backIdx, backIdx + 2600)
+  // 切片边界不能用固定字符数：卡背内容一长（比如加了删除按钮）就被截断，
+  // 断言会「看不到」新增元素而误报（实测踩过：2600 字符截掉了删除按钮）。
+  // 改到下一个稳定锚点（侧边卡渲染循环）为界。
+  const backEnd = clientSource.indexOf('const cards = []', backIdx)
+  const backBlock = clientSource.slice(backIdx, backEnd > backIdx ? backEnd : backIdx + 4000)
   // ① 翻面状态绑人设名（不是索引）：删除/刷新后同名卡仍是同一张，绑索引会翻错面
   assert.match(clientSource, /const \[flippedName, setFlippedName\] = React\.useState\(null\)/, '翻面状态应绑人设名')
   // ② 卡片自身 transform 必须保持叠层偏移原样，且**不得**出现 rotateY
@@ -2251,10 +2255,23 @@ check('卡背（详情面）展示全部维度与全文，且不动卡片 transf
     //    与「返回」并排在底部按钮行。
     assert.equal(/handleUsePersona/.test(backBlock), false, '背面不得放「使用」按钮（高频操作留正面）')
     assert.ok(
-      backBlock.includes('handleDeletePersona(name)') && backBlock.includes('soul-persona-back-del'),
+      /handleDeletePersona\(name\)/.test(backBlock) && backBlock.includes('soul-persona-back-del'),
       '背面应有「删除」按钮（仅自建卡渲染，二次确认逻辑不变）'
     )
     assert.ok(backBlock.includes('setFlippedName(null)'), '背面缺少「返回」')
+    // 卡背整面点击=返回 ⇒ 「删除」必须 stopPropagation（否则确认删除会被返回打断）
+    assert.match(
+      backBlock,
+      /ev\?\.stopPropagation\(\)\s*\n\s*void handleDeletePersona\(name\)/,
+      '卡背「删除」应 stopPropagation（卡背整面点击=返回，不挡住会打断删除确认）'
+    )
+    // 整面点击返回：必须排除「拖选文字」（卡背有可滚动全文，用户可能拖选复制）
+    assert.match(
+      backBlock,
+      /globalThis\.getSelection\?\.\(\)/,
+      '卡背整面点击返回前必须检查文字选区（否则拖选文字会误触发返回）'
+    )
+    assert.match(backBlock, /sel\.isCollapsed/, '选区判据应看 isCollapsed')
     // 底部按钮行容器：返回弹性占满 + 删除定宽
     assert.match(
       cssBlock.match(/\.soul-persona-back-actions\{([^}]*)\}/)?.[1] ?? '',

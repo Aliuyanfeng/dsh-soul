@@ -680,7 +680,9 @@ window.__ModuleLoader__.load({
       // 当前卡整面可点翻背（cursor 提示）；叠层侧边卡的点击是翻页，不提示翻面
       '.soul-persona-card[data-current="true"]:not([data-flipped="true"]) .soul-persona-face-front{cursor:pointer}',
       // 背面预先转到 180°，随 flipper 一起转回正面
-      '.soul-persona-face-back{gap:6px;padding:10px;box-sizing:border-box;transform:rotateY(180deg);opacity:1}',
+      // 卡背整面可点返回（与正面「整面点击翻到背面」对称）：cursor 提示可点。
+      // 全文块单独覆盖为 text —— 那里是可选中的文字，光标形态要与之相符。
+      '.soul-persona-face-back{gap:6px;padding:10px;box-sizing:border-box;transform:rotateY(180deg);opacity:1;cursor:pointer}',
       // 未翻面时背面整层不可点、也不被读屏念到（它虽被 backface 隐藏，但仍在树里）
       '.soul-persona-card:not([data-flipped="true"]) .soul-persona-face-back{pointer-events:none}',
       // 尊重「减少动态效果」：不做 3D 位移，直接切换
@@ -709,7 +711,7 @@ window.__ModuleLoader__.load({
       // 实测把 overflow-y 放 face 上时，长文本会把按钮一起推出视野并被文字压住。
       // 需要的背景：卡片高度固定 372px，而实测 339 字占 272px（17 行 × 16px），
       // 加头部/维度/按钮后已无余量，稍长就必然要滚。
-      '.soul-persona-fulltext{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px;white-space:pre-wrap;word-break:break-word}',
+      '.soul-persona-fulltext{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;cursor:text;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px;white-space:pre-wrap;word-break:break-word}',
       // 背面的「返回」：贴底按钮，做成描边式（不抢视觉，但必须好点）。
       //
       // ⚠️ 选择器必须带 .soul-persona-face-back 前缀（提高权重），不能只写
@@ -2259,7 +2261,21 @@ window.__ModuleLoader__.load({
                         e('div', {
                           className: 'soul-persona-face soul-persona-face-back',
                           'aria-hidden': flipped ? undefined : 'true',
-                          ...(flipped ? {} : { inert: '' })
+                          ...(flipped ? {} : { inert: '' }),
+                          // 整面点击返回正面（与正面「整面点击翻到背面」对称）。
+                          //
+                          // ⚠️ 必须排除「拖选文字」：卡背有 339 字可滚动全文，用户很可能
+                          // 拖选复制。拖选结束时会触发一次 click，若不判断就等于「一选就
+                          // 翻回去」。判据用 window.getSelection() 是否落在卡背内 ——
+                          // 有非折叠选区就说明这是一次选择操作，不返回。
+                          // 另外点击「删除」按钮时靠它的 stopPropagation 挡住（见下），
+                          // 否则删除确认会被返回动作打断。
+                          onClick: () => {
+                            if (!flipped) return
+                            const sel = globalThis.getSelection?.()
+                            if (sel && !sel.isCollapsed && sel.toString().trim() !== '') return
+                            setFlippedName(null)
+                          }
                         },
                           e('div', { className: 'soul-persona-back-head' },
                             e('span', { className: 'soul-persona-back-name' }, name),
@@ -2282,7 +2298,12 @@ window.__ModuleLoader__.load({
                             e('button', {
                               type: 'button',
                               className: 'soul-persona-action soul-persona-back-btn',
-                              onClick: () => setFlippedName(null)
+                              // 整面点击=返回；「返回」自己就是返回，stopPropagation 只为
+                              // 语义清晰（避免同一动作触发两次 setState）
+                              onClick: (ev) => {
+                                ev?.stopPropagation()
+                                setFlippedName(null)
+                              }
                             }, t('personas.flipBack')),
                             !builtin && e('button', {
                               type: 'button',
@@ -2291,7 +2312,12 @@ window.__ModuleLoader__.load({
                                 : 'soul-persona-action soul-persona-danger soul-persona-back-del',
                               'data-armed': pendingDelete === name ? 'true' : 'false',
                               title: t('personas.confirmDelete', { name }),
-                              onClick: () => handleDeletePersona(name)
+                              // 必须 stopPropagation：卡背整面点击=返回，
+                              // 不挡住的话「确认删除」会被返回动作打断（翻回正面、看不到提示）
+                              onClick: (ev) => {
+                                ev?.stopPropagation()
+                                void handleDeletePersona(name)
+                              }
                             }, pendingDelete === name ? t('personas.confirmDeleteShort') : t('personas.delete'))
                           )
                         )

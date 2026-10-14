@@ -907,6 +907,27 @@ try {
       false,
       '背面状态下正面不得再挂整面点击（否则会重复触发翻面）'
     )
+    // ⑤ 卡背整面点击=返回正面（与正面「整面点击翻到背面」对称）
+    const backFace = findAll(flippedCard, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-persona-face-back'))
+    assert.ok(backFace[0] && typeof backFace[0].props.onClick === 'function', '卡背应整面可点返回')
+    // ⑥ 但拖选文字时不得返回：模拟一个非折叠选区
+    const realGetSelection = globalThis.getSelection
+    try {
+      globalThis.getSelection = () => ({ isCollapsed: false, toString: () => '选中的指令文本' })
+      backFace[0].props.onClick()
+      for (let i = 0; i < 4; i++) await new Promise((r) => drainTick(r))
+      const stillFlipped = findAllByClass(await renderSettings(world), 'soul-persona-card').filter((c) => c.props['data-flipped'] === 'true')
+      assert.equal(stillFlipped.length, 1, '拖选文字时不得翻回正面（否则一选就跳走）')
+      // ⑦ 无选区时点击 ⇒ 正常返回
+      globalThis.getSelection = () => ({ isCollapsed: true, toString: () => '' })
+      backFace[0].props.onClick()
+      for (let i = 0; i < 4; i++) await new Promise((r) => drainTick(r))
+      const afterBack = findAllByClass(await renderSettings(world), 'soul-persona-card').filter((c) => c.props['data-flipped'] === 'true')
+      assert.equal(afterBack.length, 0, '无选区时点卡背应返回正面')
+    } finally {
+      if (realGetSelection === undefined) delete globalThis.getSelection
+      else globalThis.getSelection = realGetSelection
+    }
   })
 
   await check('C18 展开「人设预设」时自动定位到当前生效的那张（而不是永远第 1 张）', async () => {
