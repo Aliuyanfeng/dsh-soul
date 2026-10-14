@@ -416,14 +416,18 @@ async function clickButton(world, labelKey) {
   assert.equal(buttons.length, 1, `期望恰好一个「${label}」按钮，实际 ${buttons.length} 个`)
   await buttons[0].props.onClick()
   const after = await renderSettings(world)
-  // 提示条已改用宿主的 ui.Toast（不再是自绘的 .soul-toast div），
-  // 所以这里按宿主元素标记查找，并直接读它的 text / tone。
+  // 提示形态对齐宿主模型设置页：**成功走内联绿字**（.soul-saved-notice，不自动消失），
+  // **失败走 ui.Toast**。两者都可能存在，优先读绿字（成功），否则读 toast（失败）。
+  const notices = findAll(after, (n) => typeof n.props?.className === 'string' && n.props.className.includes('soul-saved-notice'))
+  if (notices.length > 0) {
+    assert.equal(notices.length, 1, `期望恰好一条成功绿字，实际 ${notices.length} 条`)
+    return { text: textOf(notices[0]), kind: 'success' }
+  }
   const toasts = findAll(after, (n) => n.type === 'ui-toast')
-  assert.equal(toasts.length, 1, `期望恰好一个 toast，实际 ${toasts.length} 个`)
+  assert.equal(toasts.length, 1, `期望恰好一个 toast（失败提示），实际 ${toasts.length} 个`)
   return {
     text: String(toasts[0].props.text ?? ''),
-    // tone='success' ⇒ 宿主渲染绿勾；否则走 icon 座位（失败态）
-    kind: toasts[0].props.tone === 'success' ? 'success' : 'error'
+    kind: 'error'
   }
 }
 
@@ -523,7 +527,7 @@ try {
     const toast = await clickButton(world, 'button.reset')
     assert.equal(toast.kind, 'error', `重置失败的提示应为错误样式，实际 ${toast.kind}`)
     assert.equal(toast.text, world.dicts.zh['toast.resetFailed'])
-    assert.notEqual(toast.text, world.dicts.zh['toast.reset'])
+    assert.notEqual(toast.text, world.dicts.zh['notice.reset'])
   })
 
   await check('C9 重置成功且丢弃过损坏文件时，提示「已备份」（而不是普通的「已重置」）', async () => {
@@ -533,14 +537,14 @@ try {
     })
     const toast = await clickButton(world, 'button.reset')
     assert.equal(toast.kind, 'success')
-    assert.equal(toast.text, world.dicts.zh['toast.resetRecovered'])
+    assert.equal(toast.text, world.dicts.zh['notice.resetRecovered'])
   })
 
   await check('C10 普通重置只提示「已重置」，且不留残余的送达警告', async () => {
     const world = await boot({ deliveryWarning: '旧的送达警告' })
     world.routes['/api/soul/config/reset'] = () => ({ ok: true, config: { ...CONFIG }, changed: [], backupPath: null })
     const toast = await clickButton(world, 'button.reset')
-    assert.equal(toast.text, world.dicts.zh['toast.reset'])
+    assert.equal(toast.text, world.dicts.zh['notice.reset'])
     assert.equal(world.controller.store.getSnapshot().error, null, '重置后不应残留上一轮的送达警告')
   })
 
@@ -552,7 +556,7 @@ try {
     const toast = await clickButton(world, 'button.save')
     assert.equal(toast.kind, 'error')
     assert.equal(toast.text, world.dicts.zh['toast.saveFailed'])
-    assert.notEqual(toast.text, world.dicts.zh['toast.noChanges'])
+    assert.notEqual(toast.text, world.dicts.zh['notice.noChanges'])
   })
 
   await check('C12 设置页真的渲染出可点的保存 / 重置按钮（断言不是对着空树跑）', async () => {

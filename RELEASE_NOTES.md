@@ -162,6 +162,13 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - `saving` 期间仍整体跳过（保存流程自身会带着响应回填，中途再插一次只会闪烁）
   - 新增 **C19** 行为断言（5 个子场景）：应用后保存按钮禁用 / store 写回 / 无 dirty 提示 / **手改字段后保存按钮恢复可用** / **编辑中字段不被外部写入覆盖**（`loadConfig` 返回不同的 style 来模拟「别处改了配置」—— 若返回相同值，effect 依赖不变根本不跑，测不出差异）
   - 判断力 **4/4** 组变异被拦（改回 dirty 整体跳过 / 无条件跟随 / 去掉快照记录 / 判断反转）；verify-client 18 → 19 项
+- **保存成功提示对齐宿主模型设置页（内联绿字，不再走 toast）**（用户反馈「保存设置的提示和全局不统一」，并指出模型页保存后是在上方出现一行绿字「已保存 DeepSeek (deepseek-official)。」）
+  - 查证宿主源码（`dsh-client-ui-settings-models`）：保存成功的提示**不是 toast**，而是设置页顶部的一行内联绿字 `.savedNotice` —— `color:var(--dsw-alias-state-success-primary)`、`margin:0`、12px/18px、`role:status` + `aria-live:polite`，位于标题/简介之后、分组列表之前；文案 `已保存 {provider}。`
+  - 生命周期也对齐：**不会自动消失**，只在开始编辑/删除/新增时清除（宿主用 `setSavedTarget(void 0)`；我们用 `dirty` 变 true 时清除）
+  - 保存/重置/应用预设/存为预设/删除预设的成功提示全部改为内联绿字；文案对齐宿主语气（句末带句号、无 emoji 装饰、带上下文对象名）
+  - **错误提示仍走 ui.Toast**（打断性提示浮层更合适，失败原因要读得完 ⇒ 停留 5s）
+  - 新增断言钉住：内联 `<p>` + role/aria-live、绿字规格、dirty 清除、成功文案不得再走 toast、失败仍走 Toast 且停留 5s、8 个 `notice.*` 文案键双语齐备
+  - 期间踩坑：清除用的 effect 一度写在 `dirty` 声明之前 —— 依赖数组在渲染期求值 ⇒ TDZ（`Cannot access 'dirty' before initialization`），已移到定义之后
 **校验**
 
 - `verify-config` 91 → **107 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」、「CSS token 存在性」、「样式对齐宿主栏目」、「人设行操作按钮规格对齐宿主列表按钮」六条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）。样式相关的 13 组变异全部被拦（不存在 token / 加回 padding / 分组退回旧边框 / 标题字重 600 / 标签字号 13px / 硬编码颜色 / 按钮高度 36px / 圆角 6px / 列表 gap 归零 / 行改回共用容器 / 加回行底色 / 删 render / 轮询去掉守卫）
@@ -274,6 +281,13 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - `saving` 期间仍整体跳过（保存流程自身会带着响应回填，中途再插一次只会闪烁）
   - 新增 **C19** 行为断言（5 个子场景）：应用后保存按钮禁用 / store 写回 / 无 dirty 提示 / **手改字段后保存按钮恢复可用** / **编辑中字段不被外部写入覆盖**（`loadConfig` 返回不同的 style 来模拟「别处改了配置」—— 若返回相同值，effect 依赖不变根本不跑，测不出差异）
   - 判断力 **4/4** 组变异被拦（改回 dirty 整体跳过 / 无条件跟随 / 去掉快照记录 / 判断反转）；verify-client 18 → 19 项
+- **保存成功提示对齐宿主模型设置页（内联绿字，不再走 toast）**（用户反馈「保存设置的提示和全局不统一」，并指出模型页保存后是在上方出现一行绿字「已保存 DeepSeek (deepseek-official)。」）
+  - 查证宿主源码（`dsh-client-ui-settings-models`）：保存成功的提示**不是 toast**，而是设置页顶部的一行内联绿字 `.savedNotice` —— `color:var(--dsw-alias-state-success-primary)`、`margin:0`、12px/18px、`role:status` + `aria-live:polite`，位于标题/简介之后、分组列表之前；文案 `已保存 {provider}。`
+  - 生命周期也对齐：**不会自动消失**，只在开始编辑/删除/新增时清除（宿主用 `setSavedTarget(void 0)`；我们用 `dirty` 变 true 时清除）
+  - 保存/重置/应用预设/存为预设/删除预设的成功提示全部改为内联绿字；文案对齐宿主语气（句末带句号、无 emoji 装饰、带上下文对象名）
+  - **错误提示仍走 ui.Toast**（打断性提示浮层更合适，失败原因要读得完 ⇒ 停留 5s）
+  - 新增断言钉住：内联 `<p>` + role/aria-live、绿字规格、dirty 清除、成功文案不得再走 toast、失败仍走 Toast 且停留 5s、8 个 `notice.*` 文案键双语齐备
+  - 期间踩坑：清除用的 effect 一度写在 `dirty` 声明之前 —— 依赖数组在渲染期求值 ⇒ TDZ（`Cannot access 'dirty' before initialization`），已移到定义之后
 **校验**
 
 - `verify-config` 59 → **91 项**（新增：重置逃生口单一实现、注入失败必须留痕、诊断端点形状、两类问题分开上报、版本号不新增常量、三张双语文案表逐键对齐、`verify` 与 `verify:strict` 两条链同序且逐项带 `--strict`；本版追加「预设范围只含人设」「残留的『关于你』不参与匹配与取值」「`normalizePersonas` 剥离历史快照」「保存与应用只遍历同一份白名单」「客户端预设行摘要不读『关于你』」五项，以及**客户端复刻常量对齐**、**人设行对齐机制**、**set_persona schema 真实 DSL 校验**、**deliveryProblemText 取表方向**、**预设应用单一实现路径 + `invalid` 回报**与**命令层三处行为契约**断言）；`verify-store` 14 → **18 项**（新增 `moveAsideConfigFile` 的四条行为断言）

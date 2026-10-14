@@ -799,7 +799,12 @@ window.__ModuleLoader__.load({
       '.soul-persona-danger-armed:hover:not(:disabled){background:var(--dsw-alias-state-error-primary);filter:brightness(1.08)}',
       // 提示词预览：宿主用 bg-module-platform 表达「内嵌代码/只读区」
       '.soul-prompt-pre{margin:8px 0 0 0;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;font-family:var(--ds-font-family-code,Consolas,Menlo,monospace);text-align:left;width:100%;box-sizing:border-box}',
-      // 提示条：改用宿主自己的 Toast 组件（ui.Toast），不再自绘。
+      // —— 保存成功的内联绿字 ——
+      // 规格照抄宿主模型设置页的 .savedNotice（zGbnIq_savedNotice）：
+      // color:var(--dsw-alias-state-success-primary)、margin:0、12px/18px。
+      // 位置也一致：标题区之后、分组列表之前。生命周期不自动消失，
+      // 由下一次编辑（dirty）清除 —— 见组件里的 effect。
+      '.soul-saved-notice{margin:0;color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:18px}',      // 提示条：改用宿主自己的 Toast 组件（ui.Toast），不再自绘。
       // 理由：宿主 Toast 是「设计平台的提示条」——顶部居中、深色底（两种主题下都是
       // bluish-800，标签固定为 bluish-00 白）、radius-lg、shadow-lv3、14px/22px、
       // 成功态自带绿勾图标、z-index 1100（在图片灯箱之上）。自绘的版本在位置
@@ -984,6 +989,18 @@ window.__ModuleLoader__.load({
       'button.reset': '重置默认',
       'status.loading': '加载中...',
       'status.unsaved': '有未保存的更改',
+      // —— 内联绿字（对齐宿主模型设置页的 savedNotice）——
+      // 保存类成功提示不再走 toast（宿主那里根本不用 toast 报成功），
+      // 文案对齐宿主语气：句末带句号、不带 emoji（宿主绿字没有装饰符号）
+      'notice.saved': '设置已保存。',
+      'notice.noChanges': '配置无变化。',
+      'notice.reset': '已重置为默认值。',
+      'notice.resetRecovered': '已重置为默认值（损坏的配置已备份）。',
+      'notice.personaSaved': '已保存预设「{name}」。',
+      'notice.personaUsed': '已应用预设「{name}」。',
+      'notice.personaUnchanged': '预设与当前配置一致。',
+      'notice.personaDeleted': '已删除预设「{name}」。',
+      // 以下错误类仍走 toast（打断性提示）
       'toast.saved': '✅ 设置已保存',
       'toast.noChanges': '✅ 配置无变化',
       'toast.reset': '✅ 已重置为默认值',
@@ -1132,6 +1149,15 @@ window.__ModuleLoader__.load({
       'button.reset': 'Reset to Default',
       'status.loading': 'Loading...',
       'status.unsaved': 'You have unsaved changes',
+      // Inline success notice (mirrors the host models page savedNotice)
+      'notice.saved': 'Settings saved.',
+      'notice.noChanges': 'No changes to save.',
+      'notice.reset': 'Reset to defaults.',
+      'notice.resetRecovered': 'Reset to defaults (the damaged config was backed up).',
+      'notice.personaSaved': 'Saved persona "{name}".',
+      'notice.personaUsed': 'Applied persona "{name}".',
+      'notice.personaUnchanged': 'Persona matches current config.',
+      'notice.personaDeleted': 'Deleted persona "{name}".',
       'toast.saved': '✅ Settings saved',
       'toast.noChanges': '✅ No changes to save',
       'toast.reset': '✅ Reset to defaults',
@@ -1486,6 +1512,14 @@ window.__ModuleLoader__.load({
         toastSeqRef.current += 1
         setToast(next === null ? null : { ...next, seq: toastSeqRef.current })
       }
+      // —— 保存成功的内联绿字（对齐宿主模型设置页的 savedNotice）——
+      //
+      // 查证：宿主保存成功的提示不是 toast，而是设置页顶部的一行绿字
+      // （.savedNotice：state-success-primary 绿、12px/18px、role:status +
+      // aria-live:polite），且**不会自动消失** —— 只在开始编辑/删除/新增时清除。
+      // 这里保持同一生命周期：下一次 dirty（开始编辑）时清除，见下方 effect。
+      const [savedNotice, setSavedNotice] = React.useState(null)
+      const showSavedNotice = (text) => setSavedNotice(text)
       const [showPrompt, setShowPrompt] = React.useState(false)
       const [promptText, setPromptText] = React.useState('')
       const [promptLoading, setPromptLoading] = React.useState(false)
@@ -1584,6 +1618,13 @@ window.__ModuleLoader__.load({
       const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth }
       const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
       const dirty = FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
+
+      // 宿主 savedNotice 语义：一旦用户开始新的编辑（dirty 变 true），
+      // 上一条「已保存」就过时了 ⇒ 清除。（effect 必须放在 dirty 定义之后：
+      // 依赖数组在渲染期求值，放前面会 TDZ —— 实测踩过。）
+      React.useEffect(() => {
+        if (dirty) setSavedNotice(null)
+      }, [dirty])
 
       // 预览是否反映未保存的编辑：只看参与编译的字段（见 PROMPT_FIELD_KEYS）。
       // 这里用 localMap/savedMap 逐字段比，而不是复用上面的 dirty —— 改光轨颜色会让
@@ -1700,10 +1741,13 @@ window.__ModuleLoader__.load({
           showToast({ text: t('toast.saveFailed'), kind: 'error' })
           return
         }
-        showToast({
-          text: Array.isArray(payload.changed) && payload.changed.length > 0 ? t('toast.saved') : t('toast.noChanges'),
-          kind: 'success'
-        })
+        // 成功提示走**内联绿字**（对齐宿主模型设置页的 savedNotice —— 见渲染处注释）：
+        // 有实际变化时报「已保存」；无变化时报「配置无变化」。
+        showSavedNotice(
+          Array.isArray(payload.changed) && payload.changed.length > 0
+            ? t('notice.saved')
+            : t('notice.noChanges')
+        )
         // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
         // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
       }
@@ -1717,10 +1761,7 @@ window.__ModuleLoader__.load({
           showToast({ text: t('toast.resetFailed'), kind: 'error' })
           return
         }
-        showToast({
-          text: payload.backupPath ? t('toast.resetRecovered') : t('toast.reset'),
-          kind: 'success'
-        })
+        showSavedNotice(payload.backupPath ? t('notice.resetRecovered') : t('notice.reset'))
         // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
         // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
       }
@@ -1735,7 +1776,7 @@ window.__ModuleLoader__.load({
           setPersonaName('')
           setShowSavePersona(false)
           await loadPersonas()
-          showToast({ text: t('toast.personaSaved'), kind: 'success' })
+          showSavedNotice(t('notice.personaSaved', { name }))
         } catch (err) {
           showToast({ text: messageOf(err), kind: 'error' })
         }
@@ -1747,12 +1788,14 @@ window.__ModuleLoader__.load({
           await loadPersonas()
           // 服务端回报了被丢弃的非法字段 ⇒ 预设只被部分应用，必须说出来而不是报「已应用」
           const invalid = Array.isArray(payload && payload.invalid) ? payload.invalid : []
-          const toast = invalid.length > 0
-            ? { text: t('toast.personaPartial', { fields: invalid.join(', ') }), kind: 'error' }
-            : (payload && payload.unchanged
-              ? { text: t('toast.personaUnchanged'), kind: 'success' }
-              : { text: t('toast.personaUsed'), kind: 'success' })
-          showToast(toast)
+          if (invalid.length > 0) {
+            showToast({ text: t('toast.personaPartial', { fields: invalid.join(', ') }), kind: 'error' })
+          } else {
+            // 成功提示走内联绿字（对齐宿主 savedNotice）；无变化也照报
+            showSavedNotice(payload && payload.unchanged
+              ? t('notice.personaUnchanged')
+              : t('notice.personaUsed', { name }))
+          }
           // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
         // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
         } catch (err) {
@@ -1777,7 +1820,7 @@ window.__ModuleLoader__.load({
         try {
           await controller.deletePersona(name)
           await loadPersonas()
-          showToast({ text: t('toast.personaDeleted'), kind: 'success' })
+          showSavedNotice(t('notice.personaDeleted', { name }))
         } catch (err) {
           showToast({ text: messageOf(err), kind: 'error' })
         }
@@ -2469,18 +2512,33 @@ window.__ModuleLoader__.load({
 
         dirty && !saving && e('div', { className: 'soul-status soul-dirty' }, t('status.unsaved')),
 
-        // 提示条：直接用宿主的 ui.Toast —— 与全局提示（顶部居中、深色底、
-        // 成功态绿勾、radius-lg、shadow-lv3、1100 层级）完全同源，
-        // 不做任何自绘样式覆盖。生命周期也归它：holdMs 后淡出，onDone 通知卸载。
+        // —— 保存成功的内联绿字（对齐宿主模型设置页的 savedNotice）——
+        //
+        // 查证（dsh-client-ui-settings-models/lib/client.js）：宿主保存成功的提示
+        // **不是 toast**，而是设置页顶部的一行绿字 —— `.savedNotice`
+        // （color:var(--dsw-alias-state-success-primary)、12px/18px、role:status +
+        // aria-live:polite），位于标题/简介之后、分组列表之前。生命周期也完全不同：
+        // **不会自动消失**，只在开始编辑/删除/新增时清除（setSavedTarget(void 0)）。
+        //
+        // 因此这里的保存类成功提示（保存/重置/应用预设）改为内联绿字，与全局一致；
+        // 错误提示仍走 ui.Toast（错误是打断性的，浮层更合适，且宿主错误也是另一套）。
+        // 消失时机对齐宿主：下一次开始编辑（dirty 变 true）或切换开关时清除。
+        savedNotice && e('p', {
+          className: 'soul-saved-notice',
+          role: 'status',
+          'aria-live': 'polite'
+        }, savedNotice),
+
+        // 提示条：只用 toast 承载**错误**（打断性提示，浮层更合适）。
+        // 保存类成功提示已上移为上方的内联绿字 —— 与宿主模型设置页的全局行为一致。
         // key 用「文本 + 次数」：同样文案再次触发时要能重新播一遍动画
         // （宿主文档明确要求 key it by a per-show sequence）。
         toast && e(ui.Toast, {
           key: `${toast.kind}:${toast.text}:${toast.seq}`,
           text: toast.text,
-          // 成功态由宿主渲染设计稿的绿勾；失败态给一个警告图标（宿主 icon 座位默认 warning 色）
-          tone: toast.kind === 'error' ? undefined : 'success',
-          icon: toast.kind === 'error' ? '⚠' : undefined,
-          holdMs: toast.kind === 'error' ? 5000 : 3000,
+          // 失败态给一个警告图标（宿主 icon 座位默认 warning 色）
+          icon: '⚠',
+          holdMs: 5000,
           onDone: () => setToast(null)
         })
       )

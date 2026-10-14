@@ -1374,49 +1374,56 @@ check('操作区贴底对齐（摘要长短不一时按钮不错位）', () => {
   assert.match(body, /flex:1/, '信息区应 flex:1 撑满卡片剩余高度')
 })
 
-check('保存/失败提示用宿主的 ui.Toast，不自绘样式', () => {
-  // 需求：提示要与宿主全局风格统一。宿主导出 Toast 组件（lib/index.js 的 283 个导出
-  // 之一），其规格为：顶部居中 top:40px、深色底 --dsw-alias-toast-bg（两种主题下都是
-  // bluish-800）、标签固定白 bluish-00、radius-lg、shadow-lv3、14px/22px、
-  // 成功态自带绿勾、z-index 1100、3s 停留 + 1s 淡出、通过 onDone 通知卸载。
-  // 自绘版本在位置（屏幕正中）、配色（跟主题卡片色）、字号（13px）、层级（10000）
-  // 上都与全局不一致，故改为直接复用宿主组件。
+check('保存成功走内联绿字（宿主 savedNotice），失败走 ui.Toast，不自绘样式', () => {
+  // 查证（dsh-client-ui-settings-models/lib/client.js）：宿主保存成功的提示
+  // **不是 toast**，而是设置页顶部的一行内联绿字 —— .savedNotice
+  // （color:var(--dsw-alias-state-success-primary)、margin:0、12px/18px、
+  // role:status + aria-live:polite），位于标题/简介之后、分组列表之前。
+  // 生命周期也完全不同：**不会自动消失**，只在开始编辑/删除/新增时清除。
+  // 因此保存类成功提示对齐它；错误仍走 ui.Toast（打断性提示，浮层更合适）。
   const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
-  // ① 必须使用宿主 Toast，而不是自绘 div + 类名
-  assert.match(clientSource, /e\(ui\.Toast, \{/, '提示条应使用宿主的 ui.Toast 组件')
+  // ① 成功绿字：必须存在，且规格照抄宿主 savedNotice
+  assert.match(clientSource, /savedNotice && e\('p', \{/, '成功提示应为内联 <p>（不是 toast）')
+  assert.match(clientSource, /role: 'status'/, '成功绿字应有 role=status（宿主同款）')
+  assert.match(clientSource, /'aria-live': 'polite'/, '成功绿字应有 aria-live=polite（宿主同款）')
+  const notice = cssBlock.match(/\.soul-saved-notice\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(notice, /color:var\(--dsw-alias-state-success-primary\)/, '绿字颜色应为 state-success-primary（宿主同款）')
+  assert.match(notice, /font-size:12px;line-height:18px/, '绿字规格应为 12px/18px（宿主同款）')
+  // ② 绿字不自动消失，dirty 时清除（宿主生命周期）
+  assert.match(clientSource, /if \(dirty\) setSavedNotice\(null\)/, '绿字应在开始编辑（dirty）时清除（宿主语义）')
+  // ③ 失败仍走宿主 ui.Toast
+  assert.match(clientSource, /e\(ui\.Toast, \{/, '失败提示应使用宿主的 ui.Toast')
   assert.match(clientSource, /onDone: \(\) => setToast\(null\)/, '应通过 onDone 卸载（生命周期归宿主 Toast）')
-  // ② 不得残留自绘提示条的样式与动画
+  // ④ 成功提示不得再走 toast（showToast 里不应有成功文案键）
+  assert.equal(
+    /showToast\(\{ text: t\('toast\.saved'\)/.test(clientCode) ||
+    /showToast\(\{ text: t\('toast\.personaUsed'\)/.test(clientCode),
+    false,
+    '保存类成功提示不得再走 toast（应对齐宿主改走内联绿字）'
+  )
+  // ⑤ 不得残留自绘提示条样式与动画、不得自起消失定时器
   assert.equal(/\.soul-toast/.test(cssBlock), false, '不应残留自绘的 .soul-toast 样式')
   assert.equal(/fadeInOut/.test(clientSource), false, '不应残留自绘的 fadeInOut 动画')
-  // ③ 不得自己起消失定时器（宿主按 holdMs 管生命周期；两处各管一次必然漂移）
   assert.equal(
     /setTimeout\(\(\) => setToast\(null\)/.test(clientSource),
     false,
     '不应自己给提示条起消失定时器（宿主 Toast 已按 holdMs 负责）'
   )
-  // ④ 成功态用宿主的绿勾（tone='success'），失败态给警告图标并延长停留
-  assert.match(clientSource, /tone: toast\.kind === 'error' \? undefined : 'success'/, '成功态应交由宿主的 tone="success" 渲染绿勾')
-  assert.match(clientSource, /holdMs: toast\.kind === 'error' \? 5000 : 3000/, '失败提示应停留更久（要读得完失败原因）')
-  // ⑤ key 必须带「每次自增的序号」：宿主文档要求同样文案再次触发时能重播动画
+  // ⑥ 失败 toast 停留 5s（要读得完失败原因）
+  assert.match(clientSource, /holdMs: 5000/, '失败 toast 应停留 5s')
+  // ⑦ key 带自增序号（宿主要求同文案重播）+ 统一 showToast 包装
   assert.match(clientSource, /key: `\$\{toast\.kind\}:\$\{toast\.text\}:\$\{toast\.seq\}`/, 'key 应含每次自增的序号')
   assert.match(clientSource, /toastSeqRef\.current \+= 1/, '缺少自增序号')
-  // ⑥ 序号要统一注入（不能只改部分调用点 —— 那样早晚会漏）
-  // 刻意**不用** useCallback：showToast 只在事件处理器里调用（不进 effect 依赖），
-  // memo 化无收益；且客户端此前只依赖 useState/useEffect/useRef 三个 hook
-  // （测试台的 React 垫片也只实现这三个），少一个 hook 就少一处离线/线上差异面。
   assert.match(clientSource, /const showToast = \(next\) => \{/, '应有统一的 showToast 包装来注入序号')
-  // 用**剥掉注释**的 clientCode 判定：这条断言本身就在注释里提到了 useCallback，
-  // 扫原文会自己把自己绊倒（实测踩过一次）。
   assert.equal(
     /React\.useCallback/.test(clientCode),
     false,
     '不应引入 useCallback（无收益，且会扩大与测试台垫片的实现差异）'
   )
-  assert.equal(
-    /[^w]setToast\(\{/.test(clientSource.replace(/showToast\(/g, '')),
-    false,
-    '不应有绕过 showToast 的 setToast({...}) 调用（会丢掉序号 ⇒ 同样文案不重播）'
-  )
+  // ⑧ 中英文案键齐备（notice.* 一套，双语对齐断言只保证键集，这里钉存在性）
+  for (const k of ['notice.saved', 'notice.noChanges', 'notice.reset', 'notice.resetRecovered', 'notice.personaSaved', 'notice.personaUsed', 'notice.personaDeleted']) {
+    assert.ok(clientSource.includes(`'${k}':`), `缺少文案键 ${k}`)
+  }
 })
 
 check('客户端的动效尊重 prefers-reduced-motion（光轨 / 圆点）', () => {
