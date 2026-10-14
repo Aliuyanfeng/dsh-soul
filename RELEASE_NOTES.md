@@ -280,6 +280,11 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - 判断力 **6/6**：execute 不接 exec / agent 缺失时硬发请求 / **cancelled 被当作批准** / rejected 被误当作批准 / 去掉 catch 兜底 / 退化路径被删 —— 全部被拦
   - 其中③⑥ 首轮**漏网**（判断力只有 4/6），暴露断言过弱：只钉了三态映射的片段，未逐字校验整个函数（cancelled 若返回 allowed，撤回的请求会被应用）；只钉了 `pendingPersonaProposal` 赋值，未验证退化分支真实可达（改成 `if (false)` 能悄悄删掉它）。已改为切片逐字校验
   - verify-config 112 → 113 项
+- **修掉审批服务的 ctx 取错问题**（实测发现：审批从未真正生效，每次都静默退化成文本流程）
+  - 根因：`requestToolApproval(ctx, ...)` 传的是 `registerTools` 的**根 ctx**，而 cordis 的服务按 fiber 作用域可见 —— 根 ctx 上 `get('approval')` 返回 undefined ⇒ 每次都走 `unavailable` 退化分支，功能「看起来没生效」
+  - 权威参照：`dsh-tools` 自己的 `serviceAsk` 用**持有 tools 服务的 ctx** 取 `approval`
+  - 修法：调用处改传 `toolsCtx`；服务解析改为多候选（`agent.ctx`（agent-scoped，审批本就该路由到该 agent 的会话）→ `toolsCtx` 兜底），任一命中即用。已查证 `Agent` 接口确有 `readonly ctx: Context`（`dsh-agent/lib/types/runtime-types.d.ts`）
+  - 断言同步：改为钉「多候选解析 + 调用处必须传 toolsCtx」，而非字面 `ctx.get('approval')`
 **校验**
 
 - `verify-config` 91 → **113 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」、「CSS token 存在性」、「样式对齐宿主栏目」、「人设行操作按钮规格对齐宿主列表按钮」六条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）。样式相关的 13 组变异全部被拦（不存在 token / 加回 padding / 分组退回旧边框 / 标题字重 600 / 标签字号 13px / 硬编码颜色 / 按钮高度 36px / 圆角 6px / 列表 gap 归零 / 行改回共用容器 / 加回行底色 / 删 render / 轮询去掉守卫）
@@ -510,6 +515,11 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - 判断力 **6/6**：execute 不接 exec / agent 缺失时硬发请求 / **cancelled 被当作批准** / rejected 被误当作批准 / 去掉 catch 兜底 / 退化路径被删 —— 全部被拦
   - 其中③⑥ 首轮**漏网**（判断力只有 4/6），暴露断言过弱：只钉了三态映射的片段，未逐字校验整个函数（cancelled 若返回 allowed，撤回的请求会被应用）；只钉了 `pendingPersonaProposal` 赋值，未验证退化分支真实可达（改成 `if (false)` 能悄悄删掉它）。已改为切片逐字校验
   - verify-config 112 → 113 项
+- **修掉审批服务的 ctx 取错问题**（实测发现：审批从未真正生效，每次都静默退化成文本流程）
+  - 根因：`requestToolApproval(ctx, ...)` 传的是 `registerTools` 的**根 ctx**，而 cordis 的服务按 fiber 作用域可见 —— 根 ctx 上 `get('approval')` 返回 undefined ⇒ 每次都走 `unavailable` 退化分支，功能「看起来没生效」
+  - 权威参照：`dsh-tools` 自己的 `serviceAsk` 用**持有 tools 服务的 ctx** 取 `approval`
+  - 修法：调用处改传 `toolsCtx`；服务解析改为多候选（`agent.ctx`（agent-scoped，审批本就该路由到该 agent 的会话）→ `toolsCtx` 兜底），任一命中即用。已查证 `Agent` 接口确有 `readonly ctx: Context`（`dsh-agent/lib/types/runtime-types.d.ts`）
+  - 断言同步：改为钉「多候选解析 + 调用处必须传 toolsCtx」，而非字面 `ctx.get('approval')`
 **校验**
 
 - `verify-config` 59 → **91 项**（新增：重置逃生口单一实现、注入失败必须留痕、诊断端点形状、两类问题分开上报、版本号不新增常量、三张双语文案表逐键对齐、`verify` 与 `verify:strict` 两条链同序且逐项带 `--strict`；本版追加「预设范围只含人设」「残留的『关于你』不参与匹配与取值」「`normalizePersonas` 剥离历史快照」「保存与应用只遍历同一份白名单」「客户端预设行摘要不读『关于你』」五项，以及**客户端复刻常量对齐**、**人设行对齐机制**、**set_persona schema 真实 DSL 校验**、**deliveryProblemText 取表方向**、**预设应用单一实现路径 + `invalid` 回报**与**命令层三处行为契约**断言）；`verify-store` 14 → **18 项**（新增 `moveAsideConfigFile` 的四条行为断言）

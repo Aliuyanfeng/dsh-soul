@@ -2232,8 +2232,34 @@ check('set_persona 接入宿主原生审批（三态 + 文本退化）', () => {
     /async execute\(args, exec\) \{/,
     'execute 必须接住 exec 参数（否则拿不到 agent，审批无法路由到会话）'
   )
-  // ② 服务获取用 ctx.get('approval')（可选依赖：拿不到就退化）
-  assert.match(indexCode, /ctx\.get\('approval'\)/, '应通过 ctx.get(\'approval\') 取审批服务')
+  // ② 服务解析：多候选（agent 的 agent-scoped ctx 优先，注册工具的 ctx 兜底），
+  //    任一命中即用；全部拿不到则退化。
+  //
+  //    实测教训：最初用 registerTools 的**根 ctx** 取服务，ctx.get('approval') 返回
+  //    undefined ⇒ 每次都退化成文本流程，看起来像「功能没生效」。
+  //    权威写法见 dsh-tools 自己的 serviceAsk：用持有 tools 的 ctx 取审批服务。
+  assert.match(indexCode, /\.get\('approval'\)/, '应通过 get(\'approval\') 取审批服务')
+  assert.match(
+    indexCode,
+    /const candidates = \[\]/,
+    '服务解析应逐候选尝试（单一 ctx 取不到时会静默退化）'
+  )
+  assert.match(
+    indexCode,
+    /if \(agent && typeof agent\.ctx === 'object'[^\n]*candidates\.push\(agent\.ctx\)/,
+    'agent 的 agent-scoped ctx 应作为首选候选（审批需路由到该 agent 的会话）'
+  )
+  assert.match(
+    indexCode,
+    /if \(ctx && typeof ctx\.get === 'function'\) candidates\.push\(ctx\)/,
+    '注册工具的 ctx 应作为兜底候选'
+  )
+  // 调用处必须传「注册工具的 ctx」而不是 apply 的根 ctx
+  assert.match(
+    indexCode,
+    /requestToolApproval\(toolsCtx, exec, proposalChanges\)/,
+    '审批调用应传 toolsCtx（注册工具的 ctx），传根 ctx 会取不到审批服务'
+  )
   // ③ agent 缺失时必须退化而不是硬发请求 —— 宿主客户端靠 agent 解析会话归属，
   //    拿不到会放弃应答（dsh-client-ui-approval 里 scopeOf(owner) === undefined ⇒ next()）
   assert.match(

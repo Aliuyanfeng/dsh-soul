@@ -1664,7 +1664,21 @@ async function requestToolApproval(ctx, exec, changes) {
     //（dsh-client-ui-approval 里 scopeOf(owner) === undefined 时直接 next()）。
     const agent = exec && exec.agent
     if (!agent) return 'unavailable'
-    const approval = typeof ctx.get === 'function' ? ctx.get('approval') : undefined
+    // 服务解析：以**注册工具的 ctx**（toolsCtx）为主 —— 这与 dsh-tools 自己的
+    // serviceAsk 写法一致（它在工具执行中用 this.ctx.get('approval')）。
+    //
+    // 实测教训：最初传的是 registerTools 的根 ctx，ctx.get('approval') 返回
+    // undefined ⇒ 每次都退化成 /soul confirm 文本流程，看起来像「功能没生效」。
+    // 另外 cordis 的 agent 作用域可能更精确（审批本就该路由到该 agent 的会话），
+    // 故一并作为候选，任一命中即用。
+    const candidates = []
+    if (agent && typeof agent.ctx === 'object' && agent.ctx && typeof agent.ctx.get === 'function') candidates.push(agent.ctx)
+    if (ctx && typeof ctx.get === 'function') candidates.push(ctx)
+    let approval
+    for (const c of candidates) {
+      const found = c.get('approval')
+      if (found && typeof found.request === 'function') { approval = found; break }
+    }
     if (!approval || typeof approval.request !== 'function') return 'unavailable'
 
     const detail = Object.entries(changes)
@@ -1833,7 +1847,7 @@ function registerTools(ctx) {
                 return { ok: true, message: T0.toolNoChanges }
               }
               const proposalChanges = Object.fromEntries(pendingKeys.map((key) => [key, patch[key]]))
-              const verdict = await requestToolApproval(ctx, exec, proposalChanges)
+              const verdict = await requestToolApproval(toolsCtx, exec, proposalChanges)
               if (verdict === 'rejected') {
                 return { ok: false, message: T0.toolRejected }
               }
