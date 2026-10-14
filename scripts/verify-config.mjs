@@ -2295,6 +2295,19 @@ check('卡背（详情面）展示全部维度与全文，且不动卡片 transf
     /flex:1 1 auto/,
     '「返回」应在卡背按钮行里弹性占满（删除定宽并行）'
   )
+  // ⑪ 整面点击翻面：正面 face 自带 onClick（任意处点击翻到卡背，用户需求）；
+  //    「使用」按钮必须 stopPropagation（点了就该用，不能顺带翻面），cursor:pointer 提示。
+  const frontFace = clientSource.slice(
+    clientSource.indexOf("className: 'soul-persona-face soul-persona-face-front'"),
+    clientSource.indexOf("className: 'soul-persona-face soul-persona-face-back'")
+  )
+  assert.match(frontFace, /onClick: flipped \? undefined : \(\) => setFlippedName\(name\)/, '正面应整面可点翻面（onClick 在 face 上）')
+  assert.match(frontFace, /ev\?\.stopPropagation\(\)/, '「使用」按钮应 stopPropagation（点使用不能顺带翻面）')
+  assert.match(
+    cssBlock.match(/\.soul-persona-face-front\{([^}]*)\}/)?.[1] ?? '',
+    /cursor:pointer/,
+    '正面应有 cursor:pointer（整面可点的可点性提示）'
+  )
 })
 
 check('「存为预设」入口与「保存设置」并列，且点开才问名字', () => {
