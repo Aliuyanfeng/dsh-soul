@@ -210,6 +210,7 @@ const PROMPT_TEXT = {
     toolValidationFailed: '配置校验失败：',
     toolProposal: '已收到人设变更请求（确认模式已开启，尚未生效）：',
     toolRejected: '你在审批面板中拒绝了这次人设变更，未做任何修改。',
+    toolApprovalDisabled: '说明：本次会话的审批通道已被禁用（approval policy = never），因此没有弹出确认面板；这不代表你做了拒绝操作。',
     toolProposalHint: '在用户确认前不会生效；用户可用 /soul confirm 确认，或 /soul reject 拒绝。'
   },
   en: {
@@ -266,6 +267,7 @@ const PROMPT_TEXT = {
     toolValidationFailed: 'Config validation failed: ',
     toolProposal: 'Persona change requested (confirmation mode is on — not applied yet):',
     toolRejected: 'You rejected this persona change in the approval panel — nothing was modified.',
+    toolApprovalDisabled: 'Note: the approval channel is disabled in this session (approval policy = never), so no confirmation panel appeared; this does not mean you rejected anything.',
     toolProposalHint: 'It stays pending until the user confirms with /soul confirm or rejects with /soul reject.'
   }
 }
@@ -1658,6 +1660,26 @@ function approvalOutcomeOf(outcome) {
   return 'unavailable'
 }
 
+// 读取当前生效的审批策略。复刻宿主 ApprovalService.effectivePolicy 的算法
+// （overrideOf(session) ?? config.policy ?? 'ask'）。
+//
+// 任一项不可读时保守回落到 'ask' —— 回落到 ask 意味着「仍去问用户」，
+// 失败方向是「多问一次」而不是「静默改配置」。
+function resolveApprovalPolicy(approval, agent) {
+  try {
+    const session = agent && agent.session
+    if (typeof approval.overrideOf === 'function' && session) {
+      const override = approval.overrideOf(session)
+      if (override === 'never' || override === 'ask') return override
+    }
+    const configured = approval.config && approval.config.policy
+    if (configured === 'never' || configured === 'ask') return configured
+  } catch {
+    // 读策略失败不应影响主流程 —— 继续按 ask 走（让宿主的真实判定说话）
+  }
+  return 'ask'
+}
+
 async function requestToolApproval(ctx, exec, changes) {
   try {
     // agent 是必须的：宿主客户端表单靠它解析会话归属，拿不到就会放弃应答
@@ -1680,6 +1702,25 @@ async function requestToolApproval(ctx, exec, changes) {
       if (found && typeof found.request === 'function') { approval = found; break }
     }
     if (!approval || typeof approval.request !== 'function') return 'unavailable'
+
+    // —— 策略预判：避免把「通道被禁用」误报成「用户拒绝」——
+    //
+    // 宿主在 effectivePolicy(session) === 'never' 时**不问任何人**，直接返回
+    // 'rejected'（见 dsh-user-approval 的 decide()）。而 'rejected' 这个取值把
+    // 两件完全不同的事混在一起：
+    //   ① 用户真的点了「拒绝」
+    //   ② 审批通道被策略禁用，无人被询问
+    // 若不区分，就会向用户报告一件**从未发生的事**（实测踩过：策略为 never 时
+    // 提示「你在审批面板中拒绝了」，而用户根本没看到面板）。
+    //
+    // 故在发起请求前复刻宿主的策略算法，判定为 'never' 时直接走文本确认
+    // （与 'unavailable' 同一落点），并给出准确文案。
+    //
+    // 为什么不直接应用变更（把 never 当作「无需确认」）：requireToolConfirmation
+    // 是用户为本功能单独设的偏好，而 never 是会话级的审批通道策略。用后者悄悄推翻
+    // 前者，等于让一个通道开关替用户取消了他自己的功能选择。真要免确认，正确做法是
+    // 关掉设置页里的「人设变更需确认」开关 —— 那才是为这件事准备的开关。
+    if (resolveApprovalPolicy(approval, agent) === 'never') return 'policy-disabled'
 
     const detail = Object.entries(changes)
       .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
@@ -1833,8 +1874,13 @@ function registerTools(ctx) {
             // 三态处理：
             //   allowed     → 用户已批准，继续往下走写盘（故这里不 return）
             //   rejected    → 用户拒绝，返回失败且不落盘
-            //   unavailable → 拿不到审批能力（无 agent / 宿主未装审批服务 /
-            //                 客户端没有应答者），退化到原有的 /soul confirm 文本流程
+            // 三态 + 一个策略态：
+            //   allowed         → 用户已批准，继续往下走写盘（故这里不 return）
+            //   rejected        → 用户明确拒绝，返回失败且不落盘
+            //   unavailable     → 拿不到审批能力（无 agent / 宿主未装审批服务 /
+            //                     客户端没有应答者），退化到 /soul confirm 文本流程
+            //   policy-disabled → 审批通道被会话策略禁用（never）⇒ 同样走文本流程，
+            //                     但文案必须说明「通道被禁用」，不能谎称用户拒绝
             //
             // 退化路径必须保留：纯 TUI 或无 Web UI 的场景没有应答者，审批会返回
             // 'unavailable'，此时文本流程是唯一可用的确认途径。删掉它会让这些场景
@@ -1851,14 +1897,17 @@ function registerTools(ctx) {
               if (verdict === 'rejected') {
                 return { ok: false, message: T0.toolRejected }
               }
-              if (verdict === 'unavailable') {
+              if (verdict === 'unavailable' || verdict === 'policy-disabled') {
                 pendingPersonaProposal = { patch: proposalChanges, proposedAt: new Date().toISOString() }
                 const detail = pendingKeys.map((key) => `${key}=${JSON.stringify(patch[key])}`).join(', ')
+                // 通道被禁用时补一句准确说明：否则用户会以为是面板出了问题，
+                // 或误以为是自己拒绝了（此前的错误措辞正是这么来的）。
+                const why = verdict === 'policy-disabled' ? `${T0.toolApprovalDisabled}\n` : ''
                 return {
                   ok: true,
                   pending: true,
                   changes: proposalChanges,
-                  message: `${T0.toolProposal}\n${detail}\n${T0.toolProposalHint}`
+                  message: `${T0.toolProposal}\n${detail}\n${why}${T0.toolProposalHint}`
                 }
               }
               // verdict === 'allowed' ⇒ 落到下面的写盘路径

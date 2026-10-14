@@ -280,14 +280,22 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - 判断力 **6/6**：execute 不接 exec / agent 缺失时硬发请求 / **cancelled 被当作批准** / rejected 被误当作批准 / 去掉 catch 兜底 / 退化路径被删 —— 全部被拦
   - 其中③⑥ 首轮**漏网**（判断力只有 4/6），暴露断言过弱：只钉了三态映射的片段，未逐字校验整个函数（cancelled 若返回 allowed，撤回的请求会被应用）；只钉了 `pendingPersonaProposal` 赋值，未验证退化分支真实可达（改成 `if (false)` 能悄悄删掉它）。已改为切片逐字校验
   - verify-config 112 → 113 项
-- **修掉审批服务的 ctx 取错问题**（实测发现：审批从未真正生效，每次都静默退化成文本流程）
+- **修掉审批服务的 ctx 取错问题**（~~实测发现：审批从未真正生效~~ —— 此表述已纠正，见下方「纠正一处错误技术记录」）
   - 根因：`requestToolApproval(ctx, ...)` 传的是 `registerTools` 的**根 ctx**，而 cordis 的服务按 fiber 作用域可见 —— 根 ctx 上 `get('approval')` 返回 undefined ⇒ 每次都走 `unavailable` 退化分支，功能「看起来没生效」
   - 权威参照：`dsh-tools` 自己的 `serviceAsk` 用**持有 tools 服务的 ctx** 取 `approval`
   - 修法：调用处改传 `toolsCtx`；服务解析改为多候选（`agent.ctx`（agent-scoped，审批本就该路由到该 agent 的会话）→ `toolsCtx` 兜底），任一命中即用。已查证 `Agent` 接口确有 `readonly ctx: Context`（`dsh-agent/lib/types/runtime-types.d.ts`）
   - 断言同步：改为钉「多候选解析 + 调用处必须传 toolsCtx」，而非字面 `ctx.get('approval')`
+- **区分「审批通道被禁用」与「用户真的拒绝」**（用户反馈：策略已是 never，为何还要拒绝？）
+  - 问题：宿主在 `effectivePolicy(session) === 'never'` 时**不问任何人**，直接返回 `'rejected'`（见 `dsh-user-approval` 的 `decide()`）。而 `'rejected'` 这个取值把两件完全不同的事混在一起：① 用户真的点了拒绝；② 审批通道被策略禁用、无人被询问。此前不区分，于是向用户报告了一件**从未发生的事**（提示「你在审批面板中拒绝了」，而用户根本没看到面板）
+  - 修法：发起请求前先解析策略（复刻宿主 `effectivePolicy` 算法：`overrideOf(session) ?? config.policy ?? 'ask'`），判定为 `never` 时返回 `policy-disabled` 并走文本确认，同时追加一句准确说明（`toolApprovalDisabled`：「本次会话的审批通道已被禁用……这不代表你做了拒绝操作」）
+  - **不直接应用变更**（即不把 `never` 当作「无需确认」）：`requireToolConfirmation` 是用户为本功能单独设的偏好，`never` 是会话级审批通道策略。用后者悄悄推翻前者，等于让一个通道开关替用户取消了他自己的功能选择。真要免确认，正确做法是关掉设置页里那个开关
+  - 不可读策略时保守回落到 `ask`：失败方向是「多问一次」，而不是「静默改配置」
+  - 行为验证 **5/5**：never ⇒ 文本确认 + 准确文案（且不白问一次）/ ask+真拒绝 ⇒ 措辞指向用户拒绝 / ask+允许 ⇒ 落盘 / 会话级覆盖优先于部署默认 / 读策略抛异常 ⇒ 保守按 ask
+  - 判断力 **5/5**：去掉预判 / 丢掉会话级覆盖 / 读失败回落到 never / 不追加说明 / 真拒绝被误报成成功 —— 全部被拦
+- **纠正一处错误技术记录**：上一笔提交（`ab01958`）把「root ctx 取不到 approval」写成**实测结论**，实为**推断**。已查明真因是 **DSH 未重启**（进程启动 16:14:53，早于修复写入 16:48:40；宿主侧插件代码只在启动时加载一次），期间还叠加了会话策略 `never`。`ctx` 那处修改**本身仍然正确**（`dsh-tools` 的权威写法就是用持有 tools 的 ctx 取审批服务），只是并非「审批未生效」的原因
 **校验**
 
-- `verify-config` 91 → **113 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」、「CSS token 存在性」、「样式对齐宿主栏目」、「人设行操作按钮规格对齐宿主列表按钮」六条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）。样式相关的 13 组变异全部被拦（不存在 token / 加回 padding / 分组退回旧边框 / 标题字重 600 / 标签字号 13px / 硬编码颜色 / 按钮高度 36px / 圆角 6px / 列表 gap 归零 / 行改回共用容器 / 加回行底色 / 删 render / 轮询去掉守卫）
+- `verify-config` 91 → **113 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」、「CSS token 存在性」、「样式对齐宿主栏目」、「人设行操作按钮规格对齐宿主列表按钮」六条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）。样式相关的 13 组变异全部被拦（不存在 token / 加回 padding / 分组退回旧边框 / 标题字重 600 / 标签字号 13px / 硬编码颜色 / 按钮高度 36px / 圆角 6px / 列表 gap 归零 / 行改回共用容器 / 加回行底色 / 删 render / 轮询去掉守卫）；本次另加「审批策略预判」契约（策略算法逐字校验 + policy-disabled 文案），5 组变异全部被拦
 
 ### v0.7.1（2026-10-10）
 
@@ -515,7 +523,7 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - 判断力 **6/6**：execute 不接 exec / agent 缺失时硬发请求 / **cancelled 被当作批准** / rejected 被误当作批准 / 去掉 catch 兜底 / 退化路径被删 —— 全部被拦
   - 其中③⑥ 首轮**漏网**（判断力只有 4/6），暴露断言过弱：只钉了三态映射的片段，未逐字校验整个函数（cancelled 若返回 allowed，撤回的请求会被应用）；只钉了 `pendingPersonaProposal` 赋值，未验证退化分支真实可达（改成 `if (false)` 能悄悄删掉它）。已改为切片逐字校验
   - verify-config 112 → 113 项
-- **修掉审批服务的 ctx 取错问题**（实测发现：审批从未真正生效，每次都静默退化成文本流程）
+- **修掉审批服务的 ctx 取错问题**（~~实测发现：审批从未真正生效~~ —— 此表述已纠正，见下方「纠正一处错误技术记录」）
   - 根因：`requestToolApproval(ctx, ...)` 传的是 `registerTools` 的**根 ctx**，而 cordis 的服务按 fiber 作用域可见 —— 根 ctx 上 `get('approval')` 返回 undefined ⇒ 每次都走 `unavailable` 退化分支，功能「看起来没生效」
   - 权威参照：`dsh-tools` 自己的 `serviceAsk` 用**持有 tools 服务的 ctx** 取 `approval`
   - 修法：调用处改传 `toolsCtx`；服务解析改为多候选（`agent.ctx`（agent-scoped，审批本就该路由到该 agent 的会话）→ `toolsCtx` 兜底），任一命中即用。已查证 `Agent` 接口确有 `readonly ctx: Context`（`dsh-agent/lib/types/runtime-types.d.ts`）

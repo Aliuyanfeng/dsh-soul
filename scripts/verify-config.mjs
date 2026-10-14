@@ -2310,6 +2310,26 @@ check('set_persona 接入宿主原生审批（三态 + 文本退化）', () => {
   // ⑧ 拒绝与退化都要有对应文案，且中英各一份
   assert.match(indexCode, /return \{ ok: false, message: T0\.toolRejected \}/, 'rejected 应返回失败并说明原因')
   assert.equal((indexCode.match(/toolRejected:/g) || []).length, 2, 'toolRejected 文案应中英各一份')
+  // ⑧b 策略预判：'rejected' 把两件事混在一起（用户真的拒绝 / 通道被策略禁用而无人被询问），
+  //     必须在发起请求前先读策略，否则会向用户报告一件从未发生的事
+  //     （实测踩过：policy=never 时提示「你在审批面板中拒绝了」，而用户根本没看到面板）。
+  assert.match(
+    indexCode,
+    /function resolveApprovalPolicy\(approval, agent\)/,
+    '应能读取当前生效的审批策略（用于区分「通道禁用」与「用户拒绝」）'
+  )
+  // 算法必须与宿主 effectivePolicy 一致：overrideOf(session) ?? config.policy ?? 'ask'
+  const policyFnAt = indexCode.indexOf('function resolveApprovalPolicy(')
+  const policyFn = indexCode.slice(policyFnAt, policyFnAt + 900)
+  assert.match(policyFn, /approval\.overrideOf\(session\)/, '策略算法应先读会话级覆盖')
+  assert.match(policyFn, /approval\.config && approval\.config\.policy/, '再读部署默认策略')
+  assert.match(policyFn, /return 'ask'/, "不可读时应保守回落到 'ask'（失败方向是「多问一次」而非「静默改配置」）")
+  assert.match(
+    indexCode,
+    /if \(resolveApprovalPolicy\(approval, agent\) === 'never'\) return 'policy-disabled'/,
+    "策略为 never 时应返回 policy-disabled（走文本确认），而不是让宿主的 'rejected' 冒充用户拒绝"
+  )
+  assert.equal((indexCode.match(/toolApprovalDisabled:/g) || []).length, 2, 'toolApprovalDisabled 文案应中英各一份')
   // ⑨ 确认模式关闭时不得调用审批
   const decideAt = indexCode.indexOf('const verdict = await requestToolApproval')
   const guardAt = indexCode.lastIndexOf('if (snapshot.requireToolConfirmation) {', decideAt)
@@ -2325,8 +2345,14 @@ check('set_persona 接入宿主原生审批（三态 + 文本退化）', () => {
   )
   assert.match(
     branchSlice,
-    /if \(verdict === 'unavailable'\) \{/,
-    '应有 unavailable 分支（退化到 /soul confirm 文本流程，纯 TUI 场景唯一途径）'
+    /if \(verdict === 'unavailable' \|\| verdict === 'policy-disabled'\) \{/,
+    '应有 unavailable / policy-disabled 分支（退化到 /soul confirm 文本流程，纯 TUI 场景唯一途径）'
+  )
+  // 通道被禁用时必须给出准确说明，不得谎称用户拒绝
+  assert.match(
+    branchSlice,
+    /verdict === 'policy-disabled' \? `\$\{T0\.toolApprovalDisabled\}/,
+    'policy-disabled 时应追加「通道被禁用」说明（此前会误报为「用户拒绝」）'
   )
   assert.equal(
     /if \(false\)/.test(branchSlice),
