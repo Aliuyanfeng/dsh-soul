@@ -715,7 +715,12 @@ window.__ModuleLoader__.load({
       // 基类之前，于是基类的 flex:1 覆盖了这里的 flex:none —— 后果是自定义预设
       // 指令较短时，剩余空间把「返回」按钮**拉伸到 98px 高**（实测：短文本 98px
       // vs 长文本 21px）。加前缀后权重更高，与声明顺序无关。
-      '.soul-persona-face-back .soul-persona-back-btn{flex:none;margin-top:auto}',
+      // 卡背底部按钮行：返回（弹性占满）+ 删除（自建卡才有，定宽）。
+      // .soul-persona-back-btn 的 margin-top:auto 移到本行容器上 —— 按钮行整体贴底。
+      '.soul-persona-back-actions{display:flex;align-items:center;gap:8px;flex:none;margin-top:auto}',
+      '.soul-persona-back-btn{flex:1 1 auto}',
+      // 删除在卡背是「次要管理操作」：定宽描边（armed 态复用正面同款变实心样式）
+      '.soul-persona-back-del{flex:0 0 64px}',
       '.soul-persona-details{flex:0 0 auto;padding:0 10px;background:transparent;color:var(--dsw-alias-label-secondary);box-shadow:inset 0 0 0 .5px var(--dsw-alias-settings-card-stroke);font-size:12px;font-weight:500}',
       '.soul-persona-details:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);filter:none}',
       // 插画区：正方形主视觉。非内置预设没有配套插画，用主题色渐变兜底
@@ -947,6 +952,7 @@ window.__ModuleLoader__.load({
       // 列表拉取失败（此前是空 catch ⇒ 界面会永远停在「加载中...」）
       'personas.loadFailed': '人设预设加载失败：{reason}',
       'personas.builtin': '内置',
+      'personas.default': '默认',
       'personas.hint': '预设只保存 Agent 的人设（风格 / 特质 / 回复长度 / 输出语言 / 自定义指令），不含「关于你」；内置预设随插件提供，不可删除',
       'style.professional': '专业严谨',
       'style.casual': '轻松自然',
@@ -1107,6 +1113,7 @@ window.__ModuleLoader__.load({
       // 列表拉取失败（此前是空 catch ⇒ 界面会永远停在「加载中...」）
       'personas.loadFailed': 'Failed to load personas: {reason}',
       'personas.builtin': 'Built-in',
+      'personas.default': 'Default',
       'personas.hint': 'A persona saves the agent personality only (style / traits / reply length / reply language / custom instructions), never your own identity fields; built-ins ship with the plugin and cannot be deleted',
       'style.professional': 'Professional',
       'style.casual': 'Casual',
@@ -1422,7 +1429,7 @@ window.__ModuleLoader__.load({
                 onClick: () => use(name)
               },
                 e('span', { className: 'soul-chip-item-name' }, name),
-                entry.builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
+                entry.builtin && e('span', { className: 'soul-persona-badge' }, name === '默认' ? t('personas.default') : t('personas.builtin')),
                 current && e('span', { className: 'soul-chip-item-mark' }, '★')
               )
             })
@@ -2191,7 +2198,7 @@ window.__ModuleLoader__.load({
                             }),
                             // 渐变遮罩：让压在图上的名称/摘要有足够对比度
                             e('div', { className: 'soul-persona-art-veil', 'aria-hidden': true }),
-                            builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
+                            builtin && e('span', { className: 'soul-persona-badge' }, name === '默认' ? t('personas.default') : t('personas.builtin')),
                             // 位置指示只出现在当前卡片上：左右露边的卡片若也显示「i / n」，
                             // 三张会同时出现同一个计数，看起来像显示错误。
                             current && e('span', { className: 'soul-persona-card-pos' }, `${index + 1} / ${total}`),
@@ -2214,23 +2221,11 @@ window.__ModuleLoader__.load({
                                 className: name === activePersona ? 'soul-persona-action soul-persona-active' : 'soul-persona-action',
                                 onClick: () => handleUsePersona(name)
                               }, name === activePersona ? t('personas.active') : t('personas.use')),
-                              // 内置预设不提供删除（后端也拒绝）：留空占位槽让两类卡片按钮同列。
-                              // 刻意不是按钮，避免造出一个点了没反应的控件。
-                              builtin
-                                ? e('span', { className: 'soul-persona-slot', 'aria-hidden': true })
-                                : e('button', {
-                                  type: 'button',
-                                  // 二次确认态：按钮变实心危险色 + 文案改为「确认删除？」，
-                                  // 与普通态（描边、文案「删除」）形成明显区别，避免误点。
-                                  className: pendingDelete === name
-                                    ? 'soul-persona-action soul-persona-danger soul-persona-danger-armed'
-                                    : 'soul-persona-action soul-persona-danger',
-                                  'data-armed': pendingDelete === name ? 'true' : 'false',
-                                  title: t('personas.confirmDelete', { name }),
-                                  onClick: () => handleDeletePersona(name)
-                                }, pendingDelete === name ? t('personas.confirmDeleteShort') : t('personas.delete')),
-                              // 详情入口：只在当前卡上出现（叠层两张不给点）。
-                              // 放在操作区最右、做成定宽小按钮，避免与「使用」抢视觉。
+                              // 「删除」已移到**卡背**（管理语境，与「返回」并排）——
+                              // 此前夹在「使用/详情」中间的 43px 窄条观感怪异（用户反馈），
+                              // 且自建卡三钮 vs 内置卡两钮导致两类卡观感不齐。
+                              // 现在两类卡正面都是「使用 + 详情」，完全一致。
+                              // 「详情」只在当前卡上出现（叠层两张不给点）。
                               current && e('button', {
                                 type: 'button',
                                 className: 'soul-persona-action soul-persona-details',
@@ -2251,7 +2246,7 @@ window.__ModuleLoader__.load({
                         },
                           e('div', { className: 'soul-persona-back-head' },
                             e('span', { className: 'soul-persona-back-name' }, name),
-                            builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin'))
+                            builtin && e('span', { className: 'soul-persona-badge' }, name === '默认' ? t('personas.default') : t('personas.builtin'))
                           ),
                           e('div', { className: 'soul-persona-dims' },
                             ...PERSONA_DIM_KEYS.map((dim) => e('div', { className: 'soul-persona-dim', key: dim },
@@ -2261,12 +2256,27 @@ window.__ModuleLoader__.load({
                           ),
                           e('div', { className: 'soul-persona-back-label' }, t('personas.customInstructions')),
                           e('div', { className: 'soul-persona-fulltext' }, personaFullText(entry)),
-                          // 返回：背面唯一的可点元素（放在底部，与正面的按钮区呼应）
-                          e('button', {
-                            type: 'button',
-                            className: 'soul-persona-action soul-persona-back-btn',
-                            onClick: () => setFlippedName(null)
-                          }, t('personas.flipBack'))
+                          // 底部按钮行：「返回」+「删除」（仅自建卡）。
+                          // 「删除」从正面移到这里（用户反馈正面三钮拥挤、夹缝观感差）：
+                          // 背面是「查看 / 管理」语境，删除放这里语义顺；且底部本就是
+                          // 一行按钮，并排进来零高度成本。二次确认（armed 态 + 5s 超时）
+                          // 逻辑不变。
+                          e('div', { className: 'soul-persona-back-actions' },
+                            e('button', {
+                              type: 'button',
+                              className: 'soul-persona-action soul-persona-back-btn',
+                              onClick: () => setFlippedName(null)
+                            }, t('personas.flipBack')),
+                            !builtin && e('button', {
+                              type: 'button',
+                              className: pendingDelete === name
+                                ? 'soul-persona-action soul-persona-danger soul-persona-danger-armed'
+                                : 'soul-persona-action soul-persona-danger soul-persona-back-del',
+                              'data-armed': pendingDelete === name ? 'true' : 'false',
+                              title: t('personas.confirmDelete', { name }),
+                              onClick: () => handleDeletePersona(name)
+                            }, pendingDelete === name ? t('personas.confirmDeleteShort') : t('personas.delete'))
+                          )
                         )
                         )   // ← 关闭 .soul-persona-flipper
                       )

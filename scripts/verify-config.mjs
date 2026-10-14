@@ -639,9 +639,13 @@ check('内置人设非空，名称合法且不超上限', () => {
   }
 })
 
-check('内置人设只声明 PERSONA_FIELDS 内的键', () => {
+check('内置人设（含默认）只声明 PERSONA_FIELDS 内的键', () => {
+  // 「默认」也是内置项（声明 6 维，language 豁免），用 mergePersonas 统一取视图，
+  // 避免直接索引 BUILTIN_PERSONAS（默认不在其中 ⇒ undefined 崩）。
+  const view = mergePersonas(null)
   for (const name of builtinPersonaNames()) {
-    for (const key of Object.keys(BUILTIN_PERSONAS[name])) {
+    for (const key of Object.keys(view[name])) {
+      if (key === 'builtin') continue
       assert.ok(PERSONA_FIELDS.includes(key), `${name} 含非人设字段：${key}`)
     }
   }
@@ -652,10 +656,16 @@ check('内置人设不声明「关于你」、输出语言与总开关', () => {
   // 另外钉住内置数据本身也不写；language 在预设范围内，但内置是给任何语言用户共用的
   // 通用人格，写死会让另一种语言的用户应用一次就被强行切回；enabled 是总开关，
   // 预设不该能替你关掉个性化。
+  const view = mergePersonas(null)
   for (const name of builtinPersonaNames()) {
     for (const key of [...PROFILE_FIELDS, 'language', 'enabled']) {
-      assert.equal(key in BUILTIN_PERSONAS[name], false, `${name} 不应声明 ${key}`)
+      assert.equal(key in view[name], false, `${name} 不应声明 ${key}`)
     }
+  }
+  // 默认人设额外契约：声明全部 6 个人格维度（language 豁免）——
+  // 这使「改任何特质 ⇒ 丢 ★」的严格语义成立（用户需求）。
+  for (const key of ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'customInstructions']) {
+    assert.ok(key in view['默认'], `默认人设应声明 ${key}`)
   }
 })
 
@@ -737,16 +747,22 @@ check('内置人设的枚举值与文本长度合法，且都有自定义指令'
     tables: TRAIT_VALUES,
     replyLength: REPLY_LENGTH_VALUES
   }
+  const view = mergePersonas(null)
   for (const name of builtinPersonaNames()) {
-    const entry = BUILTIN_PERSONAS[name]
+    const entry = view[name]
     for (const [field, allowed] of Object.entries(enums)) {
       if (!(field in entry)) continue
       assert.ok(allowed.includes(entry[field]), `${name}.${field} 非法取值：${entry[field]}`)
     }
     // customInstructions 是人格差异的主要载体：枚举字段只能表达「更啰嗦 / 更简洁」
     // 这类粗粒度倾向，所以内置预设必须有它。
-    assert.equal(typeof entry.customInstructions, 'string', `${name} 缺少 customInstructions`)
-    assert.ok(entry.customInstructions.length > 0, `${name} 的 customInstructions 为空`)
+    // 「默认」是唯一例外 —— 出厂状态没有附加指令，空串即其本义。
+    if (name !== '默认') {
+      assert.equal(typeof entry.customInstructions, 'string', `${name} 缺少 customInstructions`)
+      assert.ok(entry.customInstructions.length > 0, `${name} 的 customInstructions 为空`)
+    } else {
+      assert.equal(entry.customInstructions, '', '默认人设的 customInstructions 应为空串')
+    }
     assert.ok(
       entry.customInstructions.length <= FIELD_LIMITS.customInstructions,
       `${name} 的 customInstructions 超长（${entry.customInstructions.length} > ${FIELD_LIMITS.customInstructions}）`
@@ -781,9 +797,11 @@ check('isBuiltinPersona / resolvePersona 的判定与优先级', () => {
   assert.equal(isBuiltinPersona('不存在的名字'), false)
   assert.equal(isBuiltinPersona(123), false)
   assert.equal(isBuiltinPersona(null), false)
-  assert.deepEqual(resolvePersona(names[0], {}), BUILTIN_PERSONAS[names[0]])
-  // 内置名即使磁盘上有同名条目也应解析到内置内容
-  assert.deepEqual(resolvePersona(names[0], { [names[0]]: { style: 'roast' } }), BUILTIN_PERSONAS[names[0]])
+  // names[0] 是「默认」（不在 BUILTIN_PERSONAS 字面量里，经 personaEntry 解析）。
+  // resolvePersona 的历史语义是【纯净条目】（不含 builtin 标记），所以这里用
+  // resolve 自身对称对比：同名用户条目必须被内置内容遮蔽。
+  const direct = resolvePersona(names[0], {})
+  assert.deepEqual(resolvePersona(names[0], { [names[0]]: { style: 'roast' } }), direct)
   assert.deepEqual(resolvePersona('我的预设', { '我的预设': { style: 'casual' } }), { style: 'casual' })
   assert.equal(resolvePersona('不存在', { '我的预设': { style: 'casual' } }), null)
   assert.equal(resolvePersona(undefined, {}), null)
@@ -945,28 +963,19 @@ check('客户端卡牌把「内置」徽标放在插画区，不进操作区', (
   // 效果栏必须在信息区内（放插画区会压在图上看不清）
   const bodyCell = extractCall(clientSource, "e('div', { className: 'soul-persona-body' }")
   assert.ok(/soul-persona-eff/.test(bodyCell), '效果栏应在信息区（.soul-persona-body）内')
-  // 内置卡片在操作区第 2 轨放空占位（span，非按钮），自建卡片才是删除按钮：
-  // 这正是两类卡片「使用」按钮能严格同列的原因。
+  // 「删除」已移到**卡背**（用户反馈正面三钮拥挤、43px 窄条夹在中间观感差）。
+  // 正面现在两类卡都是「使用 + 详情」两钮 —— 断言改为：
+  //   ① 正面**不得**再有删除按钮或空占位（slot 是旧布局的产物）
+  //   ② 正面「使用」必须在、且不依赖占位对齐（flex 布局天然同列）
   const actionsBlock = actionsCell
-  assert.ok(
-    /builtin\s*\n?\s*\?\s*e\('span', \{ className: 'soul-persona-slot'/.test(actionsBlock),
-    '内置分支缺少操作区空占位（会导致「使用」与自建卡片不同列）'
-  )
-  // 删除按钮的类名由样式层决定（当前是 soul-persona-action + soul-persona-danger，
-  // 对齐宿主 .zGbnIq_dangerButton）。断言只钉「非内置分支渲染了一个带 danger 类的按钮」，
-  // 不绑死完整类名字符串 —— 否则每次调样式都要改断言（初版正是绑死了旧类名而失效）。
-  // 判定用 includes 而不是跨行正则：按钮定义是多行对象字面量，`[^}]*` 这类写法
-  // 匹配不到含 `}` 的跨行内容（实测踩过）。
-  assert.ok(
-    actionsBlock.includes('soul-persona-action soul-persona-danger') &&
-      actionsBlock.includes('handleDeletePersona(name)'),
-    '删除按钮未渲染（非内置分支应渲染带 soul-persona-danger 的按钮，且绑定 handleDeletePersona）'
-  )
-  // 空占位必须是 span 而不是 button —— 否则会造出一个点了没反应的控件
   assert.equal(
-    /soul-persona-slot'[^)]*\}\s*,\s*\{[^}]*onClick/.test(clientCode),
+    actionsBlock.includes('soul-persona-danger') || actionsBlock.includes('soul-persona-slot'),
     false,
-    '空占位不应是可点控件'
+    '正面操作区不应再有删除按钮或空占位（删除已移到卡背；正面两钮与内置卡一致）'
+  )
+  assert.ok(
+    actionsBlock.includes('handleUsePersona(name)') && actionsBlock.includes('soul-persona-details'),
+    '正面操作区应有「使用」与「详情」'
   )
 })
 
@@ -2237,7 +2246,26 @@ check('卡背（详情面）展示全部维度与全文，且不动卡片 transf
     '全文块自己应可滚动（339 字占 272px，卡片仅 372px）'
   )
   // ⑥ 背面只阅读：不得有使用/删除，但必须有「返回」
-  assert.equal(/handleUsePersona|handleDeletePersona/.test(backBlock), false, '背面不应放使用/删除按钮（阅读态且已无余量）')
+    // ⑥ 背面是「查看 / 管理」面：**不得有「使用」**（高频操作留正面），
+    //    但**必须有「删除」**（仅自建卡；从正面移到这里 —— 用户反馈正面三钮拥挤）
+    //    与「返回」并排在底部按钮行。
+    assert.equal(/handleUsePersona/.test(backBlock), false, '背面不得放「使用」按钮（高频操作留正面）')
+    assert.ok(
+      backBlock.includes('handleDeletePersona(name)') && backBlock.includes('soul-persona-back-del'),
+      '背面应有「删除」按钮（仅自建卡渲染，二次确认逻辑不变）'
+    )
+    assert.ok(backBlock.includes('setFlippedName(null)'), '背面缺少「返回」')
+    // 底部按钮行容器：返回弹性占满 + 删除定宽
+    assert.match(
+      cssBlock.match(/\.soul-persona-back-actions\{([^}]*)\}/)?.[1] ?? '',
+      /margin-top:auto/,
+      '卡背按钮行应 margin-top:auto 贴底'
+    )
+    assert.match(
+      cssBlock.match(/\.soul-persona-back-del\{([^}]*)\}/)?.[1] ?? '',
+      /flex:0 0 \d+px/,
+      '卡背删除应定宽（次要管理操作，不与返回抢宽）'
+    )
   assert.ok(backBlock.includes('setFlippedName(null)'), '背面缺少「返回」')
   // ⑦ 卡背徽标必须重置为 static：.soul-persona-badge 是 absolute（为压插画而设），
   //    在卡背 flex 行里会脱离流与名称重叠（实测徽标 [44,77] 压住名称）
@@ -2259,15 +2287,13 @@ check('卡背（详情面）展示全部维度与全文，且不动卡片 transf
   //    后声明者胜；本规则排在基类之前，于是 flex:none 被覆盖，按钮变成弹性元素。
   //    后果（实测）：自定义预设指令较短时剩余空间把按钮**拉伸到 98px**（正常 35px）；
   //    长文本时又被压缩到 21px。加前缀后与声明顺序无关。
+  // 「返回」现在在卡背按钮行里弹性占满（flex:1 1 auto），删除定宽并行。
+  // 权重教训仍在：返回按钮的 flex:1 与基类 .soul-persona-action 语义一致，不再冲突；
+  // 行容器 .soul-persona-back-actions 必须存在且贴底（margin-top:auto）。
   assert.match(
-    cssBlock,
-    /\.soul-persona-face-back \.soul-persona-back-btn\{flex:none/,
-    '「返回」按钮选择器须带祖先前缀（单类会被基类的 flex:1 1 auto 按声明顺序覆盖）'
-  )
-  assert.equal(
-    /^[^.]*\.soul-persona-back-btn\{/.test(cssBlock) ,
-    false,
-    '不应存在无前缀的裸 .soul-persona-back-btn 规则（会与基类同权重、受声明顺序影响）'
+    cssBlock.match(/\.soul-persona-back-btn\{([^}]*)\}/)?.[1] ?? '',
+    /flex:1 1 auto/,
+    '「返回」应在卡背按钮行里弹性占满（删除定宽并行）'
   )
 })
 
