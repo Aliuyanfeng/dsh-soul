@@ -1374,55 +1374,43 @@ check('操作区贴底对齐（摘要长短不一时按钮不错位）', () => {
   assert.match(body, /flex:1/, '信息区应 flex:1 撑满卡片剩余高度')
 })
 
-check('保存成功走内联绿字（宿主 savedNotice），失败走 ui.Toast，不自绘样式', () => {
-  // 查证（dsh-client-ui-settings-models/lib/client.js）：宿主保存成功的提示
-  // **不是 toast**，而是设置页顶部的一行内联绿字 —— .savedNotice
-  // （color:var(--dsw-alias-state-success-primary)、margin:0、12px/18px、
-  // role:status + aria-live:polite），位于标题/简介之后、分组列表之前。
-  // 生命周期也完全不同：**不会自动消失**，只在开始编辑/删除/新增时清除。
-  // 因此保存类成功提示对齐它；错误仍走 ui.Toast（打断性提示，浮层更合适）。
+check('成功内联绿字 + 失败内联红字（宿主 savedNotice/error 同款），不用 toast', () => {
+  // 查证（dsh-client-ui-settings-models/lib/client.js）：宿主设置页**从不使用
+  // toast**（Toast 引用 = 0）。成功与失败都是设置页内的一行内联文字，完全对称：
+  //   成功 → .savedNotice（state-success-primary、12px/18px、role:status、
+  //          aria-live:polite），位于标题/简介之后、分组列表之前；
+  //   失败 → .error（state-error-primary、12px/18px、role:alert），
+  //          就地出现，共 11 处使用。
+  // 因此本插件的成功（绿）与失败（红）也用同一形态承载，互斥显示。
   const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
-  // ① 成功绿字：必须存在，且规格照抄宿主 savedNotice
-  assert.match(clientSource, /savedNotice && e\('p', \{/, '成功提示应为内联 <p>（不是 toast）')
+  // ① 成功绿字
+  assert.match(clientSource, /savedNotice && e\('p', \{/, '成功提示应为内联 <p>')
   assert.match(clientSource, /role: 'status'/, '成功绿字应有 role=status（宿主同款）')
   assert.match(clientSource, /'aria-live': 'polite'/, '成功绿字应有 aria-live=polite（宿主同款）')
   const notice = cssBlock.match(/\.soul-saved-notice\{([^}]*)\}/)?.[1] ?? ''
   assert.match(notice, /color:var\(--dsw-alias-state-success-primary\)/, '绿字颜色应为 state-success-primary（宿主同款）')
   assert.match(notice, /font-size:12px;line-height:18px/, '绿字规格应为 12px/18px（宿主同款）')
-  // ② 绿字不自动消失，dirty 时清除（宿主生命周期）
+  // ② 失败红字（与绿字对称）
+  assert.match(clientSource, /errorNotice && e\('p', \{/, '失败提示应为内联 <p>（宿主设置页不用 toast）')
+  assert.match(clientSource, /role: 'alert'/, '失败红字应有 role=alert（宿主同款）')
+  const errRule = cssBlock.match(/\.soul-error-notice\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(errRule, /color:var\(--dsw-alias-state-error-primary\)/, '红字颜色应为 state-error-primary（宿主同款）')
+  assert.match(errRule, /font-size:12px;line-height:18px/, '红字规格应为 12px/18px（宿主同款）')
+  // ③ 互斥：失败压过成功（用户要看最新一次操作的结果）
+  assert.match(clientSource, /!errorNotice && savedNotice && e\('p', \{/, '失败时应只显示红字（成功绿字被压过）')
+  assert.match(clientSource, /setSavedNotice\(null\)\s*\n\s*setErrorNotice\(text\)/, 'showError 应先清成功提示再写失败')
+  // ④ 生命周期：绿字在开始编辑（dirty）时清除（宿主语义）
   assert.match(clientSource, /if \(dirty\) setSavedNotice\(null\)/, '绿字应在开始编辑（dirty）时清除（宿主语义）')
-  // ③ 失败仍走宿主 ui.Toast
-  assert.match(clientSource, /e\(ui\.Toast, \{/, '失败提示应使用宿主的 ui.Toast')
-  assert.match(clientSource, /onDone: \(\) => setToast\(null\)/, '应通过 onDone 卸载（生命周期归宿主 Toast）')
-  // ④ 成功提示不得再走 toast（showToast 里不应有成功文案键）
-  assert.equal(
-    /showToast\(\{ text: t\('toast\.saved'\)/.test(clientCode) ||
-    /showToast\(\{ text: t\('toast\.personaUsed'\)/.test(clientCode),
-    false,
-    '保存类成功提示不得再走 toast（应对齐宿主改走内联绿字）'
-  )
-  // ⑤ 不得残留自绘提示条样式与动画、不得自起消失定时器
+  // ⑤ 不得再有任何 toast（宿主设置页 Toast 引用 = 0）
+  assert.equal(/ui\.Toast/.test(clientCode), false, '不应再引用 ui.Toast（宿主设置页从不使用 toast）')
   assert.equal(/\.soul-toast/.test(cssBlock), false, '不应残留自绘的 .soul-toast 样式')
-  assert.equal(/fadeInOut/.test(clientSource), false, '不应残留自绘的 fadeInOut 动画')
-  assert.equal(
-    /setTimeout\(\(\) => setToast\(null\)/.test(clientSource),
-    false,
-    '不应自己给提示条起消失定时器（宿主 Toast 已按 holdMs 负责）'
-  )
-  // ⑥ 失败 toast 停留 5s（要读得完失败原因）
-  assert.match(clientSource, /holdMs: 5000/, '失败 toast 应停留 5s')
-  // ⑦ key 带自增序号（宿主要求同文案重播）+ 统一 showToast 包装
-  assert.match(clientSource, /key: `\$\{toast\.kind\}:\$\{toast\.text\}:\$\{toast\.seq\}`/, 'key 应含每次自增的序号')
-  assert.match(clientSource, /toastSeqRef\.current \+= 1/, '缺少自增序号')
-  assert.match(clientSource, /const showToast = \(next\) => \{/, '应有统一的 showToast 包装来注入序号')
-  assert.equal(
-    /React\.useCallback/.test(clientCode),
-    false,
-    '不应引入 useCallback（无收益，且会扩大与测试台垫片的实现差异）'
-  )
-  // ⑧ 中英文案键齐备（notice.* 一套，双语对齐断言只保证键集，这里钉存在性）
+  assert.equal(/showToast/.test(clientCode), false, '不应残留 showToast 调用（成功/失败都走内联文字）')
+  // ⑥ 文案键：notice.*（成功）与 toast.*（失败）双语齐备
   for (const k of ['notice.saved', 'notice.noChanges', 'notice.reset', 'notice.resetRecovered', 'notice.personaSaved', 'notice.personaUsed', 'notice.personaDeleted']) {
-    assert.ok(clientSource.includes(`'${k}':`), `缺少文案键 ${k}`)
+    assert.ok(clientSource.includes(`'${k}':`), `缺少成功文案键 ${k}`)
+  }
+  for (const k of ['toast.saveFailed', 'toast.resetFailed', 'toast.personaPartial']) {
+    assert.ok(clientSource.includes(`'${k}':`), `缺少失败文案键 ${k}`)
   }
 })
 

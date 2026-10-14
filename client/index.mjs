@@ -804,13 +804,10 @@ window.__ModuleLoader__.load({
       // color:var(--dsw-alias-state-success-primary)、margin:0、12px/18px。
       // 位置也一致：标题区之后、分组列表之前。生命周期不自动消失，
       // 由下一次编辑（dirty）清除 —— 见组件里的 effect。
-      '.soul-saved-notice{margin:0;color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:18px}',      // 提示条：改用宿主自己的 Toast 组件（ui.Toast），不再自绘。
-      // 理由：宿主 Toast 是「设计平台的提示条」——顶部居中、深色底（两种主题下都是
-      // bluish-800，标签固定为 bluish-00 白）、radius-lg、shadow-lv3、14px/22px、
-      // 成功态自带绿勾图标、z-index 1100（在图片灯箱之上）。自绘的版本在位置
-      // （屏幕正中）、配色（跟随主题卡片色）、字号（13px）上都与全局不一致。
-      // 生命周期也交给它：holdMs 后淡出，通过 onDone 通知我们卸载。
-      // 详见 client 里 renderToast() 的用法。
+      '.soul-saved-notice{margin:0;color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:18px}',
+      // 失败红字：规格照抄宿主 .zGbnIq_error（state-error-primary、margin:0、12px/18px），
+      // role=alert。与绿字同位互斥（失败压过成功），都不自动消失。
+      '.soul-error-notice{margin:0;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px}',
       // —— 输入框光轨 ——
       // 几何规则（position/尺寸/contain）同时内联在元素上，见 mountTrailRing；
       // 这里保留一份等价声明作为兜底，并让样式可读、可被第三方主题安全覆盖（仅颜色/速度/粗细）
@@ -854,8 +851,7 @@ window.__ModuleLoader__.load({
       '.soul-trail-preview[data-soul-trail="on"]{border-color:transparent}',
       '.soul-trail-preview-text{font-size:12px;color:var(--dsw-alias-label-tertiary)}',
       // 开了「减少动态效果」时：光轨层与卡片停动画。
-      // 提示条不再需要在这里特殊照顾 —— 它已改用宿主的 ui.Toast，
-      // 而宿主的 Toast.module.css 自带 reduced-motion 分支（去掉滑入、保留淡出）。
+      // 结果提示（绿字/红字）不需要在这里照顾 —— 它们是静态文字、没有动画。
       '@media (prefers-reduced-motion:reduce){.soul-trail-layer{animation:none}.soul-persona-card{animation:none!important;transition:none}}'
     ].join('')
 
@@ -1498,28 +1494,26 @@ window.__ModuleLoader__.load({
       //   状态绑定在**人设名**而不是索引：删除/刷新后同名的卡仍是同一张，
       //   绑索引会在列表变短时翻错面。
       const [flippedName, setFlippedName] = React.useState(null)
-      const [toast, setToast] = React.useState(null)
-      // 提示条的自增序号：宿主 Toast 要求「同样文案再次触发时能重新播一遍动画」，
-      // 做法是用 key 承载一个每次自增的序号（见渲染处的 key）。
-      // 统一在这里注入，而不是改 10 个 setToast 调用点 —— 后者早晚会漏。
+      // —— 内联结果提示（对齐宿主模型设置页的全局形态）——
       //
-      // 刻意用普通函数而不是 React.useCallback：showToast 只在事件处理器里被调用
-      // （不进任何 effect 的依赖数组），memo 化没有收益；而客户端此前只依赖
-      // useState/useEffect/useRef 三个 hook（测试台的 React 垫片也只实现这三个），
-      // 少引入一个 hook 就少一处「离线能过、线上不同」的差异面。
-      const toastSeqRef = React.useRef(0)
-      const showToast = (next) => {
-        toastSeqRef.current += 1
-        setToast(next === null ? null : { ...next, seq: toastSeqRef.current })
+      // 查证：宿主设置页（dsh-client-ui-settings-models）**从不使用 toast** ——
+      // 成功是顶部一行绿字（.savedNotice，role=status），失败是内联红字
+      // （.error，role=alert），两者同字号（12px/18px）、就地出现、不自动消失。
+      // 因此这里对称地用两个状态承载：savedNotice（绿）/ errorNotice（红），
+      // 均在「下一次操作开始」时被替换，编辑时清除绿字。
+      const [savedNotice, setSavedNotice] = React.useState(null)
+      const showSavedNotice = (text) => setSavedNotice(text)
+      const [errorNotice, setErrorNotice] = React.useState(null)
+      const showError = (text) => {
+        // 失败要压过之前的成功提示（用户要知道最新一次操作的结果）
+        setSavedNotice(null)
+        setErrorNotice(text)
       }
-      // —— 保存成功的内联绿字（对齐宿主模型设置页的 savedNotice）——
       //
       // 查证：宿主保存成功的提示不是 toast，而是设置页顶部的一行绿字
       // （.savedNotice：state-success-primary 绿、12px/18px、role:status +
       // aria-live:polite），且**不会自动消失** —— 只在开始编辑/删除/新增时清除。
       // 这里保持同一生命周期：下一次 dirty（开始编辑）时清除，见下方 effect。
-      const [savedNotice, setSavedNotice] = React.useState(null)
-      const showSavedNotice = (text) => setSavedNotice(text)
       const [showPrompt, setShowPrompt] = React.useState(false)
       const [promptText, setPromptText] = React.useState('')
       const [promptLoading, setPromptLoading] = React.useState(false)
@@ -1738,7 +1732,7 @@ window.__ModuleLoader__.load({
         const payload = await controller.saveConfig(localMap)
         // saveConfig 失败时内部已记录 error 并返回 undefined：给出失败提示，而非误报「无变化」
         if (!payload) {
-          showToast({ text: t('toast.saveFailed'), kind: 'error' })
+          showError(t('toast.saveFailed'))
           return
         }
         // 成功提示走**内联绿字**（对齐宿主模型设置页的 savedNotice —— 见渲染处注释）：
@@ -1758,7 +1752,7 @@ window.__ModuleLoader__.load({
         // 没成功」这件事藏了起来。
         const payload = await controller.resetConfig()
         if (!payload) {
-          showToast({ text: t('toast.resetFailed'), kind: 'error' })
+          showError(t('toast.resetFailed'))
           return
         }
         showSavedNotice(payload.backupPath ? t('notice.resetRecovered') : t('notice.reset'))
@@ -1778,7 +1772,7 @@ window.__ModuleLoader__.load({
           await loadPersonas()
           showSavedNotice(t('notice.personaSaved', { name }))
         } catch (err) {
-          showToast({ text: messageOf(err), kind: 'error' })
+          showError(messageOf(err))
         }
       }
 
@@ -1789,7 +1783,7 @@ window.__ModuleLoader__.load({
           // 服务端回报了被丢弃的非法字段 ⇒ 预设只被部分应用，必须说出来而不是报「已应用」
           const invalid = Array.isArray(payload && payload.invalid) ? payload.invalid : []
           if (invalid.length > 0) {
-            showToast({ text: t('toast.personaPartial', { fields: invalid.join(', ') }), kind: 'error' })
+            showError(t('toast.personaPartial', { fields: invalid.join(', ') }))
           } else {
             // 成功提示走内联绿字（对齐宿主 savedNotice）；无变化也照报
             showSavedNotice(payload && payload.unchanged
@@ -1799,7 +1793,7 @@ window.__ModuleLoader__.load({
           // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
         // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
         } catch (err) {
-          showToast({ text: messageOf(err), kind: 'error' })
+          showError(messageOf(err))
         }
       }
 
@@ -1822,7 +1816,7 @@ window.__ModuleLoader__.load({
           await loadPersonas()
           showSavedNotice(t('notice.personaDeleted', { name }))
         } catch (err) {
-          showToast({ text: messageOf(err), kind: 'error' })
+          showError(messageOf(err))
         }
       }
 
@@ -2512,35 +2506,28 @@ window.__ModuleLoader__.load({
 
         dirty && !saving && e('div', { className: 'soul-status soul-dirty' }, t('status.unsaved')),
 
-        // —— 保存成功的内联绿字（对齐宿主模型设置页的 savedNotice）——
+        // —— 内联结果提示（对齐宿主模型设置页的全局形态）——
         //
-        // 查证（dsh-client-ui-settings-models/lib/client.js）：宿主保存成功的提示
-        // **不是 toast**，而是设置页顶部的一行绿字 —— `.savedNotice`
-        // （color:var(--dsw-alias-state-success-primary)、12px/18px、role:status +
-        // aria-live:polite），位于标题/简介之后、分组列表之前。生命周期也完全不同：
-        // **不会自动消失**，只在开始编辑/删除/新增时清除（setSavedTarget(void 0)）。
+        // 查证（dsh-client-ui-settings-models/lib/client.js）：宿主设置页**从不使用
+        // toast**（Toast 引用 = 0），成功与失败都是设置页内的**一行内联文字**：
+        //   成功 → .savedNotice（state-success-primary 绿、12px/18px、role:status +
+        //          aria-live:polite），位于标题/简介之后、分组列表之前；
+        //   失败 → .error（state-error-primary 红、12px/18px、role:alert），
+        //          就地出现在问题发生处（行内/卡片顶部），共 11 处使用。
+        // 两者同字号同行高，仅红绿与 role 之差 —— 完全对称。
         //
-        // 因此这里的保存类成功提示（保存/重置/应用预设）改为内联绿字，与全局一致；
-        // 错误提示仍走 ui.Toast（错误是打断性的，浮层更合适，且宿主错误也是另一套）。
-        // 消失时机对齐宿主：下一次开始编辑（dirty 变 true）或切换开关时清除。
-        savedNotice && e('p', {
+        // 因此这里对称承载：绿字（成功）/ 红字（失败），同一位置、互斥显示
+        // （失败压过成功 —— 用户要看到最新一次操作的结果）。两者都不自动消失：
+        // 绿字在开始编辑（dirty）时清除，红字在下一次操作开始时被替换或清除。
+        errorNotice && e('p', {
+          className: 'soul-error-notice',
+          role: 'alert'
+        }, errorNotice),
+        !errorNotice && savedNotice && e('p', {
           className: 'soul-saved-notice',
           role: 'status',
           'aria-live': 'polite'
-        }, savedNotice),
-
-        // 提示条：只用 toast 承载**错误**（打断性提示，浮层更合适）。
-        // 保存类成功提示已上移为上方的内联绿字 —— 与宿主模型设置页的全局行为一致。
-        // key 用「文本 + 次数」：同样文案再次触发时要能重新播一遍动画
-        // （宿主文档明确要求 key it by a per-show sequence）。
-        toast && e(ui.Toast, {
-          key: `${toast.kind}:${toast.text}:${toast.seq}`,
-          text: toast.text,
-          // 失败态给一个警告图标（宿主 icon 座位默认 warning 色）
-          icon: '⚠',
-          holdMs: 5000,
-          onDone: () => setToast(null)
-        })
+        }, savedNotice)
       )
     }
 

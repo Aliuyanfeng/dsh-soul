@@ -169,6 +169,11 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - **错误提示仍走 ui.Toast**（打断性提示浮层更合适，失败原因要读得完 ⇒ 停留 5s）
   - 新增断言钉住：内联 `<p>` + role/aria-live、绿字规格、dirty 清除、成功文案不得再走 toast、失败仍走 Toast 且停留 5s、8 个 `notice.*` 文案键双语齐备
   - 期间踩坑：清除用的 effect 一度写在 `dirty` 声明之前 —— 依赖数组在渲染期求值 ⇒ TDZ（`Cannot access 'dirty' before initialization`），已移到定义之后
+- **失败提示也对齐宿主（内联红字，彻底不用 toast）**：继成功绿字后，用户指出错误提示也应与全局一致。再次查证宿主（`dsh-client-ui-settings-models`）：**Toast 引用 = 0**，错误全部是内联红字 `.error`（`state-error-primary`、margin:0、12px/18px、`role:alert`），共 11 处使用，就地出现在问题发生处
+  - 保存/重置/预设操作的 6 处失败 toast 全部改为内联红字 `.soul-error-notice`（规格照抄 `.zGbnIq_error`），与绿字同位互斥（失败压过成功 —— 用户要看最新一次操作的结果）
+  - `ui.Toast` 与 `showToast` 随之整体移除（不再有任何 toast 路径）；`prefers-reduced-motion` 断言同步简化
+  - 断言重写为对称契约：绿字/红字规格、role=status/alert、互斥逻辑、dirty 清除、无任何 toast 残留、8 个 `notice.*` + 3 个失败键双语齐备
+  - 附带清理：一处 CSS 行与过时注释被意外拼接（此前编辑遗留），已恢复
 **校验**
 
 - `verify-config` 91 → **107 项**（新增「展示名走 locale/*.json」结构层、「展示名能被宿主真实解析」行为层、「轮询在不可见时暂停」、「CSS token 存在性」、「样式对齐宿主栏目」、「人设行操作按钮规格对齐宿主列表按钮」六条；「set_persona 输出 schema」那条同时升级为**注册 + 结果渲染**两段，并用真实定义对象整体求值取代原先的文本切片）。样式相关的 13 组变异全部被拦（不存在 token / 加回 padding / 分组退回旧边框 / 标题字重 600 / 标签字号 13px / 硬编码颜色 / 按钮高度 36px / 圆角 6px / 列表 gap 归零 / 行改回共用容器 / 加回行底色 / 删 render / 轮询去掉守卫）
@@ -288,6 +293,11 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
   - **错误提示仍走 ui.Toast**（打断性提示浮层更合适，失败原因要读得完 ⇒ 停留 5s）
   - 新增断言钉住：内联 `<p>` + role/aria-live、绿字规格、dirty 清除、成功文案不得再走 toast、失败仍走 Toast 且停留 5s、8 个 `notice.*` 文案键双语齐备
   - 期间踩坑：清除用的 effect 一度写在 `dirty` 声明之前 —— 依赖数组在渲染期求值 ⇒ TDZ（`Cannot access 'dirty' before initialization`），已移到定义之后
+- **失败提示也对齐宿主（内联红字，彻底不用 toast）**：继成功绿字后，用户指出错误提示也应与全局一致。再次查证宿主（`dsh-client-ui-settings-models`）：**Toast 引用 = 0**，错误全部是内联红字 `.error`（`state-error-primary`、margin:0、12px/18px、`role:alert`），共 11 处使用，就地出现在问题发生处
+  - 保存/重置/预设操作的 6 处失败 toast 全部改为内联红字 `.soul-error-notice`（规格照抄 `.zGbnIq_error`），与绿字同位互斥（失败压过成功 —— 用户要看最新一次操作的结果）
+  - `ui.Toast` 与 `showToast` 随之整体移除（不再有任何 toast 路径）；`prefers-reduced-motion` 断言同步简化
+  - 断言重写为对称契约：绿字/红字规格、role=status/alert、互斥逻辑、dirty 清除、无任何 toast 残留、8 个 `notice.*` + 3 个失败键双语齐备
+  - 附带清理：一处 CSS 行与过时注释被意外拼接（此前编辑遗留），已恢复
 **校验**
 
 - `verify-config` 59 → **91 项**（新增：重置逃生口单一实现、注入失败必须留痕、诊断端点形状、两类问题分开上报、版本号不新增常量、三张双语文案表逐键对齐、`verify` 与 `verify:strict` 两条链同序且逐项带 `--strict`；本版追加「预设范围只含人设」「残留的『关于你』不参与匹配与取值」「`normalizePersonas` 剥离历史快照」「保存与应用只遍历同一份白名单」「客户端预设行摘要不读『关于你』」五项，以及**客户端复刻常量对齐**、**人设行对齐机制**、**set_persona schema 真实 DSL 校验**、**deliveryProblemText 取表方向**、**预设应用单一实现路径 + `invalid` 回报**与**命令层三处行为契约**断言）；`verify-store` 14 → **18 项**（新增 `moveAsideConfigFile` 的四条行为断言）

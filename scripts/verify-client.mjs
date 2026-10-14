@@ -416,19 +416,16 @@ async function clickButton(world, labelKey) {
   assert.equal(buttons.length, 1, `期望恰好一个「${label}」按钮，实际 ${buttons.length} 个`)
   await buttons[0].props.onClick()
   const after = await renderSettings(world)
-  // 提示形态对齐宿主模型设置页：**成功走内联绿字**（.soul-saved-notice，不自动消失），
-  // **失败走 ui.Toast**。两者都可能存在，优先读绿字（成功），否则读 toast（失败）。
+  // 提示形态对齐宿主模型设置页：成功走内联绿字（.soul-saved-notice，role=status）、
+  // 失败走内联红字（.soul-error-notice，role=alert）—— 宿主设置页从不使用 toast。
   const notices = findAll(after, (n) => typeof n.props?.className === 'string' && n.props.className.includes('soul-saved-notice'))
   if (notices.length > 0) {
     assert.equal(notices.length, 1, `期望恰好一条成功绿字，实际 ${notices.length} 条`)
     return { text: textOf(notices[0]), kind: 'success' }
   }
-  const toasts = findAll(after, (n) => n.type === 'ui-toast')
-  assert.equal(toasts.length, 1, `期望恰好一个 toast（失败提示），实际 ${toasts.length} 个`)
-  return {
-    text: String(toasts[0].props.text ?? ''),
-    kind: 'error'
-  }
+  const errs = findAll(after, (n) => typeof n.props?.className === 'string' && n.props.className.includes('soul-error-notice'))
+  assert.equal(errs.length, 1, `期望恰好一条失败红字，实际 ${errs.length} 条`)
+  return { text: textOf(errs[0]), kind: 'error' }
 }
 
 // ==================== 五、用例 ====================
