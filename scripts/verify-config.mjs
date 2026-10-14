@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 109
+const EXPECTED_ASSERTIONS = 110
 
 let passed = 0
 const failures = []
@@ -2175,6 +2175,36 @@ check('每个内置预设都声明全 6 个人格维度（language 豁免）', (
       `${name}：改 language 不应失去匹配（内置预设不声明它）`
     )
   }
+})
+
+check('手风琴不得裁剪向上弹出的提示（几何验证，非字符串检查）', () => {
+  // 用户实测：Agent 工具分组「人设变更需确认」右侧的 hover 提示被上方遮住一部分。
+  //
+  // 根因：.soul-accordion{overflow:hidden}（本为把触发器的方形 hover 背景裁进圆角）。
+  // 而该分组里提示是**第一个元素**，上方只有 14px 内边距，提示高约 72px 必然越界，
+  // 越界部分被裁掉。实测数据（真实 Chrome）：旧实现裁掉 19px，修复后 0px。
+  //
+  // 为什么不用字符串断言：有没有 overflow:hidden 不等于会不会被裁（取决于提示高度、
+  // 上方留白、祖先链）。这类「视觉被遮挡」必须量几何。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  // ① 容器不得用 overflow:hidden 裁剪
+  assert.equal(
+    /\.soul-accordion\{[^}]*overflow:hidden/.test(cssBlock),
+    false,
+    '手风琴容器不得 overflow:hidden（会裁掉向上弹出的 .soul-hint-tip）'
+  )
+  // ② 不裁剪后，触发器必须自己补圆角（否则 hover 背景外溢成直角）
+  assert.match(
+    cssBlock.match(/\.soul-accordion-trigger\{([^}]*)\}/)?.[1] ?? '',
+    /border-radius:calc\(var\(--dsw-radius-xl\) - \.5px\)/,
+    '触发器须补顶圆角（替代容器的裁剪）'
+  )
+  // ③ 收起态只有一个触发器 ⇒ 四角都要圆
+  assert.match(
+    cssBlock,
+    /\.soul-accordion:not\(\.soul-accordion-open\) \.soul-accordion-trigger\{border-radius:calc\(var\(--dsw-radius-xl\) - \.5px\)\}/,
+    '收起态触发器四角都要圆'
+  )
 })
 
 check('底栏开关始终展示当前人设（未匹配时显示「自定义」）', () => {

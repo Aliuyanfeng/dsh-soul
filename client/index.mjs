@@ -553,13 +553,21 @@ window.__ModuleLoader__.load({
       // 组标题：宿主用 15px/600 的小标题，这里对齐并去掉下边框（宿主分组靠卡片分隔，不靠横线）
       '.soul-group-title{margin:4px 0 0 0;font-size:15px;font-weight:600;line-height:22px;color:var(--dsw-alias-label-primary)}',
       // 折叠分组＝宿主卡片：.5px 描边 + card-fill + radius-xl + overflow hidden
-      '.soul-accordion{margin:0;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);overflow:hidden;background:var(--dsw-alias-settings-card-fill)}',
+      // 刻意不用 overflow:hidden 裁子元素圆角：那会把「向上弹出」的 .soul-hint-tip
+      // 在跨出分组上边界时切掉顶部（实测复现：Agent 工具分组的提示是该分组第一个
+      // 元素，上方只有 14px 内边距，而提示高约 60px，必然越界被裁）。
+      // 改为给触发器补顶圆角，让 hover 背景自己贴合 —— 视觉等价且不裁剪。
+      '.soul-accordion{margin:0;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill)}',
       '.soul-accordion-open{position:relative;z-index:20}',
-      '.soul-accordion-trigger{display:flex;align-items:center;width:100%;min-height:44px;gap:10px;padding:10px 14px;border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer;transition:background-color .15s ease}',
+      // 顶圆角补偿：容器不再裁剪，触发器的 hover 背景需自己贴合外层圆角
+      // （半径为外层圆角减去 0.5px 边框）。展开时底边保持直角，与 body 的分隔线相接。
+      '.soul-accordion-trigger{display:flex;align-items:center;width:100%;min-height:44px;gap:10px;padding:10px 14px;border:0;border-radius:calc(var(--dsw-radius-xl) - .5px) calc(var(--dsw-radius-xl) - .5px) 0 0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer;transition:background-color .15s ease}',
       '.soul-accordion-trigger:hover{background:var(--dsw-alias-interactive-bg-hover)}',
       '.soul-accordion-title{flex:0 0 auto;font-size:14px;font-weight:500;line-height:22px}',
       '.soul-accordion-summary{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:400;line-height:18px}',
       '.soul-accordion-icon{flex:0 0 18px;color:var(--dsw-alias-label-secondary);font-size:18px;line-height:1;text-align:center}',
+      // 收起态只有触发器一个子元素 ⇒ 四角都要圆（展开态由上面的顶圆角规则负责）
+      '.soul-accordion:not(.soul-accordion-open) .soul-accordion-trigger{border-radius:calc(var(--dsw-radius-xl) - .5px)}',
       '.soul-accordion-body{padding:14px;border-top:.5px solid var(--dsw-alias-settings-card-stroke);background:transparent}',
       '.soul-field select:focus,.soul-field textarea:focus,.soul-field input[type=text]:focus{outline:none;border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 25%, transparent)}',
       '.soul-toggle{display:flex;align-items:center;gap:8px;margin-bottom:14px}',
