@@ -36,6 +36,16 @@ import {
 import { createInjectionSource } from './lib/injection.mjs'
 import { isBuiltinPersona, builtinPersonaNames, mergePersonas, personaMatches, resolvePersona, declaredPersonaKeys } from './lib/personas.mjs'
 import { configWriteRefusal, describeConfigFailure, moveAsideConfigFile, readConfigFile, writeConfigFile } from './lib/store.mjs'
+import {
+  buildHistoryEntry,
+  createEntryId,
+  diffFields,
+  diffPersonas,
+  hashConfig,
+  historyPathFor,
+  randomSuffix,
+  recordHistoryEntry
+} from './lib/history.mjs'
 
 const name = 'soul'
 
@@ -43,6 +53,19 @@ const name = 'soul'
 function configPath() {
   return join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'soul-config.json')
 }
+
+// 变更记录的落盘路径：配置文件的**兄弟文件**（soul-config.json → soul-config.history.jsonl）。
+// 与配置同目录而不塞进配置里，理由见 DESIGN-audit-rollback.md §4.1。
+function historyPath() {
+  return historyPathFor(configPath())
+}
+
+// 最近一次「变更记录没能记下来」的原因（记成功则清空）。
+//
+// 审计失败绝不能连带配置写失败 —— 那会把「记不下来」升级成「改不了」，
+// 而配置写入是这个插件的核心功能。但也不能装作没发生：原因经
+// GET /api/soul/history 的 warning 字段回传，设置页会原样显示。
+let lastHistoryFailure = null
 
 // 版本号：唯一来源是 package.json。
 //
@@ -380,15 +403,76 @@ const NON_PROMPT_FIELDS = new Set(['trailEnabled', 'trailColor', 'trailSpeed', '
 // 返回 { config, changed, promptChanged }：
 //   - changed：实际发生变化的字段名数组（不含 personas 预设库），供调用方判断有无变更
 //   - promptChanged：changed 中会影响 Agent 行为的子集；为空时应跳过提示词刷新与会话注入
-async function commitConfig(mutate) {
+//
+// 第二参数 source 是**变更记录的归属**，形如 { source, action }：source 是渠道
+// （web / command / tool / service / persona / rollback / restorePersona），
+// action 是动作（save / set / use / …）。两个都是白名单枚举，写进条目与读回条目时各校验一次。
+//
+// 为什么必须由调用方显式给出：同一次「改了 style」可能是网页保存、斜杠命令、Agent 工具
+// 或其它插件调用，事后从配置差异里是**推不出来**的。审计的价值有一半在于回答
+// 「是谁改的」—— 默认值会让这半个价值静默消失，所以这里刻意不给默认值。
+async function commitConfig(mutate, source) {
   return enqueueConfigWrite(async () => {
     const current = await loadConfig()
     const next = mutate({ ...current })
     const changed = diffKeys(current, next)
     const promptChanged = changed.filter((key) => !NON_PROMPT_FIELDS.has(key))
     const config = await saveConfig(next)
+
+    // 差分必须在 saveConfig **之后**、且以它返回的配置为基准：saveConfig 会剔除
+    // tone / presets / examples 三个废弃字段，拿 mutate 的产物去比会把它们误报成变更。
+    await auditCommit(current, config, source)
+
     return { config, changed, promptChanged }
   })
+}
+
+// 把一次成功的提交记进变更记录。
+//
+// 时机与失败处理（DESIGN-audit-rollback.md §5）：调用点已在 saveConfig 之后，
+// 所以「配置写失败却留下记录」在结构上不可能。反过来「配置已写、记录没写成」是可能的
+// （磁盘只读、记录文件被占用）—— 此时把原因记进 lastHistoryFailure 并**继续返回成功**，
+// 因为配置确实已经改了。
+async function auditCommit(current, config, source) {
+  try {
+    const fields = diffFields(current, config)
+    const personas = diffPersonas(current.personas, config.personas)
+
+    // 「什么都没变」必须在构造条目**之前**判掉，不能靠 buildHistoryEntry 返回 null 来表达。
+    // 后者把两种情况混成了同一个返回值：真的没变，和条目因为 shape 不对被拒
+    // （例如某个调用点漏标 source）—— 后者是代码缺陷，混进来就会变成
+    // 「配置改了、记录里没有、也没有任何告警」。这条判据把缺陷从静默变响亮。
+    const changedAny =
+      Object.keys(fields.after).length > 0 ||
+      personas.added.length > 0 || personas.updated.length > 0 || personas.removed.length > 0
+    if (!changedAny) {
+      lastHistoryFailure = null
+      return null
+    }
+
+    const entry = buildHistoryEntry({
+      id: createEntryId(Date.now(), randomSuffix()),
+      at: new Date().toISOString(),
+      source: source && source.source,
+      action: source && source.action,
+      configHash: hashConfig(config),
+      before: fields.before,
+      after: fields.after,
+      personas
+    })
+    if (!entry) {
+      // 有变化却构造不出条目 ⇒ 一定是调用点的 source/action 没标或标错。
+      // 报出来而不是当作「无变化」跳过：审计缺一条而没人知道，比留一条错的更糟。
+      lastHistoryFailure = `变更记录条目构造失败（source=${JSON.stringify(source)}），本次改动未被记录`
+      return null
+    }
+    await recordHistoryEntry(historyPath(), entry)
+    lastHistoryFailure = null
+    return entry
+  } catch (err) {
+    lastHistoryFailure = String((err && err.message) || err)
+    return null
+  }
 }
 
 // 比较两份配置的差异字段名（浅比较；soul 配置为扁平对象）。
@@ -420,13 +504,16 @@ function defaultConfigPreservingPersonas(current) {
 //
 // 复用 commitConfig 的「读—改—写」，不另写一份；写入失败时恢复失败标记，
 // 避免把「文件仍然不可用」误报成正常状态。
-async function resetConfigWithEscape() {
+//
+// source 由调用方给（web 重置 / 斜杠命令重置 / 其它插件调用），穿透给 commitConfig
+// 用于变更记录 —— 三个入口都是「重置」，但来源不同，记录里要分得开。
+async function resetConfigWithEscape(source) {
   const failure = configLoadFailure
   const backupPath = failure ? await moveAsideConfigFile(configPath()) : null
   if (failure) configLoadFailure = null
 
   try {
-    const result = await commitConfig((current) => defaultConfigPreservingPersonas(current))
+    const result = await commitConfig((current) => defaultConfigPreservingPersonas(current), source)
     return { ...result, backupPath }
   } catch (err) {
     if (failure) configLoadFailure = failure
@@ -687,7 +774,7 @@ function registerRoutes(ctx) {
             }
 
             // 写队列内「读—改—写」，只合并通过校验的字段（未知字段不落盘）
-            const { config: updated, changed, promptChanged } = await commitConfig(current => ({ ...current, ...patch }))
+            const { config: updated, changed, promptChanged } = await commitConfig(current => ({ ...current, ...patch }), { source: 'web', action: 'save' })
 
             // 仅影响 Agent 行为的字段变化才刷新提示词并注入会话；
             // 光轨等纯外观字段只更新配置，不向会话堆积注入快照
@@ -800,7 +887,7 @@ function registerRoutes(ctx) {
           // 经由逃生口：配置损坏时这是设置页唯一还能成功的写操作。
           // backupPath 非 null 说明刚才确实丢弃了一份损坏的配置（已备份），
           // 客户端据此给出「备份在哪」的提示，而不是让用户以为数据凭空消失。
-          const { config, changed, promptChanged, backupPath } = await resetConfigWithEscape()
+          const { config, changed, promptChanged, backupPath } = await resetConfigWithEscape({ source: 'web', action: 'reset' })
 
           // 仅影响 Agent 行为的字段变化才刷新提示词并注入会话
           if (promptChanged.length > 0) {
@@ -928,10 +1015,13 @@ function findActivePersonaName(config) {
 // 语义选择：应用**合法部分**并如实回报被丢弃的字段，而不是整单拒绝 —— 后者会让一个
 // 只差一个字段的旧预设彻底不可用，代价更高；而「部分应用 + 明示」与 /api/soul/prompt/
 // preview 的 invalid 约定一致。
+//
+// 来源固定为 persona/use：两个调用入口（网页「使用」与 /soul use）是同一个动作，
+// 用户视角下「用了个预设」这件事本身比「从哪个入口点的」更重要，故不细分。
 async function applyPersonaEntry(ctx, entry) {
   const { patch, errors } = sanitizeConfig(pickPersonaValues(entry))
   const invalid = Object.keys(errors)
-  const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
+  const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }), { source: 'persona', action: 'use' })
   if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
   // applied 是「通过校验的字段数」——与 changed（实际产生差异的字段）不同：
   // 全部非法时 applied 为 0，此时不能报「已应用」，也不能报「与当前配置一致」。
@@ -1001,7 +1091,7 @@ function registerPersonaRoutes(ctx) {
             const personas = clonePersonas(current.personas)
             personas[personaName] = { ...personaSnapshotOf(current), updatedAt: new Date().toISOString() }
             return { ...current, personas }
-          })
+          }, { source: 'web', action: 'savePreset' })
           send(res, 200, { ok: true, ...personaLibrary(updated) })
         } catch (err) {
           send(res, 500, { ok: false, error: String(err.message || err) })
@@ -1080,7 +1170,7 @@ function registerPersonaRoutes(ctx) {
             const personas = clonePersonas(c.personas)
             delete personas[personaName]
             return { ...c, personas }
-          })
+          }, { source: 'web', action: 'deletePreset' })
           send(res, 200, { ok: true, ...personaLibrary(updated) })
         } catch (err) {
           send(res, 500, { ok: false, error: String(err.message || err) })
@@ -1383,7 +1473,7 @@ function registerCommands(ctx) {
             if (errors.nickname) {
               return { kind: 'error', text: t.failed(errors.nickname) }
             }
-            const { config: updated, promptChanged } = await commitConfig(c => ({ ...c, nickname: patch.nickname }))
+            const { config: updated, promptChanged } = await commitConfig(c => ({ ...c, nickname: patch.nickname }), { source: 'command', action: 'nickname' })
             if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.nicknameDone(patch.nickname) }
           }
@@ -1427,7 +1517,7 @@ function registerCommands(ctx) {
           if (first === 'reset') {
             // 重置活动配置，但保留人设预设库。
             // 经由逃生口：配置损坏时这是唯一还能落盘的操作（先备份损坏文件）。
-            const { config: updated, promptChanged, backupPath } = await resetConfigWithEscape()
+            const { config: updated, promptChanged, backupPath } = await resetConfigWithEscape({ source: 'command', action: 'reset' })
             if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return backupPath
               ? { kind: 'success', text: t.resetRecovered(backupPath) }
@@ -1436,13 +1526,13 @@ function registerCommands(ctx) {
 
           if (first === 'enable') {
             // 写队列内「读—改—写」，不在队列外改写内存缓存对象；无变化时跳过注入
-            const { config: updated, promptChanged } = await commitConfig(c => ({ ...c, enabled: true }))
+            const { config: updated, promptChanged } = await commitConfig(c => ({ ...c, enabled: true }), { source: 'command', action: 'enable' })
             if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.enableDone }
           }
 
           if (first === 'disable') {
-            const { config: updated, promptChanged } = await commitConfig(c => ({ ...c, enabled: false }))
+            const { config: updated, promptChanged } = await commitConfig(c => ({ ...c, enabled: false }), { source: 'command', action: 'disable' })
             if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: t.disableDone }
           }
@@ -1457,7 +1547,7 @@ function registerCommands(ctx) {
               const personas = clonePersonas(current.personas)
               personas[personaName] = { ...personaSnapshotOf(current), updatedAt: new Date().toISOString() }
               return { ...current, personas }
-            })
+            }, { source: 'command', action: 'savePreset' })
             return { kind: 'success', text: t.saveDone(personaName) }
           }
 
@@ -1521,7 +1611,7 @@ function registerCommands(ctx) {
               const personas = clonePersonas(current.personas)
               delete personas[personaName]
               return { ...current, personas }
-            })
+            }, { source: 'command', action: 'deletePreset' })
             return { kind: 'success', text: t.delDone(personaName) }
           }
 
@@ -1555,7 +1645,7 @@ function registerCommands(ctx) {
             if (Object.keys(patch).length === 0) {
               return { kind: 'error', text: t.failed(droppedKeys.length > 0 ? `${t.unknownField}: ${droppedKeys.join(', ')}` : t.setUsage) }
             }
-            const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }))
+            const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }), { source: 'command', action: 'set' })
             if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             return { kind: 'success', text: changed.length > 0 ? t.setDone(changed) : t.setNoChanges }
           }
@@ -1564,7 +1654,7 @@ function registerCommands(ctx) {
             if (!pendingPersonaProposal) return { kind: 'error', text: t.noPending }
             const proposal = pendingPersonaProposal
             pendingPersonaProposal = null
-            const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...proposal.patch }))
+            const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...proposal.patch }), { source: 'command', action: 'confirm' })
             if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
             const detail = Object.keys(proposal.patch).map((key) => `${key}=${JSON.stringify(proposal.patch[key])}`).join(', ')
             return { kind: 'success', text: t.confirmDone(detail) }
@@ -1930,7 +2020,7 @@ function registerTools(ctx) {
                 next[key] = patch[key]
               }
               return next
-            })
+            }, { source: 'tool', action: 'setPersona' })
 
             if (changed.length === 0) {
               return { ok: true, message: promptTextOf(updated).toolNoChanges }
@@ -1970,7 +2060,7 @@ export async function apply(ctx) {
       if (Object.keys(errors).length > 0) {
         throw new Error('配置校验失败：' + formatFieldErrors(errors))
       }
-      const { config, promptChanged } = await commitConfig(current => ({ ...current, ...patch }))
+      const { config, promptChanged } = await commitConfig(current => ({ ...current, ...patch }), { source: 'service', action: 'update' })
       // 送达与另外三条写路径保持一致：服务调用方（其它插件）改配置后同样应当
       // 立即反映到活动会话，否则「改了配置不生效」会从服务这条路再次出现。
       if (promptChanged.length > 0) refreshPromptAndInject(ctx, config)
@@ -1982,7 +2072,7 @@ export async function apply(ctx) {
     },
     async resetConfig() {
       // 与 HTTP / 斜杠命令两条重置入口共用逃生口
-      const { config, promptChanged } = await resetConfigWithEscape()
+      const { config, promptChanged } = await resetConfigWithEscape({ source: 'service', action: 'reset' })
       if (promptChanged.length > 0) refreshPromptAndInject(ctx, config)
       return config
     }

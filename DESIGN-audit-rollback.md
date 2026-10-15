@@ -200,6 +200,14 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
   否则用户每点一次「保存设置」都刷一条噪声，列表很快没法看
   （这也是 `normalizeHistoryEntry` 把空条目判为无效的原因 —— 读侧同样拦一遍，
   手改出来的空行也不认）。
+  - ▶ **「什么都没变」必须在构造条目之前用字段差分判掉**，不能靠
+    `buildHistoryEntry` 返回 `null` 来表达。后者会把两种情况混成同一个返回值：
+    真的没变，和条目因为 shape 不对被拒（例如某个调用点漏标 `source`）。
+    后者是代码缺陷，混进去的表现就是「配置改了、记录里没有、也没有任何告警」——
+    审计最该避免的正是这一类。所以有变化却构造不出条目时，带原因记进
+    `lastHistoryFailure`，把缺陷从静默变响亮。这条是被判断力探针 ⑪ 逼出来的：
+    最初的写法能通过全部断言，直到把告警行改成 `lastHistoryFailure = null` 才发现
+    没有任何断言在守着它。
 - 条目里的字段差分**不是**直接复用 `diffKeys`：后者只给字段名、
   且刻意跳过 `personas`（§4.3）。审计要的是旧值与新值，以及预设库事件。
 
@@ -274,9 +282,9 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
 | `lib/history.mjs` | **新增**。路径推导 / 条目构造与校验 / JSONL 解析 / 压实 / 回滚规划（纯函数，可独立测试） | ✅ 已实现 |
 | `scripts/verify-history.mjs` | **新增**。`lib/history.mjs` 的纯函数断言组（40 项） | ✅ 已实现 |
 | `package.json` | `verify` 链加入 `verify-history` + `verify:history` 单跑脚本 | ✅ 已实现 |
-| `index.mjs` | `commitConfig(mutate, source)`；14 个调用点补来源；两个间接调用者穿透；追加与压实；四条路由 | ⬜ 0.8.0-b/c |
+| `index.mjs` | `commitConfig(mutate, source)`；14 个调用点补来源（其中 2 个由 `resetConfigWithEscape` / `applyPersonaEntry` 形参穿透）；追加与压实。✅ 0.8.0-b；四条路由 ⬜ 0.8.0-c | ⬜ |
 | `client/index.mjs` | 新增「变更记录」分组（第 5 组，排在「Agent 工具」之后）；回滚 / 恢复预设 / 清空的二次确认；文案键 | ⬜ 0.8.0-d |
-| `scripts/verify-config.mjs` | 来源标注（14 处调用点各自带对）与「提交即留痕」断言 | ⬜ 0.8.0-b |
+| `scripts/verify-config.mjs` | 来源标注（每个调用点各自带对）与「提交即留痕」断言 | ✅ 0.8.0-b |
 | `scripts/verify-client.mjs` | 分组渲染、倒序、二次确认、回滚请求体断言 | ⬜ 0.8.0-d |
 | `package.json` 版本号 | 0.7.2 → 0.8.0 | ⬜ 收尾 |
 
@@ -287,7 +295,7 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
 | 步 | 内容 | 验证 | 状态 |
 | --- | --- | --- | --- |
 | 0.8.0-a | `lib/history.mjs` 纯函数层 | `verify-history`（40 项：坏行、超长行、原型污染、两个读取窗口边界、压实、回滚链） | ✅ |
-| 0.8.0-b | `commitConfig` 加来源 + 追加 + 两个间接调用者穿透 | `verify-config` 的来源标注断言 + 真实提交探针 | ⬜ |
+| 0.8.0-b | `commitConfig` 加来源 + 追加 + 两个间接调用者穿透 | `verify-config` 的来源标注断言（14 个调用点逐个归属 + 4 条时机/隔离断言）+ 11 组变异探针全部被拦 | ✅ |
 | 0.8.0-c | 四条 HTTP 路由（含方法校验、`skipped`、`restore-persona`） | 真实路由探针（含 405、非法 id、手改历史文件） | ⬜ |
 | 0.8.0-d | 设置页「变更记录」分组 | `verify-client`（渲染 / 倒序 / 二次确认 / 请求体） | ⬜ |
 
@@ -377,9 +385,9 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
 
 | # | 变异 | 期望变红的断言 |
 | --- | --- | --- |
-| 1 | `commitConfig` 里把 `appendHistory` 挪到 `saveConfig` **之前** | 「配置写失败时不得留下审计条目」 |
+| 1 | `commitConfig` 里把 `appendHistory` 挪到 `saveConfig` **之前** | 「配置写失败时不得留下审计条目」 ✅ ③ 已验 |
 | 2 | 删掉 `diffKeys` 里的 `personas` 跳过判断 | 「仅预设变更必须出现在时间线上」（这是核心陷阱） |
-| 3 | 追加失败时把异常向上抛（而不是只记 `lastHistoryFailure`） | 「审计写失败配置仍成功」 |
+| 3 | 追加失败时把异常向上抛（而不是只记 `lastHistoryFailure`） | 「审计写失败配置仍成功」 ✅ ⑤/⑥ 已验 |
 | 4 | 回滚时 `{ ...current, ...entry.before }` 直接展开（不过 `sanitizeConfig`） | 「记录里的非法值不得写入配置」 |
 | 5 | 撤销链的循环上界从 `i >= index` 改成 `i > index`（不撤目标条目自己） | 「撤销最新一条必须真的改掉它」（这正是实现阶段被推翻的那条草案语义） |
 | 5b | 撤销链去掉 `hashConfig` 指纹校验 | 「配置与记录不同步 ⇒ 拒绝」与「链条中间断掉也要拒绝」 |
@@ -389,10 +397,36 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
 | 6d | `personaSignature` 把 `updatedAt` 也算进内容指纹 | 「原样再存一遍不留假记录」 |
 | 7 | 删掉「同名预设已存在则拒绝」 | 「恢复预设不得静默覆盖同名条目」 |
 | 8 | `rollback` 路由删掉 `req.method` 校验 | 「GET `/rollback` 必须 405」（对照 `config/reset` 的既有教训） |
-| 9 | 把 `source` 参数默认成一个固定值（丢掉 14 处标注） | 「每个调用点各自的来源必须落在条目里」 |
+| 9 | 把 `source` 参数默认成一个固定值（丢掉 14 处标注） | 「每个调用点各自的来源必须落在条目里」 ✅ ② 已验 |
 | 10 | 压实阈值改成永久不触发 | 「超过上限时必须压实」 |
 
 `0.8.0-a` 已落地的部分（`lib/history.mjs` + `scripts/verify-history.mjs`，40 项断言）
 走的是**离线断言**而不是 shell 变异探针：纯函数层的每一条边界都能在断言里直接构造，
 不需要改坏源码再跑。变异探针留给 `0.8.0-b`–`0.8.0-d` —— 那三步断言的是
 「宿主行为」与「调用点归属」，只有在集成层才验得动。
+
+### 14.1 `0.8.0-b` 实际跑过的 11 组变异（全部被拦）
+
+驱动脚本 `judge.mjs`：把仓库拷进临时目录、**先跑一遍控制组**（不改任何东西必须全绿，
+否则所有「被拦」都可能来自环境），再逐条在独立副本上改一个锚点、跑一次
+`verify-config`，锚点没命中就如实报「变异未生效」而不是算作被拦。
+
+| # | 变异 | 被哪条断言拦下 |
+| --- | --- | --- |
+| ① | 去掉某个调用点的第二个实参（.history 记成「不知道谁改的」） | 提交即留痕：唯一漏斗的每个调用点都自带来源归属 |
+| ② | `source` 形参加上默认值（忘了标注的调用点静默落进默认桶） | 同上 |
+| ③ | 留痕挪到 `saveConfig` 之前（配置写失败却留下一条记录） | 留痕时机在配置落盘之后 |
+| ④ | 差分基准换成 `mutate` 的产物（把 `tone`/`presets` 等废弃字段误报成变更） | 同上 |
+| ⑤ | 审计失败向上抛（「记不下来」升级成「改不了」） | 留痕时机…且失败不得连带配置写失败 |
+| ⑥ | 审计失败静默吞掉（不记 `lastHistoryFailure`，用户看不到） | 同上 |
+| ⑦ | 重置的 `source` 不穿透（三个重置入口退化成同一个来源） | 重置是配置损坏时的逃生口 |
+| ⑧ | **张冠李戴**：把 `confirm` 的标注挪给 `set`（数量对、位置错） | 提交即留痕（这条说明只数「有几个 `source:`」是不够的） |
+| ⑨ | `index.mjs` 自己拼历史文件名（改一处忘一处会写到别的文件） | 留痕时机… |
+| ⑩ | `applyPersonaEntry` 的来源标成 `web`（应用预设认不出是预设应用） | 提交即留痕 |
+| ⑪ | 「条目构造失败」并回「无变化」（漏标 `source` 变成静默丢失记录） | 留痕时机… |
+
+▶ **⑪ 是这份表里唯一最开始失败过的一条，且失败的是探针本身而不是实现。**
+初版变异在原有告警行**之前**插了一行 `lastHistoryFailure = null`，紧接着的原始行
+又把它覆盖回真实原因 —— 根本没制造出「静默跳过」这个故障，却让人误以为
+「这条断言守不住」。**教训：变异没被拦时，先证明变异真的制造了故障，
+再怀疑断言。** 改成直接替换掉告警赋值之后立即被拦。

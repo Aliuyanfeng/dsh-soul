@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 115
+const EXPECTED_ASSERTIONS = 117
 
 let passed = 0
 const failures = []
@@ -2036,12 +2036,17 @@ check('移除损坏配置只有一条实现：lib/store.mjs 的 moveAsideConfigF
 })
 
 check('重置是配置损坏时的逃生口：先移开损坏文件，再复用同一条写入路径', () => {
-  const matched = indexCode.match(/async function resetConfigWithEscape\(\)[\s\S]*?\n\}/)
+  // 签名带 source 形参（0.8.0 起用于变更记录的归属），故匹配式允许括号内有内容
+  const matched = indexCode.match(/async function resetConfigWithEscape\([\s\S]*?\) \{[\s\S]*?\n\}/)
   assert.ok(matched, 'index.mjs 中找不到 resetConfigWithEscape')
   const body = matched[0]
   assert.ok(/moveAsideConfigFile\(configPath\(\)\)/.test(body), '重置应先移开损坏文件（＝备份到 .corrupt）')
   assert.ok(/configLoadFailure = null/.test(body), '移开之后必须清掉失败标记，否则 saveConfig 仍会拒绝')
   assert.ok(/commitConfig\(/.test(body), '重置应复用 commitConfig，而不是另写一份「读—改—写」')
+  assert.ok(
+    /commitConfig\([\s\S]*?,\s*source\)/.test(body),
+    'source 形参必须穿透给 commitConfig——否则重置动作在变更记录里失去归属'
+  )
   assert.ok(
     /catch[\s\S]*?configLoadFailure = failure[\s\S]*?throw/.test(body),
     '写入失败必须恢复失败标记，否则会把「文件仍然不可用」误报成正常'
@@ -2051,18 +2056,147 @@ check('重置是配置损坏时的逃生口：先移开损坏文件，再复用�
 check('两个重置入口都走逃生口（HTTP 与斜杠命令）', () => {
   const route = indexCode.match(/path: '\/api\/soul\/config\/reset'[\s\S]*?\n    \}\)/)
   assert.ok(route, '找不到 /api/soul/config/reset 端点')
-  assert.ok(/resetConfigWithEscape\(\)/.test(route[0]), 'HTTP 重置必须走逃生口')
+  assert.ok(/resetConfigWithEscape\(/.test(route[0]), 'HTTP 重置必须走逃生口')
   assert.ok(/backupPath/.test(route[0]), 'HTTP 重置应回传备份路径，供界面如实说明数据去哪了')
+  assert.ok(
+    /resetConfigWithEscape\(\{ source: 'web', action: 'reset' \}\)/.test(route[0]),
+    'HTTP 重置必须标注来源 web/reset，否则变更记录里认不出这次重置从哪来'
+  )
 
   const resetBranch = indexCode.match(/if \(first === 'reset'\)[\s\S]*?\n          \}/)
   assert.ok(resetBranch, "找不到 /soul reset 分支")
-  assert.ok(/resetConfigWithEscape\(\)/.test(resetBranch[0]), '/soul reset 必须走逃生口')
+  assert.ok(/resetConfigWithEscape\(/.test(resetBranch[0]), '/soul reset 必须走逃生口')
   assert.ok(/backupPath/.test(resetBranch[0]), '/soul reset 应告知备份位置')
+  assert.ok(
+    /resetConfigWithEscape\(\{ source: 'command', action: 'reset' \}\)/.test(resetBranch[0]),
+    '/soul reset 必须标注来源 command/reset——与网页重置是两个入口，记录里要分得开'
+  )
 
   assert.equal(
     /commitConfig\(current => defaultConfigPreservingPersonas\(current\)\)/.test(indexCode),
     false,
     '不得再有绕过逃生口的重置路径——否则损坏状态下会走到一条必然失败的写'
+  )
+})
+
+check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', () => {
+  // 0.8.0 的变更记录要回答「谁改的」。事后从配置差异里推不出来，所以来源必须由
+  // 调用方显式给出 —— 这条断言守的就是「显式」二字：既不许缺，也不许给默认值兜底。
+  const signature = indexCode.match(/async function commitConfig\(([^)]*)\)/)
+  assert.ok(signature, 'index.mjs 中找不到 commitConfig')
+  assert.match(signature[1], /mutate,\s*source/, 'commitConfig 必须有 source 形参')
+  assert.equal(
+    /source\s*=\s*[^,)]/.test(signature[1]),
+    false,
+    'source 不得有默认值——默认值会让「忘了标注』的调用点静默算作某个来源，比缺来源更糟'
+  )
+
+  // 全部来源标注：16 处调用点各一个。数量写死是刻意的——新增写路径时这里会红，
+  // 提醒作者同时决定它的来源归属，而不是让它悄悄落进默认桶。
+  const expected = [
+    ["{ source: 'web', action: 'save' }", 'HTTP 保存配置'],
+    ["{ source: 'web', action: 'reset' }", 'HTTP 重置'],
+    ["{ source: 'web', action: 'savePreset' }", 'HTTP 保存预设'],
+    ["{ source: 'web', action: 'deletePreset' }", 'HTTP 删除预设'],
+    ["{ source: 'persona', action: 'use' }", '应用预设（两条入口共用）'],
+    ["{ source: 'command', action: 'nickname' }", '/soul <昵称>'],
+    ["{ source: 'command', action: 'reset' }", '/soul reset'],
+    ["{ source: 'command', action: 'enable' }", '/soul enable'],
+    ["{ source: 'command', action: 'disable' }", '/soul disable'],
+    ["{ source: 'command', action: 'savePreset' }", '/soul save'],
+    ["{ source: 'command', action: 'deletePreset' }", '/soul del'],
+    ["{ source: 'command', action: 'set' }", '/soul set'],
+    ["{ source: 'command', action: 'confirm' }", '/soul confirm'],
+    ["{ source: 'tool', action: 'setPersona' }", 'set_persona 工具'],
+    ["{ source: 'service', action: 'update' }", 'soulConfig.updateConfig'],
+    ["{ source: 'service', action: 'reset' }", 'soulConfig.resetConfig']
+  ]
+  const found = expected.filter(([literal]) => indexCode.includes(literal))
+  assert.deepEqual(
+    found.map(([literal]) => literal),
+    expected.map(([literal]) => literal),
+    `缺少来源标注：${expected.filter(([l]) => !indexCode.includes(l)).map(([, who]) => who).join('、')}`
+  )
+  const total = indexCode.match(/\{ source: '[a-z][A-Za-z]*', action: '/g) || []
+  assert.equal(total.length, expected.length, `来源标注应有 ${expected.length} 处，实际 ${total.length} 处——多出来的是未登记的写路径`)
+
+  // 关联性（光有 16 个标注不够，还要落在对的地方）：抽几个有稳定锚点的切片来钉，
+  // 防止「标注都在，但张冠李戴」——例如把 confirm 的标注挪到 set 上。
+  const personaApply = indexCode.match(/async function applyPersonaEntry\(ctx, entry\)[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.match(personaApply, /\{ source: 'persona', action: 'use' \}/, 'applyPersonaEntry 的来源应是 persona/use')
+  const toolSlice = indexSource.match(/defineTool\([\s\S]*?\n    \}\)/)?.[0] ?? ''
+  assert.match(toolSlice, /\{ source: 'tool', action: 'setPersona' \}/, 'set_persona 工具的来源应是 tool/setPersona')
+  assert.match(indexCode, /updateConfig[\s\S]*?\{ source: 'service', action: 'update' \}/, 'updateConfig 的来源应是 service/update')
+  assert.match(indexCode, /resetConfig\(\)[\s\S]*?resetConfigWithEscape\(\{ source: 'service', action: 'reset' \}\)/, 'resetConfig 服务的来源应是 service/reset')
+
+  // 重置的 source 必须由 commitConfig 的形参穿透，而不是在内部写死 —— 否则三个重置
+  // 入口（网页 / 命令 / 服务）会在记录里退化成同一个来源。
+  const escape = indexCode.match(/async function resetConfigWithEscape\(([^)]*)\)[\s\S]*?\n\}/)
+  assert.ok(escape, '找不到 resetConfigWithEscape')
+  assert.match(escape[1], /source/, 'resetConfigWithEscape 必须接收 source')
+  assert.match(escape[0], /commitConfig\([\s\S]*?,\s*source\)/, 'source 必须穿透给 commitConfig')
+})
+
+check('留痕时机在配置落盘之后，且失败不得连带配置写失败', () => {
+  const body = indexCode.match(/async function commitConfig\([^)]*\)[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(body !== '', '找不到 commitConfig 函数体')
+  const saveAt = body.indexOf('await saveConfig(next)')
+  const auditAt = body.indexOf('await auditCommit(')
+  assert.ok(saveAt !== -1 && auditAt !== -1, 'commitConfig 应在 saveConfig 之后调用 auditCommit')
+  assert.ok(
+    saveAt < auditAt,
+    '留痕必须在配置落盘之后：反过来的话「配置写失败」会留下一条描述没发生过的变更的记录'
+  )
+
+  // 差分基准必须是 saveConfig 的**返回值**（已剔除 tone / presets / examples 等废弃字段），
+  // 而不是 mutate 的产物 —— 后者会把那些字段误报成变更。
+  assert.match(
+    body,
+    /auditCommit\(current,\s*config,/,
+    'auditCommit 的第二个参数应是 saveConfig 返回的 config，而不是 mutate 的中间产物'
+  )
+
+  const audit = indexCode.match(/async function auditCommit\([^)]*\)[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(audit !== '', '找不到 auditCommit')
+  assert.match(audit, /try\s*\{/, 'auditCommit 必须自带 try —— 审计失败不能往外抛')
+  assert.match(
+    audit,
+    /catch[\s\S]*?lastHistoryFailure\s*=/,
+    '审计失败必须记进 lastHistoryFailure（经诊断端点回传），不得静默吞掉'
+  )
+  assert.equal(
+    /catch[\s\S]*?throw/.test(audit),
+    false,
+    '审计失败绝不能向上抛：那会把「记不下来」升级成「改不了」，而配置写入才是核心功能'
+  )
+
+  // 没变东西就不记：否则每次点「保存」都刷一条噪声条目。
+  // 关键是把「真的没变」与「条目构造失败」分成两条路：后者是调用点漏标 source 的代码
+  // 缺陷，若被当成「无变化」跳过，表现就是「配置改了、记录里没有、也没有任何告警」。
+  assert.match(
+    audit,
+    /const changedAny =[\s\S]*?if \(!changedAny\)/,
+    '「什么都没变」必须在构造条目之前用字段差分判掉，不能靠 buildHistoryEntry 返回 null 来表达'
+  )
+  assert.match(audit, /if \(!entry\)/, '有变化却构造不出条目时应有独立分支')
+  // 匹配到 **非 null** 的赋值：`lastHistoryFailure = null` 不算「报出来了」——
+  // 那恰好是「静默跳过」的写法，而它也能被更松的正则放过。
+  assert.match(
+    audit,
+    /if \(!entry\)[\s\S]*?lastHistoryFailure\s*=\s*`/,
+    '条目构造失败必须带原因记进 lastHistoryFailure（赋 null 等于静默跳过）'
+  )
+  assert.ok(
+    /lastHistoryFailure\s*=\s*null/.test(audit),
+    '记录成功（或无需记录）时应清掉上一次的失败原因，否则旧告警会永远挂着'
+  )
+
+  // 路径：与配置同目录的兄弟文件，由 lib/history.mjs 推导，index.mjs 不自己拼字符串。
+  assert.match(indexCode, /function historyPath\(\)[\s\S]*?historyPathFor\(configPath\(\)\)/, 'historyPath 应由 historyPathFor(configPath()) 推导')
+  assert.equal(
+    /\.history\.jsonl/.test(indexCode),
+    false,
+    '文件名后缀是 lib/history.mjs 的契约，index.mjs 里不该再有一份字面副本（改一处忘一处会写到别的文件）'
   )
 })
 

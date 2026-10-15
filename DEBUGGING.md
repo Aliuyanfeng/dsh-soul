@@ -196,7 +196,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 | 层 | 脚本 | 断言数 | 会不会跳过 |
 | --- | --- | --- | --- |
-| 纯函数 / 契约 | `verify-config` | 115 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
+| 纯函数 / 契约 | `verify-config` | 117 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
 | 持久化行为 | `verify-history` | 40 | 否 |
 | 客户端行为 | `verify-client` | 23 | 否 |
@@ -206,7 +206,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | 渲染层 | `verify-trail` | 11 | 起不来浏览器时整脚本跳过 |
 | 渲染层 | `verify-nav-icon` | 16（含 6 项判断力自检） | 同上 |
 
-也可以单跑一层：`npm run verify:store` / `verify:history` / `verify:client` / `verify:e2e` / `verify:host` / `verify:compat` / `verify:trail` / `verify:nav-icon`。
+也可以单跑一层：`npm run verify:config` / `verify:store` / `verify:history` / `verify:client` / `verify:e2e` / `verify:host` / `verify:compat` / `verify:trail` / `verify:nav-icon`。
 
 **跳过也是退出码 0** —— 所以整条链看起来一片绿，实际可能少了 50+ 项断言。0.7.1 起：
 
