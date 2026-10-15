@@ -48,7 +48,7 @@ window.__ModuleLoader__.load({
     // -------------------------------------------------------------------------
 
     const NS = 'soul'
-    const VERSION = '0.7.2'
+    const VERSION = '0.8.0'
     const INITIAL = {
       enabled: true,
       nickname: '',
@@ -73,6 +73,15 @@ window.__ModuleLoader__.load({
       activePersona: null,
       // 预设列表请求失败的原因（成功时清空）。用于把「加载中」与「加载失败」区分开
       personasError: null,
+      // 变更记录（0.8.0）：null = 还没拉过，[] = 拉过且确实没有记录。
+      // 两者必须分得开 —— 否则「没有记录」与「还没加载」在界面上是同一种空白。
+      history: null,
+      // 记录可能不完整的原因（读取窗口切掉、坏行、压实、写入失败），服务端给的原文
+      historyWarning: null,
+      historyError: null,
+      // 容量上限（服务端 HISTORY_MAX_ENTRIES）。由响应带回而不是写死在客户端：
+      // 两边各写一份迟早会不一致，而「最多保留 N 条」是一句会被人当真的承诺。
+      historyMax: null,
       saving: false,
       error: null
     }
@@ -125,6 +134,16 @@ window.__ModuleLoader__.load({
       const kb = Object.keys(b)
       if (ka.length !== kb.length) return false
       return ka.every((key) => shallowEqual(a[key], b[key]))
+    }
+
+    // 变更记录只在「追加一条」或「被清空」时变化，两者的**id 序列**都不一样 ——
+    // 所以逐条深比是白费力气（每条含 before/after/personas，深比一次的代价远超收益）。
+    // 比 id 序列足够，且顺带覆盖了「压实后旧条目被淘汰」这种变化。
+    const sameHistory = (a, b) => {
+      if (a === b) return true
+      if (!Array.isArray(a) || !Array.isArray(b)) return false
+      if (a.length !== b.length) return false
+      return a.every((item, index) => item && b[index] && item.id === b[index].id)
     }
 
     function hostBase() {
@@ -521,6 +540,69 @@ window.__ModuleLoader__.load({
         return await this.postJSON('/api/soul/personas/delete', { name })
       }
 
+      // —— 变更记录（0.8.0）——
+      async fetchHistory() {
+        return await this.postJSON('/api/soul/history', null, { method: 'GET' })
+      }
+
+      // 拉取记录并写入 store。
+      //
+      // 与 loadPersonas 同款：失败必须留下痕迹，否则界面永远停在「加载中」，
+      // 与「真的还没有记录」无从区分 —— 而「到底有没有记录」正是这一组的全部意义。
+      async loadHistory() {
+        if (this.disposed) return
+        try {
+          const payload = await this.fetchHistory()
+          this.store.update((s) => {
+            // 内容相同就保留旧引用，理由同 loadPersonas：每 2s 轮询都会解析出**新数组**，
+            // 直接赋值会让 store 的浅比较永远判「变了」，整页白重渲染。
+            const next = Array.isArray(payload.entries) ? payload.entries : []
+            s.history = sameHistory(s.history, next) ? s.history : next
+            // warning 是「记录可能不完整」，不是失败：不写进 historyError，
+            // 否则界面会把「只显示了最近 1000 条」报成红色错误。
+            s.historyWarning = payload.warning ? String(payload.warning) : null
+            s.historyMax = Number.isFinite(payload.max) ? payload.max : s.historyMax
+            s.historyError = null
+          })
+        } catch (err) {
+          this.store.update((s) => {
+            s.historyError = messageOf(err)
+          })
+        }
+      }
+
+      // 撤销：把配置退回到目标记录**发生之前**。
+      //
+      // 409（diverged）与 400（找不到 / 记录被压实淘汰）都是**预期内的拒绝**，
+      // 不是网络故障 —— 直接把服务端文案抛给调用方，由界面原样展示。
+      // 服务端已经把原因写得能读懂（「记录与当前配置对不上，可能有人手工改过配置文件」），
+      // 这里再包一层「撤销失败：...」只会把关键信息埋起来。
+      async rollbackHistory(id) {
+        const payload = await this.postJSON('/api/soul/history/rollback', { id })
+        if (!this.disposed) {
+          this.store.update((s) => {
+            this.applyConfig(s, payload.config)
+            s.error = null
+          })
+        }
+        return payload
+      }
+
+      async restorePersona(id) {
+        const payload = await this.postJSON('/api/soul/history/restore-persona', { id })
+        if (!this.disposed) {
+          this.store.update((s) => {
+            this.applyConfig(s, payload.config)
+            s.error = null
+          })
+        }
+        return payload
+      }
+
+      async clearHistory() {
+        return await this.postJSON('/api/soul/history/clear')
+      }
+
       // 统一请求：body 为 null 时不携带请求体（GET 用）
       async postJSON(path, body, overrides = {}) {
         const url = new URL(path, hostBase())
@@ -869,6 +951,51 @@ window.__ModuleLoader__.load({
       '.soul-trail-preview{position:relative;margin-top:6px;padding:16px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill)}',
       '.soul-trail-preview[data-soul-trail="on"]{border-color:transparent}',
       '.soul-trail-preview-text{font-size:12px;color:var(--dsw-alias-label-tertiary)}',
+      // —— 变更记录（0.8.0）——
+      // 顶部状态行 + 右侧「清空记录」：与 .soul-drift 同款（space-between），
+      // 因为它也是「一句话 + 一个行动」的形态。
+      '.soul-history-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px}',
+      '.soul-history-count{margin-top:0}',
+      // 危险色描边文字钮（规格抄 .soul-persona-danger）：清空记录不可逆，
+      // 是这一组唯一的破坏性动作。撤销按钮不用危险色 —— 它可以再撤销一次改回来。
+      '.soul-history-clear{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;height:24px;padding:0 10px;border:.5px solid var(--dsw-alias-state-error-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-state-error-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
+      '.soul-history-clear:hover{background:var(--dsw-alias-interactive-bg-hover-danger,rgba(236,19,19,.05))}',
+      '.soul-history-clear:focus-visible{outline:2px solid var(--dsw-alias-state-error-primary);outline-offset:1px}',
+      // armed：实心危险色 + 文案变成「确认清空？」（样式抄 .soul-persona-danger-armed）
+      '.soul-history-clear-armed{background:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-label-primary-foreground)}',
+      '.soul-history-warning{margin-top:6px}',
+      '.soul-history-list{display:flex;flex-direction:column;gap:6px;margin:10px 0 0 0;padding:0;list-style:none}',
+      '.soul-history-item{border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform);overflow:hidden}',
+      // 头部是「主体按钮 + 操作按钮」两段：主体撑满左侧，操作固定在右，
+      // 因此主体按钮必须 min-width:0 才能让里面的 ellipsis 生效。
+      '.soul-history-item-head{display:flex;align-items:center;gap:8px;padding-right:8px}',
+      '.soul-history-item-main{display:flex;align-items:center;gap:8px;flex:1;min-width:0;padding:8px 10px;border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;text-align:left;cursor:pointer}',
+      '.soul-history-item-main:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-history-item-main:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}',
+      // 时间与来源不参与收缩（它们短且固定），字段名列表吃掉剩余宽度并省略。
+      '.soul-history-time{flex:none;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;white-space:nowrap}',
+      '.soul-history-source{flex:none;padding:0 6px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-xs);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px;white-space:nowrap}',
+      '.soul-history-fields{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary)}',
+      '.soul-history-item-actions{display:flex;align-items:center;gap:6px;flex:none}',
+      '.soul-history-action{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;height:24px;padding:0 8px;border:.5px solid var(--dsw-alias-brand-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
+      '.soul-history-action:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-history-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      '.soul-history-action-armed{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}',
+      '.soul-history-detail{padding:0 10px 10px 10px;border-top:.5px solid var(--dsw-alias-settings-card-stroke)}',
+      '.soul-history-diff{display:flex;flex-direction:column;gap:4px;padding-top:8px}',
+      // 三列网格而不是 flex：字段名长度不一（英文标签很长），
+      // 网格才能让「原值 → 新值」在每一行都对齐。
+      '.soul-history-diff-row{display:grid;grid-template-columns:88px minmax(0,1fr) 14px minmax(0,1fr);align-items:start;gap:6px;font-size:12px;line-height:18px}',
+      '.soul-history-diff-field{color:var(--dsw-alias-label-tertiary);word-break:break-word}',
+      // pre-wrap：介绍 / 自定义指令里的换行是内容的一部分，压成一行会看不出改了什么。
+      '.soul-history-diff-from,.soul-history-diff-to{min-width:0;white-space:pre-wrap;word-break:break-word}',
+      '.soul-history-diff-from{color:var(--dsw-alias-label-tertiary)}',
+      '.soul-history-diff-to{color:var(--dsw-alias-label-primary)}',
+      '.soul-history-diff-arrow{color:var(--dsw-alias-label-tertiary);text-align:center}',
+      '.soul-history-diff-persona{margin-top:8px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      '.soul-history-more{align-self:flex-start;margin-top:8px;padding:0;border:0;background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.soul-history-more:hover{text-decoration:underline}',
+      '.soul-history-more:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       // 开了「减少动态效果」时：光轨层与卡片停动画。
       // 结果提示（绿字/红字）不需要在这里照顾 —— 它们是静态文字、没有动画。
       '@media (prefers-reduced-motion:reduce){.soul-trail-layer{animation:none}.soul-persona-card{animation:none!important;transition:none}}'
@@ -997,6 +1124,57 @@ window.__ModuleLoader__.load({
       'group.tool': 'Agent 工具',
       'field.toolConfirm': '人设变更需确认',
       'hint.toolConfirm': '开启后，Agent 改人设会先在输入框处弹出审批面板（Enter 允许 / Esc 拒绝）。若会话审批通道不可用（策略为 never），则退化为待确认提议，需用 /soul confirm 处理 —— 此时建议关闭本开关，否则每次改动都要手输命令。',
+      // —— 变更记录（0.8.0）——
+      'group.history': '变更记录',
+      'history.empty': '还没有任何变更记录。',
+      'history.loading': '加载中...',
+      'history.loadFailed': '无法读取变更记录：{reason}',
+      'history.summary': '最近 {count} 条 · 最多保留 {max} 条',
+      'history.more': '还有 {count} 条',
+      'history.clear': '清空记录',
+      'history.clearArmed': '确认清空？',
+      'history.clearDone': '已清空 {count} 条变更记录。',
+      // 按钮用「撤销」而不是「恢复」：点一条记录的结果是**把这一次改动撤掉**
+      // （连同它之后的），不是「切回那天的状态」。
+      'history.restore': '撤销这一次',
+      'history.restoreArmed': '撤销？',
+      'history.restoreDone': '已撤销 {count} 次改动。',
+      'history.restoreUnchanged': '在撤销之前，这些改动就已经被后续改动改回去了。',
+      'history.restorePreset': '恢复此预设',
+      'history.restorePresetDone': '已恢复预设「{name}」。',
+      'history.restorePresetSkipped': '未恢复「{name}」：{reason}',
+      'history.skip.exists': '当前已有同名的预设',
+      'history.skip.builtin': '这是内置预设',
+      'history.skip.invalid-name': '名字不合法',
+      'history.restoreSkippedNote': '已恢复 {count} 个，另有 {skipped} 个未恢复。',
+      'history.diverged': '记录与当前配置对不上，无法撤销。可能有人手工改过配置文件。',
+      'history.warning': '记录可能不完整：{reason}',
+      'history.footer': '撤销人设配置，不影响人设预设库。',
+      'history.fields': '涉及 {fields}',
+      'history.field.from': '原值',
+      'history.field.to': '新值',
+      'history.personasAdded': '新增预设 {names}',
+      'history.personasRemoved': '删除预设 {names}',
+      'history.personasUpdated': '覆盖预设 {names}',
+      'history.source.web': '网页保存',
+      'history.source.command': '斜杠命令',
+      'history.source.tool': 'Agent 工具',
+      'history.source.service': '插件调用',
+      'history.source.persona': '应用预设',
+      'history.source.rollback': '撤销',
+      'history.source.restorePersona': '恢复预设',
+      // —— 变更记录：列表渲染补充（0.8.0-d）——
+      // 服务端没带回容量上限时的退路：宁可不提「最多保留 N 条」，也不编一个数字出来。
+      'history.summaryCount': '最近 {count} 条',
+      'history.timeJustNow': '刚刚',
+      'history.timeMinutes': '{count} 分钟前',
+      'history.timeHours': '{count} 小时前',
+      'history.timeDays': '{count} 天前',
+      // 空值必须显式画出来：留空会被读成「渲染坏了」，而「这次把它清空了」是一条事实
+      'history.valueEmpty': '（空）',
+      // 服务端不记空条目，所以这一句正常情况下到不了屏幕；但记录文件是可以被手工
+      // 改坏的，真遇到时宁可写「无字段变化」，也不要显示成裸键名 history.emptyFields。
+      'history.emptyFields': '无字段变化',
       'button.save': '保存设置',
       'button.saving': '保存中...',
       'button.cancel': '取消',
@@ -1156,6 +1334,57 @@ window.__ModuleLoader__.load({
       'group.tool': 'Agent tools',
       'field.toolConfirm': 'Require confirmation for persona changes',
       'hint.toolConfirm': 'When on, persona changes by the agent first raise an approval panel above the input box (Enter = allow, Esc = reject). If the session approval channel is unavailable (policy = never), it falls back to a pending proposal applied only via /soul confirm. Under full permissions the panel never appears, so turning this switch off is recommended.',
+      // —— Change history (0.8.0) ——
+      'group.history': 'Change history',
+      'history.empty': 'No changes recorded yet.',
+      'history.loading': 'Loading...',
+      'history.loadFailed': 'Could not read the change history: {reason}',
+      'history.summary': 'Last {count} · keeps up to {max}',
+      'history.more': '{count} more',
+      'history.clear': 'Clear history',
+      'history.clearArmed': 'Clear it?',
+      'history.clearDone': 'Cleared {count} change records.',
+      // "Undo" rather than "restore": clicking a record reverts **that change**
+      // (and everything after it), it does not jump back to that day's state.
+      'history.restore': 'Undo this change',
+      'history.restoreArmed': 'Undo?',
+      'history.restoreDone': 'Undid {count} change(s).',
+      'history.restoreUnchanged': 'Those changes had already been reverted by later edits.',
+      'history.restorePreset': 'Restore this preset',
+      'history.restorePresetDone': 'Restored preset "{name}".',
+      'history.restorePresetSkipped': 'Did not restore "{name}": {reason}',
+      'history.skip.exists': 'a preset with that name already exists',
+      'history.skip.builtin': 'it is a built-in preset',
+      'history.skip.invalid-name': 'the name is not valid',
+      'history.restoreSkippedNote': 'Restored {count}; {skipped} were not restored.',
+      'history.diverged': 'The history does not match the current config, so it cannot be undone. The config file may have been edited by hand.',
+      'history.warning': 'The history may be incomplete: {reason}',
+      'history.footer': 'Undoes persona settings only; your preset library is untouched.',
+      'history.fields': 'Touches {fields}',
+      'history.field.from': 'was',
+      'history.field.to': 'now',
+      'history.personasAdded': 'Added preset {names}',
+      'history.personasRemoved': 'Deleted preset {names}',
+      'history.personasUpdated': 'Overwrote preset {names}',
+      'history.source.web': 'Web save',
+      'history.source.command': 'Slash command',
+      'history.source.tool': 'Agent tool',
+      'history.source.service': 'Plugin call',
+      'history.source.persona': 'Preset applied',
+      'history.source.rollback': 'Undo',
+      'history.source.restorePersona': 'Preset restored',
+      // —— Change history: list rendering (0.8.0-d) ——
+      // Fallback for when the server did not report a capacity: better to omit
+      // "keeps up to N" than to invent a number that reads like a promise.
+      'history.summaryCount': 'Last {count}',
+      'history.timeJustNow': 'just now',
+      'history.timeMinutes': '{count} min ago',
+      'history.timeHours': '{count} h ago',
+      'history.timeDays': '{count} d ago',
+      // An empty value must be drawn explicitly: leaving it blank reads as "broken",
+      // while "it was cleared" is itself a fact worth showing.
+      'history.valueEmpty': '(empty)',
+      'history.emptyFields': 'No field changes',
       'button.save': 'Save Settings',
       'button.saving': 'Saving...',
       'button.cancel': 'Cancel',
@@ -1272,6 +1501,37 @@ window.__ModuleLoader__.load({
     // 编译结果，不该因此重新请求，也不该让预览被标成「未保存」。
     const PROMPT_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions']
 
+    // —— 变更记录（0.8.0）——
+    //
+    // 审计字段的文案键。**必须覆盖 lib/history.mjs 的 AUDIT_FIELDS**（= DEFAULT_CONFIG 全键）：
+    // 漏掉一个，时间线里就会露出一串裸键名（`trailWidth`）。有断言盯着这张表。
+    // 复用设置页既有文案而不是另写一份：同一样东西在两处叫不同名字，用户会以为不是一回事。
+    const HISTORY_FIELD_LABELS = {
+      enabled: 'toggle.enabled',
+      nickname: 'field.nickname',
+      occupation: 'field.occupation',
+      bio: 'field.bio',
+      style: 'field.style',
+      headingLists: 'field.headingLists',
+      emoji: 'field.emoji',
+      tables: 'field.tables',
+      replyLength: 'field.replyLength',
+      language: 'field.language',
+      customInstructions: 'field.instructions',
+      requireToolConfirmation: 'field.toolConfirm',
+      trailEnabled: 'trail.enable',
+      trailColor: 'trail.color',
+      trailSpeed: 'trail.speed',
+      trailWidth: 'trail.width'
+    }
+
+    // 与 lib/history.mjs 的 HISTORY_SOURCES 对齐；认不出的来源原样显示。
+    const HISTORY_SOURCES = ['web', 'command', 'tool', 'service', 'persona', 'rollback', 'restorePersona']
+
+    // 一次最多铺开多少条。记录上限是 200 条，全渲染会让这一组比整个设置页还长；
+    // 超出的折成一行「还有 N 条」，想看完的人再点一次。
+    const HISTORY_RENDER_LIMIT = 20
+
     // 提示词小图标：hover / 键盘聚焦都展示说明文字。
     // 此前只有 :hover 可达，且提示节点用 visibility:hidden —— 那会把它移出无障碍树，
     // 键盘与读屏用户拿不到字段说明。这里补 tabIndex 让它可以聚焦，并在 :focus-visible
@@ -1370,7 +1630,7 @@ window.__ModuleLoader__.load({
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, personas, activePersona, personasError, saving, error } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error } = state
 
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
@@ -1730,6 +1990,98 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(timer)
       }, [pendingDelete])
 
+      // —— 变更记录（0.8.0）的三个动作 ——
+      //
+      // 撤销与清空都是破坏性的，都走**内联二次确认**（与删除预设同一套：
+      // armed 态 + 5s 超时）。不用原生 confirm，理由见 handleDeletePersona 上方注释。
+      const [pendingUndo, setPendingUndo] = React.useState(null)
+      const [pendingClear, setPendingClear] = React.useState(false)
+      // 展开的是哪一条（存 id 而不是下标：重拉后顺序可能变，存下标会展开错行）。
+      // 不参与 5s 超时复位 —— 它是纯浏览状态，不是待确认的危险动作。
+      const [expandedEntry, setExpandedEntry] = React.useState(null)
+      // 「还有 N 条」被点开后就一直摊开：记录只在写配置时变，
+      // 一边看一边被打包的场景不存在。
+      const [showAllHistory, setShowAllHistory] = React.useState(false)
+
+      React.useEffect(() => {
+        if (pendingUndo === null && !pendingClear) return
+        const timer = setTimeout(() => {
+          setPendingUndo(null)
+          setPendingClear(false)
+        }, 5000)
+        return () => clearTimeout(timer)
+      }, [pendingUndo, pendingClear])
+
+      // 撤销：把配置退回到目标记录**发生之前**（连带撤销它之后的改动）。
+      //
+      // 服务端拒绝（409 diverged / 400 找不到）是预期内的结果，不是网络故障 ——
+      // 原样展示服务端文案，因为它已经写清了「为什么不能撤销」；
+      // 再包一层「撤销失败：」只会把关键信息埋起来。
+      const handleUndo = async (id) => {
+        if (pendingUndo !== id) {
+          setPendingUndo(id)
+          return
+        }
+        setPendingUndo(null)
+        try {
+          const payload = await controller.rollbackHistory(id)
+          await controller.loadHistory()
+          const count = Array.isArray(payload && payload.reversed) ? payload.reversed.length : 0
+          if (count === 0) {
+            // 补丁为空是合法结果：那次改动已被后续改动改回去了
+            showSavedNotice(t('history.restoreUnchanged'))
+          } else {
+            showSavedNotice(t('history.restoreDone', { count: String(count) }))
+          }
+        } catch (err) {
+          showError(messageOf(err))
+        }
+      }
+
+      const handleRestorePreset = async (id) => {
+        try {
+          const payload = await controller.restorePersona(id)
+          await Promise.all([controller.loadHistory(), loadPersonas()])
+          const restored = Array.isArray(payload && payload.restored) ? payload.restored : []
+          const skipped = Array.isArray(payload && payload.skipped) ? payload.skipped : []
+          const names = restored.join(t('common.listSep'))
+          showSavedNotice(
+            skipped.length > 0
+              ? `${t('history.restorePresetDone', { name: names })} ${t('history.restoreSkippedNote', { count: String(restored.length), skipped: String(skipped.length) })}`
+              : t('history.restorePresetDone', { name: names })
+          )
+        } catch (err) {
+          showError(messageOf(err))
+        }
+      }
+
+      const handleClearHistory = async () => {
+        if (!pendingClear) {
+          setPendingClear(true)
+          return
+        }
+        setPendingClear(false)
+        try {
+          const payload = await controller.clearHistory()
+          await controller.loadHistory()
+          const removed = payload && typeof payload.removed === 'number' ? payload.removed : 0
+          showSavedNotice(t('history.clearDone', { count: String(removed) }))
+        } catch (err) {
+          showError(messageOf(err))
+        }
+      }
+
+      // 记录分组只在展开时拉取（与人设预设同款懒加载）。
+      //
+      // 不在挂载时就拉：变更记录是**回顾性**信息，多数会话不会打开这一组，
+      // 每次进设置页都多打一次接口没有必要。也不挂在全局轮询上 ——
+      // 记录只在自己写配置时才会变，而那时 settings 页自己知道要重拉。
+      React.useEffect(() => {
+        if (openSection !== 'history') return
+        if (!controller.canRefresh()) return
+        void controller.loadHistory()
+      }, [openSection, controller])
+
       // —— 卡背（详情面）用到的三个辅助 ——
       //
       // 列出「一个人设完整的六个维度」。顺序与设置页表单一致（风格 → 标题列表 →
@@ -1824,6 +2176,131 @@ window.__ModuleLoader__.load({
         : (enabled ? t('prompt.summaryEnabled') : t('prompt.summaryDisabled'))
       const toggleSection = (section) => () => {
         setOpenSection(current => current === section ? null : section)
+      }
+
+      // —— 变更记录（0.8.0）的渲染辅助 ——
+      //
+      // 折叠行摘要要能回答「有没有记录、有没有出错」，所以出错时与 personasSummary 同款。
+      //
+      // 但**未拉取时（history === null）刻意留空**：这一组是懒加载的，不展开就永远不拉，
+      // 这时显示「加载中...」是在说一件不会发生的事（用户可能整场都没展开过它）。
+      // 留空是诚实的 —— 「还没看过」既不是「没有记录」也不是「加载中」。
+      // 展开一次之后就有数了，折叠回去会显示真实条数。
+      const historySummary = historyError
+        ? t('accordion.loadFailed')
+        : (history === null
+          ? ''
+          : (history.length === 0
+            ? t('accordion.empty')
+            : (Number.isFinite(historyMax)
+              ? t('history.summary', { count: String(history.length), max: String(historyMax) })
+              : t('history.summaryCount', { count: String(history.length) }))))
+
+      // 相对时间。用时间戳做差而不是字符串比较 Date —— 服务端给的 at 是 ISO 串，
+      // 但客户端不该假设它一定可解析：解析失败时退回原样显示，而不是显示 "NaN 分钟前"。
+      const historyTimeText = (rawAt) => {
+        const at = Date.parse(rawAt)
+        if (!Number.isFinite(at)) return String(rawAt)
+        const diff = Date.now() - at
+        // 时钟回拨（或服务端时间略快）会让 diff 变成负数 —— 当成「刚刚」，
+        // 显示「-3 分钟前」会让人以为记录坏了。
+        if (diff < 60 * 1000) return t('history.timeJustNow')
+        const minutes = Math.floor(diff / (60 * 1000))
+        if (minutes < 60) return t('history.timeMinutes', { count: String(minutes) })
+        const hours = Math.floor(minutes / 60)
+        if (hours < 24) return t('history.timeHours', { count: String(hours) })
+        return t('history.timeDays', { count: String(Math.floor(hours / 24)) })
+      }
+
+      // 来源徽标：认不出的来源原样显示（宁可露出一个英文标识，也不要显示空白 ——
+      // 空白会让人以为是渲染坏了，而这正是审计功能最不能出的问题）。
+      const historySourceText = (source) => {
+        const key = `history.source.${String(source)}`
+        return HISTORY_SOURCES.includes(source) ? t(key) : String(source)
+      }
+
+      // 一个审计字段的取值文案。
+      //
+      // 枚举值复用设置页的既有文案键（`style.*` / `trait.*` / `trail.speed.*` …），
+      // 布尔用「已开启 / 未开启」，其余原样显示。
+      // **空串与 null 都换成「（空）」**：留空会被读成「渲染坏了」，
+      // 而「这次把它清空了」恰恰是这条记录要说的事。
+      const HISTORY_ENUM_KEYS = {
+        style: (value) => `style.${value}`,
+        headingLists: (value) => `trait.headingLists.${value}`,
+        emoji: (value) => `trait.emoji.${value}`,
+        tables: (value) => `trait.tables.${value}`,
+        replyLength: (value) => `trait.replyLength.${value}`,
+        trailSpeed: (value) => `trail.speed.${value}`,
+        trailWidth: (value) => `trail.width.${value}`
+      }
+      const HISTORY_ENUM_VALUES = {
+        style: STYLE_VALUES,
+        headingLists: TRAIT_VALUES,
+        emoji: TRAIT_VALUES,
+        tables: TRAIT_VALUES,
+        replyLength: REPLY_LENGTH_VALUES,
+        trailSpeed: TRAIL_SPEED_VALUES,
+        trailWidth: TRAIL_WIDTH_VALUES
+      }
+
+      const historyValueText = (key, value) => {
+        if (value === undefined || value === null || value === '') return t('history.valueEmpty')
+        if (typeof value === 'boolean') return t(value ? 'accordion.on' : 'accordion.off')
+        if (key === 'language') {
+          const hit = LANGUAGE_OPTIONS.find((item) => item.value === value)
+          return hit ? hit.label : String(value)
+        }
+        // 只有落在合法取值里才查词典：否则 `style: 'custom-whatever'` 会渲染成键名本身
+        const toKey = HISTORY_ENUM_KEYS[key]
+        if (toKey && HISTORY_ENUM_VALUES[key].includes(value)) return t(toKey(value))
+        return String(value)
+      }
+
+      // 这一条记录「涉及哪些字段」：配置字段名 + 预设库事件。
+      // 两边都要算 —— 新增预设的记录里 before/after 都是空的，
+      // 只看配置字段会得到一句空的「涉及 」。
+      const historyFieldNames = (entry) => {
+        const keys = new Set()
+        for (const key of Object.keys(entry.before || {})) keys.add(key)
+        for (const key of Object.keys(entry.after || {})) keys.add(key)
+        return [...keys]
+      }
+
+      const historyPersonaEvents = (entry) => {
+        const events = (entry && entry.personas) || {}
+        const added = Array.isArray(events.added) ? events.added : []
+        const removed = Array.isArray(events.removed) ? events.removed.map((item) => item && item.name).filter(Boolean) : []
+        const updated = Array.isArray(events.updated) ? events.updated.map((item) => item && item.name).filter(Boolean) : []
+        return { added, removed, updated }
+      }
+
+      // 行摘要：字段名列表 + 预设事件；全空时（理论上不该出现，服务端不记空条目）
+      // 给一句「无字段名」，而不是留一句末尾悬空的「涉及 」。
+      const historyRowText = (entry) => {
+        const parts = historyFieldNames(entry).map((key) => t(HISTORY_FIELD_LABELS[key] || key))
+        const events = historyPersonaEvents(entry)
+        const sep = t('common.listSep')
+        if (events.added.length > 0) parts.push(t('history.personasAdded', { names: events.added.join(sep) }))
+        if (events.removed.length > 0) parts.push(t('history.personasRemoved', { names: events.removed.join(sep) }))
+        if (events.updated.length > 0) parts.push(t('history.personasUpdated', { names: events.updated.join(sep) }))
+        return parts.length > 0 ? t('history.fields', { fields: parts.join(sep) }) : t('history.emptyFields')
+      }
+
+      // 展开后的逐字段「原值 → 新值」。
+      //
+      // 以 after 为基准遍历、再补上「只在 before 里出现」的键（被删掉的字段）——
+      // 只遍历一边会漏掉另一半的变更。
+      const historyFieldRows = (entry) => {
+        const before = (entry && entry.before) || {}
+        const after = (entry && entry.after) || {}
+        const keys = [...new Set([...Object.keys(after), ...Object.keys(before)])]
+        return keys.map((key) => ({
+          key,
+          label: t(HISTORY_FIELD_LABELS[key] || key),
+          from: historyValueText(key, before[key]),
+          to: historyValueText(key, after[key])
+        }))
       }
 
       // 预设行摘要：风格 + 所有「偏离默认值」的人设维度。
@@ -2390,6 +2867,113 @@ window.__ModuleLoader__.load({
               )
             )
           )
+        ),
+
+        e(SoulAccordion, {
+          id: 'soul-history',
+          title: t('group.history'),
+          summary: historySummary,
+          open: openSection === 'history',
+          onToggle: toggleSection('history')
+        },
+          // 失败与空态都走「这一组自己的一句话」，不占用页面顶部的红条 ——
+          // 拉不到记录不该把整个设置页标成出错（配置本身是好的）。
+          historyError
+            ? e('div', { className: 'soul-error' }, t('history.loadFailed', { reason: historyError }))
+            : (history === null
+              ? e('div', { className: 'soul-status' }, t('history.loading'))
+              : (history.length === 0
+                ? e('div', { className: 'soul-status' }, t('history.empty'))
+                : e(Fragment, null,
+                  e('div', { className: 'soul-history-head' },
+                    e('span', { className: 'soul-status soul-history-count' }, historySummary),
+                    // 清空是**不可逆**的（记录里有昵称、职业、自述、自定义指令的原文），
+                    // 所以它是这一组唯一的危险色按钮，且同样要过二次确认。
+                    e('button', {
+                      type: 'button',
+                      className: `soul-history-clear${pendingClear ? ' soul-history-clear-armed' : ''}`,
+                      onClick: handleClearHistory
+                    }, t(pendingClear ? 'history.clearArmed' : 'history.clear'))
+                  ),
+
+                  // 记录可能不完整（末尾被截断 / 文件过大只读了一段 / 有坏行）——
+                  // 这是「看到的不是全部」，不是失败，所以留在这一组里当提示。
+                  historyWarning && e('div', { className: 'soul-status soul-history-warning' },
+                    t('history.warning', { reason: historyWarning })),
+
+                  e('ul', { className: 'soul-history-list' },
+                    ...(showAllHistory ? history : history.slice(0, HISTORY_RENDER_LIMIT)).map((entry) => {
+                      const isOpen = expandedEntry === entry.id
+                      const events = historyPersonaEvents(entry)
+                      const rows = historyFieldRows(entry)
+                      const arming = pendingUndo === entry.id
+                      return e('li', {
+                        key: entry.id,
+                        className: 'soul-history-item',
+                        'data-source': String(entry.source)
+                      },
+                        e('div', { className: 'soul-history-item-head' },
+                          // 整行主体是一个按钮（展开/收起），操作按钮放在它**外面** ——
+                          // 按钮里套按钮既非法又会让点「撤销」连带展开。
+                          e('button', {
+                            type: 'button',
+                            className: 'soul-history-item-main',
+                            'aria-expanded': isOpen,
+                            onClick: () => setExpandedEntry(isOpen ? null : entry.id)
+                          },
+                            e('span', { className: 'soul-history-time' }, historyTimeText(entry.at)),
+                            e('span', { className: 'soul-history-source' }, historySourceText(entry.source)),
+                            e('span', { className: 'soul-history-fields' }, historyRowText(entry))
+                          ),
+                          e('div', { className: 'soul-history-item-actions' },
+                            // 撤销用次要色：它可逆（撤销之后还能再撤销一次改回来），
+                            // 真正不可逆的是清空，危险色留给它。
+                            e('button', {
+                              type: 'button',
+                              className: `soul-history-action${arming ? ' soul-history-action-armed' : ''}`,
+                              onClick: () => handleUndo(entry.id)
+                            }, t(arming ? 'history.restoreArmed' : 'history.restore')),
+                            // 只有「删过预设」的记录才给恢复入口 —— 其余记录点它无事可做。
+                            events.removed.length > 0 && e('button', {
+                              type: 'button',
+                              className: 'soul-history-action',
+                              onClick: () => handleRestorePreset(entry.id)
+                            }, t('history.restorePreset'))
+                          )
+                        ),
+
+                        isOpen && e('div', { className: 'soul-history-detail' },
+                          rows.length > 0 && e('div', { className: 'soul-history-diff' },
+                            ...rows.map((row) => e('div', { key: row.key, className: 'soul-history-diff-row' },
+                              e('span', { className: 'soul-history-diff-field' }, row.label),
+                              e('span', { className: 'soul-history-diff-from', title: t('history.field.from') }, row.from),
+                              e('span', { className: 'soul-history-diff-arrow', 'aria-hidden': true }, '→'),
+                              e('span', { className: 'soul-history-diff-to', title: t('history.field.to') }, row.to)
+                            ))
+                          ),
+                          // 预设事件单独列出来是有用的：它解释了上面那颗「恢复此预设」
+                          // 按钮为什么在这儿，以及恢复出来的是什么名字。
+                          events.added.length > 0 && e('div', { className: 'soul-history-diff-persona' },
+                            t('history.personasAdded', { names: events.added.join(t('common.listSep')) })),
+                          events.updated.length > 0 && e('div', { className: 'soul-history-diff-persona' },
+                            t('history.personasUpdated', { names: events.updated.join(t('common.listSep')) })),
+                          events.removed.length > 0 && e('div', { className: 'soul-history-diff-persona' },
+                            t('history.personasRemoved', { names: events.removed.join(t('common.listSep')) }))
+                        )
+                      )
+                    })
+                  ),
+
+                  // 一条一条铺开会让这一组比整个设置页还长；但也不能不说还有多少 ——
+                  // 「最近 200 条」这句承诺得配一个能看到更多的出口。
+                  !showAllHistory && history.length > HISTORY_RENDER_LIMIT && e('button', {
+                    type: 'button',
+                    className: 'soul-history-more',
+                    onClick: () => setShowAllHistory(true)
+                  }, t('history.more', { count: String(history.length - HISTORY_RENDER_LIMIT) })),
+
+                  e('div', { className: 'soul-status' }, t('history.footer'))
+                )))
         ),
 
         e(SoulAccordion, {

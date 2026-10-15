@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 118
+const EXPECTED_ASSERTIONS = 119
 
 let passed = 0
 const failures = []
@@ -2927,6 +2927,68 @@ check('「存为预设」入口与「保存设置」并列，且点开才问名�
     assert.ok(clientSource.includes(`'${k}': '${zh}'`), `缺中文文案 ${k}`)
     assert.ok(clientSource.includes(`'${k}': '${en}'`), `缺英文文案 ${k}`)
   }
+})
+
+check('变更记录分组：字段标签覆盖全部审计字段，且只渲染服务端已倒序的记录', () => {
+  // 这一组把服务端记录**逐字段**画给用户看。画的是 `before`/`after` 里的键名 ——
+  // 键名是英文标识符，一旦某个键没有对应文案，界面上就会明晃晃写着 `trailWidth`。
+  // 静态断言检查不了「新增配置字段时会不会漏」，所以这里做的是**覆盖率**断言：
+  // 以 lib/config.mjs 的 DEFAULT_CONFIG 为唯一真源，比对客户端标签表。
+  const configSource = readFileSync(new URL('../lib/config.mjs', import.meta.url), 'utf8')
+  const defaultBlock = configSource.match(/export const DEFAULT_CONFIG = \{([\s\S]*?)\n\}/)?.[1] ?? ''
+  assert.ok(defaultBlock !== '', '找不到 lib/config.mjs 的 DEFAULT_CONFIG')
+  const auditKeys = []
+  for (const line of defaultBlock.split('\n')) {
+    const m = line.match(/^\s{2}([A-Za-z][A-Za-z0-9]*):/)
+    if (m) auditKeys.push(m[1])
+  }
+  assert.ok(auditKeys.length >= 16, `DEFAULT_CONFIG 至少应有 16 个字段，实际解析出 ${auditKeys.length}`)
+
+  // 收尾的 `}` 是缩进的（客户端里的块都在函数体内），用顶格 `\n}` 会一路吞到远处
+  // ——首版就是这么把 231 个键算进来的。
+  const labelsBlock = clientCode.match(/const HISTORY_FIELD_LABELS = \{([\s\S]*?)\n\s*\}/)?.[1] ?? ''
+  assert.ok(labelsBlock !== '', '找不到客户端 HISTORY_FIELD_LABELS')
+  const labelKeys = [...labelsBlock.matchAll(/([A-Za-z][A-Za-z0-9]*):\s*'([^']+)'/g)].map((m) => m[1])
+  for (const key of auditKeys) {
+    assert.ok(labelKeys.includes(key),
+      `审计字段 ${key} 没有历史标签 —— 变更记录里会把它显示成裸键名（新增配置字段时必须同步 HISTORY_FIELD_LABELS）`)
+  }
+  assert.equal(labelKeys.length, auditKeys.length,
+    `HISTORY_FIELD_LABELS 有 ${labelKeys.length} 项、审计字段有 ${auditKeys.length} 个 —— 多出来的标签指向了不存在的字段`)
+
+  // 值标签只允许查**已存在的**文案键：拼错一个键名，词典回退会把键名本身画到屏幕上。
+  for (const m of labelsBlock.matchAll(/'((?:field|trail|toggle)\.[A-Za-z]+)'/g)) {
+    assert.ok(clientSource.includes(`'${m[1]}': `), `标签指向的文案键 ${m[1]} 不存在`)
+  }
+  // 枚举值必须与设置页共用同一份取值表：各写一份迟早会把 'casual' 显示成键名。
+  const enumBlock = clientCode.match(/const HISTORY_ENUM_VALUES = \{([\s\S]*?)\n\s*\}/)?.[1] ?? ''
+  assert.ok(enumBlock !== '', '找不到 HISTORY_ENUM_VALUES（枚举值的文案来源）')
+  for (const [field, constName] of [
+    ['style', 'STYLE_VALUES'],
+    ['headingLists', 'TRAIT_VALUES'],
+    ['emoji', 'TRAIT_VALUES'],
+    ['tables', 'TRAIT_VALUES'],
+    ['replyLength', 'REPLY_LENGTH_VALUES'],
+    ['trailSpeed', 'TRAIL_SPEED_VALUES'],
+    ['trailWidth', 'TRAIL_WIDTH_VALUES']
+  ]) {
+    assert.match(enumBlock, new RegExp(`\\b${field}:\\s*${constName}\\b`),
+      `变更记录的 ${field} 取值表应复用 ${constName}，不得另写一份`)
+  }
+
+  // 倒序是服务端的契约（toHistoryResponse 里 reverse 过一次）。客户端再排一次
+  // 会把「最新在前」悄悄翻成「最旧在前」—— 用户看到的将是几年前的改动排第一行。
+  const listBlock = clientSource.match(/e\('ul', \{ className: 'soul-history-list' \},([\s\S]*?)\n\s{8}\)\)?,/)?.[1] ?? ''
+  assert.ok(listBlock !== '', '找不到变更记录列表的渲染')
+  assert.equal(/\.reverse\(\)|\.sort\(/.test(listBlock), false,
+    '变更记录列表不得在客户端重排 —— 服务端已经按时间倒序返回')
+  // 时间必须是相对时间：记录里存的是 ISO 字符串，直接画出来没人读得下去。
+  assert.match(clientCode, /const historyTimeText = \(rawAt\)/, '缺少相对时间格式化函数')
+  assert.match(clientCode, /!Number\.isFinite\(at\)\) return String\(rawAt\)/,
+    '相对时间解析失败时应原样显示，而不是画出 NaN')
+  // 时钟回拨（或服务端时间略快）会让差值变负 —— 「-3 分钟前」会被读成记录坏了。
+  assert.match(clientCode, /if \(diff < 60 \* 1000\) return t\('history\.timeJustNow'\)/,
+    '差值小于一分钟（含负数）都该显示「刚刚」')
 })
 
 // 「断言数一致」与「每一项真的通过」是两回事：前者只防脚本与声明漂移，

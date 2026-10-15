@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 23
+const EXPECTED_ASSERTIONS = 27
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -1309,6 +1309,335 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     world.routes['/api/soul/personas/use'] = () => ({ ok: true, config: { ...CONFIG }, changed: ['style'], invalid: [] })
     await world.controller.usePersona('任意')
     assert.equal(world.controller.store.getSnapshot().error, null, '应用预设成功后不得残留上一轮的失败提示')
+  })
+
+  // ==================== 设置页第 5 组「变更记录」（0.8.0-d）====================
+  //
+  // 这一组是审计回滚唯一的可见出口，它渲染的每一个字都来自服务端记录：
+  // 时间、来源、字段名、原值→新值、预设事件。所以断言照「用户看到的字」写，
+  // 而不是照「源码里有这段」写 —— 后者在本仓库已被证明证明不了任何事（见文件头）。
+
+  /** 按标题取一个手风琴分组（设置页里分组的唯一稳定标识就是标题文案）。 */
+  function accordionByTitle(tree, title) {
+    const hits = findAllByClass(tree, 'soul-accordion').filter((n) => textOf(n).includes(title))
+    assert.equal(hits.length, 1, `期望恰好一个「${title}」分组，实际 ${hits.length}`)
+    return hits[0]
+  }
+  function accordionTrigger(tree, title) {
+    const hits = findAllByClass(accordionByTitle(tree, title), 'soul-accordion-trigger')
+    assert.equal(hits.length, 1, `期望恰好一个「${title}」分组触发器，实际 ${hits.length}`)
+    return hits[0]
+  }
+  function accordionSummaryOf(tree, title) {
+    const spans = findAllByClass(accordionByTitle(tree, title), 'soul-accordion-summary')
+    assert.equal(spans.length, 1, '每个分组应恰好一个摘要节点')
+    return textOf(spans[0])
+  }
+  /** 唯一的成功绿字（`.soul-saved-notice`）的文案。 */
+  function savedNoticeOf(tree) {
+    const hits = findAllByClass(tree, 'soul-saved-notice')
+    assert.equal(hits.length, 1, `期望恰好一条成功提示，实际 ${hits.length} 条`)
+    return textOf(hits[0])
+  }
+  /** 造一条服务端形状的变更记录（before/after 只装变化字段，personas 恒三段）。 */
+  function historyEntry(over) {
+    return {
+      v: 1,
+      id: 'e-0',
+      at: new Date().toISOString(),
+      source: 'web',
+      action: 'save',
+      configHash: 'h',
+      before: {},
+      after: {},
+      personas: { added: [], updated: [], removed: [] },
+      ...over
+    }
+  }
+  /** 一次渲染 + 排空异步（懒加载请求与随后的 setState 都要跑完）。 */
+  async function renderSettled(world) {
+    let tree = await renderSettings(world)
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    tree = await renderSettings(world)
+    return tree
+  }
+  /** 展开「变更记录」分组并等到数据到位。 */
+  async function openHistory(world) {
+    const closed = await renderSettings(world)
+    await accordionTrigger(closed, world.dicts.zh['group.history']).props.onClick()
+    return await renderSettled(world)
+  }
+
+  await check('C24 变更记录分组：不展开不拉取，展开后按记录渲染时间/来源/字段', async () => {
+    const entries = [
+      historyEntry({
+        id: 'aaa-1',
+        at: new Date(Date.now() - 90 * 1000).toISOString(),
+        before: { bio: '旧介绍', style: 'professional' },
+        after: { bio: '', style: 'humorous' }
+      }),
+      historyEntry({
+        id: 'bbb-2',
+        at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+        source: 'command',
+        action: 'set',
+        personas: { added: ['头脑风暴伙伴'], updated: [], removed: [{ name: '极简主义者', entry: { style: 'efficient' } }] }
+      }),
+      // 刻意给一条「未来」的记录：服务端时钟略快或本机时钟回拨时真的会出现。
+      // 时间差算出来是负数，显示「-1 分钟前」会让人以为记录坏了。
+      historyEntry({
+        id: 'ccc-3',
+        at: new Date(Date.now() + 30 * 1000).toISOString(),
+        before: { style: 'professional' },
+        after: { style: 'casual' }
+      })
+    ]
+    const world = await boot()
+    const calls = []
+    world.routes['/api/soul/history'] = (call) => {
+      calls.push(call)
+      // 上限刻意不取 200：写死数字的实现在这条断言下会立刻露馅。
+      // （「最多保留 200 条」是一句会被人当真的承诺，客户端只能转述服务端说的话。）
+      return { ok: true, entries, max: 50, warning: null }
+    }
+    const zh = world.dicts.zh
+
+    // ① 未展开：一次都不许拉。多数会话根本不会打开这一组，为它多打一次接口没必要。
+    const closed = await renderSettings(world)
+    assert.equal(calls.length, 0, '未展开「变更记录」时不得请求 /api/soul/history')
+    assert.equal(accordionSummaryOf(closed, zh['group.history']), '',
+      '还没拉过时刻意留空 —— 既不谎称「加载中」，也不谎称「没有记录」')
+    assert.equal(findAllByClass(closed, 'soul-history-list').length, 0, '折叠时不得渲染记录列表')
+
+    // ② 展开 ⇒ 立即以 GET 拉取
+    await accordionTrigger(closed, zh['group.history']).props.onClick()
+    const tree = await renderSettled(world)
+    assert.equal(calls.length, 1, '展开「变更记录」应恰好拉取一次')
+    assert.equal(calls[0].method, 'GET', '拉取变更记录必须用 GET')
+    assert.equal(calls[0].path, '/api/soul/history', '拉取路径必须是 /api/soul/history')
+
+    // ③ 顶部计数：上限由服务端带回，客户端不写死
+    assert.equal(textOf(findAllByClass(tree, 'soul-history-count')[0]),
+      zh['history.summary'].replace('{count}', '3').replace('{max}', '50'),
+      '计数行必须用服务端带回的条数与条数上限')
+
+    // ④ 每条行摘要：相对时间 · 来源 · 涉及字段（字段名复用设置页既有文案）
+    const items = findAllByClass(tree, 'soul-history-item')
+    assert.equal(items.length, 3, `应渲染 3 条记录，实际 ${items.length}`)
+    assert.equal(textOf(findAllByClass(items[0], 'soul-history-time')[0]), '1 分钟前')
+    assert.equal(textOf(findAllByClass(items[0], 'soul-history-source')[0]), zh['history.source.web'])
+    assert.equal(textOf(findAllByClass(items[0], 'soul-history-fields')[0]),
+      zh['history.fields'].replace('{fields}', `${zh['field.bio']}、${zh['field.style']}`))
+    assert.equal(items[0].props['data-source'], 'web', '行上带来源标识，供按来源取样式')
+    assert.equal(textOf(findAllByClass(items[1], 'soul-history-time')[0]), '3 小时前')
+    assert.equal(textOf(findAllByClass(items[1], 'soul-history-fields')[0]),
+      zh['history.fields'].replace('{fields}',
+        `${zh['history.personasAdded'].replace('{names}', '头脑风暴伙伴')}、${zh['history.personasRemoved'].replace('{names}', '极简主义者')}`),
+      '只有预设事件的记录也得有一句「涉及 …」，否则末尾悬着一个空壳')
+    assert.equal(textOf(findAllByClass(items[2], 'soul-history-time')[0]), zh['history.timeJustNow'],
+      '时间差为负（时钟回拨/服务端稍快）必须归入「刚刚」，不能显示「-1 分钟前」')
+
+    // ⑤ 折叠回去：摘要换成真实条数（展开过一次之后就有数了）
+    await accordionTrigger(tree, zh['group.history']).props.onClick()
+    const collapsed = await renderSettings(world)
+    assert.equal(accordionSummaryOf(collapsed, zh['group.history']),
+      zh['history.summary'].replace('{count}', '3').replace('{max}', '50'),
+      '折叠摘要应显示真实条数与上限')
+    assert.equal(findAllByClass(collapsed, 'soul-history-list').length, 0, '折叠后不得继续渲染列表')
+
+    // ⑥ 拉取失败必须留下痕迹：否则永远停在「加载中」，与「真的没有记录」无从区分
+    const bad = await boot()
+    bad.routes['/api/soul/history'] = () => false
+    const badTree = await openHistory(bad)
+    const badErrors = findAllByClass(badTree, 'soul-error').map(textOf)
+    assert.equal(badErrors.length, 1, `拉取失败应在这一组里显示一条错误，实际 ${badErrors.length} 条`)
+    assert.equal(badErrors[0], bad.dicts.zh['history.loadFailed'].replace('{reason}', 'boom'))
+    await accordionTrigger(badTree, bad.dicts.zh['group.history']).props.onClick()
+    const badCollapsed = await renderSettings(bad)
+    assert.equal(accordionSummaryOf(badCollapsed, bad.dicts.zh['group.history']), bad.dicts.zh['accordion.loadFailed'],
+      '拉取失败时折叠摘要必须说「加载失败」，不能留空')
+  })
+
+  await check('C25 变更记录展开：原值→新值、空值占位、预设事件与恢复入口', async () => {
+    const entries = [
+      historyEntry({
+        id: 'ct-1',
+        at: new Date(Date.now() - 30 * 1000).toISOString(),
+        // 刻意凑齐四种取值形态：枚举（要查词典）、被清空的文本（要显示「（空）」）、
+        // 布尔（要显示「已开启/未开启」而不是 true/false）、以及**只出现在 before 里的键**。
+        // 最后这种是「字段被删掉」的唯一表达方式（diffFields 把 from→undefined 记成只有 before），
+        // 只遍历 after 的实现会把它整行漏掉 —— 而漏掉的那一行恰是「谁把我的职业删了」。
+        // ⑤ 最后一种：**枚举外的取值**。配置文件被手工改坏时真的会出现
+        //（`trailSpeed: 'turbo'`），此时必须原样显示 —— 若不加 `HISTORY_ENUM_VALUES`
+        // 白名单就直接查词典，`t('trail.speed.turbo')` 会渲染成裸键名 `trail.speed.turbo`，
+        // 比显示原始值更难懂。
+        before: { bio: '旧介绍', style: 'professional', requireToolConfirmation: false, occupation: '工程师', trailSpeed: 'slow' },
+        after: { bio: '', style: 'humorous', requireToolConfirmation: true, trailSpeed: 'turbo' }
+      }),
+      historyEntry({
+        id: 'ct-2',
+        at: new Date(Date.now() - 30 * 1000).toISOString(),
+        source: 'command',
+        action: 'deletePreset',
+        personas: { added: [], updated: [], removed: [{ name: '极简主义者', entry: { style: 'efficient' } }] }
+      })
+    ]
+    const world = await boot()
+    world.routes['/api/soul/history'] = () => ({ ok: true, entries, max: 200, warning: null })
+    const zh = world.dicts.zh
+    let tree = await openHistory(world)
+
+    // ① 默认不收开任何一行：20 条全铺开会比整个设置页还长
+    assert.equal(findAllByClass(tree, 'soul-history-detail').length, 0, '默认不得展开任何一条记录')
+    // ② 「恢复此预设」只给删过预设的那条 —— 别的记录点它无事可做
+    const restoreButtons = findAllByClass(tree, 'soul-history-action')
+      .filter((n) => textOf(n) === zh['history.restorePreset'])
+    assert.equal(restoreButtons.length, 1, `「恢复此预设」应只出现在删过预设的记录上，实际 ${restoreButtons.length} 个`)
+
+    // ③ 展开第一条 ⇒ 逐字段「原值 → 新值」
+    const mainOf = (index) => {
+      const items = findAllByClass(tree, 'soul-history-item')
+      const hit = findAllByClass(items[index], 'soul-history-item-main')
+      assert.equal(hit.length, 1, '每条记录应恰好一个可展开主体')
+      return hit[0]
+    }
+    await mainOf(0).props.onClick()
+    tree = await renderSettings(world)
+    const rows = findAllByClass(tree, 'soul-history-diff-row')
+    assert.equal(rows.length, 5, `第一条应展开出 5 个字段，实际 ${rows.length}`)
+    const rowOf = (label) => {
+      const hit = rows.filter((r) => textOf(findAllByClass(r, 'soul-history-diff-field')[0]) === label)
+      assert.equal(hit.length, 1, `应恰好一行「${label}」`)
+      return hit[0]
+    }
+    const styleRow = rowOf(zh['field.style'])
+    assert.equal(textOf(findAllByClass(styleRow, 'soul-history-diff-from')[0]), zh['style.professional'])
+    assert.equal(textOf(findAllByClass(styleRow, 'soul-history-diff-to')[0]), zh['style.humorous'])
+    const bioRow = rowOf(zh['field.bio'])
+    assert.equal(textOf(findAllByClass(bioRow, 'soul-history-diff-from')[0]), '旧介绍')
+    assert.equal(textOf(findAllByClass(bioRow, 'soul-history-diff-to')[0]), zh['history.valueEmpty'],
+      '被清空的字段必须显示「（空）」而不是留白 —— 留白会被读成渲染坏了')
+    // ④ 布尔字段画的是「已开启/未开启」，不是 true/false
+    const toolRow = rowOf(zh['field.toolConfirm'])
+    assert.equal(textOf(findAllByClass(toolRow, 'soul-history-diff-from')[0]), zh['accordion.off'])
+    assert.equal(textOf(findAllByClass(toolRow, 'soul-history-diff-to')[0]), zh['accordion.on'])
+    // ⑤ 只出现在 before 里的键（字段被删掉）也必须占一行，新值那侧显示「（空）」
+    const occRow = rowOf(zh['field.occupation'])
+    assert.equal(textOf(findAllByClass(occRow, 'soul-history-diff-from')[0]), '工程师')
+    assert.equal(textOf(findAllByClass(occRow, 'soul-history-diff-to')[0]), zh['history.valueEmpty'],
+      '只在 before 里出现的字段必须照常占一行 —— 否则「谁把我这一项删了」就永远查不到')
+    // ⑥ 两列各自带 title：光靠位置分不清哪边是原值
+    assert.equal(findAllByClass(styleRow, 'soul-history-diff-from')[0].props.title, zh['history.field.from'])
+    assert.equal(findAllByClass(styleRow, 'soul-history-diff-to')[0].props.title, zh['history.field.to'])
+    // ⑦ 枚举外的取值原样显示（查词典前必须先过取值白名单）
+    const speedRow = rowOf(zh['trail.speed'])
+    assert.equal(textOf(findAllByClass(speedRow, 'soul-history-diff-from')[0]), zh['trail.speed.slow'])
+    assert.equal(textOf(findAllByClass(speedRow, 'soul-history-diff-to')[0]), 'turbo',
+      '枚举外的取值必须原样显示 —— 直接查词典会渲染成裸键名 `trail.speed.turbo`')
+
+    // ⑦ 展开第二条：预设事件单独成行，并**取代**第一条的展开（同时只展开一行）
+    await mainOf(1).props.onClick()
+    tree = await renderSettings(world)
+    const personaLines = findAllByClass(tree, 'soul-history-diff-persona').map(textOf)
+    assert.ok(personaLines.includes(zh['history.personasRemoved'].replace('{names}', '极简主义者')),
+      `应有一行「删除预设 极简主义者」，实际 ${JSON.stringify(personaLines)}`)
+    assert.equal(findAllByClass(tree, 'soul-history-diff-row').length, 0,
+      '展开第二条时第一条必须收起 —— 同时摊开多行会让组内长度不可控')
+    // ⑧ 再点一次收起
+    await mainOf(1).props.onClick()
+    tree = await renderSettings(world)
+    assert.equal(findAllByClass(tree, 'soul-history-detail').length, 0, '点第二次应收起')
+  })
+
+  await check('C26 变更记录：撤销与清空都要过内联二次确认（不用原生 confirm）', async () => {
+    const entries = [historyEntry({
+      id: 'u-1',
+      at: new Date().toISOString(),
+      before: { style: 'professional' },
+      after: { style: 'casual' }
+    })]
+    const world = await boot()
+    const rollbacks = []
+    const clears = []
+    world.routes['/api/soul/history'] = () => ({ ok: true, entries, max: 200, warning: null })
+    world.routes['/api/soul/history/rollback'] = (call) => {
+      rollbacks.push(call.body)
+      return {
+        ok: true,
+        config: { ...CONFIG },
+        changed: ['style'],
+        skipped: [],
+        reversed: ['u-1'],
+        unchanged: false,
+        entry: null,
+        deliveryWarning: null
+      }
+    }
+    world.routes['/api/soul/history/clear'] = () => { clears.push(true); return { ok: true, removed: 1 } }
+    const zh = world.dicts.zh
+    let tree = await openHistory(world)
+
+    // ① 撤销：第一次点只进入待确认，一个请求都不发
+    const undoBtn = () => findAllByClass(tree, 'soul-history-action')[0]
+    assert.equal(textOf(undoBtn()), zh['history.restore'])
+    await undoBtn().props.onClick()
+    tree = await renderSettings(world)
+    assert.equal(textOf(undoBtn()), zh['history.restoreArmed'], '第一次点后按钮应变成「撤销？」')
+    assert.equal(rollbacks.length, 0, '第一次点「撤销这一次」不得直接发请求')
+    // ② 第二次点才真的撤销
+    await undoBtn().props.onClick()
+    tree = await renderSettled(world)
+    assert.equal(rollbacks.length, 1, '第二次点「撤销？」才发请求')
+    assert.equal(rollbacks[0].id, 'u-1', '撤销必须带上这一条的 id')
+    assert.equal(savedNoticeOf(tree), zh['history.restoreDone'].replace('{count}', '1'))
+
+    // ③ 清空：同样的两步。它是这一组唯一的危险色按钮（不可逆）
+    const clearBtn = () => findAllByClass(tree, 'soul-history-clear')[0]
+    assert.equal(textOf(clearBtn()), zh['history.clear'])
+    await clearBtn().props.onClick()
+    tree = await renderSettings(world)
+    assert.equal(textOf(clearBtn()), zh['history.clearArmed'], '第一次点后按钮应变成「确认清空？」')
+    assert.equal(clears.length, 0, '第一次点「清空记录」不得直接发请求')
+    await clearBtn().props.onClick()
+    tree = await renderSettled(world)
+    assert.equal(clears.length, 1, '第二次点「确认清空？」才发请求')
+    assert.equal(savedNoticeOf(tree), zh['history.clearDone'].replace('{count}', '1'))
+  })
+
+  await check('C27 变更记录：超过 20 条折叠可展开，warning 不得被当成失败', async () => {
+    const many = Array.from({ length: 22 }, (_, i) => historyEntry({
+      id: `m-${String(i).padStart(2, '0')}`,
+      at: new Date(Date.now() - (i + 1) * 60 * 1000).toISOString(),
+      before: { style: 'professional' },
+      after: { style: 'humorous' }
+    }))
+    const world = await boot()
+    world.routes['/api/soul/history'] = () => ({
+      ok: true,
+      entries: many,
+      max: 200,
+      warning: '记录文件较大，只读取了最近的部分。'
+    })
+    const zh = world.dicts.zh
+    let tree = await openHistory(world)
+
+    // ① 一条一条铺开会让这一组比整个设置页还长 ⇒ 只渲染 20 条
+    assert.equal(findAllByClass(tree, 'soul-history-item').length, 20, '最多只渲染 20 条')
+    // ② 剩下的必须有出口：「最多保留 200 条」这句承诺得配一个能看到更多的按钮
+    const more = findAllByClass(tree, 'soul-history-more')
+    assert.equal(more.length, 1, '超出 20 条时应给出「还有 N 条」')
+    assert.equal(textOf(more[0]), zh['history.more'].replace('{count}', '2'))
+    await more[0].props.onClick()
+    tree = await renderSettings(world)
+    assert.equal(findAllByClass(tree, 'soul-history-item').length, 22, '点开「还有 2 条」后应全部摊开')
+    assert.equal(findAllByClass(tree, 'soul-history-more').length, 0, '全部摊开后不该再留「还有 N 条」')
+
+    // ③ warning 是「看到的不是全部」，不是失败：留在组内、且不能染红
+    const warn = findAllByClass(tree, 'soul-history-warning')
+    assert.equal(warn.length, 1, 'warning 应留在这一组内提示')
+    assert.equal(textOf(warn[0]), zh['history.warning'].replace('{reason}', '记录文件较大，只读取了最近的部分。'))
+    assert.ok(String(warn[0].props.className).includes('soul-status'), 'warning 用普通提示样式，不是 .soul-error')
+    assert.equal(findAllByClass(tree, 'soul-error').length, 0, 'warning 不得被当成错误')
   })
 } finally {
   restoreTimers()
