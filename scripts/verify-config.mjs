@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 117
+const EXPECTED_ASSERTIONS = 118
 
 let passed = 0
 const failures = []
@@ -1590,10 +1590,13 @@ check('客户端预设行摘要不读「关于你」', () => {
   assert.ok(/row\.style/.test(block[1]), '预设行摘要仍应读 style')
 })
 
-check('服务端四条写路径都拒绝内置名，读取路径都走合并库', () => {
-  // HTTP 保存 / 删除各一处，/soul 命令的 save / del 各一处
+check('服务端五条写路径都拒绝内置名，读取路径都走合并库', () => {
+  // HTTP 保存 / 删除各一处，/soul 命令的 save / del 各一处，
+  // 再加 0.8.0-c 的「恢复预设」——它也是一条写路径。
+  // 恢复路径这一处不是冗余防御：记录文件按契约是**不可信输入**（可以被人手改），
+  // 手工塞进 removed 列表里的内置名若不拦，就会造出一个遮蔽内置预设的同名自定义条目。
   const rejections = indexCode.split('isBuiltinPersona(personaName)').length - 1
-  assert.equal(rejections, 4, `内置名拒绝点应为 4 处（HTTP 与命令层各 2），实际 ${rejections} 处`)
+  assert.equal(rejections, 5, `内置名拒绝点应为 5 处（HTTP 2 + 命令层 2 + 恢复预设 1），实际 ${rejections} 处`)
   assert.ok(indexCode.split('mergePersonas(').length - 1 >= 3, '预设库读取应统一走 mergePersonas')
   assert.ok(/resolvePersona\(personaName, config\.personas\)/.test(indexCode), '命令层 use 未走 resolvePersona')
   assert.ok(/resolvePersona\(personaName, current\.personas\)/.test(indexCode), 'HTTP use 未走 resolvePersona')
@@ -2091,8 +2094,10 @@ check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', (
     'source 不得有默认值——默认值会让「忘了标注』的调用点静默算作某个来源，比缺来源更糟'
   )
 
-  // 全部来源标注：16 处调用点各一个。数量写死是刻意的——新增写路径时这里会红，
+  // 全部来源标注：18 处调用点各一个。数量写死是刻意的——新增写路径时这里会红，
   // 提醒作者同时决定它的来源归属，而不是让它悄悄落进默认桶。
+  // （0.8.0-c 加了两条撤销路径：撤销本身也写配置，于是「我撤销过一次」也留下一条
+  // 记录，审计因此是链条而不是快照，能看出「改了、撤了、又改回去」。）
   const expected = [
     ["{ source: 'web', action: 'save' }", 'HTTP 保存配置'],
     ["{ source: 'web', action: 'reset' }", 'HTTP 重置'],
@@ -2109,7 +2114,9 @@ check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', (
     ["{ source: 'command', action: 'confirm' }", '/soul confirm'],
     ["{ source: 'tool', action: 'setPersona' }", 'set_persona 工具'],
     ["{ source: 'service', action: 'update' }", 'soulConfig.updateConfig'],
-    ["{ source: 'service', action: 'reset' }", 'soulConfig.resetConfig']
+    ["{ source: 'service', action: 'reset' }", 'soulConfig.resetConfig'],
+    ["{ source: 'rollback', action: 'rollback' }", 'HTTP 撤销'],
+    ["{ source: 'restorePersona', action: 'restorePreset' }", 'HTTP 恢复预设']
   ]
   const found = expected.filter(([literal]) => indexCode.includes(literal))
   assert.deepEqual(
@@ -2120,7 +2127,7 @@ check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', (
   const total = indexCode.match(/\{ source: '[a-z][A-Za-z]*', action: '/g) || []
   assert.equal(total.length, expected.length, `来源标注应有 ${expected.length} 处，实际 ${total.length} 处——多出来的是未登记的写路径`)
 
-  // 关联性（光有 16 个标注不够，还要落在对的地方）：抽几个有稳定锚点的切片来钉，
+  // 关联性（光有标注不够，还要落在对的地方）：抽几个有稳定锚点的切片来钉，
   // 防止「标注都在，但张冠李戴」——例如把 confirm 的标注挪到 set 上。
   const personaApply = indexCode.match(/async function applyPersonaEntry\(ctx, entry\)[\s\S]*?\n\}/)?.[0] ?? ''
   assert.match(personaApply, /\{ source: 'persona', action: 'use' \}/, 'applyPersonaEntry 的来源应是 persona/use')
@@ -2128,6 +2135,12 @@ check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', (
   assert.match(toolSlice, /\{ source: 'tool', action: 'setPersona' \}/, 'set_persona 工具的来源应是 tool/setPersona')
   assert.match(indexCode, /updateConfig[\s\S]*?\{ source: 'service', action: 'update' \}/, 'updateConfig 的来源应是 service/update')
   assert.match(indexCode, /resetConfig\(\)[\s\S]*?resetConfigWithEscape\(\{ source: 'service', action: 'reset' \}\)/, 'resetConfig 服务的来源应是 service/reset')
+  // 两条撤销路径的来源必须靠在自己的路由切片里（两条路由都调 commitConfig，
+  // 标注写反了在「16 处齐不齐」这种判据下完全看不出来）
+  const rollbackRoute = indexCode.match(/path: '\/api\/soul\/history\/rollback'[\s\S]*?\n    \}\)/)?.[0] ?? ''
+  assert.match(rollbackRoute, /\{ source: 'rollback', action: 'rollback' \}/, '撤销路由的来源应是 rollback/rollback')
+  const restoreRoute = indexCode.match(/path: '\/api\/soul\/history\/restore-persona'[\s\S]*?\n    \}\)/)?.[0] ?? ''
+  assert.match(restoreRoute, /\{ source: 'restorePersona', action: 'restorePreset' \}/, '恢复预设路由的来源应是 restorePersona/restorePreset')
 
   // 重置的 source 必须由 commitConfig 的形参穿透，而不是在内部写死 —— 否则三个重置
   // 入口（网页 / 命令 / 服务）会在记录里退化成同一个来源。
@@ -2198,6 +2211,55 @@ check('留痕时机在配置落盘之后，且失败不得连带配置写失败'
     false,
     '文件名后缀是 lib/history.mjs 的契约，index.mjs 里不该再有一份字面副本（改一处忘一处会写到别的文件）'
   )
+})
+
+check('变更记录四条路由：方法校验、撤销语义、恢复预设的护栏', () => {
+  // 契约里最容易退化的两处：一是写路由忘了校验 req.method（GET 也能触发写入，
+  // 来自 /api/soul/config/reset 的真实教训）；二是撤销把「读记录」放到队列外，
+  // 于是并发时规划建立在已被别人改过的配置上。
+  const routes = ['/api/soul/history', '/api/soul/history/rollback', '/api/soul/history/restore-persona', '/api/soul/history/clear']
+  for (const path of routes) {
+    const body = indexCode.match(new RegExp(`path: '${path.replace(/\//g, '\\/')}'[\\s\\S]*?\\n    \\}\\)`))?.[0] ?? ''
+    assert.ok(body !== '', `缺少路由 ${path}`)
+    const expected = path === '/api/soul/history' ? 'GET' : 'POST'
+    assert.match(body, new RegExp(`req\\.method !== '${expected}'`), `${path} 必须显式校验 req.method === ${expected}`)
+    assert.match(body, /send\(res, 405, \{ ok: false, error: 'Method not allowed' \}\)/, `${path} 的方法不符应返回 405`)
+  }
+
+  const rollback = indexCode.match(/path: '\/api\/soul\/history\/rollback'[\s\S]*?\n    \}\)/)?.[0] ?? ''
+  // 撤销必须是**异步 mutate**：只有 mutate 体内能保证「读记录 → 规划 → 写配置」在同一队列
+  // 任务里。同步 mutate 签名的写法会迫使调用方在入队前读记录，那正是竞态窗口。
+  assert.match(rollback, /commitConfig\(async \(current\) => \{/, '撤销必须用 async mutate，在队列内读记录')
+  assert.match(rollback, /if \(read\.error\) throw httpError\(500/, '记录读不出来必须中止，不能按「空记录」继续')
+  assert.match(rollback, /planRollback\(read\.entries, current, id\)/, '撤销必须走 planRollback（链式指纹校验）')
+  assert.match(rollback, /plan\.reason === 'missing'[\s\S]*?throw httpError\(400/, '找不到 id 应回 400')
+  assert.match(rollback, /throw httpError\(409,/, '记录与配置对不上应回 409（不给一个猜出来的结果）')
+  assert.ok(
+    /Object\.keys\(plan\.patch\)\.length === 0\) return \{ \.\.\.current \}/.test(rollback),
+    '补丁为空是合法结果（目标改动已被后续改回来），应原样返回而不是报错'
+  )
+  assert.match(rollback, /promptChanged\.length > 0\) refreshPromptAndInject/, '撤销后必须按同一门控刷新提示词')
+
+  const restore = indexCode.match(/path: '\/api\/soul\/history\/restore-persona'[\s\S]*?\n    \}\)/)?.[0] ?? ''
+  assert.match(restore, /sanitizePersonaName\(item\.name\)/, '恢复预设必须重新校验名字（记录是不可信输入）')
+  assert.match(restore, /isBuiltinPersona\(personaName\)/, '恢复预设必须拒绝内置名')
+  assert.match(restore, /hasOwn\(personas, personaName\)/, '同名已存在必须拒绝，不得静默覆盖用户后来的编辑')
+  assert.match(restore, /skipped\.push\(\{ name: personaName, reason: 'exists' \}\)/, '跳过原因要如实回报，不能只报成功的')
+  // 空白名这条分支只在记录被手改时才可达（normalizePersonaEvents 只看「非空且不超长」，
+  // 而 '   ' 三条空格满足它、sanitizePersonaName 才拒绝）。恰恰因此必须回报 ——
+  // 一条「恢复了 2 个」的成功消息里不说有 1 个没恢复，是最容易被忽略的那种漏报。
+  assert.match(
+    restore,
+    /skipped\.push\(\{ name: item\.name, reason: 'invalid-name' \}\)/,
+    '名字非法的条目也要报进 skipped（它在记录被手改时可达，不能只报能恢复的）'
+  )
+  assert.match(restore, /if \(restored\.length === 0\)[\s\S]*?throw httpError\(400/, '一个都没恢复时应回 400 而不是空成功')
+
+  const clear = indexCode.match(/path: '\/api\/soul\/history\/clear'[\s\S]*?\n    \}\)/)?.[0] ?? ''
+  // 清空若不入队，就会与并发的追加撞在一起 —— 最坏是「刚清完又冒出一条」。
+  assert.match(clear, /enqueueConfigWrite\(async \(\) => \{/, '清空必须借配置写队列串行')
+  assert.match(clear, /clearHistoryFile\(historyPath\(\)\)/, '清空应走 clearHistoryFile')
+  assert.match(clear, /lastHistoryFailure = null/, '清空后应清掉上一次的写入失败告警')
 })
 
 check('重置失败不得被报成成功', () => {

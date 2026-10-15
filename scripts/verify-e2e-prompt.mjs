@@ -26,7 +26,7 @@
  * 用法：node scripts/verify-e2e-prompt.mjs
  * 退出码：0 = 通过；1 = 存在失败项。
  */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -37,9 +37,9 @@ import { assertCount } from './lib/skip-report.mjs'
 import { BUILTIN_PERSONAS } from '../lib/personas.mjs'
 import { PROFILE_FIELDS } from '../lib/config.mjs'
 
-// 基线运行应跑出的断言数：E 场景 24 项 + F 损坏场景 8 项 + 2 项判断力对照。
-// 跑完时校验，防止「脚本加/删用例」与文档口径悄悄脱节。
-const EXPECTED_ASSERTIONS = 38
+// 基线运行应跑出的断言数：E 场景 28 项 + F 损坏场景 8 项 + G 变更记录 16 项
+// + H 撤销拒绝路径 3 项 + 2 项判断力对照。跑完时校验，防止「脚本加/删用例」与文档口径悄悄脱节。
+const EXPECTED_ASSERTIONS = 57
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -133,12 +133,14 @@ function makeCtx() {
 }
 
 /** 直接调用捕获到的 HTTP 处理器，避免起真实服务器。 */
-async function callRoute(ctx, path, body, method = 'POST') {
+async function callRoute(ctx, path, body, method = 'POST', url = null) {
   const handler = ctx.state.routes.get(path)
   if (!handler) throw new Error(`未注册路由 ${path}`)
   const payload = Buffer.from(JSON.stringify(body ?? {}))
   const req = {
     method,
+    // url 单独可传：?limit= 这类查询串住在 url 上，与路由 path 无关
+    url: url === null ? path : url,
     async *[Symbol.asyncIterator]() {
       yield payload
     }
@@ -505,6 +507,239 @@ async function corruptConfigScenario(entry) {
   return results
 }
 
+// ==================== 变更记录与回滚场景（0.8.0）====================
+
+/**
+ * 真实挂载 + 真实文件系统跑一遍变更记录：每次提交留痕、撤销、恢复被删预设、清空。
+ *
+ * 为什么非要在这一层测：路由里的 400 / 405 / 409 是**判定逻辑**，源码文本断言只能证明
+ * 「写了这行代码」，证明不了「这条分支真的会触发」。而撤销的核心风险恰恰是分支走错 ——
+ * 比如把 diverged 也当成可撤销，用户就会拿到一份从未存在过的混合配置。
+ */
+async function historyScenario(entry) {
+  const dshHome = mkdtempSync(join(tmpdir(), 'dsh-soul-e2e-history-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+
+  const results = []
+  const push = (name, ok, detail) => results.push({ name, ok, detail })
+  const configFile = join(dshHome, 'soul-config.json')
+  const historyFile = join(dshHome, 'soul-config.history.jsonl')
+  const mount = async () => {
+    const mod = await import(pathToFileURL(entry).href + `?t=${Date.now()}-${Math.random()}`)
+    const ctx = makeCtx()
+    await mod.apply(ctx)
+    return ctx
+  }
+  const listHistory = async (ctx, limit = null) => {
+    const raw = await callRoute(ctx, '/api/soul/history', null, 'GET', limit === null ? null : `/api/soul/history?limit=${limit}`)
+    return raw
+  }
+
+  try {
+    const ctx = await mount()
+
+    // ── 留痕：每一次提交都要留下一条，且记清来源 ────────────────────────────────
+    await callRoute(ctx, '/api/soul/config', { customInstructions: 'G-甲' })
+    await callRoute(ctx, '/api/soul/config', { customInstructions: 'G-乙' })
+    await callRoute(ctx, '/api/soul/personas/save', { name: 'G自建' })
+    const deleted = await callRoute(ctx, '/api/soul/personas/delete', { name: 'G自建' })
+    push('G1 删除预设返回 200', deleted.status === 200 && deleted.body?.ok === true, JSON.stringify(deleted.body).slice(0, 120))
+
+    push('G2 变更记录文件真的落在配置的兄弟路径上', existsSync(historyFile), historyFile)
+
+    const all = await listHistory(ctx)
+    const entries = all.body?.entries || []
+    push(
+      'G3 列表返回 200 且最新在前（时间线顺序由物理顺序决定，不靠时间戳排序）',
+      all.status === 200 &&
+        all.body?.ok === true &&
+        entries.length >= 4 &&
+        entries[0].personas.removed.length === 1 &&
+        entries[0].personas.removed[0].name === 'G自建',
+      JSON.stringify({ 条数: entries.length, 最新来源: entries[0]?.source, 最新动作: entries[0]?.action })
+    )
+    push(
+      'G4 每条记录都带来源与动作（事后从配置差异里推不出「是谁改的」）',
+      entries.every((item) => typeof item.source === 'string' && typeof item.action === 'string') &&
+        entries.some((item) => item.source === 'web' && item.action === 'deletePreset'),
+      JSON.stringify(entries.map((item) => `${item.source}/${item.action}`))
+    )
+    push(
+      'G5 记录带链式指纹（配置哈希），否则撤销无法判断「当前状态是否还是当初那条链」',
+      entries.every((item) => /^[0-9a-f]{64}$/.test(item.configHash)),
+      JSON.stringify(entries[0]?.configHash)
+    )
+
+    const limited = await listHistory(ctx, 1)
+    push(
+      'G6 ?limit= 只削本次返回的条数，max 仍是容量上限（两种含义不能混）',
+      limited.body?.entries?.length === 1 && limited.body.entries[0].id === entries[0].id && limited.body.max === 200,
+      JSON.stringify({ 返回: limited.body?.entries?.length, max: limited.body?.max })
+    )
+
+    // ── 方法校验：写路由不能接受 GET ───────────────────────────────────────────
+    const listWrongMethod = await callRoute(ctx, '/api/soul/history', null, 'POST')
+    const rollbackWrongMethod = await callRoute(ctx, '/api/soul/history/rollback', null, 'GET')
+    push(
+      'G7 四条路由的 method 判定真的生效（POST 列表 / GET 撤销都必须 405，而不是执行写入）',
+      listWrongMethod.status === 405 && rollbackWrongMethod.status === 405,
+      `列表 POST=${listWrongMethod.status} 撤销 GET=${rollbackWrongMethod.status}`
+    )
+
+    // ── 撤销：回到目标条目**发生之前** ──────────────────────────────────────────
+    const oldest = entries[entries.length - 1]
+    const rolled = await callRoute(ctx, '/api/soul/history/rollback', { id: oldest.id })
+    push(
+      'G8 撤销到最早一条：配置回到那次改动之前（customInstructions 复原为默认空串）',
+      rolled.status === 200 && rolled.body?.config?.customInstructions === '',
+      JSON.stringify({ status: rolled.status, customInstructions: rolled.body?.config?.customInstructions })
+    )
+    push(
+      'G9 撤销如实回报撤销了哪些条目（reversed 含目标条目自身）',
+      Array.isArray(rolled.body?.reversed) && rolled.body.reversed.includes(oldest.id),
+      JSON.stringify(rolled.body?.reversed)
+    )
+    const afterRollback = await listHistory(ctx)
+    const newest = (afterRollback.body?.entries || [])[0]
+    push(
+      'G10 撤销动作自己也会留一条记录（时间线成链，撤销可被再撤销）',
+      newest?.source === 'rollback' && newest?.action === 'rollback' && newest?.id !== oldest.id,
+      JSON.stringify({ source: newest?.source, action: newest?.action })
+    )
+
+    const missing = await callRoute(ctx, '/api/soul/history/rollback', { id: 'zzzzzzzz-abcdef' })
+    push(
+      'G11 找不到的 id 回 400（而不是静默成功让用户以为撤销生效了）',
+      missing.status === 400 && missing.body?.ok === false,
+      JSON.stringify({ status: missing.status, error: missing.body?.error })
+    )
+
+    // ── 恢复预设：绝不静默覆盖同名 ─────────────────────────────────────────────
+    const restore = await callRoute(ctx, '/api/soul/history/restore-persona', { id: entries[0].id })
+    const personasAfter = await callRoute(ctx, '/api/soul/personas', null, 'GET')
+    push(
+      'G12 从「删除预设」的记录里恢复预设，条目内容逐字段还原',
+      restore.status === 200 &&
+        Array.isArray(restore.body?.restored) &&
+        restore.body.restored.includes('G自建') &&
+        Object.prototype.hasOwnProperty.call(personasAfter.body?.personas, 'G自建'),
+      JSON.stringify({ status: restore.status, restored: restore.body?.restored, skipped: restore.body?.skipped })
+    )
+
+    const restoreAgain = await callRoute(ctx, '/api/soul/history/restore-persona', { id: entries[0].id })
+    push(
+      'G13 同名预设已存在时拒绝恢复（400）—— 删掉后又新建同名条目，恢复不能把它悄悄覆盖掉',
+      restoreAgain.status === 400 &&
+        (restoreAgain.body?.error || '').includes('G自建'),
+      JSON.stringify({ status: restoreAgain.status, error: restoreAgain.body?.error })
+    )
+
+    const noRemoved = await callRoute(ctx, '/api/soul/history/restore-persona', { id: oldest.id })
+    push(
+      'G14 对「没有删除预设」的记录恢复预设回 400（不返回空成功）',
+      noRemoved.status === 400,
+      JSON.stringify({ status: noRemoved.status, error: noRemoved.body?.error })
+    )
+
+    // ── 记录文件是不可信输入：手改出来的怪条目不能崩，也不能静默吞掉 ────────────
+    // 追加一条**手工伪造**的记录：里面有个只有空白的预设名。它骗得过
+    // normalizePersonaEvents（只看「非空且不超长」），但过不了 sanitizePersonaName ——
+    // 这正是「读侧再校验一遍」存在的理由。要求：既不崩，也要如实报进 skipped。
+    {
+      const forged = {
+        v: 1,
+        id: 'forged0001-abcdef',
+        at: new Date().toISOString(),
+        source: 'web',
+        action: 'deletePreset',
+        configHash: 'a'.repeat(64),
+        before: { nickname: '' },
+        after: { nickname: 'x' },
+        personas: { added: [], updated: [], removed: [{ name: '   ', entry: { style: 'roasted' } }, { name: 'G伪造', entry: { style: 'casual' } }] }
+      }
+      appendFileSync(historyFile, `${JSON.stringify(forged)}\n`, 'utf8')
+
+      const forgedResult = await callRoute(ctx, '/api/soul/history/restore-persona', { id: 'forged0001-abcdef' })
+      push(
+        'G16 手改出来的记录：空白名报进 skipped，合法名照常恢复（读侧二次校验，既不崩也不吞）',
+        forgedResult.status === 200 &&
+          forgedResult.body?.restored?.includes('G伪造') &&
+          (forgedResult.body?.skipped || []).some((item) => item.reason === 'invalid-name'),
+        JSON.stringify({ status: forgedResult.status, restored: forgedResult.body?.restored, skipped: forgedResult.body?.skipped })
+      )
+    }
+
+    // ── 清空：隐私出口 ────────────────────────────────────────────────────────
+    const cleared = await callRoute(ctx, '/api/soul/history/clear')
+    const afterClear = await listHistory(ctx)
+    push(
+      'G15 清空回报删掉的条数，并且真的清干净（记录里有昵称 / 介绍原文，这是隐私出口）',
+      cleared.status === 200 && cleared.body?.removed > 0 && afterClear.body?.entries?.length === 0,
+      JSON.stringify({ removed: cleared.body?.removed, 剩余: afterClear.body?.entries?.length })
+    )
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(dshHome, { recursive: true, force: true })
+  }
+
+  return results
+}
+
+/**
+ * 手改配置后撤销必须被拒（409 diverged）。
+ *
+ * 单独一个场景的原因：diverged 的前提是「进程外的改动」，只能靠**重新挂载**来复现 ——
+ * 进程内所有写路径都走同一漏斗、都会留痕，链永远不会断。这也正是它的现实来源：
+ * 用户手改了 soul-config.json 之后重启 DSH。
+ */
+async function historyDivergedScenario(entry) {
+  const dshHome = mkdtempSync(join(tmpdir(), 'dsh-soul-e2e-diverged-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+  const configFile = join(dshHome, 'soul-config.json')
+
+  const results = []
+  const push = (name, ok, detail) => results.push({ name, ok, detail })
+  const mount = async () => {
+    const mod = await import(pathToFileURL(entry).href + `?t=${Date.now()}-${Math.random()}`)
+    const ctx = makeCtx()
+    await mod.apply(ctx)
+    return ctx
+  }
+
+  try {
+    const first = await mount()
+    await callRoute(first, '/api/soul/config', { customInstructions: '原始值' })
+    const record = (await callRoute(first, '/api/soul/history', null, 'GET')).body?.entries?.[0]
+    push('H1 预置一条可撤销的记录', typeof record?.id === 'string', JSON.stringify(record?.id))
+
+    // 进程外改坏链条：直接改磁盘上的配置（模拟用户手工编辑 / 别的工具写入）
+    const onDisk = JSON.parse(readFileSync(configFile, 'utf8'))
+    writeFileSync(configFile, JSON.stringify({ ...onDisk, customInstructions: '手工改的' }, null, 2), 'utf8')
+
+    const second = await mount()
+    const diverged = await callRoute(second, '/api/soul/history/rollback', { id: record.id })
+    push(
+      'H2 配置被进程外改动后撤销回 409，而不是算出一份从未存在过的混合配置',
+      diverged.status === 409 && diverged.body?.ok === false,
+      JSON.stringify({ status: diverged.status, error: diverged.body?.error })
+    )
+    push(
+      'H3 被拒的撤销没有改动配置（拒绝就是拒绝，不留半截写入）',
+      JSON.parse(readFileSync(configFile, 'utf8')).customInstructions === '手工改的',
+      readFileSync(configFile, 'utf8').slice(0, 80)
+    )
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(dshHome, { recursive: true, force: true })
+  }
+
+  return results
+}
+
 // ==================== 挂载沙箱 ====================
 /**
  * 把插件复制到临时目录，并生成静态依赖 `@deepseek-ai/dsh-llm` 的形状兼容桩。
@@ -567,6 +802,27 @@ async function main() {
     for (const r of await corruptConfigScenario(corruptSandbox.entry)) record(r.name, r.ok, r.detail)
   } finally {
     rmSync(corruptSandbox.dir, { recursive: true, force: true })
+  }
+
+  // 变更记录与撤销（0.8.0）：另起沙箱，因为它的前置状态是「已经攒下一串记录」，
+  // 与上面那条从空配置起步的场景互相污染。
+  console.log('')
+  console.log('G 变更记录：提交即留痕、撤销、恢复预设、清空')
+  const historySandbox = prepareSandbox(PKG_DIR, 'history')
+  try {
+    for (const r of await historyScenario(historySandbox.entry)) record(r.name, r.ok, r.detail)
+  } finally {
+    rmSync(historySandbox.dir, { recursive: true, force: true })
+  }
+
+  // 手改配置后撤销必须被拒（409）：需要一次「进程外的改动」，只能靠重新挂载复现
+  console.log('')
+  console.log('H 撤销的拒绝路径：配置被进程外改动')
+  const divergedSandbox = prepareSandbox(PKG_DIR, 'diverged')
+  try {
+    for (const r of await historyDivergedScenario(divergedSandbox.entry)) record(r.name, r.ok, r.detail)
+  } finally {
+    rmSync(divergedSandbox.dir, { recursive: true, force: true })
   }
 
   // 判断力对照：把 provider 读的配置源换成 DEFAULT_CONFIG（模拟「配置改了但读不到」），

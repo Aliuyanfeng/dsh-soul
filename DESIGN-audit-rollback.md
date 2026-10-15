@@ -1,7 +1,7 @@
 # 变更审计与回滚（0.8.0）
 
-> 状态：**已评审，实施中**。`0.8.0-a`（`lib/history.mjs` + `scripts/verify-history.mjs`）已落地，
-> `0.8.0-b/c/d` 待做 —— 各节末标了当前进度。
+> 状态：**已评审，实施中**。`0.8.0-a`（纯函数层）、`0.8.0-b`（提交即留痕）、
+> `0.8.0-c`（四条 HTTP 路由）已落地，只剩 `0.8.0-d`（设置页）—— 各节末标了当前进度。
 >
 > 前置阅读：`lib/config.mjs`（配置 schema 与白名单）、`lib/store.mjs`（既有的原子写与损坏处理）、
 > `DESIGN-persona-scope.md`（同类设计文档的写法，以及「宿主契约必须先查证」的做法）。
@@ -282,9 +282,10 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
 | `lib/history.mjs` | **新增**。路径推导 / 条目构造与校验 / JSONL 解析 / 压实 / 回滚规划（纯函数，可独立测试） | ✅ 已实现 |
 | `scripts/verify-history.mjs` | **新增**。`lib/history.mjs` 的纯函数断言组（40 项） | ✅ 已实现 |
 | `package.json` | `verify` 链加入 `verify-history` + `verify:history` 单跑脚本 | ✅ 已实现 |
-| `index.mjs` | `commitConfig(mutate, source)`；14 个调用点补来源（其中 2 个由 `resetConfigWithEscape` / `applyPersonaEntry` 形参穿透）；追加与压实。✅ 0.8.0-b；四条路由 ⬜ 0.8.0-c | ⬜ |
+| `index.mjs` | `commitConfig(mutate, source)`；14 个调用点补来源（其中 2 个由 `resetConfigWithEscape` / `applyPersonaEntry` 形参穿透）；追加与压实。✅ 0.8.0-b；四条路由 ✅ 0.8.0-c | ✅ |
 | `client/index.mjs` | 新增「变更记录」分组（第 5 组，排在「Agent 工具」之后）；回滚 / 恢复预设 / 清空的二次确认；文案键 | ⬜ 0.8.0-d |
-| `scripts/verify-config.mjs` | 来源标注（每个调用点各自带对）与「提交即留痕」断言 | ✅ 0.8.0-b |
+| `scripts/verify-config.mjs` | 来源标注（每个调用点各自带对）与「提交即留痕」断言；四条路由的契约断言 ✅ 0.8.0-b / 0.8.0-c | ✅ |
+| `scripts/verify-e2e-prompt.mjs` | 真实挂载跑一遍四条路由：留痕、撤销、恢复预设、清空、405 / 400 / 409（38 → 57 项） | ✅ 0.8.0-c |
 | `scripts/verify-client.mjs` | 分组渲染、倒序、二次确认、回滚请求体断言 | ⬜ 0.8.0-d |
 | `package.json` 版本号 | 0.7.2 → 0.8.0 | ⬜ 收尾 |
 
@@ -296,7 +297,7 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
 | --- | --- | --- | --- |
 | 0.8.0-a | `lib/history.mjs` 纯函数层 | `verify-history`（40 项：坏行、超长行、原型污染、两个读取窗口边界、压实、回滚链） | ✅ |
 | 0.8.0-b | `commitConfig` 加来源 + 追加 + 两个间接调用者穿透 | `verify-config` 的来源标注断言（14 个调用点逐个归属 + 4 条时机/隔离断言）+ 11 组变异探针全部被拦 | ✅ |
-| 0.8.0-c | 四条 HTTP 路由（含方法校验、`skipped`、`restore-persona`） | 真实路由探针（含 405、非法 id、手改历史文件） | ⬜ |
+| 0.8.0-c | 四条 HTTP 路由（含方法校验、`skipped`、`restore-persona`） | `verify-config` 的契约断言 + `verify-e2e-prompt` 的 19 项真实路由探针（含 405、非法 id、手改历史文件）+ 12 组变异探针全部被拦 | ✅ |
 | 0.8.0-d | 设置页「变更记录」分组 | `verify-client`（渲染 / 倒序 / 二次确认 / 请求体） | ⬜ |
 
 ## 11. 已知风险
@@ -430,3 +431,35 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
 又把它覆盖回真实原因 —— 根本没制造出「静默跳过」这个故障，却让人误以为
 「这条断言守不住」。**教训：变异没被拦时，先证明变异真的制造了故障，
 再怀疑断言。** 改成直接替换掉告警赋值之后立即被拦。
+
+### 14.2 `0.8.0-c` 实际跑过的 12 组变异（初跑 11/12，漏网一条已补断言）
+
+`0.8.0-b/c` 的断言面不同：`b` 验的是「调用点归属」（源文本正则就够），
+`c` 验的是「分支真的会走对」—— 405 / 400 / 409 是判定逻辑，源码里有这行代码
+不等于这条分支会被触发。所以这一批的落点是 `verify-e2e-prompt`：真实挂载 +
+真实临时 `DSH_HOME`，把请求打进去看返回码。
+
+| # | 变异 | 被哪条断言拦下 |
+| --- | --- | --- |
+| M1 | 删掉 `GET /api/soul/history` 的 method 校验 | 变更记录四条路由 / G7（POST 列表必须 405） |
+| M2 | 删掉 `rollback` 的 method 校验（GET 也能撤销） | 同上 / G7 |
+| M3 | `diverged`（409）降级成「当作空补丁成功」 | 同上 / H2 |
+| M4 | 找不到 id 也回 200 而不是 400 | 同上 / G11 |
+| M5 | 丢掉 `read.error` 的中止（记录读不出来按空记录继续） | 同上 |
+| M6 | 撤销后不刷新提示词注入（配置改了但 Agent 还按旧的说话） | 同上 |
+| M7 | 恢复预设静默覆盖同名条目 | 同上 / G13 |
+| M8 | 恢复预设不拒绝内置名 | 服务端五条写路径都拒绝内置名 |
+| M9 | 清空不入队（与并发追加撞车，「刚清完又冒出一条」） | 同上 |
+| M10 | 撤销的 `source` 标成 `web/save`（回滚动作伪装成普通保存） | 提交即留痕：唯一调用点归属 / G10 |
+| M11 | 记录读进队列外（规划建立在可能已被改过的配置上） | 变更记录四条路由 |
+| M12 | `restore-persona` 的 `skipped` 不回报（只报成功的） | **初跑漏网** —— 见下 |
+
+▶ **M12 是这一批唯一漏网的一条，它暴露的是断言覆盖面的缺口而不是实现缺陷。**
+`skipped` 原先只钉了 `reason: 'exists'`，于是删掉 `invalid-name` 那条分支没人发现。
+那条分支**可达**：`normalizePersonaEvents` 只看「非空且不超长」，三条空格 `'   '`
+满足它，而 `sanitizePersonaName` 会拒绝 —— 恰恰是最该回报的一类（用户只看到
+「恢复了 2 个」，不知道有 1 个被丢掉了）。
+补法有两层：`verify-config` 加一条源文本断言，`verify-e2e-prompt` 加 **G16** ——
+往记录文件里追加一条**手工伪造**的条目（含空白名与合法名），要求既恢复合法的那个、
+也把空白名报进 `skipped`。后者同时是「记录文件按不可信输入处理」这条设计前提的
+第一个端到端证据。补完后 12/12。

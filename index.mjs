@@ -38,13 +38,19 @@ import { isBuiltinPersona, builtinPersonaNames, mergePersonas, personaMatches, r
 import { configWriteRefusal, describeConfigFailure, moveAsideConfigFile, readConfigFile, writeConfigFile } from './lib/store.mjs'
 import {
   buildHistoryEntry,
+  clearHistoryFile,
   createEntryId,
   diffFields,
   diffPersonas,
+  findEntryIndex,
   hashConfig,
   historyPathFor,
+  MAX_READ_LINES,
+  planRollback,
   randomSuffix,
-  recordHistoryEntry
+  readHistoryFile,
+  recordHistoryEntry,
+  toHistoryResponse
 } from './lib/history.mjs'
 
 const name = 'soul'
@@ -414,17 +420,30 @@ const NON_PROMPT_FIELDS = new Set(['trailEnabled', 'trailColor', 'trailSpeed', '
 async function commitConfig(mutate, source) {
   return enqueueConfigWrite(async () => {
     const current = await loadConfig()
-    const next = mutate({ ...current })
+    // mutate 允许返回 Promise：撤销要在「读记录 → 规划 → 写配置」之间保持原子，
+    // 而记录必须在**队列内**读。放在队列外读会有一个窗口——两次撤销并发时，
+    // 后者的规划建立在已被前者改过的配置上，指纹校验会给出看起来像「数据损坏」的
+    // diverged，排查方向完全跑偏。
+    const next = await mutate({ ...current })
     const changed = diffKeys(current, next)
     const promptChanged = changed.filter((key) => !NON_PROMPT_FIELDS.has(key))
     const config = await saveConfig(next)
 
     // 差分必须在 saveConfig **之后**、且以它返回的配置为基准：saveConfig 会剔除
     // tone / presets / examples 三个废弃字段，拿 mutate 的产物去比会把它们误报成变更。
-    await auditCommit(current, config, source)
+    const entry = await auditCommit(current, config, source)
 
-    return { config, changed, promptChanged }
+    return { config, changed, promptChanged, entry }
   })
+}
+
+// 路由内主动拒绝：从队列任务里抛出即可中止本次提交（不写盘），由 handler 按状态码回话。
+// 不用返回一个「什么都没改」的配置来收场 —— 那会照样重写一次配置文件，
+// 让一次失败的操作在磁盘上留下痕迹。
+function httpError(status, message) {
+  const err = new Error(message)
+  err.httpStatus = status
+  return err
 }
 
 // 把一次成功的提交记进变更记录。
@@ -1213,6 +1232,219 @@ function registerPersonaRoutes(ctx) {
         } catch (err) {
           res.writeHead(500, { 'content-type': 'application/json' })
           res.end(JSON.stringify({ ok: false, error: String(err.message || err) }))
+        }
+      }
+    })
+  })
+}
+
+// ==================== 变更记录 ====================
+
+// 解析 ?limit=。非法值一律当作「没给」而不是报错：这是一个纯展示参数，
+// 为一个拼错的查询串返回 400 只会让客户端多写一段没必要的错误处理。
+function parseLimit(rawUrl) {
+  try {
+    const raw = new URL(String(rawUrl || ''), 'http://localhost').searchParams.get('limit')
+    if (raw === null) return null
+    const value = Number.parseInt(raw, 10)
+    if (!Number.isFinite(value) || value <= 0) return null
+    return Math.min(value, MAX_READ_LINES)
+  } catch {
+    return null
+  }
+}
+
+// 变更记录的四条路由：列表 / 撤销 / 恢复预设 / 清空。
+//
+// 一律先校验 req.method（同文件其余写路由的规矩，来自 /api/soul/config/reset
+// 曾经任何方法——包括 GET——都能触发破坏性写入的教训）。
+//
+// 撤销与恢复预设都走唯一漏斗 commitConfig，于是「我撤销过一次」本身也留下一条记录：
+// 审计因此是链条而不是快照，能看出「改了、撤了、又改回去」。
+function registerHistoryRoutes(ctx) {
+  ctx.inject(['webServer'], (wsCtx) => {
+    const send = (res, status, body) => {
+      res.writeHead(status, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(body))
+    }
+
+    // 列表（最新在前）
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/history',
+      handler: async (req, res) => {
+        try {
+          if (req.method !== 'GET') {
+            send(res, 405, { ok: false, error: 'Method not allowed' })
+            return
+          }
+          const read = await readHistoryFile(historyPath())
+          const payload = toHistoryResponse(read, lastHistoryFailure)
+          // ?limit= 只影响本次返回的条数，**不动 max** —— max 是容量上限（压实后保多少条），
+          // 拿它当「本次有多少条」用，客户端会在两种含义之间猜。
+          const limit = parseLimit(req.url)
+          if (limit !== null && payload.entries.length > limit) {
+            payload.entries = payload.entries.slice(0, limit)
+          }
+          send(res, 200, { ok: true, ...payload })
+        } catch (err) {
+          send(res, 500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
+
+    // 撤销：把配置退回到目标条目**发生之前**的状态（连带撤销它之后的所有改动）
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/history/rollback',
+      handler: async (req, res) => {
+        try {
+          if (req.method !== 'POST') {
+            send(res, 405, { ok: false, error: 'Method not allowed' })
+            return
+          }
+          const parsed = await readJsonBody(req)
+          if (!parsed.ok) {
+            send(res, parsed.status, { ok: false, error: parsed.error })
+            return
+          }
+          const id = typeof (parsed.body && parsed.body.id) === 'string' ? parsed.body.id : ''
+          if (!id) {
+            send(res, 400, { ok: false, error: '缺少要撤销的记录 id' })
+            return
+          }
+
+          let plan = null
+          const { config: updated, changed, promptChanged, entry } = await commitConfig(async (current) => {
+            // 记录必须在**队列内**读：放到队列外读会与并发写入形成窗口，规划建立在
+            // 已被别人改过的配置上，指纹校验随后报出一个看起来像「数据损坏」的
+            // diverged，把排查方向带偏。
+            const read = await readHistoryFile(historyPath())
+            if (read.error) throw httpError(500, read.error)
+            plan = planRollback(read.entries, current, id)
+            if (!plan.ok) {
+              if (plan.reason === 'missing') {
+                throw httpError(400, `找不到这条变更记录：${id}。它可能已被清空或压实淘汰。`)
+              }
+              // diverged：配置与记录不同步（有人手改过配置文件）。不给一个猜出来的结果。
+              throw httpError(409, '记录与当前配置对不上，无法撤销。可能有人手工改过配置文件。')
+            }
+            // 补丁为空是**合法**结果（目标那次改动已被后续改动改回来了），
+            // 此时不改任何字段、也不会留下记录，由 unchanged 告诉客户端「已经是最新」。
+            if (Object.keys(plan.patch).length === 0) return { ...current }
+            return { ...current, ...plan.patch }
+          }, { source: 'rollback', action: 'rollback' })
+
+          // 仅影响 Agent 行为的字段变化才刷新提示词注入（与其余写路径同一门控）
+          if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
+
+          send(res, 200, {
+            ok: true,
+            config: updated,
+            changed,
+            skipped: plan ? plan.skipped : [],
+            reversed: plan ? plan.reversed : [],
+            unchanged: changed.length === 0,
+            entry,
+            deliveryWarning: deliveryProblemText(updated)
+          })
+        } catch (err) {
+          const status = err && err.httpStatus ? err.httpStatus : 500
+          send(res, status, { ok: false, error: String((err && err.message) || err) })
+        }
+      }
+    })
+
+    // 恢复预设：只对「删除预设」这类条目有意义（条目里带着被删条目的内容）
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/history/restore-persona',
+      handler: async (req, res) => {
+        try {
+          if (req.method !== 'POST') {
+            send(res, 405, { ok: false, error: 'Method not allowed' })
+            return
+          }
+          const parsed = await readJsonBody(req)
+          if (!parsed.ok) {
+            send(res, parsed.status, { ok: false, error: parsed.error })
+            return
+          }
+          const id = typeof (parsed.body && parsed.body.id) === 'string' ? parsed.body.id : ''
+          if (!id) {
+            send(res, 400, { ok: false, error: '缺少记录 id' })
+            return
+          }
+
+          const restored = []
+          const skipped = []
+          const { config: updated, changed, entry } = await commitConfig(async (current) => {
+            const read = await readHistoryFile(historyPath())
+            if (read.error) throw httpError(500, read.error)
+            const index = findEntryIndex(read.entries, id)
+            if (index < 0) {
+              throw httpError(400, `找不到这条变更记录：${id}。它可能已被清空或压实淘汰。`)
+            }
+            const removed = read.entries[index].personas.removed
+            if (removed.length === 0) {
+              throw httpError(400, '这条记录里没有被删除的预设，无法恢复。')
+            }
+            const personas = clonePersonas(current.personas)
+            for (const item of removed) {
+              // 逐个校验、逐个说明为什么没恢复。**绝不静默覆盖同名条目**：
+              // 删掉「架构师」之后完全可能又新建了一个同名但内容不同的预设，
+              // 此时「恢复」若是直接写回，等于把用户后来的编辑悄悄扔掉。
+              const personaName = sanitizePersonaName(item.name)
+              if (!personaName) {
+                skipped.push({ name: item.name, reason: 'invalid-name' })
+                continue
+              }
+              if (isBuiltinPersona(personaName)) {
+                skipped.push({ name: personaName, reason: 'builtin' })
+                continue
+              }
+              if (hasOwn(personas, personaName)) {
+                skipped.push({ name: personaName, reason: 'exists' })
+                continue
+              }
+              personas[personaName] = { ...item.entry }
+              restored.push(personaName)
+            }
+            if (restored.length === 0) {
+              throw httpError(400, `没有可恢复的预设：${skipped.map((item) => item.name).join('、')}`)
+            }
+            return { ...current, personas }
+          }, { source: 'restorePersona', action: 'restorePreset' })
+
+          // 预设库变化不触发会话注入（diffKeys 本就跳过 personas），故此处不刷新提示词
+          send(res, 200, { ok: true, restored, skipped, changed, entry, ...personaLibrary(updated) })
+        } catch (err) {
+          const status = err && err.httpStatus ? err.httpStatus : 500
+          send(res, status, { ok: false, error: String((err && err.message) || err) })
+        }
+      }
+    })
+
+    // 清空：隐私出口（记录里有昵称 / 职业 / 介绍 / 自定义指令的原文）
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/history/clear',
+      handler: async (req, res) => {
+        try {
+          if (req.method !== 'POST') {
+            send(res, 405, { ok: false, error: 'Method not allowed' })
+            return
+          }
+          // 借配置写队列串行：记录是在提交路径里写的，清空若不入队就会与并发的追加
+          // 撞在一起 —— 最坏的结果是「刚清完又冒出一条」，用户会以为清空没生效。
+          const removed = await enqueueConfigWrite(async () => {
+            const count = await clearHistoryFile(historyPath())
+            lastHistoryFailure = null
+            return count
+          })
+          send(res, 200, { ok: true, removed })
+        } catch (err) {
+          send(res, 500, { ok: false, error: String(err.message || err) })
         }
       }
     })
@@ -2081,6 +2313,7 @@ export async function apply(ctx) {
   // 注册各模块
   registerRoutes(ctx)
   registerPersonaRoutes(ctx)
+  registerHistoryRoutes(ctx)
   registerCommands(ctx)
   registerSystemPrompt(ctx)
   registerTools(ctx)
