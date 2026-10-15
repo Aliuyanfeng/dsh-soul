@@ -147,7 +147,7 @@ dsh --profile desktop --dump-config
 (Get-Item "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-soul").Target
 ```
 
-`package.json` 的 `version`、`client/index.mjs` 的 `VERSION` 常量两处必须一致（本版均为 `0.7.2`）；`RELEASE_NOTES.md` 的**最新段落标题**也应对应同一版本号。前两处由 `verify-config` 断言钉住（客户端复刻常量 == 宿主定义），改一处漏另一处会立刻失败。
+`package.json` 的 `version`、`client/index.mjs` 的 `VERSION` 常量两处必须一致（本版均为 `0.8.0`）；`RELEASE_NOTES.md` 的**最新段落标题**也应对应同一版本号。前两处由 `verify-config` 断言钉住（客户端复刻常量 == 宿主定义），改一处漏另一处会立刻失败。
 
 ### 3) 客户端产物（确认浏览器拿到新代码）
 
@@ -196,10 +196,10 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 | 层 | 脚本 | 断言数 | 会不会跳过 |
 | --- | --- | --- | --- |
-| 纯函数 / 契约 | `verify-config` | 118 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
+| 纯函数 / 契约 | `verify-config` | 119 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
 | 持久化行为 | `verify-history` | 40 | 否 |
-| 客户端行为 | `verify-client` | 23 | 否 |
+| 客户端行为 | `verify-client` | 27 | 否 |
 | 端到端（保存 → 两条通道都拿到新文本；变更记录四条路由） | `verify-e2e-prompt` | 57 | 否 |
 | 宿主实现 | `verify-live-prompt` | 20 | 定位不到 DSH 时整脚本跳过 |
 | 版本兼容 | `verify-compat` | 10（声明数；未执行项按 `skipNote` 从声明数里下修后对账） | 定位不到 DSH 时整脚本跳过 |
@@ -220,7 +220,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 `verify-trail` / `verify-nav-icon` 覆盖的是**渲染层**（DOM 里的 SVG），而设置页的**交互行为**此前只有「源文本契约」——即断言 `client/index.mjs` 里出现了某段写法。那种断言证明不了运行时真的走了那条分支：把 `if (!payload)` 改成常量、或让 `resetConfig` 永不返回 `undefined`，源码看起来依然正确。
 
-`verify-client` 把**真实的 `client/index.mjs` 原样载入**（不复制、不裁剪），在纯 Node 里用一小撮 React 垫片 + 假 `window` / `document` / `fetch` / 定时器跑真实的 `apply(ctx)`，然后**像用户一样点按钮**，断言**用户实际会看到的那句提示**。它守着 0.7.1 修过、而此前没有行为回归看护的四处：
+`verify-client` 把**真实的 `client/index.mjs` 原样载入**（不复制、不裁剪），在纯 Node 里用一小撮 React 垫片 + 假 `window` / `document` / `fetch` / 定时器跑真实的 `apply(ctx)`，然后**像用户一样点按钮**，断言**用户实际会看到的那句提示**。27 个用例守着两类东西：0.7.1 修过而此前没有行为回归看护的几处，以及 0.8.0 新增的「变更记录」分组：
 
 | 用例 | 守的是什么 |
 | --- | --- |
@@ -230,6 +230,14 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | C8 | 重置失败**不得**报成成功（配置损坏时那唯一一条自救路径） |
 | C9 / C10 | 重置丢弃过损坏文件时要提示「已备份」；普通重置不留残余警告 |
 | C11 | 保存失败**不得**误报成「配置无变化」 |
+| C13 | 快捷开关保存失败必须给出反馈（此前静默：按钮外观与文案都不变） |
+| C14 | 预设列表拉取失败要显示失败原因，不得永远停在「加载中...」（0.8.0-d 就是被它抓到「懒加载分组复用全局加载文案」） |
+| C15 | 只改首尾空格不算脏（与服务端 `trim` 判据一致） |
+| C16 / C18 / C20 / C22 | 人设卡片按宿主协议渲染、展开时自动定位到生效那张、点叠层侧边卡只翻页不翻面、翻页复位翻面态 |
+| C17 / C19 | 应用预设成功后清掉上一轮的失败提示；表单必须跟随 store 且保存按钮不得误亮（「应用预设后被保存打回默认」那条 bug 的行为回归） |
+| C21 | 底栏展示当前人设，未匹配时显示「自定义」 |
+| C23 | 全局轮询注册在装配层（不依赖设置页是否挂载） |
+| C24–C27 | 变更记录：不展开不拉取 / 展开后按记录渲染时间·来源·字段名 / 原值→新值逐行（含空值与枚举外取值）/ 撤销与清空都走内联二次确认 / 超 20 条折叠、`warning` 不得被当成失败 |
 
 两个实现要点（离线复刻时踩过的坑）：
 
