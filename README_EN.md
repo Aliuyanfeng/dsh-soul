@@ -41,6 +41,18 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 - Settings nav icon: the "Personalization" entry in the settings panel draws the same geometry as the plugin icon — same trail and spark, but coloured and weighted like its neighbours (monochrome `currentColor`). DSH hardcodes nav glyphs by section id and offers no way for a plugin to declare one, so the client swaps the glyph in the DOM
 - Prompt preview (read-only, collapsible section at the bottom of the settings page): shows the **currently active** prompt while the form is untouched; as soon as any edit is pending it compiles the **draft** instead — what will actually be injected once you save — refreshing live (400 ms after you stop typing) and again after save / reset / applying a persona. Fields that fail validation are listed separately and excluded from the preview
 
+## Roadmap
+
+| Version | Direction | Status |
+| --- | --- | --- |
+| `0.7.2` | Settings-page styling aligned with the host, stacked card carousel, persona changes routed through the host's native approval panel | In progress |
+| `0.8.0` | **Persona workspace binding** — one directory subtree binds one persona, applied automatically on entering the directory | [Design draft](./DESIGN-persona-scope.md) reviewed |
+| `0.8.1` | Change audit and rollback — every config change recorded, viewable and revertible | Planned |
+| `0.8.2` | Self-evolution proposals with diff approval — the Agent proposes persona refinements and the diff goes through the approval panel | Planned |
+| `0.9.0` | Memory layer — long-term memory across sessions, isolated per persona, recalled on demand | Planned |
+
+Design rationale lives in the corresponding design document; shipped changes are in [RELEASE_NOTES.md](./RELEASE_NOTES.md) and the release process in [PUBLISHING.md](./PUBLISHING.md). The roadmap states direction, not a commitment — the order may change.
+
 ## Installation
 
 ```powershell
