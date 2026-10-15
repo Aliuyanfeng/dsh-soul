@@ -1,9 +1,22 @@
-# 变更审计与回滚（0.8.0 设计草案）
+# 变更审计与回滚（0.8.0）
+
+> 状态：**已评审，实施中**。`0.8.0-a`（`lib/history.mjs` + `scripts/verify-history.mjs`）已落地，
+> `0.8.0-b/c/d` 待做 —— 各节末标了当前进度。
+>
+> 前置阅读：`lib/config.mjs`（配置 schema 与白名单）、`lib/store.mjs`（既有的原子写与损坏处理）、
+> `DESIGN-persona-scope.md`（同类设计文档的写法，以及「宿主契约必须先查证」的做法）。
+>
+> 本文件同时是**实现说明**：`0.8.0-a` 阶段推翻了两条草案决策（§4.4 的回滚语义、
+> §4.2 的 `fields` 字段），推翻的理由保留在正文里 —— 只看结论会让人以为那两条
+> 本来就想清楚了，下次还会照错的那版写。
 
 ## 1. 目标
 
 任何一次配置写入都留下一条不可篡改的记录，用户可以在设置页看到「谁在什么时候改了什么」，
-并把活动配置恢复到历史中的任意一个状态。
+并把活动配置**撤销**回历史中的任意一个状态。
+
+「撤销回某个状态」的实现是倒着回放变更（§4.4），最终落到「点的那次改动发生之前」——
+从用户角度看仍然是「回到历史上的某一点」。
 
 非目标：不做预设库的版本管理（见 §4.3），不做多用户审计，不做远程上报。
 
@@ -26,11 +39,11 @@
 `index.mjs:383` 的 `commitConfig(mutate)` 是**全部**配置写路径的收敛点。
 grep 实测 14 个调用点（不含定义与注释），全部经过它：
 
-| 行 | 来源 (`source`/`action`) |
+| 行 | 来源 (`source` / `action`) |
 | --- | --- |
-| `index.mjs:429` | `rollback`（`@reset`，`resetConfigWithEscape` 内部） |
+| `index.mjs:429` | **穿透自调用点**（`resetConfigWithEscape` 内部，见下表） |
 | `index.mjs:690` | `web` / `save`（HTTP `POST /api/soul/config`） |
-| `index.mjs:934` | `persona` / `use`（`applyPersonaEntry` 内部） |
+| `index.mjs:934` | **穿透自调用点**（`applyPersonaEntry` 内部，见下表） |
 | `index.mjs:1000` | `web` / `savePreset` |
 | `index.mjs:1079` | `web` / `deletePreset` |
 | `index.mjs:1386` | `command` / `nickname` |
@@ -40,14 +53,26 @@ grep 实测 14 个调用点（不含定义与注释），全部经过它：
 | `index.mjs:1520` | `command` / `deletePreset` |
 | `index.mjs:1558` | `command` / `set` |
 | `index.mjs:1567` | `command` / `confirm` |
-| `index.mjs:1927` | `tool` / `set_persona` |
+| `index.mjs:1927` | `tool` / `setPersona` |
 | `index.mjs:1973` | `service` / `update` |
 
-两个间接调用者必须把来源**穿透**下去：`resetConfigWithEscape()`（`index.mjs:423`，
-三个调用点 `index.mjs:803` / `:1430` / `:1985`）与 `applyPersonaEntry()`（`index.mjs:931`，
-两个调用点 `index.mjs:1038` / `:1474`）。
+两个间接调用者必须把来源**穿透**下去（它们的 `commitConfig` 调用点
+`:429` / `:934` 自己不带来源，来源由下面这些入口决定）：
 
-⇒ **`commitConfig` 必须加第二个参数**：`commitConfig(mutate, source)`。
+| 间接调用者（定义） | 调用点 | 来源 / 动作 |
+| --- | --- | --- |
+| `resetConfigWithEscape()`（`index.mjs:423`） | `index.mjs:803`（HTTP reset） | `web` / `reset` |
+| 同上 | `index.mjs:1430`（`/soul reset`） | `command` / `reset` |
+| 同上 | `index.mjs:1985`（`soulConfig.resetConfig`） | `service` / `reset` |
+| `applyPersonaEntry()`（`index.mjs:931`） | `index.mjs:1038`（HTTP personas/use） | `persona` / `use` |
+| 同上 | `index.mjs:1474`（`/soul use`） | `persona` / `use` |
+
+⇒ **`commitConfig` 必须加第二个参数**：`commitConfig(mutate, source)`，
+其中 `source` 形如 `{ source, action }`。
+
+**来源与动作都是白名单枚举**（`lib/history.mjs` 的 `HISTORY_SOURCES` / `HISTORY_ACTIONS`），
+写进条目时校验，读回来时再校验一次。游离的字符串会让 UI 的徽标无从渲染，
+而「渲染不出来就空着」正是让审计失去可信度的第一步。
 
 ## 4. 数据模型
 
@@ -73,10 +98,10 @@ grep 实测 14 个调用点（不含定义与注释），全部经过它：
   "at": "2026-02-14T09:31:07.123Z",
   "source": "web",
   "action": "save",
-  "fields": ["style", "emoji"],
+  "configHash": "9f2c…（64 位十六进制）",
   "before": { "style": "professional", "emoji": "default" },
   "after":  { "style": "humorous",     "emoji": "more"    },
-  "personas": { "added": [], "removed": [] }
+  "personas": { "added": [], "updated": [], "removed": [] }
 }
 ```
 
@@ -84,9 +109,14 @@ grep 实测 14 个调用点（不含定义与注释），全部经过它：
   唯一（写队列串行但两次写入可以落在同一毫秒），所以需要独立的 id。
 - `before` / `after` 只装**发生变化的字段**，不是完整配置快照。理由：一次 `style` 改动
   不该在磁盘上留下 4.8 KB；而回滚需要的「改成什么」本来就是逐字段的。
-- `fields` 是 `Object.keys(before)` 的冗余记录。留着是为了让**人**读 JSONL 时不必
-  自己 diff 两个对象 —— 审计文件的第一读者是排障的人，不是程序。
-- `personas` 记录预设库的增删（见 §4.3），无变化时为 `{ added: [], removed: [] }`。
+- `configHash` 是**这次写入之后**配置的指纹，回滚靠它做链式校验（见 §4.4）。
+  指纹只覆盖 `DEFAULT_CONFIG` 的键（代码里的 `AUDIT_FIELDS`），`personas` 刻意不在其中 ——
+  否则「存一个预设」会让「撤销一次 style」因为哈希对不上而被拒绝。
+  哈希前先对键名递归排序再序列化：配置在「写入时构造」与「读盘后重建」两条路径上
+  键序可能不同，不排序会算出两个指纹，把正常状态误判成「记录与配置不同步」。
+- `personas` 记录预设库的增删改（见 §4.3），无变化时为 `{ added: [], updated: [], removed: [] }`。
+- **没有 `fields` 字段**（草案曾有）。`Object.keys(before)` 已经能算出来，
+  多存一份就多一处可能与 `before` 不一致的地方；读 JSONL 的人本来就要看 `before`/`after`。
 
 ### 4.3 预设库只记事件，不做快照
 
@@ -97,11 +127,17 @@ grep 实测 14 个调用点（不含定义与注释），全部经过它：
 处理方式：记录事件，不记录内容。
 
 - `personas.added`: `["实验性重构"]`
+- `personas.updated`: `[{ "name": "旧的", "entry": { "style": "casual", "emoji": "more" } }]`
 - `personas.removed`: `[{ "name": "旧的", "entry": { "style": "casual", "emoji": "more" } }]`
 
-`removed` 带条目内容，因为**删除是唯一不可逆的操作** —— 新增一个预设后悔了可以再删，
-删掉一个预设后悔了没有任何出路。这是唯一一处值得存内容的例外，成本可忽略
-（单个预设几百字节）。
+`updated` 与 `removed` 带条目内容，因为**它们都会丢原内容**：删除是明显的不可逆操作，
+而「存为预设」用一个已存在的名字就会静默覆盖 —— 后者更容易被忽略。
+新增一个预设后悔了可以再删，删掉或覆盖一个预设后悔了没有任何出路。
+这是唯一一处值得存内容的例外，成本可忽略（单个预设几百字节）。
+
+判断「内容有没有变」时只比 `PERSONA_FIELDS` 与元数据，**刻意不比 `updatedAt`**：
+它每次保存都会变，算进来会让「原样再存一遍」留下一条假的「覆盖了预设 X」，
+而时间线一旦有假记录就失去可信度。
 
 **整表回滚不恢复预设库，但删除可以单独撤销。** 分开处理的理由：
 
@@ -112,52 +148,92 @@ grep 实测 14 个调用点（不含定义与注释），全部经过它：
 - 与 `defaultConfigPreservingPersonas`（`index.mjs:406`）「重置不清空预设」的既有
   取舍一致：预设是资产，重组资产的动作永远由用户单点发起。
 
-### 4.4 回滚的语义：恢复**目标条目之后的状态**
+### 4.4 回滚的语义：**撤销**目标条目以及它之后的所有改动
 
-回滚 = 把目标条目的 `after` 应用到当前活动配置。等价于「回到那次改动刚做完的样子」。
+回滚 = 反向重放：从最新一条往回，逐条应用 `before`，一路撤到目标条目（含）。
+结果状态是「目标条目发生**之前**」的样子。
 
-不采用「撤销这一条」（`before`）作为默认动作：两者在最后一条上等价，但在中间条目上，
-「恢复到这个状态」才是用户从列表里点一个历史点时的心智模型。
+▶ 草案最初写的是「把目标条目的 `after` 应用到当前配置」（= 恢复到那一条刚做完的样子）。
+实现阶段推翻了它，理由有两条**硬的**：
+
+1. **点最新一条会变成空操作。** 你正处在最新状态，应用它的 `after` 什么也没改 ——
+   而最新那条恰恰是用户最想撤的（「刚才那下改错了」）。
+   最初的辩护是「中间条目上『恢复到那个状态』才是心智模型」，但那省略了最新条目这一最常见情形。
+2. **结果会与行内容相反。** 假设记录是 ①改 `style`、②改 `emoji`。点 ① 那一行，
+   草案的算法把配置设回「①刚做完」的状态 —— 于是 ① 的 `style` 留着（没撤），
+   反而是 ② 的 `emoji` 被退回去了。列表上写着「style: professional → humorous」，
+   点「恢复」却改掉了 `emoji`，这是**行内容与行为直接矛盾**。
+
+为什么必须连带撤销它之后的：条目只记变化字段，后一条的 `before` 是它自己那次改动的前提。
+跳过中间某条去单独还原更早的字段，会算出一份从未存在过的混合状态。
+
+**链式指纹校验。** 上面的算法假设「记录与当前配置同步」。一旦不同步
+（用户手改了 `soul-config.json`、或进程死在「配置已写、审计未写」之间），
+撤销出来的就是那份混合状态 —— 比拒绝更糟。所以每一步都先验指纹：
+当前状态的 `hashConfig` 必须等于该条目的 `configHash`，对不上就返回
+`reason='diverged'`，由调用方明确报错，而不是算出一份从未存在过的配置。
 
 值一律过 `sanitizeConfig` 白名单后再合并：审计文件是**不可信输入**（用户可手改、
-可被其它工具写坏），绝不 `{ ...current, ...entry.after }` 直接展开。
+可被其它工具写坏），绝不 `{ ...current, ...entry.before }` 直接展开。
+校验不通过的字段进 `skipped` 如实回报（沿用 `applyPersonaEntry` 的「部分应用 + 明示」约定），
+不静默丢弃。
+
+回滚的返回值里 `reversed` 是被撤销的条目 id 列表（从新到旧，**含目标条目**），
+供 UI 在动手前给一句「将撤销最近 N 次改动」。
 
 ## 5. 追加时机与失败处理
 
 追加发生在 `commitConfig` 的**队列任务内、`saveConfig` 成功之后**：
 
 ```
-loadConfig → mutate → diffKeys → saveConfig → appendHistory
+loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHistoryEntry
 ```
 
-- 在队列内 ⇒ 追加与写入天然串行，不需要第二次加锁。
+- 在队列内 ⇒ 追加与写入天然串行，不需要第二次加锁
+  （`lib/history.mjs` 的临时文件名与 `writeConfigFile` 一样固定、不带随机后缀，
+  正是靠这一点才不必并发去重）。
 - 在 `saveConfig` 之后 ⇒ 只有真正落盘的变更才有记录（写失败的提交不留假记录）。
 - **追加失败不让提交失败**：审计是次级设施，一次磁盘满不该让用户连设置都存不了。
   失败记进模块级 `lastHistoryFailure`，由 `GET /api/soul/history` 的 `warning` 字段
   回传给 UI —— 不静默、也不阻塞。
+- **空提交不入账**：`before` + `after` + 预设事件全为空就不写行。
+  否则用户每点一次「保存设置」都刷一条噪声，列表很快没法看
+  （这也是 `normalizeHistoryEntry` 把空条目判为无效的原因 —— 读侧同样拦一遍，
+  手改出来的空行也不认）。
+- 条目里的字段差分**不是**直接复用 `diffKeys`：后者只给字段名、
+  且刻意跳过 `personas`（§4.3）。审计要的是旧值与新值，以及预设库事件。
 
 ## 6. 容量与压实
 
-- `MAX_ENTRIES = 200`（行数上限）。
-- 追加前先 `stat` 文件大小；超过 `MAX_BYTES = 512 * 1024` 时才读取全文、保留最新
-  `MAX_ENTRIES` 条、原子重写（临时文件 + rename，同 `writeConfigFile`）。
-- 幸福路径只有一次 `stat`，压实是低频操作。
+- `MAX_ENTRIES = 200`（压实后保留的条数）。
+- 追加前先 `stat` 文件大小；**只有**超过 `MAX_BYTES = 512 * 1024` 时才读取全文、
+  保留最新 `MAX_ENTRIES` 条、原子重写（临时文件 + rename，同 `writeConfigFile`）。
+- 幸福路径只有一次 `stat`，压实是低频操作：按每条几百字节算，
+  512 KB 大约在 2000+ 条时才触发，压到 200 条。
+- 压实会**重新序列化合法条目**，被丢弃的坏行随之消失。这是有意为之（自愈），
+  代价是坏行不再出现 —— 所以坏行计数必须在**读取时**就报给用户，
+  不能等到压实才发现「有几行不见了」。
+- 「文件里有多少行」与「实际读回来多少条」是两个数。读取侧还有两个上限
+  （`MAX_READ_BYTES = 4 MiB` 只读尾部、`MAX_READ_LINES = 1000`），
+  它们切掉的是**合法**行，绝不能和「解析不了的行」混为一谈（§8）。
 
 ## 7. HTTP 契约
 
-三条路由，**一律先校验 `req.method`**
+四条路由，**一律先校验 `req.method`**
 （教训：`/api/soul/config/reset` 曾完全没有方法校验，任何方法包括 GET 都会执行破坏性写入）。
 
 | 路由 | 方法 | 请求 | 响应 |
 | --- | --- | --- | --- |
-| `/api/soul/history` | GET | — | `{ ok, entries: [...最新在前...], warning? }` |
-| `/api/soul/history/rollback` | POST | `{ id }` | `{ ok, config, changed, skipped, entry }` |
+| `/api/soul/history` | GET | `?limit=`（可选） | `{ ok, entries: [...最新在前...], max, warning? }` |
+| `/api/soul/history/rollback` | POST | `{ id }` | `{ ok, config, changed, skipped, reversed, entry }` |
 | `/api/soul/history/restore-persona` | POST | `{ id }` | `{ ok, ...personaLibrary }` |
 | `/api/soul/history/clear` | POST | — | `{ ok, removed }` |
 
 - `rollback` 找不到 `id` ⇒ 400（而不是静默成功）。
 - `rollback` 的 `skipped` 列出「审计里有、但当前校验不通过」的字段名（沿用
   `applyPersonaEntry` 的「部分应用 + 明示」约定）。
+- `rollback` 遇到 `reason='diverged'`（配置与记录不同步）⇒ 409，文案说明
+  「记录与当前配置对不上，可能被手工改过」，**不**给出一个猜出来的结果。
 - `restore-persona` 只接受 `personas.removed` 非空的条目，且**逐个**走
   `sanitizePersonaName` + 内置名拒绝 + 同名已存在时拒绝（不静默覆盖用户后来新建的同名预设）。
 - 回滚与恢复预设都走 `commitConfig`（带上 `source: 'rollback'` / `'restorePersona'`），
@@ -167,39 +243,53 @@ loadConfig → mutate → diffKeys → saveConfig → appendHistory
 
 ## 8. 安全与边界
 
-- **历史文件当不可信输入。** 逐行校验：`v` 必须是 1、`id`/`at` 是非空字符串、
-  `source` 在白名单内、`before`/`after` 只接受已知配置键且值类型匹配。
-  非法行丢弃并计入 `dropped`（不抛错 —— 一条坏行不该让整个页面打不开）。
-- **拒绝原型污染键。** `__proto__` / `constructor` / `prototype` 一律丢弃
-  （复用 `lib/config.mjs:105` 的 `FORBIDDEN_PERSONA_NAMES` 思路）。
+- **历史文件当不可信输入。** 逐行校验：`v` 必须是 1、`id` 匹配 `/^[0-9a-z]{1,12}-[0-9a-f]{6}$/`、
+  `at` 能被 `Date.parse` 解析、`source`/`action` 在白名单内、`configHash` 是 64 位十六进制、
+  `before`/`after` 只接受已知配置键。任一处不对**整条**丢弃并计入 `dropped`
+  （不抛错 —— 一条坏行不该让整个页面打不开）。宁可少一条历史，也不写回一个谁都没见过的配置。
+- **三种「少了几条」必须分开报。** `dropped` 是「读到了但解析不了」（坏行），
+  `trimmed` 是「因为条数上限没读到」（合法行），`trimmedHead` 是「只读了文件尾部」。
+  把后两者算进 `dropped`，UI 就会对着一个没有任何坏行的文件说「有 8000 行无法解析」——
+  这个误报是本模块自己的断言抓出来的（§14 的 6b）。
+- **拒绝原型污染键。** `__proto__` / `constructor` / `prototype` 一律丢弃。
+  与 `lib/config.mjs` 的 `FORBIDDEN_PERSONA_NAMES` 是**两处独立防线**：
+  那边管预设名，这边管配置字段与预设事件名 —— 同名常量放在两个模块里各自成立，
+  不共享是为了让任一侧被绕过时另一侧仍然拦得住。
 - **内容绝不进提示词。** 审计记录不参与 `compilePrompt`，与「绑定内容不进提示词」同理。
-- **长度上限。** 单行超过 `MAX_LINE_BYTES = 64 * 1024` 直接丢弃；读取总行数上限
-  `MAX_READ_LINES = 1000`（防手写一个 10 万行的文件把内存吃满）。
+  `verify-history` 里有一条断言专门扫这件事：剔掉注释行后，
+  `lib/history.mjs` 的代码里不出现 `prompt` / 提示词编译相关标识符。
+- **长度上限。** 单行超过 `MAX_LINE_BYTES = 64 * 1024` 直接丢弃；单次读取上限
+  `MAX_READ_BYTES = 4 MiB`（只读尾部，丢掉被窗口截断的首行）；
+  读取行数上限 `MAX_READ_LINES = 1000`（防手写一个 10 万行的文件把内存吃满）。
 - **时间戳不参与任何逻辑判定。** `at` 只用于显示；排序与定位都用文件内的物理顺序 + `id`。
+  连 `pruneEntries` 都不顺手 `sort` —— 按时间排会在同毫秒或时钟回拨时搅乱顺序，
+  而物理顺序正是 `planRollback` 的判据。
+- **读取是流式的，不做「一次 `readFile` 全读进来」。** 这是 `MAX_READ_BYTES` 的意义：
+  文件可能被外部工具撑大，先把 4 MiB 之后的都读完再截断，等于没有上限。
 
 ## 9. 影响的文件
 
-| 文件 | 改动 |
-| --- | --- |
-| `lib/history.mjs` | **新增**。路径推导 / 条目构造与校验 / JSONL 解析 / 压实（纯函数，可独立测试） |
-| `index.mjs` | `commitConfig(mutate, source)`；14 个调用点补来源；两个间接调用者穿透；追加与压实；四条路由 |
-| `client/index.mjs` | 新增「变更记录」分组（第 5 组，排在「Agent 工具」之后）；回滚 / 恢复预设 / 清空的二次确认；文案键 |
-| `scripts/verify-history.mjs` | **新增**。`lib/history.mjs` 的纯函数断言组 |
-| `scripts/verify-store.mjs` | 新增「配置写入留下审计」的真实文件系统断言（追加的原子性、压实重写） |
-| `scripts/verify-config.mjs` | 来源标注（14 处调用点各自带对）与「提交即留痕」断言 |
-| `scripts/verify-client.mjs` | 分组渲染、倒序、二次确认、回滚请求体断言 |
-| `package.json` | `verify` 链加入 `verify-history`；版本号 0.7.2 → 0.8.0 |
+| 文件 | 改动 | 状态 |
+| --- | --- | --- |
+| `lib/history.mjs` | **新增**。路径推导 / 条目构造与校验 / JSONL 解析 / 压实 / 回滚规划（纯函数，可独立测试） | ✅ 已实现 |
+| `scripts/verify-history.mjs` | **新增**。`lib/history.mjs` 的纯函数断言组（40 项） | ✅ 已实现 |
+| `package.json` | `verify` 链加入 `verify-history` + `verify:history` 单跑脚本 | ✅ 已实现 |
+| `index.mjs` | `commitConfig(mutate, source)`；14 个调用点补来源；两个间接调用者穿透；追加与压实；四条路由 | ⬜ 0.8.0-b/c |
+| `client/index.mjs` | 新增「变更记录」分组（第 5 组，排在「Agent 工具」之后）；回滚 / 恢复预设 / 清空的二次确认；文案键 | ⬜ 0.8.0-d |
+| `scripts/verify-config.mjs` | 来源标注（14 处调用点各自带对）与「提交即留痕」断言 | ⬜ 0.8.0-b |
+| `scripts/verify-client.mjs` | 分组渲染、倒序、二次确认、回滚请求体断言 | ⬜ 0.8.0-d |
+| `package.json` 版本号 | 0.7.2 → 0.8.0 | ⬜ 收尾 |
 
 ## 10. 分层与实施顺序
 
 每一步可独立验证、独立提交。
 
-| 步 | 内容 | 验证 |
-| --- | --- | --- |
-| 0.8.0-a | `lib/history.mjs` 纯函数层 | `verify-history`（含坏行、超长行、原型污染、压实边界） |
-| 0.8.0-b | `commitConfig` 加来源 + 追加 + 两个间接调用者穿透 | `verify-config` 的来源标注断言 + 真实提交探针 |
-| 0.8.0-c | 四条 HTTP 路由（含方法校验、`skipped`、`restore-persona`） | 真实路由探针（含 405、非法 id、手改历史文件） |
-| 0.8.0-d | 设置页「变更记录」分组 | `verify-client`（渲染 / 倒序 / 二次确认 / 请求体） |
+| 步 | 内容 | 验证 | 状态 |
+| --- | --- | --- | --- |
+| 0.8.0-a | `lib/history.mjs` 纯函数层 | `verify-history`（40 项：坏行、超长行、原型污染、两个读取窗口边界、压实、回滚链） | ✅ |
+| 0.8.0-b | `commitConfig` 加来源 + 追加 + 两个间接调用者穿透 | `verify-config` 的来源标注断言 + 真实提交探针 | ⬜ |
+| 0.8.0-c | 四条 HTTP 路由（含方法校验、`skipped`、`restore-persona`） | 真实路由探针（含 405、非法 id、手改历史文件） | ⬜ |
+| 0.8.0-d | 设置页「变更记录」分组 | `verify-client`（渲染 / 倒序 / 二次确认 / 请求体） | ⬜ |
 
 ## 11. 已知风险
 
@@ -217,6 +307,12 @@ loadConfig → mutate → diffKeys → saveConfig → appendHistory
    不静默覆盖（覆盖是不可逆的，而拒绝只是让用户自己先改名）。
 6. **审计只覆盖 `commitConfig` 这条路。** 手改配置文件、别的插件直接写同一个文件，
    都不留痕。这不是缺陷而是边界（§12）—— 假称覆盖了全部改动比不覆盖更危险。
+7. **手改配置会让回滚整体失效。** 链式指纹（§4.4）的代价：用户手工编辑一次
+   `soul-config.json` 之后，`hashConfig(current)` 与最新记录的指纹对不上，
+   于是**任何**回滚都会返回 `diverged`。
+   缓解：这是刻意的取舍 —— 相比「算出一份从未存在过的配置」，明确报错是可恢复的
+   （用户可以清空记录从头开始，或者手动改回去）。UI 的文案要说清是「记录与当前配置对不上」，
+   而不是「出错了」，否则用户会反复重试同一个必然失败的动作。
 
 ## 12. 明确不做
 
@@ -256,16 +352,22 @@ loadConfig → mutate → diffKeys → saveConfig → appendHistory
 | `history.more` | 还有 {count} 条 |
 | `history.clear` | 清空记录 |
 | `history.clearArmed` | 确认清空？ |
-| `history.restore` | 恢复 |
-| `history.restoreArmed` | 确认恢复？ |
-| `history.restoreDone` | 已恢复到该记录。 |
+| `history.restore` | 撤销这一次 |
+| `history.restoreArmed` | 撤销？ |
+| `history.restoreDone` | 已撤销 {count} 次改动。 |
 | `history.restorePreset` | 恢复此预设 |
 | `history.restorePresetDone` | 已恢复预设「{name}」。 |
+| `history.diverged` | 记录与当前配置对不上，无法撤销。可能有人手工改过配置文件。 |
 | `history.warning` | 记录可能不完整：{reason} |
-| `history.footer` | 恢复人设配置，不影响人设预设库。 |
+| `history.footer` | 撤销人设配置，不影响人设预设库。 |
+
+按钮文案用「撤销」而不是「恢复」，与 §4.4 的语义一致：点一条记录的结果是
+**把这一次改动撤掉**（连同它之后的），不是「切到那天的状态」。
+`history.restoreDone` 回报 `{count}`（实际撤销了几次），因为点击中间那条会连带撤销
+它之后的改动 —— 不报数的话用户会觉得「我只点了一次，怎么变了这么多」。
 
 来源徽标文案：`web` 网页保存 / `command` 斜杠命令 / `tool` Agent 工具 /
-`service` 插件调用 / `persona` 应用预设 / `rollback` 回滚 / `restorePersona` 恢复预设。
+`service` 插件调用 / `persona` 应用预设 / `rollback` 撤销 / `restorePersona` 恢复预设。
 
 ## 14. 判断力探针（每个行为改动都要配一批）
 
@@ -278,10 +380,19 @@ loadConfig → mutate → diffKeys → saveConfig → appendHistory
 | 1 | `commitConfig` 里把 `appendHistory` 挪到 `saveConfig` **之前** | 「配置写失败时不得留下审计条目」 |
 | 2 | 删掉 `diffKeys` 里的 `personas` 跳过判断 | 「仅预设变更必须出现在时间线上」（这是核心陷阱） |
 | 3 | 追加失败时把异常向上抛（而不是只记 `lastHistoryFailure`） | 「审计写失败配置仍成功」 |
-| 4 | 回滚时 `{ ...current, ...entry.after }` 直接展开（不过 `sanitizeConfig`） | 「审计文件里的非法值不得写入配置」 |
-| 5 | 回滚走 `entry.before` 而不是 `entry.after` | 「恢复到目标条目之后的状态」 |
+| 4 | 回滚时 `{ ...current, ...entry.before }` 直接展开（不过 `sanitizeConfig`） | 「记录里的非法值不得写入配置」 |
+| 5 | 撤销链的循环上界从 `i >= index` 改成 `i > index`（不撤目标条目自己） | 「撤销最新一条必须真的改掉它」（这正是实现阶段被推翻的那条草案语义） |
+| 5b | 撤销链去掉 `hashConfig` 指纹校验 | 「配置与记录不同步 ⇒ 拒绝」与「链条中间断掉也要拒绝」 |
 | 6 | 删掉历史文件的坏行过滤 | 「一条坏行不得让整个列表打不开」 |
+| 6b | 把「超出读取窗口的合法行」计进 `dropped` 而不是 `trimmed` | 不得报成「有 N 行无法解析」（本文件被自己的断言抓到的真实误报） |
+| 6c | `readHistoryFile` 去掉「起点正好落在行首 ⇒ 保留首行」的一字节探测 | 「切在行首 ⇒ 首行是完整的，必须保留」 |
+| 6d | `personaSignature` 把 `updatedAt` 也算进内容指纹 | 「原样再存一遍不留假记录」 |
 | 7 | 删掉「同名预设已存在则拒绝」 | 「恢复预设不得静默覆盖同名条目」 |
 | 8 | `rollback` 路由删掉 `req.method` 校验 | 「GET `/rollback` 必须 405」（对照 `config/reset` 的既有教训） |
 | 9 | 把 `source` 参数默认成一个固定值（丢掉 14 处标注） | 「每个调用点各自的来源必须落在条目里」 |
 | 10 | 压实阈值改成永久不触发 | 「超过上限时必须压实」 |
+
+`0.8.0-a` 已落地的部分（`lib/history.mjs` + `scripts/verify-history.mjs`，40 项断言）
+走的是**离线断言**而不是 shell 变异探针：纯函数层的每一条边界都能在断言里直接构造，
+不需要改坏源码再跑。变异探针留给 `0.8.0-b`–`0.8.0-d` —— 那三步断言的是
+「宿主行为」与「调用点归属」，只有在集成层才验得动。

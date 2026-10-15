@@ -192,12 +192,13 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 ### 3.6) `npm run verify` 里的「跳过」与「假绿」
 
-`npm run verify` 串了 **8 个脚本**，按「由浅入深」四层排列：
+`npm run verify` 串了 **9 个脚本**，按「由浅入深」四层排列：
 
 | 层 | 脚本 | 断言数 | 会不会跳过 |
 | --- | --- | --- | --- |
 | 纯函数 / 契约 | `verify-config` | 115 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
+| 持久化行为 | `verify-history` | 40 | 否 |
 | 客户端行为 | `verify-client` | 23 | 否 |
 | 端到端（保存 → 两条通道都拿到新文本） | `verify-e2e-prompt` | 38 | 否 |
 | 宿主实现 | `verify-live-prompt` | 20 | 定位不到 DSH 时整脚本跳过 |
@@ -205,7 +206,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | 渲染层 | `verify-trail` | 11 | 起不来浏览器时整脚本跳过 |
 | 渲染层 | `verify-nav-icon` | 16（含 6 项判断力自检） | 同上 |
 
-也可以单跑一层：`npm run verify:store` / `verify:client` / `verify:e2e` / `verify:host` / `verify:compat` / `verify:trail` / `verify:nav-icon`。
+也可以单跑一层：`npm run verify:store` / `verify:history` / `verify:client` / `verify:e2e` / `verify:host` / `verify:compat` / `verify:trail` / `verify:nav-icon`。
 
 **跳过也是退出码 0** —— 所以整条链看起来一片绿，实际可能少了 50+ 项断言。0.7.1 起：
 
@@ -425,9 +426,22 @@ svg.getBoundingClientRect().height  // 正常应 ≈ 输入框卡片高度（+4p
 $DSH_HOME/soul-config.json
 ```
 
+变更记录（0.8.0 起）位于它的**兄弟路径**：
+
+```text
+$DSH_HOME/soul-config.history.jsonl
+```
+
 未设置 `DSH_HOME` 时，使用 DSH 默认用户数据目录。
 
-写入是**原子**的（先写同目录 `.tmp`、再 `rename` 覆盖），因此不存在"写到一半的半个配置文件"；读取失败时也不会把坏文件覆盖掉（见 4.4）。
+配置文件写入是**原子**的（先写同目录 `.tmp`、再 `rename` 覆盖），因此不存在"写到一半的半个配置文件"；读取失败时也不会把坏文件覆盖掉（见 4.4）。
+
+变更记录是**追加式 JSONL**：一行一条，人能直接读、也能 `git diff`。查「为什么变成这样了」时直接看它即可 —— 每行有 `at` / `source` / `action` / `before` / `after`。几条排查要点：
+
+- **行数比预期少不是丢数据。** 读取侧有三个上限：单次读取 4 MiB（只读尾部）、最多 1000 行、单行 64 KiB。被这些上限切掉的是**合法**行，与「解析不了的行」分开计数（见 `lib/history.mjs` 的 `trimmed` 与 `dropped`）。
+- **出现 `grep` 不到的半行**：进程死在追加中途。读侧会丢掉它并报「末尾不完整」，回滚会因为指纹对不上而拒绝 —— 这是设计好的行为，不是 bug。
+- **回滚一律说「记录与当前配置对不上」**：说明有人手工改过 `soul-config.json`。链式指纹校验会拒绝任何回滚，此时要么手工改回去，要么清空记录重来。
+- **清空记录**：设置页「变更记录」分组里的「清空记录」（带二次确认），或直接删掉该文件。
 
 日志：插件默认不输出运行日志。如需临时调试，可在源码中取消相关 `console` 语句的注释；宿主端输出到启动 DSH 的终端，客户端输出到浏览器 DevTools Console。调试完成后建议恢复注释。
 
