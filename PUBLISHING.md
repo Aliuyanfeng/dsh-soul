@@ -10,13 +10,17 @@
 - `dsh.bundle.patch`
 - `files`
 
-发布包至少应包含（当前 21 个文件）：
+发布包至少应包含（当前 32 个文件）：
 
 ```text
 index.mjs
 lib/*.mjs                      # config / injection / personas / store
 client/index.mjs
 assets/icon.svg
+assets/personas/*.webp         # 7 个内置人设插画 + 1 张自建默认贴图
+assets/personas/placeholder.svg
+locale/zh.json                 # 插件展示名（readPluginMeta 读 meta.title）
+locale/en.json
 cordis.patch.yml
 scripts/lib/skip-report.mjs
 scripts/verify-*.mjs           # config / store / client / e2e-prompt / live-prompt / compat / trail / nav-icon
@@ -81,7 +85,7 @@ git push origin main
 
 1. 仓库页 → **Releases** → **Draft a new release**。
 2. **Choose a tag** 输入 `0.2.1`（与 `package.json` 版本一致，**不带 `v` 前缀**）→ 选择 **Create new tag on publish**（基于 main 最新 commit）。
-3. Release 标题填 `v0.2.1`（标题惯例带 `v`，与 tag 名不同，这是仓库既有实践）；描述从 `RELEASE_NOTES.md` 复制对应版本段落。
+3. Release 标题填 `v0.2.1`（标题惯例带 `v`，与 tag 名不同，这是仓库既有实践）；描述**按本文件下方「同步维护 RELEASE_NOTES.md 与 Release 描述」的格式规范单独撰写**，不要直接粘贴 `RELEASE_NOTES.md` 段落（两者口径不同）。
 4. 点击 **Publish release** → GitHub 创建 tag 并触发工作流 → 自动发布到 npm。
 
 > **tag 命名约定**：仓库全部历史 tag 均为不带 `v` 的形式（`0.1.1`、`0.3.0` … `0.6.0`），而 Release **标题**惯例带 `v`。工作流用 `TAG_VERSION="${GITHUB_REF_NAME#v}"` 校验，所以两种写法都能通过校验，但混用会造成 tag 命名不一致，不建议。
@@ -107,9 +111,95 @@ release 事件      : tag 校验 -> 包内容检查 -> 幂等检查 -> (未发�
 workflow_dispatch : 跳过     -> 包内容检查 -> 幂等检查 -> (未发布时) publish
 ```
 
-#### 同步维护 RELEASE_NOTES.md
+#### 同步维护 RELEASE_NOTES.md 与 Release 描述
 
-`RELEASE_NOTES.md` 是发版说明的单一来源：发版前先把该版本的变更写入（或确认已写入）`RELEASE_NOTES.md`，再粘贴到 GitHub Release 描述中，保持两处一致。
+**两者口径不同，是两个独立产物**（早前的做法是「把 `RELEASE_NOTES.md` 段落复制到 Release 描述」，v0.7.2 起废弃）：
+
+| | `RELEASE_NOTES.md` | GitHub Release 描述 |
+| --- | --- | --- |
+| 定位 | **CHANGELOG**（归档、可追溯） | **发布说明**（给人看「我该不该升」） |
+| 读者 | 维护者 / 排查问题的人 | 使用者 |
+| 内容 | 根因、代码路径、断言设计、判断力验证、测试自省 | 用户可感知的变化 |
+| 篇幅 | 每版本数百行 | 每版本 100~200 行 |
+| 写法 | 技术叙述 | 「症状 → 现象」 |
+
+发版时**两处都要更新**：先写 `RELEASE_NOTES.md`（详尽版），再按本节的格式规范写 Release 描述（精简版）。把 CHANGELOG 直接粘到 Release 描述会让发布页充满使用者不关心的实现细节。
+
+##### Release 描述格式规范
+
+这份规范来自 v0.7.2 定稿，13 个历史 Release 已按此统一。新版本请照此写。
+
+**骨架**
+
+```markdown
+# vX.Y.Z
+
+> 一句话概述本版主题（不是罗列条目）
+
+## 🔒 安全
+## ✨ 新增
+## 🐛 修复
+## 🎨 变更
+## 📦 安装
+```
+
+**规则**
+
+1. **标题行** `# vX.Y.Z` —— 与 Release title 一致（title 也叫 `vX.Y.Z`）。GitHub 会在正文上方单独显示 title，正文里仍保留标题行，以保证与历史版本排版一致。
+2. **一句话概述** 用 `>` 引言块，说清本版**主题**（如「本版以修掉静默失败为主题」），不是条目清单。
+3. **区块顺序固定**：`🔒 安全` → `✨ 新增` → `🐛 修复` → `🎨 变更`。安全永远置顶——使用者最需要先知道。
+4. **空块省略**。不写「安全：无」这类占位，那是凑数。
+5. **`📦 安装` 每个版本都要有**（用户从任何老版本升级都需要知道方法），内容固定，见下。
+6. **可选区块**：`⚡ 优化`（性能/内部改进）、`📝 文档`、`🔧 兼容性`、`⚠️ 已知限制`、`🧪 测试`、`🗑️ 移除` —— 按需添加，位置在 `🎨 变更` 之后、`📦 安装` 之前。
+7. **条目写法**：粗体写「变化」，冒号后写**用户看到的现象**。例如：
+   - ✅ `**应用预设后点保存，人设被打回旧值**：点「使用」显示正常，但「保存设置」误亮，一点保存刚选的人设就变回默认`
+   - ❌ `修掉 dirty 判据与服务端 trim 不一致的问题：原实现按原始串比较...`
+8. **不写实现细节**：不出现断言编号、变异数、文件路径、`lib/xxx.mjs`、根因分析。这些归 `RELEASE_NOTES.md`。
+9. **同区块内可加粗体子标题分组**（`**界面风格**`、`**人设卡片**`），用于条目较多的区块。
+10. **末尾可加一行指引**指向 CHANGELOG：
+
+    ```markdown
+    ---
+
+    **完整变更记录**（含每项的根因、证据与验证方式）见 [RELEASE_NOTES.md](https://github.com/Aliuyanfeng/dsh-soul/blob/main/RELEASE_NOTES.md) 的 vX.Y.Z 段落。
+    ```
+
+**`📦 安装` 的固定内容**（逐字使用，勿改写）
+
+````markdown
+## 📦 安装
+
+### Web 版
+
+```powershell
+dsh plugin --profile web add dsh-soul
+dsh plugin --profile web update dsh-soul
+```
+
+> 若你的 Web profile 不叫 `web`（`dsh web` 默认使用该名字），把 `--profile` 换成自己的 profile 名即可。
+
+### 桌面版
+
+桌面版的插件由应用独占管理，命令行不接受 `--profile desktop`。请在应用内操作：
+
+1. 打开侧边栏的**插件**面板
+2. 点「**添加插件**」→「**安装第三方插件**」
+3. 输入包名 `dsh-soul`（也支持 Git 仓库与本地目录）
+4. **重启应用**生效；如之前装过旧版本，请先**卸载**再安装
+````
+
+> **为什么桌面版不给命令**：DSH 的 launcher 对 `--profile desktop` 直接报错 `profile "desktop" is managed exclusively by the Electron application`（见 `bin.js` 的 `rejectElectronProfile`）。桌面 profile 由应用独占管理，只能走应用内插件面板。
+>
+> **为什么不写 `npm install`**：`dsh-soul` 是 DSH 插件，`dsh plugin` 本身是 pnpm 的转发器（先在 profile 目录执行 `pnpm <参数>`，再调和 `dsh.profile.bundles`）。直接 `npm install` 不会进入任何 profile，装了也不会生效。
+
+##### 批量修正历史 Release 的格式
+
+历史 Release 需要回溯统一格式时，可用 GitHub REST API 批量改写（`PATCH /repos/{owner}/{repo}/releases/{release_id}`）。三条实测经验：
+
+1. **必须先留档**：先把每个 Release 的现有 `body` 全部导出存盘，Release 描述被覆盖后 GitHub 侧没有历史版本可比对，不像 git 有 reflog。
+2. **请求体手工转义 JSON**：正文含换行、引号、中文与 Emoji 时，`ConvertTo-Json` 生成的载荷会被 GitHub 判 `400 Problems parsing JSON`。改为自行转义（`\` → `\\`、`"` → `\"`、换行 → `\n`）并以 `application/json; charset=utf-8` 发送 UTF-8 字节。
+3. **行尾统一为 LF**：本地文件若是 CRLF，写入后 GitHub 会归一化为 LF，导致「回读比对不一致」的假失败。写入前先把内容统一为 LF，再逐版本回读核验（`GET /releases/tags/{tag}` 与本地逐字比对）。
+
 
 ### 手动发布
 
