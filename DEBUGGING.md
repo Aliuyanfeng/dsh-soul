@@ -192,13 +192,14 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 ### 3.6) `npm run verify` 里的「跳过」与「假绿」
 
-`npm run verify` 串了 **9 个脚本**，按「由浅入深」四层排列：
+`npm run verify` 串了 **10 个脚本**，按「由浅入深」四层排列：
 
 | 层 | 脚本 | 断言数 | 会不会跳过 |
 | --- | --- | --- | --- |
 | 纯函数 / 契约 | `verify-config` | 119 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
 | 持久化行为 | `verify-history` | 40 | 否 |
+| 纯函数（工作区绑定） | `verify-bindings` | 47 | 否 |
 | 客户端行为 | `verify-client` | 27 | 否 |
 | 端到端（保存 → 两条通道都拿到新文本；变更记录四条路由） | `verify-e2e-prompt` | 57 | 否 |
 | 宿主实现 | `verify-live-prompt` | 20 | 定位不到 DSH 时整脚本跳过 |
@@ -206,7 +207,9 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | 渲染层 | `verify-trail` | 11 | 起不来浏览器时整脚本跳过 |
 | 渲染层 | `verify-nav-icon` | 16（含 6 项判断力自检） | 同上 |
 
-也可以单跑一层：`npm run verify:config` / `verify:store` / `verify:history` / `verify:client` / `verify:e2e` / `verify:host` / `verify:compat` / `verify:trail` / `verify:nav-icon`。
+合计 **365 项**（其中 `verify-compat` 的 10 项在定位不到 DSH 时整脚本跳过、`verify-trail` 的 11 项同上）。
+
+也可以单跑一层：`npm run verify:config` / `verify:store` / `verify:history` / `verify:bindings` / `verify:client` / `verify:e2e` / `verify:host` / `verify:compat` / `verify:trail` / `verify:nav-icon`。
 
 **跳过也是退出码 0** —— 所以整条链看起来一片绿，实际可能少了 50+ 项断言。0.7.1 起：
 
@@ -255,6 +258,30 @@ node scripts/verify-trail.mjs --dump "$env:TEMP\trail-dump.html"
 ```
 
 `verify-nav-icon` 同理（`--emit` / `--dump`，无须 `--allow-file-access-from-files`）。
+
+### 3.8) 工作区绑定怎么离线验证（`verify-bindings`）
+
+0.8.1 的绑定层（`lib/bindings.mjs`，430 行）失败模式**全都长得很安静** —— 不会抛错、不会红，只会在某天表现成「绑定莫名其妙不生效」。这正是它需要独立断言组的理由：
+
+| 变异（看起来同样合理的写法） | 真实后果 | 断言拦在哪 |
+| --- | --- | --- |
+| `candidate.startsWith(bound)`（少 `+ sep`） | `D:\项目A` 命中 `D:\项目AB`，两个磁盘上毫无关系的目录互相串味 | 「前缀必须落在路径边界上」 |
+| `compareKey` 不折大小写 | Windows 上 `d:\项目a` 与 `D:\项目A` 成了两条绑定，改一条另一条不动 | 「大小写折算只发生在比较里」 |
+| 折算挪进展示形态 | 存进表里的键变成小写，设置页显示的目录名与用户磁盘不符 | 「路径规范化只用于比较，展示用原样」 |
+| 最长前缀排序反过来 | 子目录的专属绑定被父级绑定覆盖 | 「最长前缀必须排在最前」 |
+| `realpath` 失败时抛错 | 一块离线的网络盘把整个设置页带崩 | 「绝不抛错」 |
+| 一条坏条目让整表拒绝 | 手改坏一行，其余 20 条绑定一起失效 | 「坏条目只丢弃并计数」 |
+| 版本不认识仍按当前语义解析 | 解出一堆假绑定，比暂时不生效更糟 | 「版本不符时整表忽略」 |
+| 失效人设不回落到父级 | 用户在子目录里静默换了人，且无任何提示 | 「父级绑定可用时必须回落到它」 |
+
+**语义显式传入**（`{ sep, caseInsensitive }`），不读 `process.platform`：CI 在 ubuntu、开发机在 Windows，若断言跟着平台跑，两边的「绿」就不是同一件事了。`WIN` 与 `POSIX` 两套语义在同一台机器上都跑。
+
+判断力探针（`D:\AliuProject\_bind\judge.mjs`）在真实源码上做 16 组变异，**16/16 全部被拦**。其中一条探针跑出来的是「变异没制造故障」而不是「断言有效」：
+
+> 探针 ⑨（`serializeBindings` 不过滤保留键）最初**仍通过**。查证后发现断言本身没有判别力 —— 原始用例用对象字面量写 `{ '__proto__': 'X' }`，那是**设原型**而不是加自有属性，`Object.keys` 里根本看不见它。改用 `JSON.parse('{"__proto__":"X"}')`（会生成自有可枚举属性）并在断言里加一句前置条件校验后，变异立刻被拦。
+> **教训：变异没被拦时，先证明变异真的制造了故障，再怀疑断言。**（同 0.8.0-b 探针 ⑪ 的坑，这是第二次。）
+
+测试内每条 bad entry 的丢弃原因用 `[dir, reason]` 逐条对应而不是「排序后比个数」：后者在两条记录互换原因时照样通过。
 
 ### 4) 功能与动效（本版新增「输入框光轨」）
 

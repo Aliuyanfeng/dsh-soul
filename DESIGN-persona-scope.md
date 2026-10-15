@@ -1,6 +1,8 @@
-# 人设工作区绑定（0.8.0 设计草案）
+# 人设工作区绑定（0.8.1 设计草案）
 
-> 状态：**草案，待评审**。本文件不描述已实现的行为，只描述 0.8.0 的目标、取舍与验收方式。
+> 状态：**实施中**（0.8.1-a 纯函数层已完成并提交，0.8.1-b/c/d 待做）。
+> 本文件描述 0.8.1 的目标、取舍与验收方式；§10 的分层编号沿用草案写作时的 0.8.0-a..d，
+> 实际发版本号为 **0.8.1-a..d**（草案写作期间路线图调过一次序：0.8.0 让给了变更审计与回滚）。
 > 前置阅读：`lib/personas.mjs` 文件头四条设计约定、`RELEASE_NOTES.md` 的 v0.7.2 段落、`PUBLISHING.md` 的发版流程。
 
 ## 1. 目标
@@ -341,24 +343,46 @@ ctx.inject(['uiWorkspace'], (scope) => { /* 注册带动目录按钮的区块 */
 
 | 文件 | 改动 |
 | --- | --- |
-| `lib/bindings.mjs` | **新增**。路径规范化、前缀匹配、绑定表读写与校验（纯函数，可独立测试） |
+| `lib/bindings.mjs` | **新增**。路径规范化、前缀匹配、绑定表读写与校验（纯函数，可独立测试）。**0.8.1-a 已完成**（430 行） |
 | `lib/config.mjs` | 不改（绑定不进配置） |
-| `index.mjs` | `registerSystemPrompt` 的 `text` 回调改为按 `ctx.agent` 解析；新增绑定 HTTP 路由；`injectPromptToAllAgents` 改为逐 agent 编译 |
+| `lib/store.mjs` | 不改。绑定表复用它的 `readConfigFile` / `writeConfigFile` / `moveAsideConfigFile`，不另造一套原子写 |
+| `index.mjs` | `registerSystemPrompt` 的 `text` 回调改为按 `ctx.agent` 解析；新增绑定 HTTP 路由；`injectPromptToAllAgents` 改为逐 agent 编译；绑定写入后主动刷新（§6.4） |
 | `client/index.mjs` | 新增「工作区绑定」分组；`ctx.inject(['uiWorkspace'], ...)` 动态注入；新增文案键 |
-| `scripts/verify-config.mjs` | 新增绑定层纯函数断言组 |
+| `scripts/verify-bindings.mjs` | **新增**（0.8.1-a）。绑定层纯函数与真实文件系统断言，47 项 |
+| `scripts/verify-config.mjs` | 新增「绑定写入准入与路由」契约断言（HTTP 方法校验、写入后触发刷新） |
 | `scripts/verify-client.mjs` | 新增 UI 行为断言（分组渲染、下拉、解绑二次确认、降级） |
 | `scripts/verify-e2e-prompt.mjs` | 新增「不同 cwd 的会话拿到不同 persona section」端到端断言 |
+| `package.json` | `verify` / `verify:strict` 链插入 `verify-bindings.mjs`（`verify-config` 有一条断言要求链覆盖 scripts 下全部 `verify-*.mjs`） |
 
 ## 10. 分层与实施顺序
 
-每一步可独立验证、独立发布，不做「大爆炸」。
+每一步可独立验证、独立发布，不做「大爆炸」。下表编号沿用草案写作时的 `0.8.0-a..d`，
+**实际发版本号为 `0.8.1-a..d`**（写作期间路线图调序，0.8.0 让给了变更审计与回滚）。
 
-| 步 | 内容 | 验证方式 |
-| --- | --- | --- |
-| 0.8.0-a | `lib/bindings.mjs` 纯函数层 + 断言 | `verify-config` 新断言组，含前缀误命中（`项目A` vs `项目AB`）、规范化四例、损坏文件 |
-| 0.8.0-b | 宿主侧解析接入 `registerSystemPrompt` + 逐 agent 注入 | `verify-e2e-prompt` 多 cwd 断言 |
-| 0.8.0-c | 绑定 HTTP 路由（含方法校验）+ 端到端 | 真实路由探针，含 405 与非法输入 |
-| 0.8.0-d | 设置页分组 UI + 点选 + 降级 | `verify-client`，含 pickDirectory 抛错降级路径 |
+| 步 | 内容 | 验证方式 | 状态 |
+| --- | --- | --- | --- |
+| 0.8.1-a | `lib/bindings.mjs` 纯函数层 + 断言 | `verify-bindings`（47 项）+ 判断力探针 16/16 | **完成** |
+| 0.8.1-b | 宿主侧解析接入 `registerSystemPrompt` + 逐 agent 注入 | `verify-e2e-prompt` 多 cwd 断言 | 待做 |
+| 0.8.1-c | 绑定 HTTP 路由（含方法校验）+ 端到端 | 真实路由探针，含 405 与非法输入 | 待做 |
+| 0.8.1-d | 设置页分组 UI + 点选 + 降级 | `verify-client`，含 pickDirectory 抛错降级路径 | 待做 |
+
+### 10.1 0.8.1-a 实施中被断言逼出的三处修正（均已落到代码与注释里）
+
+1. **`bindingsPathFor` 不得用 `node:path` 的 `dirname`/`join`。** 它们**按运行平台**解析，
+   于是在 Windows 上处理 `/home/u/.dsh/soul-config.json` 会得到 `\home\u\...` ——
+   断言随即无法在同一台机器上验证两套路径语义。改为只做一次「最后一个分隔符」切分
+   （与 `lib/history.mjs` 的 `historyPathFor` 同款）。
+2. **UNC 前缀只在 Windows 分隔符下识别。** POSIX 的 `//` 按规矩等同于 `/`，
+   若也当 UNC 处理，`//` 会被原样保留，于是它与 `/` 成了两条不同的绑定。
+3. **`bindingRefusal` 的第三关必须拿 trim 后的名字查库。** 直接拿原串查的话，
+   `我的自定义人设 `（末尾一个空格）会在第一关通过、第三关被判「不存在」——
+   拒绝理由与真实原因不符，用户看到的是一句自相矛盾的话。
+   同时拆出 `normalizeBindingEntry`（回答「写什么」）与 `bindingRefusal`（回答「能不能写」），
+   否则调用方必然自己再 trim 一遍值，而那正是不一致的来源。
+
+另外明确一条**刻意的边界**：`normalizeDirPath` **不解析 `.` / `..`**（那归 `resolveDirIdentity`
+的 realpath 管）。不做的后果是失败方向安全的 —— `D:\项目A\sub\..` 会原样留下成为一条
+永远命中不了的绑定；反过来若用纯文本规则折叠 `..`，当 `sub` 是符号链接时折叠结果是**错的**。
 
 ## 11. 已知风险
 
