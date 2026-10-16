@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 132
+const EXPECTED_ASSERTIONS = 134
 
 let passed = 0
 const failures = []
@@ -3321,6 +3321,165 @@ check('工作区绑定：命中结果回报展示键，失效项去重后如实�
     /shadowed\.push\(\{ \.\.\.item, dir: item\.dir \}\)/.test(fn),
     false,
     'shadowed 不得保留原始键 —— 身份键会直接显示给用户'
+  )
+})
+
+check('工作区绑定四条契约：同一路径只注册一次、方法分派、队列内读盘、删空不刷新', () => {
+  // ---------- ① 同一 (kind, path) 只能注册一次 ----------
+  //
+  // 宿主 dsh-host-webserver 的 register() 对重复 (kind, path) **直接抛错**：
+  //   if (table.has(route.path)) throw new Error(`webserver: duplicate ${route.kind} route "${route.path}"`)
+  // 而注册发生在 ctx.inject 回调里 ⇒ 一次重复注册不是「后一个生效」，是**整个插件
+  // 装配失败**（用户看到的是插件加载不出来，与控制台里那句重复路由毫无字面关联）。
+  //
+  // ⚠️ 这条是元断言：它必须自己解析出全部注册点，而不是逐个点名。曾经 GET 与 POST
+  // 各写了一次 register('/api/soul/bindings')，本机假宿主用 Map.set 静默覆盖，
+  // 一路绿到浏览器里才炸。
+  const registrations = [...indexCode.matchAll(/webServer\.register\(\{\s*kind:\s*'(\w+)',\s*path:\s*'([^']+)'/g)].map(
+    (m) => ({ kind: m[1], path: m[2] })
+  )
+  assert.ok(registrations.length >= 16, `注册点解析失败（只找到 ${registrations.length} 处，路由数量不该这么少）`)
+  const seenRoutes = new Map()
+  const duplicated = []
+  for (const route of registrations) {
+    const key = `${route.kind} ${route.path}`
+    if (seenRoutes.has(key)) duplicated.push(key)
+    seenRoutes.set(key, true)
+  }
+  assert.deepEqual(
+    duplicated,
+    [],
+    `同一个 (kind, path) 被注册了多次：${JSON.stringify(duplicated)} —— 宿主会抛 ` +
+      'webserver: duplicate，装配直接失败。GET/POST 必须在 handler 内按 req.method 分派。'
+  )
+
+  // ---------- ② GET / POST 共用一次注册，且两条分支都在 ----------
+  const bindingsRoutes = [...indexCode.matchAll(/path: '\/api\/soul\/bindings'[\s\S]*?\n    \}\)/g)].map((m) => m[0])
+  assert.equal(bindingsRoutes.length, 1, `/api/soul/bindings 应只注册一次，实际 ${bindingsRoutes.length} 次`)
+  const bindings = bindingsRoutes[0]
+  assert.match(bindings, /if \(req\.method === 'GET'\)/, 'GET 分支缺失：列表读不出来了')
+  assert.match(bindings, /if \(req\.method !== 'POST'\)/, 'POST 之外的其它方法必须落到 405')
+  assert.match(bindings, /send\(res, 405, \{ ok: false, error: 'Method not allowed' \}\)/, '方法不符应返回 405')
+  // 顺序：GET 必须在 405 之前判掉，否则列表接口自己先被 405 拦住。
+  assert.ok(
+    bindings.indexOf("req.method === 'GET'") < bindings.indexOf("req.method !== 'POST'"),
+    'GET 分支必须先于 405 判定 —— 反过来写会让读取接口自己收到 405'
+  )
+
+  const del = indexCode.match(/path: '\/api\/soul\/bindings\/delete'[\s\S]*?\n    \}\)/)?.[0] ?? ''
+  assert.ok(del !== '', '缺少解绑路由')
+  assert.match(del, /req\.method !== 'POST'/, '解绑必须显式校验 req.method === POST')
+  assert.match(del, /send\(res, 405, \{ ok: false, error: 'Method not allowed' \}\)/, '解绑的方法不符应返回 405')
+
+  // ---------- ③ 写路径：准入在队列外，读盘在队列内 ----------
+  assert.match(bindings, /bindingRefusal\(/, '写绑定前必须过 bindingRefusal（路径非法 / 过长 / 人设不存在）')
+  assert.match(bindings, /normalizeBindingEntry\(/, '写入的键值必须规范化（否则同一目录存成多条）')
+  // 队列外读会与并发写形成窗口，后写覆盖前写。绑定表是**整表替换**式的读改写，
+  // 这个窗口不是理论问题：设置页连点两次就是两次并发 POST。
+  assert.match(
+    bindings,
+    /await enqueueBindingsWrite\(async \(\) => \{[\s\S]*?readBindingsFile\(bindingsPath\(\)\)/,
+    '读盘必须在 enqueueBindingsWrite 队列**内**：队列外读会有窗口，后写覆盖前写'
+  )
+  assert.equal(
+    /const read = await readBindingsFile\(bindingsPath\(\)\)[\s\S]{0,400}?await enqueueBindingsWrite/.test(bindings),
+    false,
+    '读盘不得在入队之前 —— 这是竞态窗口的另一种写法'
+  )
+  assert.match(bindings, /const isNew = !hasOwn\(table, entry\.dir\)/, '改绑与新增必须分开判定')
+  // 满表时改绑仍应可用：否则用户只能先删一条再改，而删除是不可逆的。
+  assert.match(
+    bindings,
+    /if \(isNew && Object\.keys\(table\)\.length >= MAX_BINDINGS\)/,
+    '只有真新增才受上限约束 —— 满表后连改绑都做不了会让用户只能先删再绑'
+  )
+
+  // ---------- ④ 删除：按比较键命中，删空不刷新 ----------
+  assert.match(del, /normalizeDirPath\(parsed\.body && parsed\.body\.dir\)/, '解绑目标要规范化')
+  // 配置里存的可能是另一种写法（分隔符 / 尾分隔符 / 盘符大小写），拿原串直接
+  // delete 会「点了没反应」—— 用户看到列表里那一行，点下去什么都没发生。
+  assert.match(
+    del,
+    /Object\.keys\(table\)\.find\(dir => compareKey\(dir\) === compareKey\(target\)\)/,
+    '必须按比较键找目标：拿原串 delete 会「点了没反应」'
+  )
+  assert.equal(/delete table\[target\]/.test(del), false, '不得用原串直接 delete')
+  // 一次空解绑不该向所有活动会话注入快照：那是一条「配置已更新」的假消息。
+  assert.match(
+    del,
+    /if \(removed\) await afterBindingsWrite\(config\)/,
+    '没删掉任何东西时不得刷新提示词（空解绑会向所有会话注入一条假更新）'
+  )
+
+  // ---------- ⑤ 写后必须自己刷新：第三类会改变提示词的事实 ----------
+  for (const [name, source] of [['新增/改绑', bindings], ['解绑', del]]) {
+    assert.match(source, /afterBindingsWrite\(config\)/, `${name} 写完后必须触发刷新`)
+  }
+  const after = extractObject(indexSource, 'const afterBindingsWrite')
+  assert.ok(after !== '', '找不到 afterBindingsWrite')
+  // 绑定表改了但内存缓存没重载，刷新出去的仍是旧解析结果 —— 表现是「保存了却不生效」。
+  assert.match(after, /await loadBindings\(\)/, '刷新前必须重载绑定表，否则刷出去的还是旧解析结果')
+  assert.match(after, /refreshPromptAndInject\(ctx, fresh\)/, '绑定变更必须自己刷新提示词')
+  // 绑定写不能借配置写队列：两套数据因果无关，共用队列只会把延迟叠在一起（§4.3）。
+  assert.match(indexCode, /let bindingsWriteQueue = Promise\.resolve\(\)/, '绑定写应有独立的队列实例')
+  assert.equal(
+    /enqueueConfigWrite[\s\S]{0,200}?writeBindingsFile/.test(indexCode),
+    false,
+    '绑定写不得走配置写队列'
+  )
+})
+
+check('工作区绑定只读视图：失效条目标注、sessions 走与会话相同的解析路径', () => {
+  const view = extractObject(indexSource, 'async function bindingsView')
+  assert.ok(view !== '', '找不到 bindingsView')
+  // 失效引用**不自动删除**（用户可能只是临时删了预设、打算改回来），但必须显式标注 ——
+  // 否则用户在目录里等一个永远不会来的人设。
+  assert.match(view, /invalid\.push\(\{ dir, persona: name \}\)/, '失效引用要如实列出')
+  assert.equal(/delete cache\.bindings\[/.test(view), false, '不得自动删除失效引用（设计 §4.2）')
+  assert.match(view, /warning: bindingsLoadFailure/, '整表读不出来要作为 warning 回传，与「一条都没绑」区分')
+  assert.match(view, /max: MAX_BINDINGS/, '要把条数上限回传（界面才能说清还有多少余量）')
+  assert.match(view, /sessions: describeActiveSessions\(ctx, config\)/, '要带回活动会话的解析结果')
+
+  const sessions = extractObject(indexSource, 'function describeActiveSessions')
+  assert.ok(sessions !== '', '找不到 describeActiveSessions')
+  // 列不出活动会话不是错误：设置页只是少一段「当前用的谁」，仍能管理绑定表。
+  // 两个分支（agents 服务缺席 / list() 抛错）都必须**返回空列表而不是抛出去** ——
+  // 读侧一抛，整个 GET /api/soul/bindings 就 500，用户连绑定表都看不到了。
+  assert.match(sessions, /agents\.list\(\)/, '活动会话来自 agents.list()')
+  assert.equal(/throw /.test(sessions), false, 'describeActiveSessions 不得抛错：列不出会话只是少一段信息，不该让整个读接口失败')
+  assert.match(sessions, /typeof agents\.list !== 'function'\) return out/, 'agents 服务不可用时应返回空列表')
+  assert.match(sessions, /catch \{[\s\S]{0,200}?return out/, 'list() 抛错时同样返回空列表，且不得把异常冒泡给 HTTP 层')
+  // 生效人设必须走与真实装配**同一条路径**，否则设置页显示的人设与实际注入的可能不一致 ——
+  // 那正是最难查的一类 bug。
+  assert.match(sessions, /configForCwd\(config, cwd\)\.config/, '生效人设必须走 configForCwd（与真实装配同一条路径）')
+  // ★ 光「算了」还不够，还得**回报出去**：sessions[].persona 是设置页回答「我这个项目
+  // 现在到底是谁」的唯一来源。曾有一条变异把这一项写成 null 而全部断言照绿 ——
+  // 因为断言只看 binding 名，没看生效人设。
+  assert.match(
+    sessions,
+    /persona: findActivePersonaName\(effective\)/,
+    'sessions 必须回报生效人设（不是 null、也不是全局那一个）：界面要答得出「这个会话现在是谁」'
+  )
+  // 只有**没有 cwd** 的分支才可以用全局配置算生效人设（那时确实没有绑定可解析）。
+  // 有 cwd 的分支若也这么算，带绑定的会话会显示成全局那个名字，而注入的是绑定的人设。
+  assert.equal(
+    (sessions.match(/persona: findActivePersonaName\(config\)/g) || []).length,
+    1,
+    '用全局配置算生效人设只允许出现在「没有 cwd」那一个分支里'
+  )
+  // 没有 cwd 的会话要如实说出来，而不是静默省略：用户需要知道「这个会话没有目录」。
+  assert.match(sessions, /cwd: null/, '没有 cwd 的会话要显式回报，不能静默跳过')
+  // 「直接绑定」与「继承自上级」的判别必须在宿主做：客户端拿原始串比较时
+  // Windows 上 `D:\项目A` 与 `d:\项目a` 会被判成不同目录。
+  assert.match(
+    sessions,
+    /compareKey\(normalizeDirPath\(resolved\.dir\)\) === compareKey\(normalizeDirPath\(cwd\)\)/,
+    'inherited 判别必须在宿主做，且用比较键（原始串比较在 Windows 上会误判大小写）'
+  )
+  assert.equal(
+    /resolved\.dir === cwd/.test(sessions),
+    false,
+    '不得用原始串比较目录 —— 盘符大小写 / 分隔符差异会让「就是本目录」显示成「继承自上级」'
   )
 })
 

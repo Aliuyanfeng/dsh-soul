@@ -36,11 +36,16 @@ import {
 } from './lib/config.mjs'
 import {
   bindingsPathFor,
+  bindingRefusal,
   compareKey,
+  MAX_BINDINGS,
+  MAX_PATH_LENGTH,
+  normalizeBindingEntry,
   normalizeDirPath,
   readBindingsFile,
   resolveDirIdentity,
-  resolvePersonaForCwd
+  resolvePersonaForCwd,
+  writeBindingsFile
 } from './lib/bindings.mjs'
 import { createInjectionSource } from './lib/injection.mjs'
 import { isBuiltinPersona, builtinPersonaNames, mergePersonas, personaMatches, resolvePersona, declaredPersonaKeys } from './lib/personas.mjs'
@@ -1653,6 +1658,235 @@ function registerHistoryRoutes(ctx) {
   })
 }
 
+// ==================== 工作区绑定路由 ====================
+
+// 绑定表的写队列。与配置队列（enqueueConfigWrite）**刻意是两个实例**（设计 §4.3）：
+// 两套数据在因果上无关 —— 绑定的写入不依赖配置的当前值，反之亦然 —— 共用一个队列
+// 只会把两者的延迟叠在一起，一次慢写的绑定请求会挡住配置保存。
+let bindingsWriteQueue = Promise.resolve()
+
+function enqueueBindingsWrite(task) {
+  const run = bindingsWriteQueue.then(task)
+  bindingsWriteQueue = run.then(() => {}, () => {})
+  return run
+}
+
+// 活动会话的目录与解析结果，供设置页回答「我这个项目现在是谁」。
+//
+// 为什么必须由宿主算：设置页的槽位 scope 是 `root`（设计 §7.7），它**拿不到
+// sessionId**，也就拿不到会话 cwd。宿主遍历 agents.list() 是唯一权威的来源。
+//
+// 取 `session.header.cwd` 而不是工作区根：两者可能不同（工作区 D:\AliuProject、
+// 会话 cwd D:\AliuProject\dsh-plugin），显示错粒度会让用户绑错层级。
+function describeActiveSessions(ctx, config) {
+  const out = []
+  const agents = ctx.get('agents')
+  if (!agents || typeof agents.list !== 'function') return out
+
+  let listed
+  try {
+    listed = agents.list()
+  } catch {
+    // 列不出活动会话不是错误：设置页只是少一段「当前用的谁」，仍能管理绑定表。
+    return out
+  }
+
+  for (const agent of listed) {
+    const cwd = cwdOfAgent(agent)
+    const id = agent && typeof agent.id === 'string' ? agent.id : null
+
+    if (!cwd) {
+      // cwd 缺席是宿主允许的情况（会话没有工作目录）。必须如实说出来 ——
+      // 让用户对着空白猜「为什么绑了没生效」，不如直接告诉他这个会话没有目录。
+      out.push({ id, cwd: null, persona: findActivePersonaName(config), binding: null, shadowed: [] })
+      continue
+    }
+
+    const resolved = resolveBindingForCwd(cwd, config.personas)
+    // 生效人设走与真实装配**同一条路径**（configForCwd → 部分覆盖 → findActivePersonaName），
+    // 否则设置页显示的「生效人设」与实际注入的可能不一致 —— 那正是最难查的一类 bug。
+    const effective = configForCwd(config, cwd).config
+
+    let binding = null
+    if (resolved) {
+      // 「直接绑定」与「继承自上级」的判别**必须在宿主做**：客户端拿原始串比较时，
+      // Windows 上 `D:\项目A` 与 `d:\项目a` 会被判成不同目录，于是「就是本目录」
+      // 被显示成「继承自上级」，用户会去找一条并不存在的父级绑定。
+      const sameDir = compareKey(normalizeDirPath(resolved.dir)) === compareKey(normalizeDirPath(cwd))
+      binding = { dir: resolved.dir, persona: resolved.persona, inherited: !sameDir }
+    }
+
+    out.push({
+      id,
+      cwd,
+      persona: findActivePersonaName(effective),
+      binding,
+      shadowed: resolved ? resolved.shadowed : []
+    })
+  }
+
+  return out
+}
+
+// 绑定表的可读形态（列表 + 失效标注 + 解析结果）。
+async function bindingsView(ctx) {
+  const cache = await ensureBindings()
+  const config = await loadConfig()
+
+  // 失效引用：指向的人设已不存在。**不自动删除**（设计 §4.2）——用户可能只是临时
+  // 删了那个预设、打算重命名回来。但必须显式标注，否则用户在目录里等一个永远
+  // 不会来的人设。
+  const invalid = []
+  for (const dir of Object.keys(cache.bindings)) {
+    const name = cache.bindings[dir]
+    if (!resolvePersona(name, config.personas)) invalid.push({ dir, persona: name })
+  }
+
+  return {
+    bindings: cache.bindings,
+    invalid,
+    dropped: cache.dropped,
+    // warning 是「整表没读进来」或「有条目被丢弃」，与「一条都没绑」是两件事。
+    warning: bindingsLoadFailure,
+    max: MAX_BINDINGS,
+    maxPathLength: MAX_PATH_LENGTH,
+    sessions: describeActiveSessions(ctx, config)
+  }
+}
+
+function registerBindingRoutes(ctx) {
+  ctx.inject(['webServer'], (wsCtx) => {
+    const send = (res, status, body) => {
+      res.writeHead(status, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(body))
+    }
+
+    // 写完之后统一收尾：重载绑定表 → 刷新提示词并注入。
+    //
+    // 这是**第三类**会改变提示词的事实（设计 §6.4）：它不改 soul-config.json，
+    // 所以 commitConfig 的 promptChanged 门控看不见它。绑定路由必须自己触发，
+    // 否则「刚绑好，会话里却不生效，要新开会话才行」。
+    const afterBindingsWrite = async (config) => {
+      await loadBindings()
+      const fresh = config || (await loadConfig())
+      refreshPromptAndInject(ctx, fresh)
+    }
+
+    // GET = 读取（绑定表 + 当前活动会话的解析结果）；POST = 新增 / 改绑。
+    //
+    // 同一 (kind, path) 只能 register **一次**：宿主 dsh-host-webserver 的
+    // `register()` 对重复路径直接 `throw new Error('webserver: duplicate exact
+    // route "' + path + '"')`，而这里是 ctx.inject 回调 —— 一次重复注册会让
+    // 整个插件装配失败。故方法分派必须写在 handler 内，这也正是本文件其余
+    // 14 条路由的范式。
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/bindings',
+      handler: async (req, res) => {
+        if (req.method === 'GET') {
+          try {
+            send(res, 200, { ok: true, ...(await bindingsView(ctx)) })
+          } catch (err) {
+            send(res, 500, { ok: false, error: String(err.message || err) })
+          }
+          return
+        }
+        if (req.method !== 'POST') {
+          send(res, 405, { ok: false, error: 'Method not allowed' })
+          return
+        }
+        try {
+          const parsed = await readJsonBody(req)
+          if (!parsed.ok) {
+            send(res, parsed.status, { ok: false, error: parsed.error })
+            return
+          }
+
+          const config = await loadConfig()
+          // 准入检查挑出三类拒绝（路径非法 / 过长 / 人设不存在），
+          // 原因文案可直接展示 —— 客户端不得再包一层前缀。
+          const refusal = bindingRefusal(parsed.body && parsed.body.dir, parsed.body && parsed.body.persona, config.personas)
+          if (refusal) {
+            send(res, 400, { ok: false, error: refusal })
+            return
+          }
+          const entry = normalizeBindingEntry(parsed.body && parsed.body.dir, parsed.body && parsed.body.persona, config.personas)
+          if (!entry) {
+            send(res, 400, { ok: false, error: '绑定内容不合法，未写入。' })
+            return
+          }
+
+          await enqueueBindingsWrite(async () => {
+            // 队列内读盘再合并：队列外读会与并发写入形成窗口，后写覆盖前写。
+            const read = await readBindingsFile(bindingsPath())
+            if (read.failure) throw httpError(500, read.failure)
+            const table = { ...read.bindings }
+            // 已存在的目录改绑不算新增，只有真新增才受条数上限约束 ——
+            // 否则满表之后连改绑都做不了，用户只能先删再绑。
+            const isNew = !hasOwn(table, entry.dir)
+            if (isNew && Object.keys(table).length >= MAX_BINDINGS) {
+              throw httpError(400, `绑定数量已达上限（${MAX_BINDINGS} 条），请先删除不再需要的绑定。`)
+            }
+            table[entry.dir] = entry.persona
+            await writeBindingsFile(bindingsPath(), table)
+          })
+
+          await afterBindingsWrite(config)
+          send(res, 200, { ok: true, ...(await bindingsView(ctx)) })
+        } catch (err) {
+          // 队列内抛出的 httpError 带状态码；其余按 500 处理。
+          send(res, err.httpStatus || 500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
+
+    // 解绑
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/bindings/delete',
+      handler: async (req, res) => {
+        try {
+          if (req.method !== 'POST') {
+            send(res, 405, { ok: false, error: 'Method not allowed' })
+            return
+          }
+          const parsed = await readJsonBody(req)
+          if (!parsed.ok) {
+            send(res, parsed.status, { ok: false, error: parsed.error })
+            return
+          }
+          const target = normalizeDirPath(parsed.body && parsed.body.dir)
+          if (!target) {
+            send(res, 400, { ok: false, error: '需要一个绝对路径才能解绑。' })
+            return
+          }
+
+          const config = await loadConfig()
+          let removed = false
+          await enqueueBindingsWrite(async () => {
+            const read = await readBindingsFile(bindingsPath())
+            if (read.failure) throw httpError(500, read.failure)
+            const table = { ...read.bindings }
+            // 按**比较键**找：用户点了列表里那一行，但配置里存的可能是另一种写法
+            // （分隔符、尾分隔符、盘符大小写）。拿原串直接 delete 会「点了没反应」。
+            const key = Object.keys(table).find(dir => compareKey(dir) === compareKey(target))
+            if (key === undefined) return
+            delete table[key]
+            removed = true
+            await writeBindingsFile(bindingsPath(), table)
+          })
+
+          // 没删掉任何东西时**不刷新**：一次空解绑不该向所有活动会话注入快照。
+          if (removed) await afterBindingsWrite(config)
+          send(res, 200, { ok: true, removed, ...(await bindingsView(ctx)) })
+        } catch (err) {
+          send(res, err.httpStatus || 500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
+  })
+}
+
 // ==================== 斜杠命令 ====================
 
 // 宿主端无 locale 服务（CommandInvocation 不携带 UI 语言，settings 中亦无语言字段），
@@ -2533,6 +2767,7 @@ export async function apply(ctx) {
   registerRoutes(ctx)
   registerPersonaRoutes(ctx)
   registerHistoryRoutes(ctx)
+  registerBindingRoutes(ctx)
   registerCommands(ctx)
   registerSystemPrompt(ctx)
   registerTools(ctx)

@@ -40,7 +40,7 @@ import { PROFILE_FIELDS } from '../lib/config.mjs'
 // 基线运行应跑出的断言数：E 场景 28 项 + F 损坏场景 8 项 + G 变更记录 16 项
 // + H 撤销拒绝路径 3 项 + W 工作区绑定 15 项 + 2 项判断力对照。跑完时校验，
 // 防止「脚本加/删用例」与文档口径悄悄脱节。
-const EXPECTED_ASSERTIONS = 77
+const EXPECTED_ASSERTIONS = 90
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -65,6 +65,7 @@ function makeCtx(agentSpecs) {
     sections: [],        // 每次 systemPrompt.section() 的注册
     disposals: 0,
     routes: new Map(),   // path -> handler
+    routeKeys: [],       // "kind path" 注册序列（重复注册在 register 里直接抛）
     services: [],        // ctx.get / ctx.inject 索要过的服务名
     providers: [],       // 已注册的服务（ctx.provide）
     injected: [],        // 每个活动 agent 收到的注入消息（汇总，E13 用）
@@ -111,8 +112,20 @@ function makeCtx(agentSpecs) {
   }
 
   const webServer = {
-    register({ path, handler }) {
-      state.routes.set(path, handler)
+    // ★ 必须与宿主 dsh-host-webserver 的 register() **同等严格**：宿主对重复的
+    // (kind, path) 直接 `throw new Error('webserver: duplicate exact route "' + path + '"')`，
+    // 而抛点在 ctx.inject 回调里 ⇒ 一次重复注册会让整个插件装配失败。
+    //
+    // 桩若用 Map.set 静默覆盖，这条最致命的错误就永远测不出来：后注册的 handler
+    // 顶掉前一个，测试里表现成「GET 也会按 POST 处理」之类的怪现象，甚至完全正常。
+    // 这里如实抛错，让重复注册在断言里显形。
+    register(route) {
+      const key = `${route.kind} ${route.path}`
+      if (state.routeKeys.includes(key)) {
+        throw new Error(`webserver: duplicate ${route.kind} route "${route.path}"`)
+      }
+      state.routeKeys.push(key)
+      state.routes.set(route.path, route.handler)
     }
   }
 
@@ -1102,6 +1115,244 @@ async function bindingIdentityScenario(entry) {
   return results
 }
 
+// ==================== 绑定路由场景（0.8.1-c）====================
+
+/**
+ * 绑定写路由：方法分派、准入拒绝、**写入即生效**。
+ *
+ * 为什么必须端到端：绑定层的纯函数已由 verify-bindings 钉住、路由的源文本契约
+ * 由 verify-config 钉住，但「写完真的改变了会话里拿到的人设」是第三件事 —— 中间
+ * 隔着独立写队列、缓存重载、以及**必须由路由自己触发的刷新**。绑定不改
+ * soul-config.json，commitConfig 的 promptChanged 门控看不见它（设计 §6.4）。
+ * 接错的症状是「设置页显示绑定成功，会话里却还是全局人设，要重启才生效」，
+ * 而纯函数层与源文本契约对这件事一无所知。
+ *
+ * 另一个只有端到端能覆盖的点：GET 与 POST 共用**一次** register（宿主
+ * dsh-host-webserver 对重复的 (kind, path) 直接抛错，装配会整个失败）。假宿主
+ * 的 register 已与宿主同等严格，故本场景一挂载就会暴露任何重复注册。
+ */
+async function bindingRoutesScenario(entry) {
+  const dshHome = mkdtempSync(join(tmpdir(), 'dsh-soul-e2e-broutes-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+
+  const results = []
+  const push = (name, ok, detail) => results.push({ name, ok, detail })
+
+  const dirProject = mkdtempSync(join(tmpdir(), 'dsh-soul-br-proj-'))
+  const dirOther = mkdtempSync(join(tmpdir(), 'dsh-soul-br-other-'))
+  const dirThird = mkdtempSync(join(tmpdir(), 'dsh-soul-br-third-'))
+  const subDir = join(dirProject, '子模块')
+  const bindingsFile = join(dshHome, 'soul-bindings.json')
+
+  const ARCH = '以系统设计视角回答'
+  const MINIMAL = '只给结论和必要依据'
+
+  // 刷新是「不 await 的浮动 Promise」（globalUpdatePrompt 里有一次 await loadConfig）。
+  // 注入本体在 refreshPromptAndInject 里是同步跑完的，但 section 重注册要过一次
+  // 微任务，所以断言前统一排空一次。
+  const drain = async (rounds = 8) => {
+    for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => setImmediate(resolve))
+  }
+  const injectedText = (ctx, id) =>
+    (ctx.state.injections.get(id) || []).map((m) => m?.content?.[0]?.text || '').join('\n')
+  const readBindings = () => JSON.parse(readFileSync(bindingsFile, 'utf8')).bindings
+
+  try {
+    mkdirSync(subDir, { recursive: true })
+    // 先落一条绑定：拒绝路径要证明「配置没被写坏」，比较基准得真实存在。
+    writeFileSync(bindingsFile, JSON.stringify({ version: 1, bindings: { [dirOther]: '极简主义者' } }, null, 2))
+    const beforeText = readFileSync(bindingsFile, 'utf8')
+
+    const mod = await import(pathToFileURL(entry).href + `?t=${Date.now()}-${Math.random()}`)
+    const ctx = makeCtx([
+      { id: 'br-proj', cwd: dirProject },
+      { id: 'br-sub', cwd: subDir },
+      { id: 'br-other', cwd: dirOther },
+      { id: 'br-nocwd' }
+    ])
+    await mod.apply(ctx)
+
+    // ── 读 ──────────────────────────────────────────────────────────────
+    const list = await callRoute(ctx, '/api/soul/bindings', null, 'GET')
+    push(
+      'R1 GET 返回绑定表与活动会话（sessions 由宿主遍历 agents.list() 得出 —— 设置页槽位拿不到 sessionId）',
+      list.status === 200 &&
+        list.body?.ok === true &&
+        Array.isArray(list.body?.sessions) &&
+        list.body.sessions.length === 4 &&
+        typeof list.body?.max === 'number' &&
+        list.body?.bindings?.[dirOther] === '极简主义者',
+      JSON.stringify({ status: list.status, sessions: list.body?.sessions?.length, max: list.body?.max })
+    )
+
+    // ── 方法分派：同一路径注册一次，handler 内按 method 走 ──────────────────
+    const putList = await callRoute(ctx, '/api/soul/bindings', {}, 'PUT')
+    const getDelete = await callRoute(ctx, '/api/soul/bindings/delete', null, 'GET')
+    push(
+      'R2 两条路由都显式校验方法（PUT 列表 / GET 解绑都回 405，而不是被执行或落到 GET 分支）',
+      putList.status === 405 && getDelete.status === 405,
+      `列表 PUT=${putList.status} 解绑 GET=${getDelete.status}`
+    )
+
+    // ── 准入拒绝：三类理由原样回传，且磁盘一个字节都没动 ────────────────────
+    const relative = await callRoute(ctx, '/api/soul/bindings', { dir: '相对/路径', persona: '极简主义者' })
+    const unknown = await callRoute(ctx, '/api/soul/bindings', { dir: dirProject, persona: '不存在的人设' })
+    push(
+      'R3 非绝对路径被拒绝（400），理由可直接展示，且绑定文件未被改动',
+      relative.status === 400 &&
+        relative.body?.ok === false &&
+        (relative.body?.error || '').includes('绝对路径') &&
+        readFileSync(bindingsFile, 'utf8') === beforeText,
+      JSON.stringify({ status: relative.status, error: relative.body?.error })
+    )
+    push(
+      'R4 写入不存在的人设被拒绝（400）—— 允许写入等于让用户对着一个 typo 等永远不来的生效',
+      unknown.status === 400 && (unknown.body?.error || '').includes('不存在的人设'),
+      JSON.stringify({ status: unknown.status, error: unknown.body?.error })
+    )
+
+    // ── 写入即生效 ──────────────────────────────────────────────────────
+    const sectionsBefore = ctx.state.sections.length
+    const created = await callRoute(ctx, '/api/soul/bindings', { dir: dirProject, persona: '资深架构师' })
+    await drain()
+    push(
+      'R5 合法绑定写入成功，规范化后的键真的落盘',
+      created.status === 200 && readBindings()[dirProject] === '资深架构师',
+      JSON.stringify({ status: created.status, 落盘: readBindings() })
+    )
+    push(
+      'R6 写入后 section 被重新注册（绑定不改 soul-config.json，promptChanged 门控看不见它）',
+      ctx.state.sections.length > sectionsBefore,
+      `${sectionsBefore} → ${ctx.state.sections.length}`
+    )
+    // ★ 本场景的核心：不重新挂载，活动会话立刻拿到新解析结果。
+    //   br-sub 一条绑定都没写，它拿到 ARCH 是因为**父目录绑定被继承** ——
+    //   若注入通道没有逐 agent 编译（而是共用一份全局文本），br-sub 拿不到。
+    const afterProj = injectedText(ctx, 'br-proj')
+    const afterSub = injectedText(ctx, 'br-sub')
+    const afterOther = injectedText(ctx, 'br-other')
+    push(
+      'R7 绑定写完立即对活动会话生效：本目录与子目录都拿到新的人设，子目录靠继承',
+      afterProj.includes(ARCH) && afterSub.includes(ARCH) && !afterOther.includes(ARCH),
+      JSON.stringify({
+        本目录: afterProj.includes(ARCH),
+        子目录: afterSub.includes(ARCH),
+        其它目录被误伤: afterOther.includes(ARCH)
+      })
+    )
+
+    // ── 改绑同一目录：覆盖而不是新增 ─────────────────────────────────────
+    const rebound = await callRoute(ctx, '/api/soul/bindings', { dir: dirProject, persona: '极简主义者' })
+    const tableAfterRebind = readBindings()
+    push(
+      'R8 同一目录改绑是覆盖：条数不变，人设换新（否则改绑会把表越写越长）',
+      rebound.status === 200 &&
+        Object.keys(tableAfterRebind).length === 2 &&
+        tableAfterRebind[dirProject] === '极简主义者',
+      JSON.stringify(tableAfterRebind)
+    )
+
+    // ── 解绑：按比较键命中，删空不刷新 ───────────────────────────────────
+    // 用「另一种写法」解绑：Windows 上折大小写 + 尾分隔符（两者都指向同一目录）。
+    // 拿原串直接 delete 的话这一步会「点了没反应」—— 用户看着列表里那一行，
+    // 点下去什么都没发生。
+    const altSpelling = process.platform === 'win32' ? `${dirProject}\\`.toUpperCase() : `${dirProject}/`
+    const removedOne = await callRoute(ctx, '/api/soul/bindings/delete', { dir: altSpelling })
+    push(
+      'R9 用另一种写法（大小写 / 尾分隔符）解绑仍能命中，并按比较键删掉原键',
+      removedOne.status === 200 &&
+        removedOne.body?.removed === true &&
+        !Object.prototype.hasOwnProperty.call(readBindings(), dirProject),
+      JSON.stringify({ removed: removedOne.body?.removed, 剩余: Object.keys(readBindings()) })
+    )
+
+    await drain()
+    const injectedBeforeEmpty = ctx.state.injected.length
+    const sectionsBeforeEmpty = ctx.state.sections.length
+    const removedNone = await callRoute(ctx, '/api/soul/bindings/delete', { dir: dirThird })
+    await drain()
+    push(
+      'R10 解绑一个本来就没绑的目录：如实回 removed=false，且**不触发刷新**（空解绑会向所有会话注入一条假更新）',
+      removedNone.status === 200 &&
+        removedNone.body?.removed === false &&
+        ctx.state.injected.length === injectedBeforeEmpty &&
+        ctx.state.sections.length === sectionsBeforeEmpty,
+      JSON.stringify({
+        注入: `${injectedBeforeEmpty} → ${ctx.state.injected.length}`,
+        section: `${sectionsBeforeEmpty} → ${ctx.state.sections.length}`
+      })
+    )
+
+    // ── 失效引用：如实标注，但不自动删除 ─────────────────────────────────
+    await callRoute(ctx, '/api/soul/personas/save', { name: 'R自建' })
+    await callRoute(ctx, '/api/soul/bindings', { dir: dirThird, persona: 'R自建' })
+    await callRoute(ctx, '/api/soul/personas/delete', { name: 'R自建' })
+    const afterDelete = await callRoute(ctx, '/api/soul/bindings', null, 'GET')
+    const invalid = afterDelete.body?.invalid || []
+    push(
+      'R11 绑定指向的人设被删掉后如实列进 invalid，且条目仍在表里（不自动删除 —— 用户可能只是改个名字）',
+      invalid.length === 1 &&
+        invalid[0].dir === dirThird &&
+        invalid[0].persona === 'R自建' &&
+        Object.prototype.hasOwnProperty.call(afterDelete.body?.bindings || {}, dirThird),
+      JSON.stringify({ invalid, 表: afterDelete.body?.bindings })
+    )
+
+    // ── inherited 判别：必须在宿主做 ─────────────────────────────────────
+    // 绑定 dirProject，会话 cwd 是它自己 vs 它的子目录：前者「就是本目录」、
+    // 后者「继承自上级」。客户端拿原始串比较在 Windows 上会被盘符大小写骗过。
+    await callRoute(ctx, '/api/soul/bindings', { dir: dirProject, persona: '资深架构师' })
+    const view = await callRoute(ctx, '/api/soul/bindings', null, 'GET')
+    const byId = Object.fromEntries((view.body?.sessions || []).map((s) => [s.id, s]))
+    push(
+      'R12 sessions 如实区分「就是本目录」与「继承自上级」，没有 cwd 的会话显式回报 cwd:null',
+      byId['br-proj']?.binding?.inherited === false &&
+        byId['br-sub']?.binding?.inherited === true &&
+        byId['br-other']?.binding?.persona === '极简主义者' &&
+        byId['br-other']?.binding?.inherited === false &&
+        byId['br-nocwd']?.cwd === null &&
+        byId['br-nocwd']?.binding === null,
+      JSON.stringify({
+        proj: byId['br-proj']?.binding,
+        sub: byId['br-sub']?.binding,
+        other: byId['br-other']?.binding,
+        nocwd: byId['br-nocwd']?.cwd
+      })
+    )
+
+    // ★ 生效人设（sessions[].persona）必须与**绑定结果**一致，而不是全局配置那一个。
+    //
+    // 这是设置页要回答的那个问题：「我这个项目现在到底是谁」。只回报 binding 名是不够的 ——
+    // 绑定可能指向一个已删除的人设（那时生效的其实是全局配置），两者必须分别可见。
+    // 同理，若这里错用了全局配置算生效人设，带绑定的会话会显示成全局的那个名字，
+    // 而会话里注入的却是绑定的人设 —— 界面与事实相反，正是最难查的一类 bug。
+    const globalPersona = (await callRoute(ctx, '/api/soul/status', null, 'GET')).body?.persona
+    push(
+      'R13 sessions 的生效人设跟随绑定解析结果（不是全局那一个），且与状态端点对全局的描述不矛盾',
+      byId['br-proj']?.persona === '资深架构师' &&
+        byId['br-other']?.persona === '极简主义者' &&
+        byId['br-sub']?.persona === '资深架构师' &&
+        globalPersona !== '资深架构师',
+      JSON.stringify({
+        proj: byId['br-proj']?.persona,
+        sub: byId['br-sub']?.persona,
+        other: byId['br-other']?.persona,
+        全局: globalPersona
+      })
+    )
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(dshHome, { recursive: true, force: true })
+    rmSync(dirProject, { recursive: true, force: true })
+    rmSync(dirOther, { recursive: true, force: true })
+    rmSync(dirThird, { recursive: true, force: true })
+  }
+
+  return results
+}
+
 // ==================== 挂载沙箱 ====================
 /**
  * 把插件复制到临时目录，并生成静态依赖 `@deepseek-ai/dsh-llm` 的形状兼容桩。
@@ -1207,6 +1458,17 @@ async function main() {
     for (const r of await bindingIdentityScenario(identitySandbox.entry)) record(r.name, r.ok, r.detail)
   } finally {
     rmSync(identitySandbox.dir, { recursive: true, force: true })
+  }
+
+  // 绑定写路由（0.8.1-c）：另起沙箱，因为它的前置状态是「绑定表里已经有一条」，
+  // 且它要观察**写入后活动会话立刻被刷新** —— 与前面那些只读装配的场景互相污染。
+  console.log('')
+  console.log('R 工作区绑定路由：方法分派、准入拒绝、写入即生效、解绑')
+  const bindingRoutesSandbox = prepareSandbox(PKG_DIR, 'broutes')
+  try {
+    for (const r of await bindingRoutesScenario(bindingRoutesSandbox.entry)) record(r.name, r.ok, r.detail)
+  } finally {
+    rmSync(bindingRoutesSandbox.dir, { recursive: true, force: true })
   }
 
   // 判断力对照：把 provider 读的配置源换成 DEFAULT_CONFIG（模拟「配置改了但读不到」），
