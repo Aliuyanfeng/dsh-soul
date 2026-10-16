@@ -3304,6 +3304,14 @@ check('工作区绑定：命中结果回报展示键，失效项去重后如实�
   )
   // 同一条绑定的展示键与身份键可能同时命中，不去重 UI 会把一条失效绑定画两遍。
   assert.match(fn, /const seen = new Set\(\)/, 'shadowed 需要按翻译后的 dir 去重')
+  // ★ 只声明 Set 而不判 membership 等于**没有去重** —— 这两行必须成对存在。
+  // 曾有变异把 `if (seen.has(dir)) continue` 整行删掉，而上面那条只认 `new Set()`
+  // 的断言照样通过：断言看住了「有没有去重集合」，却没看住「有没有用它」。
+  assert.match(
+    fn,
+    /if \(seen\.has\(dir\)\) continue/,
+    '去重必须真的判 membership（`seen.add` 之前要先 `seen.has` 才 continue），否则 Set 形同虚设'
+  )
   assert.match(
     fn,
     /shadowed\.push\(\{ \.\.\.item, dir \}\)/,
