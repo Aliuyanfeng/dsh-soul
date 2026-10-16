@@ -26,7 +26,7 @@
  * 用法：node scripts/verify-e2e-prompt.mjs
  * 退出码：0 = 通过；1 = 存在失败项。
  */
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -38,8 +38,9 @@ import { BUILTIN_PERSONAS } from '../lib/personas.mjs'
 import { PROFILE_FIELDS } from '../lib/config.mjs'
 
 // 基线运行应跑出的断言数：E 场景 28 项 + F 损坏场景 8 项 + G 变更记录 16 项
-// + H 撤销拒绝路径 3 项 + 2 项判断力对照。跑完时校验，防止「脚本加/删用例」与文档口径悄悄脱节。
-const EXPECTED_ASSERTIONS = 57
+// + H 撤销拒绝路径 3 项 + W 工作区绑定 15 项 + 2 项判断力对照。跑完时校验，
+// 防止「脚本加/删用例」与文档口径悄悄脱节。
+const EXPECTED_ASSERTIONS = 72
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -59,20 +60,42 @@ function record(name, ok, detail) {
 // ==================== 假宿主 ====================
 
 /** 记录一切被访问的服务名与每次会话注入，供 E13 / E16 断言两条通道都健在。 */
-function makeCtx() {
+function makeCtx(agentSpecs) {
   const state = {
-    sections: [],       // 每次 systemPrompt.section() 的注册
+    sections: [],        // 每次 systemPrompt.section() 的注册
     disposals: 0,
-    routes: new Map(),  // path -> handler
-    services: [],       // ctx.get / ctx.inject 索要过的服务名
-    providers: [],      // 已注册的服务（ctx.provide）
-    injected: []        // 每个活动 agent 收到的注入消息
+    routes: new Map(),   // path -> handler
+    services: [],        // ctx.get / ctx.inject 索要过的服务名
+    providers: [],       // 已注册的服务（ctx.provide）
+    injected: [],        // 每个活动 agent 收到的注入消息（汇总，E13 用）
+    agents: [],          // 活动 agent 桩（工作区绑定场景按 id 取）
+    injections: new Map() // agent id -> 该会话收到的注入消息
   }
 
-  // 活动 agent 桩：宿主通过 agents.list() 暴露，注入走 agent.inject()
+  // 活动 agent 桩：宿主通过 agents.list() 暴露，注入走 agent.inject()。
+  //
+  // 默认单个**不带 cwd** 的会话（E/F/G/H 场景只需要「有会话可注入」）。工作区绑定场景
+  // 传 specs 造多 cwd 的多会话：`cwd` 是字符串时挂上 session.header.cwd，省略则**根本不
+  // 挂 session** —— 那正是宿主在诊断装配下的形态，cwdOfAgent 必须容忍它而不是抛错。
+  const specs = Array.isArray(agentSpecs) && agentSpecs.length > 0 ? agentSpecs : [{ id: 'fake-agent' }]
+  const list = specs.map((spec) => {
+    const bucket = []
+    state.injections.set(spec.id, bucket)
+    const stub = {
+      id: spec.id,
+      inject(message) {
+        bucket.push(message)
+        state.injected.push(message)
+      }
+    }
+    if (typeof spec.cwd === 'string') stub.session = { header: { cwd: spec.cwd } }
+    return stub
+  })
+  state.agents = list
+
   const agents = {
     list() {
-      return [{ id: 'fake-agent', inject(message) { state.injected.push(message) } }]
+      return list
     }
   }
 
@@ -162,11 +185,23 @@ async function callRoute(ctx, path, body, method = 'POST', url = null) {
   return captured
 }
 
-/** 当前生效的 section 文本：始终读**最后一次**注册的 provider（模拟宿主每步求值）。 */
-function currentPrompt(ctx) {
+/** 装配上下文的桩：宿主在 diagnostics 装配时不传 agent，`agentWithCwd(null)` 就是那种形态。 */
+function agentWithCwd(cwd) {
+  if (typeof cwd !== 'string') return undefined
+  return { session: { header: { cwd } } }
+}
+
+/**
+ * 当前生效的 section 文本：始终读**最后一次**注册的 provider（模拟宿主每步求值）。
+ *
+ * 必须传装配上下文：0.8.1-b 之后 text provider 会按 `assembly.agent` 的 cwd 解析绑定，
+ * 零参调用得到的是「没有会话信息」这条分支（也就是全局配置），那是另一个被测语义 ——
+ * 想测「某个会话会拿到什么」就必须把那个会话传进来。
+ */
+function currentPrompt(ctx, cwd) {
   const last = ctx.state.sections[ctx.state.sections.length - 1]
   if (!last) return '<未注册>'
-  return last.text()
+  return last.text({ agent: agentWithCwd(cwd) })
 }
 
 // ==================== 场景 ====================
@@ -740,6 +775,309 @@ async function historyDivergedScenario(entry) {
   return results
 }
 
+// ==================== 工作区绑定场景（0.8.1-b）====================
+
+/**
+ * 同一进程里多个不同 cwd 的会话：目录绑定必须**各自解析**，且两条通道口径一致。
+ *
+ * 为什么非要端到端测：绑定层的纯函数（前缀匹配、最长前缀、边界判定）已由
+ * verify-bindings 单独钉住，但「解析结果真的到达了会话」是另一回事 —— 中间还隔着
+ * configForCwd 的合成语义、text provider 的**同步**约束、以及注入通道的逐 agent 编译。
+ * 这三处任何一处接错，症状都是「绑定看起来生效了、其实全都在用全局配置」，或者更糟：
+ * A 项目的人设进了 B 项目的会话。纯函数层的断言对这两件事一无所知。
+ *
+ * 绑定表必须在挂载**之前**落盘：loadBindings() 只在 apply() 启动时读一次
+ * （读盘不能放在装配路径上 —— text provider 必须是同步的）。
+ */
+async function workspaceBindingScenario(entry) {
+  const dshHome = mkdtempSync(join(tmpdir(), 'dsh-soul-e2e-workspace-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+
+  const results = []
+  const push = (name, ok, detail) => results.push({ name, ok, detail })
+
+  // 目录键用**真实存在**的目录。loadBindings() 会对每条键算一次 realpath 身份键；
+  // 路径不存在时它刻意回落到规范化形态而不报错，但那样身份键恒等于展示键，
+  // 「两个键集合」这条设计就一点都没被覆盖到。
+  const dirA = mkdtempSync(join(tmpdir(), 'dsh-soul-ws-A-'))
+  const dirB = mkdtempSync(join(tmpdir(), 'dsh-soul-ws-B-'))
+  const subDir = join(dirA, '子模块')
+  // 前缀边界：与 dirA 同级、名字以 dirA 结尾的兄弟目录（`D:\项目A` vs `D:\项目AB`）
+  const siblingDir = `${dirA}回响`
+  const bindingsFile = join(dshHome, 'soul-bindings.json')
+
+  // 判别字符串取自两个内置人设自己的指令文本 —— 它们彼此完全不同，可当指纹用。
+  const ARCH = '以系统设计视角回答'
+  const MINIMAL = '只给结论和必要依据'
+  const ROAST = '吐槽达人'
+
+  const injectedText = (id) =>
+    (ctxRef.state.injections.get(id) || []).map((m) => m?.content?.[0]?.text || '').join('\n')
+
+  let ctxRef = null
+
+  try {
+    mkdirSync(subDir, { recursive: true })
+    writeFileSync(
+      bindingsFile,
+      JSON.stringify(
+        {
+          version: 1,
+          bindings: {
+            [dirA]: '资深架构师',
+            [subDir]: '极简主义者',
+            [dirB]: 'W-不存在的人设'
+          }
+        },
+        null,
+        2
+      )
+    )
+
+    const mod = await import(pathToFileURL(entry).href + `?t=${Date.now()}`)
+    const ctx = makeCtx([
+      { id: 'agent-global' }, // 会话头没有 cwd
+      { id: 'agent-a', cwd: dirA },
+      { id: 'agent-b', cwd: dirB },
+      { id: 'agent-sub', cwd: subDir },
+      { id: 'agent-sibling', cwd: siblingDir }
+    ])
+    ctxRef = ctx
+    await mod.apply(ctx)
+
+    // 全局基线：先写入「关于你」与被绑定覆盖的维度。
+    // style=roast 是刻意选的 —— 它让「覆盖真的替换了字段」与「只是又追加了一段文本」
+    // 产生可观测差别（后者会同时出现吐槽文案与架构师文案，而两者互斥）。
+    await callRoute(ctx, '/api/soul/config', { nickname: 'W-昵称', occupation: 'W-职业', style: 'roast' })
+
+    // 诊断装配形态：宿主在 diagnostics 下可能**整个装配上下文都不传**
+    // （runtime-types.d.ts 的注释写明 agent `absent on diagnostics`）。
+    const lastSection = ctx.state.sections[ctx.state.sections.length - 1]
+    const textNoAssembly = lastSection.text()
+
+    const globalText = currentPrompt(ctx)
+    const textA = currentPrompt(ctx, dirA)
+    const textSub = currentPrompt(ctx, subDir)
+    const textB = currentPrompt(ctx, dirB)
+    const textSibling = currentPrompt(ctx, siblingDir)
+
+    push(
+      'W1 没有 cwd 的会话（含整个装配上下文缺席）回落全局配置，不抛错也不命中绑定',
+      globalText.includes(ROAST) &&
+        !globalText.includes(ARCH) &&
+        textNoAssembly === globalText,
+      JSON.stringify({ 全局含吐槽: globalText.includes(ROAST), 无上下文一致: textNoAssembly === globalText })
+    )
+    push(
+      'W2 同一进程内不同 cwd 的会话拿到不同的 section 文本（配置不再全局唯一）',
+      textA.includes(ARCH) && textSub.includes(MINIMAL) && textA !== textSub,
+      JSON.stringify({ a: textA.includes(ARCH), sub: textSub.includes(MINIMAL) })
+    )
+    push(
+      'W3 最长前缀优先：子目录自己的绑定压过父目录的绑定（不是两条叠加）',
+      textSub.includes(MINIMAL) && !textSub.includes(ARCH),
+      JSON.stringify(textSub.slice(0, 70))
+    )
+    push(
+      'W4 前缀匹配落在**路径边界**上：以 dirA 为前缀的兄弟目录不得命中 dirA',
+      textSibling === globalText && !textSibling.includes(ARCH),
+      JSON.stringify({ 兄弟目录: siblingDir, 命中: textSibling.includes(ARCH) })
+    )
+    push(
+      'W5 绑定指向已不存在的人设时不生效、回落全局（不自动删除，也不假装命中）',
+      textB === globalText && textB.includes(ROAST),
+      JSON.stringify({ 等于全局: textB === globalText })
+    )
+    push(
+      'W6 目录绑定走预设的「部分覆盖」语义：不动「关于你」，且是替换而非追加',
+      textA.includes('W-昵称') && textA.includes(ARCH) && !textA.includes(ROAST) && !textA.includes(MINIMAL),
+      JSON.stringify({ 昵称在: textA.includes('W-昵称'), 吐槽被替换: !textA.includes(ROAST) })
+    )
+
+    // ── 注入通道：同样的逐会话解析，但走的是另一条路 ──────────────────────────
+    const injectedA = injectedText('agent-a')
+    const injectedSub = injectedText('agent-sub')
+    const injectedB = injectedText('agent-b')
+    const injectedGlobal = injectedText('agent-global')
+    push(
+      'W7 注入通道也逐会话编译：绑定目录的会话收到该人设，未绑定的收到全局配置',
+      injectedA.includes(ARCH) &&
+        injectedSub.includes(MINIMAL) &&
+        !injectedB.includes(ARCH) &&
+        injectedGlobal.includes(ROAST),
+      JSON.stringify({
+        a: injectedA.includes(ARCH),
+        sub: injectedSub.includes(MINIMAL),
+        b: injectedB.includes(ARCH)
+      })
+    )
+    push(
+      'W8 两条通道对同一会话给出**逐字节相同**的文本（section 与注入不会各说各话）',
+      injectedA.endsWith(textA) && injectedGlobal.endsWith(globalText),
+      JSON.stringify({ a: injectedA.endsWith(textA), 全局: injectedGlobal.endsWith(globalText) })
+    )
+
+    const status = await callRoute(ctx, '/api/soul/status', null, 'GET')
+    push(
+      'W9 诊断端点如实计数：五个会话各自送达，没有把「算不出来」算成失败',
+      status.body?.channels?.injection?.agents === 5 &&
+        status.body?.channels?.injection?.delivered === 5 &&
+        status.body?.channels?.injection?.failed === 0,
+      JSON.stringify(status.body?.channels?.injection)
+    )
+
+    // 全局总开关不属于 PERSONA_FIELDS，任何绑定都覆盖不了它。
+    await callRoute(ctx, '/api/soul/config', { enabled: false })
+    const offA = currentPrompt(ctx, dirA)
+    const offGlobal = currentPrompt(ctx)
+    push(
+      'W10 全局总开关仍然说话：enabled=false 时绑定的目录也不会拿到人设',
+      offA === '' && offGlobal === '',
+      JSON.stringify({ 绑定目录: offA.slice(0, 30), 全局: offGlobal.slice(0, 30) })
+    )
+    await callRoute(ctx, '/api/soul/config', { enabled: true })
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(dshHome, { recursive: true, force: true })
+    rmSync(dirA, { recursive: true, force: true })
+    rmSync(dirB, { recursive: true, force: true })
+  }
+
+  return results
+}
+
+// ==================== 绑定身份键与降级场景（0.8.1-b）====================
+
+/**
+ * 绑定表的「两个键集合」与读取失败时的降级，各自需要**不同的磁盘前置状态**：
+ * 身份键（realpath）要真有 Junction 才与展示键不同，降级要真有损坏/异常版本的文件。
+ * 而绑定表在 apply() 里只读一次，所以每一种前置状态都得重新挂载一次。
+ *
+ * 为什么不能只靠 lib/bindings.mjs 的纯函数断言：那里实时注入 realpathFn，证明的是
+ * 「匹配函数怎么想」；这里证明的是「整条装配链真的把 Junction 认成了同一个目录」——
+ * 中间还隔着 normalizeDirPath 的大小写折算、compareTable 的键优先级、以及
+ * resolvePersonaForCwd 的失效回落。任何一处接错，两个路径会变成两条互不相干的绑定。
+ */
+async function bindingIdentityScenario(entry) {
+  const dshHome = mkdtempSync(join(tmpdir(), 'dsh-soul-e2e-identity-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+
+  const results = []
+  const push = (name, ok, detail) => results.push({ name, ok, detail })
+  const bindingsFile = join(dshHome, 'soul-bindings.json')
+
+  // 每组前置状态都真的在磁盘上造出来，用**真实存在的目录**：loadBindings() 会对每条键
+  // 算一次 realpath，路径不存在时它刻意回落到规范化形态 —— 那样身份键恒等于展示键，
+  // 「两个键集合」这条设计一点都没被覆盖到。
+  const rootReal = mkdtempSync(join(tmpdir(), 'dsh-soul-id-real-'))
+  const rootLink = mkdtempSync(join(tmpdir(), 'dsh-soul-id-link-'))
+  const realDir = join(rootReal, '真实目录')
+  const linkDir = join(rootLink, '入口目录')
+  mkdirSync(realDir, { recursive: true })
+
+  // 前置条件：Junction 必须真的指向另一个路径。造不出来（权限 / 平台限制）时本条
+  // 就失去了判别力 —— 那必须**如实报出来**，而不是让断言「因为两边本来就是同一个
+  // 目录」而空过。Windows 上 junction 不需要管理员权限，POSIX 上传 'junction' 会
+  // 退化成普通 symlink，两者都能解析。
+  let linkReady = false
+  try {
+    symlinkSync(realDir, linkDir, 'junction')
+    linkReady = realpathSync(linkDir) === realpathSync(realDir)
+  } catch {
+    linkReady = false
+  }
+
+  const ARCH = '以系统设计视角回答'
+  const MINIMAL = '只给结论和必要依据'
+
+  const mount = async (agents) => {
+    const mod = await import(pathToFileURL(entry).href + `?t=${Date.now()}-${Math.random()}`)
+    const ctx = makeCtx(agents)
+    await mod.apply(ctx)
+    return ctx
+  }
+
+  try {
+    if (!linkReady) {
+      push('W11 前置条件：Junction 可用（造不出来则 W11–W13 无判别力）', false, '无法创建 junction / symlink')
+    } else {
+      // ── 展示键优先：身份键不得改写另一条已存在的绑定 ────────────────────────
+      // 两个键各自绑不同人设：入口目录那条（展示键）与真实目录那条。realpath 会把
+      // 入口目录解析成真实目录 —— 若身份键直接覆盖，真实目录的会话就会**静默拿到
+      // 入口目录的人设**，而用户从设置页完全看不出来。
+      writeFileSync(bindingsFile, JSON.stringify({
+        version: 1,
+        bindings: { [linkDir]: '极简主义者', [realDir]: '资深架构师' }
+      }, null, 2))
+      const ctx = await mount([{ id: 'via-link', cwd: linkDir }, { id: 'via-real', cwd: realDir }])
+      const atLink = currentPrompt(ctx, linkDir)
+      const atReal = currentPrompt(ctx, realDir)
+      push(
+        'W11 会话 cwd 是 Junction 入口时按用户写的那个键命中（展示键优先于身份键）',
+        atLink.includes(MINIMAL) && !atLink.includes(ARCH),
+        JSON.stringify(atLink.slice(0, 60))
+      )
+      push(
+        'W12 真实路径的会话仍拿到真实路径那条绑定 —— 身份键不得改写已存在的展示键',
+        atReal.includes(ARCH) && !atReal.includes(MINIMAL),
+        JSON.stringify(atReal.slice(0, 60))
+      )
+
+      // ── 身份键的用途：绑定只写在入口、会话从真实路径进来 ─────────────────────
+      // 这是设计里点名的典型失配：cwd 由 Node 的 process.cwd() 给出（规范路径），
+      // 而绑定目录是用户在选择器里点出来的（很可能是 Junction 路径）。
+      writeFileSync(bindingsFile, JSON.stringify({
+        version: 1,
+        bindings: { [linkDir]: '极简主义者' }
+      }, null, 2))
+      const ctx2 = await mount([{ id: 'real-only', cwd: realDir }])
+      const atReal2 = currentPrompt(ctx2, realDir)
+      push(
+        'W13 绑定只写在 Junction 入口时，从真实路径进来的会话同样命中（身份键存在的理由）',
+        atReal2.includes(MINIMAL),
+        JSON.stringify(atReal2.slice(0, 60))
+      )
+    }
+
+    // ── 降级：绑定文件损坏 / 版本不认识 ───────────────────────────────────────
+    // 绑定是环境事实、不是用户唯一的数据副本，所以读取失败时**以空表继续**而不是
+    // 拒绝启动（与配置损坏时的策略刻意不同）。用户此时看到的是「绑定都没了」，
+    // 但他至少能打开设置页把它们重新绑上 —— 而不是整个插件不激活。
+    writeFileSync(bindingsFile, '{"version": 1, "bindings": {"D:\\\\半截', 'utf8')
+    const ctx3 = await mount([{ id: 'corrupt', cwd: realDir }])
+    const atCorrupt = currentPrompt(ctx3, realDir)
+    push(
+      'W14 绑定文件损坏时插件照常启动、所有会话回落全局（不抛错），且损坏文件被移开备份',
+      ctx3.state.sections.length === 1 && atCorrupt.length > 0 && !atCorrupt.includes(MINIMAL) &&
+        existsSync(`${bindingsFile}.corrupt`),
+      JSON.stringify({ section: ctx3.state.sections.length, 备份: existsSync(`${bindingsFile}.corrupt`) })
+    )
+
+    writeFileSync(bindingsFile, JSON.stringify({
+      version: 99,
+      bindings: { [realDir]: '极简主义者' }
+    }, null, 2))
+    const ctx4 = await mount([{ id: 'future', cwd: realDir }])
+    const atFuture = currentPrompt(ctx4, realDir)
+    push(
+      'W15 绑定文件的版本号不认识时整表忽略、回落全局（不按当前语义猜着解析）',
+      atFuture.length > 0 && !atFuture.includes(MINIMAL),
+      JSON.stringify(atFuture.slice(0, 60))
+    )
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(dshHome, { recursive: true, force: true })
+    rmSync(rootReal, { recursive: true, force: true })
+    rmSync(rootLink, { recursive: true, force: true })
+  }
+
+  return results
+}
+
 // ==================== 挂载沙箱 ====================
 /**
  * 把插件复制到临时目录，并生成静态依赖 `@deepseek-ai/dsh-llm` 的形状兼容桩。
@@ -825,6 +1163,28 @@ async function main() {
     rmSync(divergedSandbox.dir, { recursive: true, force: true })
   }
 
+  // 工作区绑定（0.8.1-b）：另起沙箱，因为它的前置状态是「绑定表已经在磁盘上」，
+  // 而绑定表只在 apply() 读取一次。混进前面那些场景会互相污染。
+  console.log('')
+  console.log('W 工作区绑定：不同 cwd 的会话各自解析人设')
+  const workspaceSandbox = prepareSandbox(PKG_DIR, 'workspace')
+  try {
+    for (const r of await workspaceBindingScenario(workspaceSandbox.entry)) record(r.name, r.ok, r.detail)
+  } finally {
+    rmSync(workspaceSandbox.dir, { recursive: true, force: true })
+  }
+
+  // 身份键（Junction）与读取失败的降级：每种前置状态都要重新挂载一次，
+  // 因为绑定表只在 apply() 里读一次。
+  console.log('')
+  console.log('W2 绑定身份键与降级：Junction 入口 / 真实路径 / 损坏 / 版本不认识')
+  const identitySandbox = prepareSandbox(PKG_DIR, 'identity')
+  try {
+    for (const r of await bindingIdentityScenario(identitySandbox.entry)) record(r.name, r.ok, r.detail)
+  } finally {
+    rmSync(identitySandbox.dir, { recursive: true, force: true })
+  }
+
   // 判断力对照：把 provider 读的配置源换成 DEFAULT_CONFIG（模拟「配置改了但读不到」），
   // E4 / E8 必须失败 —— 否则这些断言证明不了「新配置真的到了 provider」。
   const sandbox = mkdtempSync(join(tmpdir(), 'dsh-soul-sabotage-'))
@@ -838,12 +1198,13 @@ async function main() {
     const target = join(patched, 'index.mjs')
     const source = readFileSync(target, 'utf8')
     // marker 取「provider 读的那个配置源」这一表达式本身，而不是它所在的整行语句 ——
-    // 后者会随 section 注册处的写法调整而失效（曾经就这样报废过一次对照）。
-    const marker = 'compilePrompt(configCache || DEFAULT_CONFIG)'
-    if (!source.includes(marker)) {
-      record('E 判断力对照：可在副本中改坏 provider 的配置源', false, '找不到 marker')
+    // 后者会随 section 注册处的写法调整而失效（曾经就这样报废过一次对照；
+    // 0.8.1-b 把 text 回调改成按 cwd 解析后又失效了一次，这次仍只钉表达式）。
+    const marker = 'configCache || DEFAULT_CONFIG'
+    if (!source.includes(marker) || source.split(marker).length !== 2) {
+      record('E 判断力对照：可在副本中改坏 provider 的配置源', false, '找不到 marker 或 marker 不唯一')
     } else {
-      writeFileSync(target, source.replace(marker, 'compilePrompt(DEFAULT_CONFIG)'))
+      writeFileSync(target, source.replace(marker, 'DEFAULT_CONFIG'))
       const sabotageSandbox = prepareSandbox(patched, 'sabotage')
       try {
         sabotage = await scenario(sabotageSandbox.entry)

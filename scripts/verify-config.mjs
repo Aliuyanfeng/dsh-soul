@@ -45,7 +45,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 119
+const EXPECTED_ASSERTIONS = 125
 
 let passed = 0
 const failures = []
@@ -2991,6 +2991,204 @@ check('变更记录分组：字段标签覆盖全部审计字段，且只渲染�
   // 时钟回拨（或服务端时间略快）会让差值变负 —— 「-3 分钟前」会被读成记录坏了。
   assert.match(clientCode, /if \(diff < 60 \* 1000\) return t\('history\.timeJustNow'\)/,
     '差值小于一分钟（含负数）都该显示「刚刚」')
+})
+
+// ---------- 工作区绑定（0.8.1-b）----------
+
+check('工作区绑定：provider 每轮按会话 cwd 解析，且必须是同步的', () => {
+  const opts = stripComments(extractObject(indexSource, 'spCtx.systemPrompt.section('))
+  assert.ok(opts !== '', '找不到 spCtx.systemPrompt.section(...) 调用')
+
+  // section 的 text 回调**必须读装配上下文**。宿主侧的原话是
+  // `text: typeof entry.text === "function" ? entry.text(context) : entry.text`
+  // （dsh-system-prompt/lib/index.js），也就是每个 step 都会重新求值一次 ——
+  // 这正是「改配置后下一轮生效」这条通道的机制。不看入参就退化成全局一份文本，
+  // 工作区绑定会**静默失效**：设置页显示绑定成功，会话里拿到的却是全局人设。
+  assert.match(
+    opts,
+    /text:\s*\(?\s*assembly\s*\)?\s*=>/,
+    'section 的 text 必须是接受装配上下文的函数（不看 assembly 就无法按 cwd 解析绑定）'
+  )
+  assert.match(
+    opts,
+    /cwdOfAgent\(\s*assembly\s*&&\s*assembly\.agent\s*\)/,
+    'text 回调应经 cwdOfAgent(assembly && assembly.agent) 取会话目录 —— 直接 assembly.agent 会在诊断装配（agent 缺席）时抛错'
+  )
+  assert.match(opts, /configForCwd\(/, 'text 回调必须经 configForCwd 合成该目录生效的配置')
+  assert.equal(/async\s*\(?\s*assembly/.test(opts), false, 'text 回调不得是 async')
+  assert.equal(/await /.test(opts), false, 'text 回调内不得出现 await')
+
+  // 宿主是**同步**调用 text 的（`section.text(context)` 位于一个非 async 的 map 回调里）。
+  // 返回 Promise 会被当成 section 文本对象直接塞进提示词 —— 坏得无声无息。
+  // 因此 realpath 这种异步 I/O 只能出现在**键**侧（loadBindings），不能出现在这里。
+  assert.equal(
+    /realpath|resolveDirIdentity/.test(opts),
+    false,
+    'text 回调里不得做 realpath（异步 I/O）：它必须是同步的，身份解析只能在 loadBindings() 对键做一次'
+  )
+  assert.match(
+    opts,
+    /configCache \|\| DEFAULT_CONFIG/,
+    'text 回调仍应读 configCache（保存后下一轮立即生效）'
+  )
+})
+
+check('工作区绑定：注入通道逐 agent 编译，不共用一份全局文本', () => {
+  const matched = indexCode.match(/function injectPromptToAllAgents\(ctx, config\)[\s\S]*?\n\}/)
+  assert.ok(matched, 'index.mjs 中找不到 injectPromptToAllAgents')
+  const body = matched[0]
+
+  // 草案 §6.3：配置不再全局唯一之后，算一份文本发给所有人就是**把 A 项目的人设
+  // 注入 B 项目的会话** —— 比不注入更糟（不注入时它至少还是全局配置，与用户以为的一致）。
+  const loopAt = body.indexOf('for (const agent of listed)')
+  assert.ok(loopAt !== -1, '找不到遍历活动会话的循环')
+  const loop = body.slice(loopAt)
+  assert.match(
+    loop,
+    /configForCwd\(\s*config\s*,\s*cwdOfAgent\(\s*agent\s*\)\s*\)/,
+    '编译必须发生在循环体内、按该 agent 的 cwd 解析 —— 循环外算一份就和绑定功能互相抵消'
+  )
+  // 反证：循环外不得再有 compilePrompt（否则那份文本会被复用给所有会话）
+  assert.equal(
+    /const prompt = compilePrompt\(config\)/.test(body.slice(0, loopAt)),
+    false,
+    '循环外不得预先编译一份全局文本'
+  )
+  // 逐 agent 编译不得以破坏可观测性为代价（与上面那条断言同一组契约）
+  assert.ok(/delivered\+\+/.test(body) && /failed\+\+/.test(body), '仍应如实统计成功与失败数')
+  assert.match(
+    body,
+    /configForCwd\(config, cwdOfAgent\(agent\)\)[\s\S]{0,120}?const prompt = compilePrompt\(perAgent\)/,
+    '应当先用该会话的 cwd 合成配置、再编译（顺序反了等于还是全局文本）'
+  )
+})
+
+check('工作区绑定：合成配置只覆盖人设字段，全局总开关不被覆盖', () => {
+  const fn = stripComments(extractObject(indexSource, 'function configForCwd'))
+  assert.ok(fn !== '', '找不到 configForCwd 函数体')
+  assert.match(fn, /resolveBindingForCwd\(/, '应先按目录解析绑定')
+  assert.match(
+    fn,
+    /pickPersonaValues\(persona\)/,
+    '必须用 pickPersonaValues 走白名单 —— 直接展开条目会把磁盘上残留的「关于你」写回活动配置'
+  )
+  assert.match(fn, /sanitizeConfig\(/, '合成的补丁要经同一套校验（与 /personas/use 的取值语义逐字段一致）')
+  // `enabled` 不属于 PERSONA_FIELDS：关掉插件后，绑定的目录也不该偷偷注入人设。
+  assert.equal(
+    /\benabled\b/.test(fn),
+    false,
+    'configForCwd 不得触碰 enabled —— 全局总开关必须始终说话'
+  )
+  const cwdOf = stripComments(extractObject(indexSource, 'function cwdOfAgent'))
+  assert.ok(cwdOf !== '', '找不到 cwdOfAgent 函数体')
+  assert.match(
+    cwdOf,
+    /agent\?\.session\?\.header\?\.cwd/,
+    'cwdOfAgent 必须用可选链容忍 undefined —— 宿主在诊断装配时不传 agent（absent on diagnostics）'
+  )
+  assert.match(
+    cwdOf,
+    /typeof cwd === 'string' && cwd\.trim\(\) !== ''/,
+    '空串 / 非字符串的 cwd 必须当成「没有会话信息」，否则 normalizeDirPath 会拿它去匹配'
+  )
+})
+
+check('工作区绑定：读盘只在装配路径之外，且失败不阻塞启动', () => {
+  // 绑定表要单独缓存的原因：两个消费者都在**每一轮装配**上（text provider 每轮一次、
+  // 注入每次保存一次）。读盘 + 最多 200 次 realpath 放进这条路径不可接受。
+  const load = stripComments(extractObject(indexSource, 'async function loadBindings'))
+  assert.ok(load !== '', '找不到 loadBindings 函数体')
+  assert.match(load, /readBindingsFile\(/, '应经 lib/bindings.mjs 读取（损坏 / 版本的判定在那里）')
+  assert.match(load, /resolveDirIdentity\(/, '应把每条键解析成身份形态（解 Junction / 符号链接）')
+  assert.equal(/throw /.test(load), false, 'loadBindings 不得抛错：绑定是可选增强，读不出来不该让装配流程崩掉')
+  // 失败时不写缓存（与 loadConfig 同款：用户改对文件后下次加载自动恢复），
+  // 但必须把比较表清空 —— 宁可暂时不生效，也不能拿旧表继续命中。
+  assert.match(
+    load,
+    /if \(failure\) \{[\s\S]*?bindingsCompareTable = \{\}[\s\S]*?bindingsDisplayOf = new Map\(\)[\s\S]*?return /,
+    '加载失败时必须清空比较表并提前返回（不得留着旧表继续命中）'
+  )
+  const failBlock = load.match(/if \(failure\) \{[\s\S]*?\n  \}/)?.[0] ?? ''
+  assert.equal(
+    /bindingsCache\s*=/.test(failBlock),
+    false,
+    '失败分支不得写 bindingsCache：缓存了空表，用户修好文件后不重启就恢复不了'
+  )
+
+  // 身份键不得覆盖展示键：展示键是用户亲手写下的那个名字，优先级更高；
+  // 被挡住的身份键只是少一条别名，判定方向安全。
+  assert.match(
+    load,
+    /if \(hasOwn\(compareTable, identity\)\) continue/,
+    '身份键撞上另一条展示键时应跳过 —— 覆盖会让 UI 显示用户没写过的目录名'
+  )
+  assert.match(
+    load,
+    /compareKey\(identity\) === compareKey\(dir\)\) continue/,
+    '身份键与展示键相同时不应另占一个键位（否则 shadowed 会出现重复项）'
+  )
+
+  // 启动时读一次：必须在装配路径之外做完（text provider 是同步的，不能在里面 await）。
+  const applyBody = stripComments(extractObject(indexSource, 'export async function apply'))
+  assert.ok(applyBody !== '', '找不到 apply 函数体')
+  assert.match(applyBody, /await ensureBindings\(\)/, 'apply() 应在注册 section 之前先读一次绑定表')
+  const sectionAt = applyBody.indexOf('registerSystemPrompt(')
+  const bindingsAt = applyBody.indexOf('await ensureBindings()')
+  assert.ok(bindingsAt !== -1 && sectionAt !== -1, 'apply() 里应同时有 ensureBindings 与 registerSystemPrompt')
+  assert.ok(
+    bindingsAt < sectionAt,
+    '读绑定表必须排在注册 section 之前 —— 注册那一刻 provider 就可能被调用，此时表还没读出来'
+  )
+})
+
+check('工作区绑定：命中结果回报展示键，失效项去重后如实上报', () => {
+  const fn = stripComments(extractObject(indexSource, 'function resolveBindingForCwd'))
+  assert.ok(fn !== '', '找不到 resolveBindingForCwd 函数体')
+  assert.match(fn, /normalizeDirPath\(cwd\)/, 'cwd 侧只做纯字符串规范化（realpath 已在键侧做过）')
+  assert.match(
+    fn,
+    /bindingsDisplayOf\.get\(/,
+    '命中后必须把身份键翻译回展示键 —— 用户不认得 realpath 吐出来的名字'
+  )
+  // 同一条绑定的展示键与身份键可能同时命中，不去重 UI 会把一条失效绑定画两遍。
+  assert.match(fn, /const seen = new Set\(\)/, 'shadowed 需要按翻译后的 dir 去重')
+  assert.match(
+    fn,
+    /shadowed\.push\(\{ \.\.\.item, dir \}\)/,
+    'shadowed 项也要带上展示键（UI 要能说出「这条更具体的绑定为什么没生效」）'
+  )
+  assert.equal(
+    /shadowed\.push\(\{ \.\.\.item, dir: item\.dir \}\)/.test(fn),
+    false,
+    'shadowed 不得保留原始键 —— 身份键会直接显示给用户'
+  )
+})
+
+check('工作区绑定：纯函数层不依赖宿主，隐私边界不破', () => {
+  const bindingSource = readFileSync(new URL('../lib/bindings.mjs', import.meta.url), 'utf8')
+  const bindingCode = stripComments(bindingSource)
+  assert.equal(
+    /from 'cordis'|require\('cordis'\)/.test(bindingCode),
+    false,
+    'lib/bindings.mjs 不得依赖 cordis —— 它要能被脚本独立加载测试'
+  )
+  // 绑定表里存的是**本机目录结构**，属于用户隐私：它只用于选人设，内容绝不进提示词。
+  assert.equal(
+    /compilePrompt|systemPrompt|injectPromptToAllAgents/.test(bindingCode),
+    false,
+    'lib/bindings.mjs 不得触碰提示词装配 —— 目录路径不进 system prompt'
+  )
+  assert.equal(/console\./.test(bindingCode), false, '纯函数层不得打印')
+  // 绑定文件的读写必须复用统一原语（原子写 / 损坏处理 / 路径推导），不得各自造一份。
+  assert.match(bindingCode, /from '\.\/store\.mjs'/, '应复用 lib/store.mjs 的读写原语')
+  assert.match(
+    bindingCode,
+    /await writeConfigFile\(filePath, serializeBindings\(bindings\)\)/,
+    'writeBindingsFile 必须经 writeConfigFile 原子写'
+  )
+  // 绑定文件是配置文件的**兄弟**：由 configPath() 推导，测试把配置指到临时目录时绑定自动跟随。
+  assert.match(indexCode, /function bindingsPath\(\)[\s\S]{0,120}?bindingsPathFor\(configPath\(\)\)/,
+    '绑定文件路径应由 configPath() 推导（「配置在哪、绑定就在哪」是结构事实）')
 })
 
 // 「断言数一致」与「每一项真的通过」是两回事：前者只防脚本与声明漂移，

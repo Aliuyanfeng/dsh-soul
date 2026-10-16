@@ -33,6 +33,14 @@ import {
   sanitizeConfig,
   sanitizePersonaName
 } from './lib/config.mjs'
+import {
+  bindingsPathFor,
+  compareKey,
+  normalizeDirPath,
+  readBindingsFile,
+  resolveDirIdentity,
+  resolvePersonaForCwd
+} from './lib/bindings.mjs'
 import { createInjectionSource } from './lib/injection.mjs'
 import { isBuiltinPersona, builtinPersonaNames, mergePersonas, personaMatches, resolvePersona, declaredPersonaKeys } from './lib/personas.mjs'
 import { configWriteRefusal, describeConfigFailure, moveAsideConfigFile, readConfigFile, writeConfigFile } from './lib/store.mjs'
@@ -693,14 +701,23 @@ function injectPromptToAllAgents(ctx, config) {
   }
 
   const T = promptTextOf(config)
-  const prompt = compilePrompt(config)
-  const snapshotText = prompt || T.injectDisabled
 
   let delivered = 0
   let failed = 0
   let lastError = null
 
   for (const agent of listed) {
+    // **每个会话各自编译**，不能共用一份文本。
+    //
+    // 工作区绑定让「配置」不再是全局唯一的：A 项目会话该拿到「资深架构师」，B 项目会话
+    // 该拿到「极简主义者」。若在这里算一份全局文本发给所有人，B 项目会收到 A 的人设 ——
+    // 这比不注入更糟（不注入时它至少还是全局配置，与用户以为的一致）。
+    //
+    // 拿不到 cwd（会话头无该字段）时 configForCwd 返回原配置，行为与绑定功能上线前一致。
+    const perAgent = configForCwd(config, cwdOfAgent(agent)).config
+    const prompt = compilePrompt(perAgent)
+    const snapshotText = prompt || T.injectDisabled
+
     try {
       agent.inject(createUserMessage({
         content: [{
@@ -747,6 +764,162 @@ function refreshPromptAndInject(ctx, config) {
     })
   }
   injectPromptToAllAgents(ctx, config)
+}
+
+// ==================== 工作区绑定：按目录解析人设 ====================
+//
+// 三层解析（DESIGN-persona-scope.md §5）：会话显式覆盖 → 目录绑定（最长前缀）→ 全局配置。
+// 0.8.1-b 落地的是中间那层；会话覆盖（0.8.1-c/d）尚未接入，接入点见 resolveForCwd 的注释。
+//
+// 为什么绑定表要单独缓存而不是每次读盘：本节的两个消费者都在**每一轮装配**上 ——
+// system prompt section 的 text provider 每轮都被调用一次，活动会话注入每次保存各一次。
+// 读盘 + 200 次 realpath 放进这条路径是不可接受的，所以绑定表在加载时规范化一次。
+
+// 绑定文件路径（configPath() 的兄弟文件）。
+function bindingsPath() {
+  return bindingsPathFor(configPath())
+}
+
+// 绑定表读数。null = 还没读过（与「读过了、确实是空表」必须分得开，
+// 后者意味着「用户一条都没绑」，前者意味着「还没问过磁盘」）。
+let bindingsCache = null
+
+// 最近一次绑定加载失败 / 有坏条目的说明（无问题为 null）。
+let bindingsLoadFailure = null
+
+// 命中判定的比较表。
+//
+// 这里有两个键集合，都指向同一条绑定：
+//   · **展示键**：绑定表里原样存着的形式，UI 与用户看到的就是它；
+//   · **身份键**：`realpath` 解析后的形式（解掉符号链接 / Junction；Windows 上还会
+//     规范化盘符大小写）。
+//
+// 为什么要两个都进比较表 —— 两边各自可能缺席一次解析：
+//   · 会话 cwd 由 Node 的 `process.cwd()` 提供（`GetCurrentDirectory` 返回的是**规范**
+//     路径），而绑定目录是用户在选择器里点出来的，很可能是 Junction 路径。
+//     典型失配：cwd = `D:\真实目录`、绑定键 = `D:\junction入口`。
+//   · 反过来，用户手工粘贴的路径可能本就是规范路径，而会话 cwd 落在 Junction 里。
+// 两个键都留着，任一侧成立即命中；`bindingsDisplayOf` 负责把命中结果翻译回展示键，
+// 因为用户不认得 realpath 吐出来的那个名字。
+//
+// **不对 cwd 做 realpath**：text provider 必须是**同步**的（见 registerSystemPrompt），
+// 而 realpath 是异步 I/O。把身份解析全部放在**键**侧，这个约束就消失了 ——
+// 键在加载时算一次，之后每轮装配都只是字符串比较。
+let bindingsCompareTable = null
+
+// 身份键 → 展示键（仅当两者不同时才有一条）。
+let bindingsDisplayOf = null
+
+// 解析绑定表：读盘 + 为每条键算出身份形态。
+//
+// 失败时**以空表继续**并把原因记在 bindingsLoadFailure 上，绝不抛错：
+// 绑定是可选增强，读不出来不该让整个插件的装配流程崩掉（与 loadConfig 的策略不同，
+// 因为配置是用户唯一的数据副本，而绑定不是）。
+//
+// 失败时**不写 bindingsCache**，与 loadConfig 同款：用户把文件改对之后，下一次
+// 加载（绑定路由写完表之后总会重新加载）就能自动恢复，不必重启 DSH。
+// 此时比较表被清成空表 —— 宁可暂时不生效，也不能拿上一次的旧表继续命中。
+async function loadBindings() {
+  const filePath = bindingsPath()
+  const { bindings, dropped, failure } = await readBindingsFile(filePath)
+  bindingsLoadFailure = failure || (dropped.length > 0 ? `${dropped.length} 条绑定因格式问题被忽略。` : null)
+
+  if (failure) {
+    bindingsCompareTable = {}
+    bindingsDisplayOf = new Map()
+    return { bindings: {}, dropped, failure, filePath }
+  }
+
+  // 计算身份键。并发发起（最多 MAX_BINDINGS=200 条，realpath 很轻），
+  // 但 resolveDirIdentity 自身绝不抛错，所以这里不需要 per-item 的 try/catch。
+  const compareTable = { ...bindings }
+  const displayOf = new Map()
+  const keys = Object.keys(bindings)
+  const identities = await Promise.all(keys.map(dir => resolveDirIdentity(dir)))
+
+  for (let i = 0; i < keys.length; i++) {
+    const dir = keys[i]
+    const identity = identities[i]
+    // 只有真的不同才加别键：同一条绑定占两个键位会让 shadowed 出现重复项。
+    if (!identity || compareKey(identity) === compareKey(dir)) continue
+    // 身份键撞上另一条展示键时**不覆盖** —— 展示键是用户亲手写的那个，
+    // 优先级更高；被挡住的身份键只是少一条别名，判定方向安全。
+    if (hasOwn(compareTable, identity)) continue
+    compareTable[identity] = bindings[dir]
+    displayOf.set(identity, dir)
+  }
+
+  bindingsCompareTable = compareTable
+  bindingsDisplayOf = displayOf
+  bindingsCache = { bindings, dropped, failure: null, filePath }
+  return bindingsCache
+}
+
+// 按目录解析该用什么人设（三层解析的「目录层」）。
+//
+// 返回 null 表示没有可用绑定 ⇒ 调用方回落全局配置（这是绝大多数用户的常态）。
+// 返回对象时：
+//   · dir / persona —— 真正生效的那条绑定；
+//   · shadowed —— 命中了、但人设已不存在的更具体绑定（不生效，但必须能说出来）。
+//
+// 本函数是**同步**的：它每轮装配都被调用，且 text provider 不允许是异步的。
+// 因此读盘只能发生在装配之外（apply() 启动时、绑定路由写完之后），见 ensureBindings。
+async function ensureBindings() {
+  if (!bindingsCache) await loadBindings()
+  return bindingsCache
+}
+
+function resolveBindingForCwd(cwd, userPersonas) {
+  if (!bindingsCompareTable || !bindingsDisplayOf) return null
+  const normalized = normalizeDirPath(cwd)
+  if (!normalized) return null
+
+  const resolved = resolvePersonaForCwd(normalized, bindingsCompareTable, userPersonas)
+  if (!resolved) return null
+
+  // 命中身份键时回报展示键（用户认得的是他自己写的那个名字）。
+  const display = dir => (bindingsDisplayOf.get(dir) || dir)
+  const seen = new Set()
+  const shadowed = []
+  for (const item of resolved.shadowed) {
+    const dir = display(item.dir)
+    // 同一条绑定的展示键与身份键可能都命中，去重后 UI 才不会把一条失效绑定画两遍。
+    if (seen.has(dir)) continue
+    seen.add(dir)
+    shadowed.push({ ...item, dir })
+  }
+
+  return { dir: display(resolved.dir), persona: resolved.persona, shadowed }
+}
+
+// 把「全局配置 + 一次目录解析结果」合成为该目录实际生效的配置。
+//
+// 用预设的**部分覆盖**语义（与 /api/soul/personas/use 同一条规则）：只覆盖条目实际
+// 声明过的字段，未声明的保持全局值。这条复用不是巧合 —— 用户在设置页点「使用」
+// 一个预设时看到的效果，必须与他在该目录里自动拿到的效果**逐字段一致**，
+// 否则「绑定生效了吗」将无法用任何已有操作来验证。
+//
+// `enabled` 刻意**不在**覆盖范围内（它不属于 PERSONA_FIELDS）：全局总开关始终说话，
+// 关掉插件后绑定的目录也不会偷偷注入人设。
+function configForCwd(base, cwd) {
+  const resolved = resolveBindingForCwd(cwd, base.personas)
+  if (!resolved) return { config: base, binding: null }
+  const persona = resolvePersona(resolved.persona, base.personas)
+  if (!persona) return { config: base, binding: null }
+  const { patch } = sanitizeConfig(pickPersonaValues(persona))
+  return { config: { ...base, ...patch }, binding: resolved }
+}
+
+// 从装配上下文里取该会话的工作目录。
+//
+// 两个都必须容忍 undefined：
+//   · `ctx` —— 宿主在 diagnostics 装配时**不传 agent**（runtime-types.d.ts:14-19 的注释
+//     写明 `absent on diagnostics`）。此时回落全局配置，绝不抛错。
+//   · `cwd` —— 会话头里可能没有这个字段。取不到时任何绑定都不会命中，
+//     于是行为与「没有绑定功能」完全一致（失败方向安全）。
+function cwdOfAgent(agent) {
+  const cwd = agent?.session?.header?.cwd
+  return typeof cwd === 'string' && cwd.trim() !== '' ? cwd : null
 }
 
 // ==================== HTTP 路由 ====================
@@ -1941,7 +2114,17 @@ function registerSystemPrompt(ctx) {
         // 代价为 0：我们不使用任何宿主提示词变量（需要上下文时，text 本身就是
         // provider）。关掉它同时让「预览所见」与「真实注入」逐字符一致。
         interpolate: false,
-        text: () => compilePrompt(configCache || DEFAULT_CONFIG)
+        text: (assembly) => {
+          // ⚠️ 必须同步：宿主以 `section.text(context)` 的形式**同步**调用
+          // （dsh-system-prompt 的装配：`typeof entry.text === 'function' ? entry.text(context) : entry.text`），
+          // 返回 Promise 会被当成 section 文本对象塞进提示词。所以这里只做纯字符串
+          // 比较——路径的身份解析（realpath）已在 loadBindings() 里对**键**做过一次。
+          //
+          // `assembly.agent` 在诊断装配时缺席（宿主注释写明 `absent on diagnostics`），
+          // cwdOfAgent 对 undefined 返回 null ⇒ configForCwd 原样返回全局配置。
+          const base = configCache || DEFAULT_CONFIG
+          return compilePrompt(configForCwd(base, cwdOfAgent(assembly && assembly.agent)).config)
+        }
       })
 
       deliveryState.sectionRegisteredAt = new Date().toISOString()
@@ -2280,6 +2463,13 @@ function registerTools(ctx) {
 export async function apply(ctx) {
   // 加载配置
   await loadConfig()
+
+  // 加载工作区绑定表。
+  //
+  // 必须在装配路径之外做完：system prompt section 的 text provider 是**同步**的
+  // （见 registerSystemPrompt 里的说明），不能在里面 await 读盘。这里读一次，
+  // 之后每轮装配只做纯字符串比较。失败不阻塞启动（绑定是可选增强）。
+  await ensureBindings()
   
   // 提供 soulConfig 服务
   ctx.provide('soulConfig', {
