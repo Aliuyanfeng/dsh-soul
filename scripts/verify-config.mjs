@@ -2978,7 +2978,9 @@ check('变更记录分组：字段标签覆盖全部审计字段，且只渲染�
 
   // 倒序是服务端的契约（toHistoryResponse 里 reverse 过一次）。客户端再排一次
   // 会把「最新在前」悄悄翻成「最旧在前」—— 用户看到的将是几年前的改动排第一行。
-  const listBlock = clientSource.match(/e\('ul', \{ className: 'soul-history-list' \},([\s\S]*?)\n\s{8}\)\)?,/)?.[1] ?? ''
+  // （0.8.1 双入口后，列表渲染在插件详情页组件 SoulHistorySection 内，
+  // 缩进为 6 空格 —— 原设置页手风琴内是 8 空格，匹配缩进要跟着搬。）
+  const listBlock = clientSource.match(/e\('ul', \{ className: 'soul-history-list' \},([\s\S]*?)\n\s{16}\)\)?,/)?.[1] ?? ''
   assert.ok(listBlock !== '', '找不到变更记录列表的渲染')
   assert.equal(/\.reverse\(\)|\.sort\(/.test(listBlock), false,
     '变更记录列表不得在客户端重排 —— 服务端已经按时间倒序返回')
