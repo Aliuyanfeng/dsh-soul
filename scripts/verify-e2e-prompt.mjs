@@ -40,7 +40,7 @@ import { PROFILE_FIELDS } from '../lib/config.mjs'
 // 基线运行应跑出的断言数：E 场景 28 项 + F 损坏场景 8 项 + G 变更记录 16 项
 // + H 撤销拒绝路径 3 项 + W 工作区绑定 15 项 + 2 项判断力对照。跑完时校验，
 // 防止「脚本加/删用例」与文档口径悄悄脱节。
-const EXPECTED_ASSERTIONS = 72
+const EXPECTED_ASSERTIONS = 77
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -282,6 +282,30 @@ async function scenario(entry) {
       ctx.state.injected.length === injectedBefore,
       `${injectedBefore} → ${ctx.state.injected.length}`
     )
+
+    // 非提示词字段必须是「推导出来的集合」而不是手写清单。
+    // 手工白名单已经漏过两次（requireToolConfirmation、historyMaxEntries），
+    // 后果是改一次容量参数就向所有活动会话多注入一条「配置已更新」。
+    // 这里逐个走真实 HTTP 写路径，断言 section 与注入都不增加。
+    for (const [key, value] of [
+      ['historyMaxEntries', 500],
+      ['requireToolConfirmation', true],
+      ['trailEnabled', false],
+      ['trailSpeed', 'fast'],
+      ['trailWidth', 'thick']
+    ]) {
+      const sBefore = ctx.state.sections.length
+      const iBefore = ctx.state.injected.length
+      const saved = await callRoute(ctx, '/api/soul/config', { [key]: value })
+      push(
+        `E10c 非提示词字段 ${key} 保存后不刷新提示词、不注入会话`,
+        saved.status === 200 &&
+          (saved.body?.changed || []).includes(key) &&
+          ctx.state.sections.length === sBefore &&
+          ctx.state.injected.length === iBefore,
+        `status=${saved.status} changed=${JSON.stringify(saved.body?.changed)} section ${sBefore}→${ctx.state.sections.length} 注入 ${iBefore}→${ctx.state.injected.length}`
+      )
+    }
 
     // 校验失败不得改动生效提示词
     const bad = await callRoute(ctx, '/api/soul/config', { style: '不存在的风格' })

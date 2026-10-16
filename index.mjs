@@ -29,6 +29,7 @@ import {
   LANGUAGE_VALUES,
   PERSONA_FIELDS,
   PERSONA_NAME_MAX,
+  PROMPT_INPUT_FIELDS,
   migrateConfig,
   sanitizeConfig,
   sanitizePersonaName
@@ -408,9 +409,23 @@ function enqueueConfigWrite(task) {
   return run
 }
 
-// 纯客户端外观字段：变更它们不需要刷新系统提示词，也不需要向活动会话注入快照；
+// 不影响提示词的字段：变更它们不需要刷新系统提示词，也不需要向活动会话注入快照；
 // 但它们仍是实际配置变更，必须计入 changed（供调用方判断「已保存 / 无变化」并驱动前端 dirty）。
-const NON_PROMPT_FIELDS = new Set(['trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth'])
+//
+// 由 DEFAULT_CONFIG 减去 PROMPT_INPUT_FIELDS **推导**，而不是手写清单。
+// 手写清单的代价已经发生过两次：trail* 四项之外，requireToolConfirmation 与
+// historyMaxEntries 都曾被漏在外面 —— 后果是改一次「保留条数」会重新注册 section
+// 并向所有活动会话注入一条配置更新消息，用户看到的是「我只调了个容量，Agent 却被
+// 通知了一遍配置变了」。这类「漏登记」不会报错，只会安静地多注入。
+//
+// 推导的安全前提是 compilePrompt 只读 PROMPT_INPUT_FIELDS 里的字段，该前提由
+// scripts/verify-config.mjs 的「编译源码读取的每个 config.X 都必须已登记」钉住。
+//
+// 未知键（不在 DEFAULT_CONFIG 里）会落在「影响提示词」一侧 —— 方向是安全的：
+// 最坏是多重启一次提示词，而不是改了不生效。
+const NON_PROMPT_FIELDS = new Set(
+  Object.keys(DEFAULT_CONFIG).filter((key) => !PROMPT_INPUT_FIELDS.includes(key))
+)
 
 // 在写队列中执行一次配置更新：mutate 收到当前配置的浅拷贝，返回新配置对象。
 // 注意 mutate 必须在队列任务内完成全部读取与合并，不要在队列外提前读取配置。

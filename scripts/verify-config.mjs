@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 131
+const EXPECTED_ASSERTIONS = 132
 
 let passed = 0
 const failures = []
@@ -1749,6 +1749,50 @@ check('客户端「参与编译的字段」与宿主 compilePrompt 实际读取�
     'PROMPT_FIELD_KEYS 与实际参与编译的字段不一致：漏字段会让预览显示陈旧内容，多字段会触发无谓重编译'
   )
   assert.ok(clientKeys.length >= 5, `参与编译的字段过少：${clientKeys.length}`)
+})
+
+check('NON_PROMPT_FIELDS 由 DEFAULT_CONFIG 减去 PROMPT_INPUT_FIELDS 推导，且编译源码读取的字段全部已登记', () => {
+  // 这一对断言是**互相依存**的，缺一条另一条就会变成空话：
+  //   - 「推导」保证新增字段默认被当成影响提示词（方向安全：最坏多刷新一次，
+  //     而不是「改了不生效」）；
+  //   - 但推导只有在「compilePrompt 只读 PROMPT_INPUT_FIELDS 里的字段」为真时才安全。
+  //     若将来有人往 compilePrompt 里加了一个 config.X 却忘了登记进 PROMPT_INPUT_FIELDS，
+  //     那个字段会被推导进 NON_PROMPT_FIELDS —— 于是「改了它，提示词不变」，
+  //     而且没有任何报错。这是本插件最坏的一类静默失败，所以必须在这里钉死。
+
+  // ① 不得退回手写清单：index.mjs 里该常量必须由 DEFAULT_CONFIG 与 PROMPT_INPUT_FIELDS 推出
+  const derived = indexCode.match(/const NON_PROMPT_FIELDS = new Set\([\s\S]*?\)\n/)
+  assert.ok(derived, 'index.mjs 缺少 NON_PROMPT_FIELDS 定义')
+  assert.ok(/Object\.keys\(DEFAULT_CONFIG\)/.test(derived[0]), 'NON_PROMPT_FIELDS 必须由 Object.keys(DEFAULT_CONFIG) 推导，不得手写清单')
+  assert.ok(/PROMPT_INPUT_FIELDS\.includes/.test(derived[0]), 'NON_PROMPT_FIELDS 必须用 PROMPT_INPUT_FIELDS 做筛选')
+  assert.equal(
+    /'trailEnabled'|'trailColor'/.test(derived[0]),
+    false,
+    'NON_PROMPT_FIELDS 里不得再出现手写的字段名（这正是漏掉 requireToolConfirmation / historyMaxEntries 的成因）'
+  )
+  assert.ok(/from '\.\/lib\/config\.mjs'|PROMPT_INPUT_FIELDS,/.test(indexCode), 'index.mjs 应 import PROMPT_INPUT_FIELDS')
+
+  // ② 推导的安全前提：编译源码读取的每个 config.X 都必须在 PROMPT_INPUT_FIELDS 里
+  const registered = new Set(PROMPT_INPUT_FIELDS)
+  const readKeys = [...new Set([...promptCompilerSource().matchAll(/config\.(\w+)/g)].map((m) => m[1]))]
+  assert.ok(readKeys.length >= 8, `编译源码里解析到的字段过少：${readKeys.length}（正则或函数边界可能已失效）`)
+  const unregistered = readKeys.filter((key) => !registered.has(key))
+  assert.deepEqual(
+    unregistered,
+    [],
+    `提示词编译读取了未登记的字段：${unregistered.join(', ')}。` +
+      '它们会被推导进 NON_PROMPT_FIELDS，导致「改了配置但提示词不更新」且不报错。' +
+      '若确属提示词字段，请加进 lib/config.mjs 的 PROMPT_INPUT_FIELDS；' +
+      '若确实不影响提示词，请把读取从这几个函数里移出去。'
+  )
+
+  // ③ 两个集合必须互补且覆盖 DEFAULT_CONFIG 全键（推导语法错了会两边都漏）
+  const all = Object.keys(DEFAULT_CONFIG)
+  const promptSide = all.filter((key) => registered.has(key))
+  const nonPromptSide = all.filter((key) => !registered.has(key))
+  assert.equal(promptSide.length + nonPromptSide.length, all.length, 'DEFAULT_CONFIG 键分类不完整')
+  assert.deepEqual(promptSide.slice().sort(), [...PROMPT_INPUT_FIELDS].sort(), 'PROMPT_INPUT_FIELDS 里出现了 DEFAULT_CONFIG 之外的键')
+  assert.equal(nonPromptSide.length, 6, `不影响提示词的字段数应为 6（requireToolConfirmation + 4 个 trail* + historyMaxEntries），实际 ${nonPromptSide.length}`)
 })
 
 check('客户端复刻的枚举常量与宿主 lib/config.mjs 逐项一致', () => {
