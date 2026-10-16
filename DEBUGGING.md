@@ -196,18 +196,18 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 | 层 | 脚本 | 断言数 | 会不会跳过 |
 | --- | --- | --- | --- |
-| 纯函数 / 契约 | `verify-config` | 125 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
+| 纯函数 / 契约 | `verify-config` | 132 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
-| 持久化行为 | `verify-history` | 41 | 否 |
+| 持久化行为 | `verify-history` | 43 | 否 |
 | 纯函数（工作区绑定） | `verify-bindings` | 47 | 否 |
 | 客户端行为 | `verify-client` | 28 | 否 |
-| 端到端（保存 → 两条通道都拿到新文本；变更记录四条路由） | `verify-e2e-prompt` | 72 | 否 |
+| 端到端（保存 → 两条通道都拿到新文本；变更记录四条路由） | `verify-e2e-prompt` | 77 | 否 |
 | 宿主实现 | `verify-live-prompt` | 20 | 定位不到 DSH 时整脚本跳过 |
 | 版本兼容 | `verify-compat` | 10（声明数；未执行项按 `skipNote` 从声明数里下修后对账） | 定位不到 DSH 时整脚本跳过 |
 | 渲染层 | `verify-trail` | 11 | 起不来浏览器时整脚本跳过 |
 | 渲染层 | `verify-nav-icon` | 16（含 6 项判断力自检） | 同上 |
 
-合计 **365 项**（其中 `verify-compat` 的 10 项在定位不到 DSH 时整脚本跳过、`verify-trail` 的 11 项同上）。
+合计 **402 项**（其中 `verify-compat` 的 10 项在定位不到 DSH 时整脚本跳过、`verify-trail` 的 11 项同上）。
 
 也可以单跑一层：`npm run verify:config` / `verify:store` / `verify:history` / `verify:bindings` / `verify:client` / `verify:e2e` / `verify:host` / `verify:compat` / `verify:trail` / `verify:nav-icon`。
 
@@ -240,7 +240,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | C17 / C19 | 应用预设成功后清掉上一轮的失败提示；表单必须跟随 store 且保存按钮不得误亮（「应用预设后被保存打回默认」那条 bug 的行为回归） |
 | C21 | 底栏展示当前人设，未匹配时显示「自定义」 |
 | C23 | 全局轮询注册在装配层（不依赖设置页是否挂载） |
-| C24–C27 | 变更记录：不展开不拉取 / 展开后按记录渲染时间·来源·字段名 / 原值→新值逐行（含空值与枚举外取值）/ 撤销与清空都走内联二次确认 / 超 20 条折叠、`warning` 不得被当成失败 |
+| C24–C28 | 变更记录：不展开不拉取 / 展开后按记录渲染时间·来源·字段名 / 原值→新值逐行（含空值与枚举外取值）/ 撤销与清空都走内联二次确认 / 超 20 条折叠、`warning` 不得被当成失败；C28 另守「设置页只留展开区里的说明块，不得挂回折叠标题旁」 |
 
 两个实现要点（离线复刻时踩过的坑）：
 
@@ -296,7 +296,9 @@ node scripts/verify-trail.mjs --dump "$env:TEMP\trail-dump.html"
 | 持久化 | 保存后重开设置页四项参数不变；`$DSH_HOME/soul-config.json` 中出现 `trail*` 四字段 |
 | 不污染提示词 | 只改光轨颜色 → 仅提示「已保存」，**不产生**会话注入消息；改昵称 / 风格才会注入 |
 
-> 光轨四项属于**纯外观配置**：计入"配置已变更"（用于保存提示与脏检查），但被排除在 `promptChanged` 之外，因此既不刷新系统提示词，也不向会话注入快照。
+> 光轨四项属于**不影响提示词的配置**：计入"配置已变更"（用于保存提示与脏检查），但被排除在 `promptChanged` 之外，因此既不刷新系统提示词，也不向会话注入快照。
+>
+> 这个集合（`index.mjs` 的 `NON_PROMPT_FIELDS`）必须**推导**而非手写：由 `DEFAULT_CONFIG` 减去 `PROMPT_INPUT_FIELDS` 得到。手写清单漏过两次 —— `requireToolConfirmation` 与 `historyMaxEntries` 曾不在其中，于是改一次「保留条数」会向所有活动会话多注入一条「配置已更新」。推导的安全前提（`compilePrompt` 只读 `PROMPT_INPUT_FIELDS` 内的字段）由 `verify-config` 的一条契约钉住，`verify-e2e-prompt` 的 E10c 逐个字段走真实 HTTP 写路径验证「section 与注入都不增加」。
 
 ## 四、常见报错
 
@@ -476,7 +478,8 @@ $DSH_HOME/soul-config.history.jsonl
 - **行数比预期少不是丢数据。** 读取侧有三个上限：单次读取 4 MiB（只读尾部）、最多 1000 行、单行 64 KiB。被这些上限切掉的是**合法**行，与「解析不了的行」分开计数（见 `lib/history.mjs` 的 `trimmed` 与 `dropped`）。
 - **出现 `grep` 不到的半行**：进程死在追加中途。读侧会丢掉它并报「末尾不完整」，回滚会因为指纹对不上而拒绝 —— 这是设计好的行为，不是 bug。
 - **回滚一律说「记录与当前配置对不上」**：说明有人手工改过 `soul-config.json`。链式指纹校验会拒绝任何回滚，此时要么手工改回去，要么清空记录重来。
-- **清空记录**：设置页「变更记录」分组里的「清空记录」（带二次确认），或直接删掉该文件。
+- **清空记录**：插件详情页（插件管理 → 已安装插件 → dsh-soul）的记录区块里的「清空记录」（带二次确认），或直接删掉该文件。保留条数在设置页「人设预设」展开区可调（50 / 100 / 200 / 500，默认 200）。
+- **设置页找不到变更记录**：不是坏了。0.8.1 起主入口在**插件详情页**（变更记录是低频的回顾性信息，长期占设置页主区不值得），设置页只在「人设预设」展开区给出指引。详情页区块只在 `subject.kind === 'bundle'` 且 `subject.pkg.name === 'dsh-soul'` 时渲染 —— 从插件列表点进 dsh-soul 的详情页即可看到，其他插件的详情页按槽位契约渲染 `null`。
 
 日志：插件默认不输出运行日志。如需临时调试，可在源码中取消相关 `console` 语句的注释；宿主端输出到启动 DSH 的终端，客户端输出到浏览器 DevTools Console。调试完成后建议恢复注释。
 

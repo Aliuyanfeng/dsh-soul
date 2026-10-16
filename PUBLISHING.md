@@ -10,11 +10,11 @@
 - `dsh.bundle.patch`
 - `files`
 
-发布包至少应包含（当前 34 个文件）：
+发布包至少应包含（当前 36 个文件）：
 
 ```text
 index.mjs
-lib/*.mjs                      # config / injection / personas / store / history
+lib/*.mjs                      # config / injection / personas / store / history / bindings
 client/index.mjs
 assets/icon.svg
 assets/personas/*.webp         # 7 个内置人设插画 + 1 张自建默认贴图
@@ -23,7 +23,7 @@ locale/zh.json                 # 插件展示名（readPluginMeta 读 meta.title
 locale/en.json
 cordis.patch.yml
 scripts/lib/skip-report.mjs
-scripts/verify-*.mjs           # config / store / history / client / e2e-prompt / live-prompt / compat / trail / nav-icon
+scripts/verify-*.mjs           # config / store / history / bindings / client / e2e-prompt / live-prompt / compat / trail / nav-icon
 README.md
 README_EN.md
 LICENSE

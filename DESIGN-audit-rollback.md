@@ -2,6 +2,8 @@
 
 > 状态：**已全部落地（随 0.8.0 发布）**。`0.8.0-a`（纯函数层）、`0.8.0-b`（提交即留痕）、
 > `0.8.0-c`（四条 HTTP 路由）、`0.8.0-d`（设置页「变更记录」分组）均已实现 —— 各节末标了当前进度。
+> 发布前又做了两轮打磨：**双入口**（主入口迁到宿主插件详情页，设置页只留指引，见 §14.4）
+> 与**保留条数可自定义**（§14.5）。
 >
 > 前置阅读：`lib/config.mjs`（配置 schema 与白名单）、`lib/store.mjs`（既有的原子写与损坏处理）、
 > `DESIGN-persona-scope.md`（同类设计文档的写法，以及「宿主契约必须先查证」的做法）。
@@ -279,15 +281,16 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
 
 | 文件 | 改动 | 状态 |
 | --- | --- | --- |
-| `lib/history.mjs` | **新增**。路径推导 / 条目构造与校验 / JSONL 解析 / 压实 / 回滚规划（纯函数，可独立测试） | ✅ 已实现 |
-| `scripts/verify-history.mjs` | **新增**。`lib/history.mjs` 的纯函数断言组（40 项） | ✅ 已实现 |
+| `lib/history.mjs` | **新增**。路径推导 / 条目构造与校验 / JSONL 解析 / 压实 / 回滚规划（纯函数，可独立测试） | ✅ 0.8.0-a |
+| `lib/config.mjs` | 新增 `historyMaxEntries`（含 `HISTORY_MAX_ENTRIES_MIN/MAX/DEFAULT` 与 `clampHistoryMaxEntries`）；`migrateConfig` / `sanitizeConfig` 同步 | ✅ 打磨轮 |
+| `scripts/verify-history.mjs` | **新增**。`lib/history.mjs` 的纯函数断言组（43 项：含条数上限可由调用方指定、非法值回退常量） | ✅ 0.8.0-a |
 | `package.json` | `verify` 链加入 `verify-history` + `verify:history` 单跑脚本 | ✅ 已实现 |
-| `index.mjs` | `commitConfig(mutate, source)`；14 个调用点补来源（其中 2 个由 `resetConfigWithEscape` / `applyPersonaEntry` 形参穿透）；追加与压实。✅ 0.8.0-b；四条路由 ✅ 0.8.0-c | ✅ |
-| `client/index.mjs` | 新增「变更记录」分组（第 5 组，排在「Agent 工具」之后）；回滚 / 恢复预设 / 清空的二次确认；文案键 | ⬜ 0.8.0-d |
-| `scripts/verify-config.mjs` | 来源标注（每个调用点各自带对）与「提交即留痕」断言；四条路由的契约断言 ✅ 0.8.0-b / 0.8.0-c | ✅ |
-| `scripts/verify-e2e-prompt.mjs` | 真实挂载跑一遍四条路由：留痕、撤销、恢复预设、清空、405 / 400 / 409（38 → 57 项） | ✅ 0.8.0-c |
-| `scripts/verify-client.mjs` | 分组渲染、倒序、二次确认、回滚请求体断言 | ⬜ 0.8.0-d |
-| `package.json` 版本号 | 0.7.2 → 0.8.0 | ⬜ 收尾 |
+| `index.mjs` | `commitConfig(mutate, source)`；16 个调用点补来源（其中 2 个由 `resetConfigWithEscape` / `applyPersonaEntry` 形参穿透）；追加与压实 ✅ 0.8.0-b；四条路由 ✅ 0.8.0-c；`NON_PROMPT_FIELDS` 改为推导 ✅ 打磨轮 | ✅ |
+| `client/index.mjs` | 变更记录区块 **`SoulHistorySection`**（宿主插件详情页槽位）+ 设置页的指引与保留条数下拉；回滚 / 恢复预设 / 清空的二次确认；文案键 | ✅ 0.8.0-d → 0.8.1 双入口 |
+| `scripts/verify-config.mjs` | 来源标注（每个调用点各自带对）与「提交即留痕」断言；四条路由的契约断言 ✅ 0.8.0-b / 0.8.0-c；保留条数四条契约 + `NON_PROMPT_FIELDS` 推导契约 ✅ 打磨轮（125 → **132 项**） | ✅ |
+| `scripts/verify-e2e-prompt.mjs` | 真实挂载跑一遍四条路由：留痕、撤销、恢复预设、清空、405 / 400 / 409；E10c 对 5 个非提示词字段走真实写路径（38 → **77 项**） | ✅ |
+| `scripts/verify-client.mjs` | 区块渲染、倒序、二次确认、回滚请求体断言（23 → **28 项**，C24–C28） | ✅ 0.8.0-d / 打磨轮 |
+| `package.json` 版本号 | 0.7.2 → 0.8.0 | ✅ 收尾 |
 
 ## 10. 分层与实施顺序
 
@@ -530,4 +533,54 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
 这一批首跑即 20/20，没有漏网 —— 14.3 补的三条断言（未来时间戳样本、枚举外取值
 样本、`max: 50` 桩）在代码搬迁后依然守得住，说明那三种补法补的是**断言的判别力**
 而不是某个具体实现的形状。
+
+### 14.5 `0.8.0` 打磨（保留条数可调 + 说明并入展开区）的 22 组变异（初跑 17/21，四条已定位）
+
+本轮抓出的**真缺陷**是 `index.mjs` 的 `NON_PROMPT_FIELDS` 是**手工白名单**：
+`requireToolConfirmation` 与新增的 `historyMaxEntries` 都不在其中，于是改一次
+「保留条数」会重新注册 system prompt section、并向所有活动会话注入一条
+「[dsh-soul 个性化配置已更新]」。用户视角是「我只调了个容量，Agent 却被通知了一遍配置变了」。
+修法：由 `DEFAULT_CONFIG` 减去 `PROMPT_INPUT_FIELDS` **推导**；推导的安全前提
+（`compilePrompt` 只读 `PROMPT_INPUT_FIELDS` 内的字段）另配一条源文本契约钉住 ——
+否则将来新增提示词字段却忘了登记，会静默变成「改了不生效」，那是本插件最坏的一类失败。
+
+| # | 变异 | 被哪条断言拦下 |
+| --- | --- | --- |
+| ❶ | `NON_PROMPT_FIELDS` 退回手写清单 | `verify-config`：必须由 `Object.keys(DEFAULT_CONFIG)` 推导 |
+| ❷ | 推导式里再排除掉 `historyMaxEntries` | E10c：该字段保存后 section 与注入都不得增加 |
+| ❸ | 推导式里再排除掉 `requireToolConfirmation` | 同 ❷（同一个漏登记的另一半） |
+| ❹ | 推导方向写反（拿 `PROMPT_INPUT_FIELDS` 当非提示词集合） | E10：纯外观字段保存后不重新注册 section |
+| ❺ | 编译函数里新增一个未登记的 `config.X` 读取 | `verify-config`：编译源码读取的每个字段都必须已登记 |
+| ❻ | `PROMPT_INPUT_FIELDS` 里的字段被换成未登记形态 | 「预设范围只含人设，与「关于你」无交集」 |
+| ❼ | `clampHistoryMaxEntries` 退回「先 `Number()` 再判整数」 | clamp 逐值：`null` / 空串必须返回 `null` 而不是下限 50 |
+| ❽ | clamp 只判下界不判上界 | clamp 逐值：100000 必须夹成 500 |
+| ❾ | `DEFAULT_CONFIG.historyMaxEntries` 与 `MAX_ENTRIES` 脱钩 | `verify-config`：两模块常量必须相等 |
+| ❿ | `pruneEntries` 忽略调用方给的上限 | `verify-history`：必须真的按传进来的上限截 |
+| ⓫ | `pruneEntries` 保留头部而非尾部 | `verify-history`：切出的 id 序列必须是尾部 |
+| ⓬ | `toHistoryResponse` 的 `max` 写死模块常量 | `verify-history`：`max` 来自调用方 |
+| ⓭ | 下拉档位写进服务端区间之外的档（1000） | `verify-config`：档位必须落在合法区间内 |
+| ⓮ | 客户端默认档与后端默认值不一致 | 同上（必含默认档） |
+| ⓯ | 字段标签表漏掉 `historyMaxEntries` | `verify-config`：标签必须覆盖全部审计字段 |
+| ⓰ | label 的 `htmlFor` 不再关联 select | `verify-config`：`label` 必须关联到控件 |
+| ⓱ | 说明块拆回折叠标题旁 | C28：说明块应恰好一个 |
+| ⓲ | 说明块少一行（吞掉变更记录去向） | C28：说明块应有两行 |
+| ⓳ | 说明块两行顺序颠倒 | C28：第一行应是预设收录范围 |
+| ⓴ | 说明文案挪进折叠触发器 | C28：折叠态不该出现指引 |
+| ㉑ | 说明块挪进另一组手风琴 | C28：只有人设预设分组挂说明块 |
+| ㉒ | `.soul-accordion-head` 层复活 | C28：head 层应已删除 |
+
+**初跑 17/21 的四条，两条是探针自己的问题，两条是锚点没对上真实源码：**
+
+- ⓰ 首轮报「仍通过」，但**变异确实被拦** —— 它被挂在了渲染层脚本上，而
+  `label.htmlFor` 是**源文本契约**（归 `verify-config` 守）。单独复现一次即分清：
+  改挂 `CONFIG` 后当场变红。**没被拦时除了怀疑断言，还要怀疑「这条变异该由谁来拦」。**
+- ⓴ 首版的变异写法（在 `.soul-note` 之后追加一个 `SoulHint`）其实**改变了渲染树结构**，
+  但它挂在 `CLIENT` 上时被 C28 的「说明块之外不得有 hint」判据兜住了；重写为
+  「把 `history.entryHint` 写进 `summary` prop」后，判据落在折叠态文本上，更贴近
+  用户的真实观感（折叠时就看得见 → 正是要求改掉的那个形态）。
+- ❽ / ⓫ / ⓰ 的锚点串初版对不上真实源码（`Math.min(Math.max(...))` 单行写法、
+  `list.slice(list.length - limit)`、缩进）。为此写了**锚点自检脚本**
+  `D:\AliuProject\_p0822\anchors.mjs`：把每条探针的 `find` 串拿到真实源码里查一遍，
+  秒级完成。整批跑一轮要几分钟，锚点没命中却只在末尾报一句「变异未生效」——
+  先过锚点，再跑整批。
 
