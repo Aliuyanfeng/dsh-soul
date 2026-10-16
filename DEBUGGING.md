@@ -196,18 +196,18 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 | 层 | 脚本 | 断言数 | 会不会跳过 |
 | --- | --- | --- | --- |
-| 纯函数 / 契约 | `verify-config` | 132 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
+| 纯函数 / 契约 | `verify-config` | 134 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
 | 持久化行为 | `verify-history` | 43 | 否 |
 | 纯函数（工作区绑定） | `verify-bindings` | 47 | 否 |
 | 客户端行为 | `verify-client` | 28 | 否 |
-| 端到端（保存 → 两条通道都拿到新文本；变更记录四条路由） | `verify-e2e-prompt` | 77 | 否 |
+| 端到端（保存 → 两条通道都拿到新文本；变更记录四条路由；工作区绑定路由） | `verify-e2e-prompt` | 90 | 否 |
 | 宿主实现 | `verify-live-prompt` | 20 | 定位不到 DSH 时整脚本跳过 |
 | 版本兼容 | `verify-compat` | 10（声明数；未执行项按 `skipNote` 从声明数里下修后对账） | 定位不到 DSH 时整脚本跳过 |
 | 渲染层 | `verify-trail` | 11 | 起不来浏览器时整脚本跳过 |
 | 渲染层 | `verify-nav-icon` | 16（含 6 项判断力自检） | 同上 |
 
-合计 **402 项**（其中 `verify-compat` 的 10 项在定位不到 DSH 时整脚本跳过、`verify-trail` 的 11 项同上）。
+合计 **417 项**（其中 `verify-compat` 的 10 项在定位不到 DSH 时整脚本跳过、`verify-trail` 的 11 项同上）。
 
 也可以单跑一层：`npm run verify:config` / `verify:store` / `verify:history` / `verify:bindings` / `verify:client` / `verify:e2e` / `verify:host` / `verify:compat` / `verify:trail` / `verify:nav-icon`。
 
@@ -282,6 +282,30 @@ node scripts/verify-trail.mjs --dump "$env:TEMP\trail-dump.html"
 > **教训：变异没被拦时，先证明变异真的制造了故障，再怀疑断言。**（同 0.8.0-b 探针 ⑪ 的坑，这是第二次。）
 
 测试内每条 bad entry 的丢弃原因用 `[dir, reason]` 逐条对应而不是「排序后比个数」：后者在两条记录互换原因时照样通过。
+
+### 3.9) 「插件加载不出来」：同一路由注册两次
+
+宿主 `dsh-host-webserver` 的 `register()` 对重复的 `(kind, path)` **直接抛错**：
+
+```js
+register(route) {
+    const table = route.kind === "exact" ? this.exact : this.prefixes;
+    if (table.has(route.path)) throw new Error(`webserver: duplicate ${route.kind} route "${route.path}"`);
+```
+
+抛点在插件的 `ctx.inject(['webServer'], ...)` 回调里 ⇒ 这**不是**「后注册的生效」，而是整个插件装配失败。用户看到的是「插件加载不出来 / 功能全没了」，与控制台那句 duplicate 毫无字面关联。
+
+因此本插件的 **16 条路由每条只 `register` 一次**，GET / POST 一律在 handler 内按 `req.method` 分派（`/api/soul/config` 一直如此；`/api/soul/bindings` 曾是唯一例外，被写成两次注册）。
+
+三道防线，缺一不可：
+
+| 防线 | 位置 | 拦什么 |
+| --- | --- | --- |
+| 元断言：解析出**全部**注册点，`(kind, path)` 不得重复 | `verify-config.mjs`（`webServer\.register\(\{\s*kind:` 正则 + `>= 16` 前置检查） | 任何人再写一次重复注册 |
+| 假宿主的 `register` 与宿主**同等严格**（命中即抛 duplicate） | `verify-e2e-prompt.mjs` 的 `makeCtx` | 装配期真炸（桩若用 `Map.set` 静默覆盖，这条最致命的错误永久隐身） |
+| 判断力探针：故意注入一次重复注册 | `D:\AliuProject\_wsc2\judge.mjs` 探针 ① | 上面两道防线本身失效 |
+
+**教训：测试桩对契约的宽松度，决定了它能测出什么。** 桩比宿主宽松时，「绿」只说明桩没意见。
 
 ### 4) 功能与动效（本版新增「输入框光轨」）
 
