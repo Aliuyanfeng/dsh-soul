@@ -687,6 +687,11 @@ window.__ModuleLoader__.load({
       '.soul-accordion-icon{flex:0 0 18px;color:var(--dsw-alias-label-secondary);font-size:18px;line-height:1;text-align:center}',
       // 收起态只有触发器一个子元素 ⇒ 四角都要圆（展开态由上面的顶圆角规则负责）
       '.soul-accordion:not(.soul-accordion-open) .soul-accordion-trigger{border-radius:calc(var(--dsw-radius-xl) - .5px)}',
+      // head 包住 trigger + 可选的问号提示（hint 在 button 外，见 SoulAccordion 注释）。
+      // 提示要随行居中，且在 hover 时把触发的 hover 背景让开 —— 提示本身不带背景。
+      '.soul-accordion-head{display:flex;align-items:center}',
+      '.soul-accordion-head .soul-accordion-trigger{flex:1;min-width:0}',
+      '.soul-accordion-head .soul-hint{margin:0 12px 0 0;flex:none}',
       '.soul-accordion-body{padding:14px;border-top:.5px solid var(--dsw-alias-settings-card-stroke);background:transparent}',
       '.soul-field select:focus,.soul-field textarea:focus,.soul-field input[type=text]:focus{outline:none;border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 25%, transparent)}',
       '.soul-toggle{display:flex;align-items:center;gap:8px;margin-bottom:14px}',
@@ -966,7 +971,6 @@ window.__ModuleLoader__.load({
       // —— 设置页指引行（0.8.1 双入口）：列表迁去详情页后的指针 ——
       // 次要色一行文字，不抢主区的视觉权重；样式抄 .soul-hint 的排印。
       '.soul-history-entry{display:flex;align-items:baseline;gap:8px;margin:2px 0 0 0;padding:0}',
-      '.soul-history-entry-hint{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       // 危险色描边文字钮（规格抄 .soul-persona-danger）：清空记录不可逆，
       // 是这一组唯一的破坏性动作。撤销按钮不用危险色 —— 它可以再撤销一次改回来。
       '.soul-history-clear{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;height:24px;padding:0 10px;border:.5px solid var(--dsw-alias-state-error-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-state-error-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
@@ -1183,9 +1187,9 @@ window.__ModuleLoader__.load({
       // —— 变更记录：列表渲染补充（0.8.0-d）——
       // 服务端没带回容量上限时的退路：宁可不提「最多保留 N 条」，也不编一个数字出来。
       'history.summaryCount': '最近 {count} 条',
-      // 双入口（0.8.1）：主入口在插件详情页（地方大、可充分展示），设置页原分组改为
-      // 一行指引 —— 低频功能不该长期占着设置页的主区。
-      'history.entryHint': '完整的变更记录（撤销 / 恢复预设 / 清空）已移至「插件管理 → 已安装插件 → 人设引擎」详情页。',
+      // 双入口（0.8.1）：主入口在插件详情页，设置页不再留独立指引行（突兀且占地）；
+      // 改为「人设预设」折叠标题旁的问号提示（SoulHint），文案缩成一句，hover 展示。
+      'history.entryHint': '变更记录已移至插件详情页：撤销、恢复预设、清空都在那里。',
       'history.entryOpen': '打开变更记录',
       'history.timeJustNow': '刚刚',
       'history.timeMinutes': '{count} 分钟前',
@@ -1402,7 +1406,7 @@ window.__ModuleLoader__.load({
       // Dual entry (0.8.1): the full view lives on the plugin detail page; the
       // settings group becomes a pointer line so a low-frequency feature stops
       // occupying the settings page permanently.
-      'history.entryHint': 'The full change history (undo / restore preset / clear) has moved to Plugin Manager → Installed Plugins → Persona Engine → Details.',
+      'history.entryHint': 'Change history has moved to the plugin details page: undo, restore preset, and clear all live there.',
       'history.entryOpen': 'Open change history',
       'history.timeJustNow': 'just now',
       'history.timeMinutes': '{count} min ago',
@@ -1608,18 +1612,24 @@ window.__ModuleLoader__.load({
 
     // 可折叠设置面板：同一时间只展开一个区域，并持久化用户最后的选择。
     function SoulAccordion(props) {
-      const { id, title, summary, open, onToggle, children } = props
+      const { id, title, summary, open, onToggle, hint, children } = props
       return e('section', { className: `soul-accordion${open ? ' soul-accordion-open' : ''}` },
-        e('button', {
-          type: 'button',
-          className: 'soul-accordion-trigger',
-          'aria-expanded': open,
-          'aria-controls': `${id}-body`,
-          onClick: onToggle
-        },
-          e('span', { className: 'soul-accordion-title' }, title),
-          e('span', { className: 'soul-accordion-summary' }, summary),
-          e('span', { className: 'soul-accordion-icon', 'aria-hidden': true }, open ? '−' : '+')
+        e('div', { className: 'soul-accordion-head' },
+          e('button', {
+            type: 'button',
+            className: 'soul-accordion-trigger',
+            'aria-expanded': open,
+            'aria-controls': `${id}-body`,
+            onClick: onToggle
+          },
+            e('span', { className: 'soul-accordion-title' }, title),
+            e('span', { className: 'soul-accordion-summary' }, summary),
+            e('span', { className: 'soul-accordion-icon', 'aria-hidden': true }, open ? '−' : '+')
+          ),
+          // 问号提示放在 trigger **外**：button 里不允许嵌套可聚焦元素（HTML 交互内容
+          // 嵌套规则），SoulHint 有 tabIndex，放里面既非法又会让 Tab 焦点顺序错乱。
+          // head 用 flex 包住两者，提示视觉上仍贴着标题。
+          hint || null
         ),
         open && e('div', { id: `${id}-body`, className: 'soul-accordion-body' }, children)
       )
@@ -2632,7 +2642,10 @@ window.__ModuleLoader__.load({
             title: t('group.personas'),
             summary: personasSummary,
             open: openSection === 'personas',
-            onToggle: toggleSection('personas')
+            onToggle: toggleSection('personas'),
+            // 变更记录入口指引挂在标题旁的问号上：独立一行在个性化区块里太突兀，
+            // hover 展示对低频信息刚好。
+            hint: e(SoulHint, { text: t('history.entryHint') })
           },
             e('div', { className: 'soul-field' },
               // 加载失败优先于「加载中」：否则失败时界面永远停在加载态，与「还没有预设」无从区分
@@ -3007,13 +3020,10 @@ window.__ModuleLoader__.load({
           )
         ),
 
-        // —— 变更记录：设置页只留一行指引（0.8.1 双入口）——
-        // 完整的时间线 / 撤销 / 恢复 / 清空在插件详情页（SoulHistorySection）：
-        // 那里地方大、页面本身就是「专门来看记录」的语境。这里不再渲染列表，
-        // 也不再挂任何 history 状态 —— 指引行是纯文案，渲染成本为零。
-        e('div', { className: 'soul-history-entry' },
-          e('span', { className: 'soul-history-entry-hint' }, t('history.entryHint'))
-        ),
+        // —— 变更记录：设置页不再留独立指引行 ——
+        // 指引并入「人设预设」折叠标题旁的问号提示（见下方 SoulHint）：
+        // 独立一行在个性化区块里突兀，hover 提示对低频信息更合适。
+        // 这里不再渲染任何 history 状态，渲染成本为零。
 
         e(SoulAccordion, {
           id: 'soul-prompt',

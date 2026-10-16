@@ -1657,19 +1657,34 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     assert.equal(findAllByClass(tree, 'soul-error').length, 0, 'warning 不得被当成错误')
   })
 
-  await check('C28 设置页指引：不再渲染列表，只留一行指向详情页的指引', async () => {
+  await check('C28 设置页指引：并入人设预设标题的问号提示，不再有独立指引行', async () => {
     const world = await boot()
     world.routes['/api/soul/history'] = () => ({ ok: true, entries: [historyEntry({ id: 'a' })], max: 200, warning: null })
     const zh = world.dicts.zh
     const tree = await renderSettings(world)
-    // 设置页不得再出现变更记录的列表与手风琴 —— 那是详情页的职责
-    assert.equal(findAllByClass(tree, 'soul-history-list').length, 0, '设置页不得渲染变更记录列表')
-    assert.equal(findAllByClass(tree, 'soul-accordion').filter((n) => textOf(n).includes(zh['group.history'])).length, 0,
+    // 设置页不得再出现变更记录的列表与手风琴 —— 那是详情页的职责。
+    // 判据用 accordion **标题 span** 而不是整个 accordion 文本：指引提示文案里
+    // 就有「变更记录」四个字，挂在人设预设 head 里会误伤整树文本匹配。
+    const accordionTitles = findAllByClass(tree, 'soul-accordion-title')
+    assert.equal(accordionTitles.some((n) => textOf(n) === zh['group.history']), false,
       '设置页不得再保留「变更记录」手风琴分组')
-    // 指引行必须存在，且文案指向详情页路径
-    const hints = findAllByClass(tree, 'soul-history-entry-hint')
-    assert.equal(hints.length, 1, `设置页应恰好一行指引，实际 ${hints.length}`)
-    assert.equal(textOf(hints[0]), zh['history.entryHint'])
+    // 独立指引行已废除：突兀且占地，低频信息降级为 hover 提示
+    assert.equal(findAllByClass(tree, 'soul-history-entry').length, 0, '设置页不得再保留独立指引行（.soul-history-entry）')
+    // 指引改挂在「人设预设」折叠标题旁的问号提示上（hint 在 trigger 外、head 内）
+    const heads = findAllByClass(tree, 'soul-accordion-head')
+    assert.equal(heads.length >= 1, true, '应存在 accordion head 结构')
+    const personaHead = heads.find((n) => textOf(n).includes(zh['group.personas']))
+    assert.ok(personaHead, '找不到「人设预设」分组')
+    const personaHints = findAllByClass(personaHead, 'soul-hint')
+    assert.equal(personaHints.length, 1, '人设预设标题旁应恰好一个问号提示')
+    assert.equal(textOf(personaHints[0]), zh['history.entryHint'], '提示文案必须是 history.entryHint')
+    // hint 必须在 trigger（button）外：button 内不允许嵌套可聚焦元素
+    assert.equal(findAllByClass(findAllByClass(personaHead, 'soul-accordion-trigger')[0], 'soul-hint').length, 0,
+      '提示不得嵌进 trigger 按钮（交互内容嵌套规则）')
+    // 其余分组不得误挂提示
+    const otherHeads = heads.filter((n) => n !== personaHead)
+    assert.equal(otherHeads.some((n) => findAllByClass(n, 'soul-hint').length > 0), false,
+      '只有人设预设分组挂提示，其他分组不得误挂')
   })
 } finally {
   restoreTimers()
