@@ -2,6 +2,8 @@
 
 # dsh-soul
 
+[![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/aliuyanfeng/dsh-soul)
+
 A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nickname, reply style, tone, and custom instructions.
 
 ## Features

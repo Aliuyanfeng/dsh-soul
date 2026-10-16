@@ -2,6 +2,8 @@
 
 [简体中文](./README.md) | [English](./README_EN.md)
 
+[![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/aliuyanfeng/dsh-soul)
+
 DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复风格、语调和自定义指令。
 
 ## 功能
