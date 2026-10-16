@@ -16,6 +16,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   DEFAULT_CONFIG,
   FIELD_LIMITS,
+  HISTORY_MAX_ENTRIES_DEFAULT,
+  HISTORY_MAX_ENTRIES_MAX,
+  HISTORY_MAX_ENTRIES_MIN,
   LANGUAGE_VALUES,
   PERSONA_FIELDS,
   PERSONA_NAME_MAX,
@@ -24,11 +27,13 @@ import {
   REPLY_LENGTH_VALUES,
   STYLE_VALUES,
   TRAIT_VALUES,
+  clampHistoryMaxEntries,
   migrateConfig,
   normalizePersonas,
   sanitizeConfig,
   sanitizePersonaName
 } from '../lib/config.mjs'
+import { MAX_ENTRIES } from '../lib/history.mjs'
 import {
   BUILTIN_PERSONAS,
   builtinPersonaNames,
@@ -45,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 125
+const EXPECTED_ASSERTIONS = 131
 
 let passed = 0
 const failures = []
@@ -458,8 +463,97 @@ check('migrateConfig：合法光轨配置保留，颜色转大写', () => {
   assert.equal(config.trailWidth, 'thick')
 })
 
-console.log('插件清单与图标')
+// —— 变更记录保留条数（0.8.0 打磨）——
+// 这条字段与其它容量参数的区别：它同时被三处消费（压实上限、响应里的 max、UI 表单），
+// 任一处漏读都会出现「显示的和实际的不一致」，而那种不一致用户是察觉不到的
+// —— 他只会发现「说好保留 50 条，怎么还能撤销到很早之前」。
+check('DEFAULT_CONFIG 含变更记录条数默认值，且与 lib/history.mjs 的常量一致', () => {
+  assert.equal(DEFAULT_CONFIG.historyMaxEntries, 200)
+  assert.equal(HISTORY_MAX_ENTRIES_DEFAULT, 200)
+  // 两条常量分居两个模块，各有各的用途（一个是配置默认值，一个是压实兜底）。
+  // 数值必须相等，否则「没传上限」时的行为会与默认配置不符。
+  assert.equal(MAX_ENTRIES, HISTORY_MAX_ENTRIES_DEFAULT, 'lib/history.mjs 的兜底必须等于配置默认值')
+  assert.equal(HISTORY_MAX_ENTRIES_MIN, 50)
+  assert.equal(HISTORY_MAX_ENTRIES_MAX, 500)
+})
 
+check('clampHistoryMaxEntries：区间内原样、越界夹取、非整数返回 null', () => {
+  assert.equal(clampHistoryMaxEntries(200), 200)
+  assert.equal(clampHistoryMaxEntries(50), 50)
+  assert.equal(clampHistoryMaxEntries(500), 500)
+  // 夹取而不是拒绝：容量参数越界时放宽比报错更符合直觉（用户要 30，给 50 是可解释的）
+  assert.equal(clampHistoryMaxEntries(30), 50)
+  assert.equal(clampHistoryMaxEntries(100000), 500)
+  assert.equal(clampHistoryMaxEntries(0), 50)
+  assert.equal(clampHistoryMaxEntries(-5), 50)
+  // 非整数 / 非数字交给调用方决定：这里「猜」会把脏数据和手误混为一谈
+  assert.equal(clampHistoryMaxEntries(50.5), null)
+  assert.equal(clampHistoryMaxEntries('100'), null, '字符串不做隐式转换：表单里传字符串是调用方的 bug')
+  assert.equal(clampHistoryMaxEntries(NaN), null)
+  assert.equal(clampHistoryMaxEntries(Infinity), null)
+  assert.equal(clampHistoryMaxEntries(null), null)
+  assert.equal(clampHistoryMaxEntries(undefined), null)
+})
+
+check('sanitizeConfig：变更记录条数越界夹取、非整数才拒绝', () => {
+  assert.equal(sanitizeConfig({ historyMaxEntries: 100 }).patch.historyMaxEntries, 100)
+  assert.equal(sanitizeConfig({ historyMaxEntries: 30 }).patch.historyMaxEntries, 50, '越界夹取，不报错')
+  assert.equal(sanitizeConfig({ historyMaxEntries: 9000 }).patch.historyMaxEntries, 500)
+  assert.equal(sanitizeConfig({ historyMaxEntries: 30 }).errors.historyMaxEntries, undefined)
+  assert.ok(sanitizeConfig({ historyMaxEntries: 12.5 }).errors.historyMaxEntries)
+  assert.ok(sanitizeConfig({ historyMaxEntries: '200' }).errors.historyMaxEntries)
+  assert.ok(sanitizeConfig({ historyMaxEntries: null }).errors.historyMaxEntries)
+  assert.equal('historyMaxEntries' in sanitizeConfig({ historyMaxEntries: 'x' }).patch, false)
+})
+
+check('migrateConfig：变更记录条数非数字回退默认值、是数字则一律夹取', () => {
+  // 磁盘配置是**不可信输入**：手改过的 null、字符串都会原样读进来。
+  // 判据只有一条 ——「是数字就夹取，不是数字才回退」。刻意不给 0 / 负数开特例：
+  //   · 与 sanitizeConfig 必须同策略，否则同一个 0 走 HTTP 变成 50、走手改配置变成 200，
+  //     同一个输入两种结果，是脏数据能钻过去的缝；
+  //   · 0 的意图方向是「少留一点」，夹到下限 50 顺着这个方向；
+  //     若回退成默认值 200 反而把保留窗口**变大**了，与用户的意思正好相反。
+  assert.equal(migrateConfig({}).historyMaxEntries, 200)
+  assert.equal(migrateConfig({ historyMaxEntries: null }).historyMaxEntries, 200)
+  assert.equal(migrateConfig({ historyMaxEntries: 'abc' }).historyMaxEntries, 200)
+  assert.equal(migrateConfig({ historyMaxEntries: '200' }).historyMaxEntries, 200, '字符串不当数字用')
+  assert.equal(migrateConfig({ historyMaxEntries: 12.5 }).historyMaxEntries, 200, '小数不是合法条数')
+  assert.equal(migrateConfig({ historyMaxEntries: 0 }).historyMaxEntries, 50)
+  assert.equal(migrateConfig({ historyMaxEntries: -100 }).historyMaxEntries, 50)
+  assert.equal(migrateConfig({ historyMaxEntries: 10 }).historyMaxEntries, 50)
+  assert.equal(migrateConfig({ historyMaxEntries: 99999 }).historyMaxEntries, 500)
+  assert.equal(migrateConfig({ historyMaxEntries: 400 }).historyMaxEntries, 400)
+})
+
+// 这条是「UI 与后端契约」的地基：设置页的下拉选项必须全部落在服务端接受的区间内。
+// 只在客户端加一档 1000，用户选中后保存会被夹成 500 —— 界面显示 1000、实际存 500。
+check('变更记录条数：设置页下拉选项全部落在合法区间内，且必含默认档', () => {
+  const clientText = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+  const block = clientText.match(/const HISTORY_MAX_ENTRIES_OPTIONS = \[([^\]]*)\]/)?.[1] ?? ''
+  assert.ok(block !== '', '找不到 client/index.mjs 的 HISTORY_MAX_ENTRIES_OPTIONS')
+  const options = block.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
+  assert.ok(options.length >= 2, '至少要有两个档位，否则这个设置项没有选择余地')
+  for (const n of options) {
+    assert.ok(n >= HISTORY_MAX_ENTRIES_MIN && n <= HISTORY_MAX_ENTRIES_MAX, `档位 ${n} 超出服务端接受的 ${HISTORY_MAX_ENTRIES_MIN}–${HISTORY_MAX_ENTRIES_MAX}`)
+    assert.equal(clampHistoryMaxEntries(n), n, `档位 ${n} 被服务端夹取，说明两端对不上`)
+  }
+  assert.ok(options.includes(HISTORY_MAX_ENTRIES_DEFAULT), `选项里必须有默认档 ${HISTORY_MAX_ENTRIES_DEFAULT}`)
+  // 客户端那份默认值也必须与后端一致（表单初值用它）
+  assert.match(clientText, /const HISTORY_MAX_ENTRIES_DEFAULT = 200/, '客户端默认值必须与 lib/config.mjs 一致')
+})
+
+check('变更记录条数：config 双语文案键齐全，且 UI 真的用了它', () => {
+  const clientText = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+  for (const key of ['history.maxEntries', 'history.maxEntriesHint', 'history.maxEntriesDefault', 'history.maxEntriesOption']) {
+    // 中英各一份：漏一份会让 makeFallbackT 把裸键名渲染到屏幕上
+    const hits = clientText.split(`'${key}':`).length - 1
+    assert.equal(hits, 2, `文案键 ${key} 应为中英各一份，实际 ${hits} 份`)
+  }
+  assert.match(clientText, /id: 'soul-historyMaxEntries'/, '设置页必须有这个下拉的 id（label 的 htmlFor 指向它）')
+  assert.match(clientText, /htmlFor: 'soul-historyMaxEntries'/, 'label 必须关联到控件，否则点标签不会聚焦')
+})
+
+console.log('插件清单与图标')
 // DSH 读取 package.json 的 icon 字段（app-boot 的 readPluginMeta / iconOf），
 // 在插件管理列表与侧栏入口渲染。图标缺失只是回退默认插图，但路径写错、
 // 或没进 files 白名单，就会出现「仓库里有、装完没有」的静默失败，故固化为检查。

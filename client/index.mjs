@@ -82,6 +82,10 @@ window.__ModuleLoader__.load({
       // 容量上限（服务端 HISTORY_MAX_ENTRIES）。由响应带回而不是写死在客户端：
       // 两边各写一份迟早会不一致，而「最多保留 N 条」是一句会被人当真的承诺。
       historyMax: null,
+      // 变更记录保留条数（配置字段，用户可改）。与 historyMax 不同：
+      // historyMax 是「当前配置承诺的上限」（响应带回），historyMaxEntries 是
+      // 设置表单里的那份值 —— 保存成功后两者应相等。
+      historyMaxEntries: 200,
       saving: false,
       error: null
     }
@@ -417,6 +421,8 @@ window.__ModuleLoader__.load({
         s.trailColor = config.trailColor || TRAIL_COLOR_FALLBACK
         s.trailSpeed = config.trailSpeed || 'slow'
         s.trailWidth = config.trailWidth || 'thin'
+        // 变更记录保留条数：服务端 migrate 已夹取到 50–500，这里只兜「缺席」
+        s.historyMaxEntries = Number.isFinite(config.historyMaxEntries) ? config.historyMaxEntries : 200
       }
 
       async loadConfig() {
@@ -687,11 +693,8 @@ window.__ModuleLoader__.load({
       '.soul-accordion-icon{flex:0 0 18px;color:var(--dsw-alias-label-secondary);font-size:18px;line-height:1;text-align:center}',
       // 收起态只有触发器一个子元素 ⇒ 四角都要圆（展开态由上面的顶圆角规则负责）
       '.soul-accordion:not(.soul-accordion-open) .soul-accordion-trigger{border-radius:calc(var(--dsw-radius-xl) - .5px)}',
-      // head 包住 trigger + 可选的问号提示（hint 在 button 外，见 SoulAccordion 注释）。
-      // 提示要随行居中，且在 hover 时把触发的 hover 背景让开 —— 提示本身不带背景。
-      '.soul-accordion-head{display:flex;align-items:center}',
-      '.soul-accordion-head .soul-accordion-trigger{flex:1;min-width:0}',
-      '.soul-accordion-head .soul-hint{margin:0 12px 0 0;flex:none}',
+      // 折叠标题旁的问号提示已取消（说明改放展开区内的 .soul-note）：
+      // head 层随之删除 —— 触发器恢复成 section 的直接子元素，无需 flex 包裹。
       '.soul-accordion-body{padding:14px;border-top:.5px solid var(--dsw-alias-settings-card-stroke);background:transparent}',
       '.soul-field select:focus,.soul-field textarea:focus,.soul-field input[type=text]:focus{outline:none;border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 25%, transparent)}',
       '.soul-toggle{display:flex;align-items:center;gap:8px;margin-bottom:14px}',
@@ -730,6 +733,11 @@ window.__ModuleLoader__.load({
       '.soul-hint:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px;border-radius:3px}',
       '.soul-hint:focus-visible .soul-hint-tip{opacity:1;visibility:visible}',
       '.soul-status{margin-top:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
+      // 说明块：一组「读到就够、不需要操作」的文字（预设收录范围 + 变更记录去哪了）。
+      // 与 .soul-status 同排印，但允许多行分行 —— 多条说明挤成一段会像一句话里
+      // 混了两件事。行距靠 line-height 自然撑开，不上边框（不是引用也不是分隔）。
+      '.soul-note{margin-top:10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
+      '.soul-note > div + div{margin-top:2px}',
       '.soul-dirty{color:var(--dsw-alias-state-warn-primary)}',
       // —— 人设预设：竖版卡牌 + 堆叠轮播 ——
       // 方案 B：插画是卡面主视觉（方形满铺），名称与摘要压在图上由渐变承接，
@@ -968,9 +976,9 @@ window.__ModuleLoader__.load({
       '.soul-detail-history-head{display:flex;align-items:baseline;gap:10px}',
       '.soul-detail-history-title{margin:0;font-size:14px;font-weight:500;line-height:20px;color:var(--dsw-alias-label-primary)}',
       '.soul-detail-history-count{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
-      // —— 设置页指引行（0.8.1 双入口）：列表迁去详情页后的指针 ——
-      // 次要色一行文字，不抢主区的视觉权重；样式抄 .soul-hint 的排印。
-      '.soul-history-entry{display:flex;align-items:baseline;gap:8px;margin:2px 0 0 0;padding:0}',
+      // —— 设置页指引（0.8.1 双入口）——
+      // 列表整体迁去插件详情页后，设置页不再有指引行；去向说明并入「人设预设」
+      // 展开区的 .soul-note（见下方 .soul-note 注释），不再单独占一行。
       // 危险色描边文字钮（规格抄 .soul-persona-danger）：清空记录不可逆，
       // 是这一组唯一的破坏性动作。撤销按钮不用危险色 —— 它可以再撤销一次改回来。
       '.soul-history-clear{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;height:24px;padding:0 10px;border:.5px solid var(--dsw-alias-state-error-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-state-error-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
@@ -1190,7 +1198,11 @@ window.__ModuleLoader__.load({
       // 双入口（0.8.1）：主入口在插件详情页，设置页不再留独立指引行（突兀且占地）；
       // 改为「人设预设」折叠标题旁的问号提示（SoulHint），文案缩成一句，hover 展示。
       'history.entryHint': '变更记录已移至插件详情页：撤销、恢复预设、清空都在那里。',
-      'history.entryOpen': '打开变更记录',
+      // —— 变更记录保留条数（0.8.0 打磨）——
+      'history.maxEntries': '保留条数',
+      'history.maxEntriesHint': '变更记录最多保留多少条。超出后自动丢弃最旧的记录；条数越多，可撤销的范围越大。',
+      'history.maxEntriesDefault': '{count} 条（默认）',
+      'history.maxEntriesOption': '{count} 条',
       'history.timeJustNow': '刚刚',
       'history.timeMinutes': '{count} 分钟前',
       'history.timeHours': '{count} 小时前',
@@ -1407,7 +1419,11 @@ window.__ModuleLoader__.load({
       // settings group becomes a pointer line so a low-frequency feature stops
       // occupying the settings page permanently.
       'history.entryHint': 'Change history has moved to the plugin details page: undo, restore preset, and clear all live there.',
-      'history.entryOpen': 'Open change history',
+      // —— Change history retention (0.8.0 polish) ——
+      'history.maxEntries': 'Entries kept',
+      'history.maxEntriesHint': 'How many change-history entries to keep. Older entries are dropped once the limit is reached; a larger number means a longer undo window.',
+      'history.maxEntriesDefault': '{count} entries (default)',
+      'history.maxEntriesOption': '{count} entries',
       'history.timeJustNow': 'just now',
       'history.timeMinutes': '{count} min ago',
       'history.timeHours': '{count} h ago',
@@ -1525,7 +1541,14 @@ window.__ModuleLoader__.load({
     ]
 
     // 表单字段与 store 字段的一一对应（dirty 检测与保存载荷共用）
-    const FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+    const FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'historyMaxEntries']
+
+    // 变更记录保留条数的可选值。**只放整数档位，不做自由输入**：
+    // 这是个一次设定、此后不再碰的容量参数，自由输入只会带来
+    // 「输 30 被夹到 50」这种需要额外解释的状态。默认档（200）单独标注出来，
+    // 用户想回到出厂设置时一眼能找到。
+    const HISTORY_MAX_ENTRIES_OPTIONS = [50, 100, 200, 500]
+    const HISTORY_MAX_ENTRIES_DEFAULT = 200
 
     // 其中真正参与 compilePrompt 的字段子集。
     // 提示词预览只依赖它们：改光轨颜色 / 粗细、切换 set_persona 确认模式都不会改变
@@ -1553,7 +1576,10 @@ window.__ModuleLoader__.load({
       trailEnabled: 'trail.enable',
       trailColor: 'trail.color',
       trailSpeed: 'trail.speed',
-      trailWidth: 'trail.width'
+      trailWidth: 'trail.width',
+      // 保留条数本身也是被审计的字段：改它同样会留一条记录（否则用户改了容量，
+      // 记录里查不到是谁改的），所以它必须有自己的标签。
+      historyMaxEntries: 'history.maxEntries'
     }
 
     // 与 lib/history.mjs 的 HISTORY_SOURCES 对齐；认不出的来源原样显示。
@@ -1611,25 +1637,24 @@ window.__ModuleLoader__.load({
     }
 
     // 可折叠设置面板：同一时间只展开一个区域，并持久化用户最后的选择。
+    //
+    // 曾经这里有个 `hint` prop，把问号提示渲染在折叠标题旁的 head 里。用户反馈：
+    // 折叠态挂问号等于把说明放在「还没展开就能看到」的位置，而它解释的恰恰是展开后
+    // 的东西。现在说明一律写进 body 里（能直接读的文字优先于 hover），
+    // head 层随之取消 —— 触发器恢复成 section 的直接子元素。
     function SoulAccordion(props) {
-      const { id, title, summary, open, onToggle, hint, children } = props
+      const { id, title, summary, open, onToggle, children } = props
       return e('section', { className: `soul-accordion${open ? ' soul-accordion-open' : ''}` },
-        e('div', { className: 'soul-accordion-head' },
-          e('button', {
-            type: 'button',
-            className: 'soul-accordion-trigger',
-            'aria-expanded': open,
-            'aria-controls': `${id}-body`,
-            onClick: onToggle
-          },
-            e('span', { className: 'soul-accordion-title' }, title),
-            e('span', { className: 'soul-accordion-summary' }, summary),
-            e('span', { className: 'soul-accordion-icon', 'aria-hidden': true }, open ? '−' : '+')
-          ),
-          // 问号提示放在 trigger **外**：button 里不允许嵌套可聚焦元素（HTML 交互内容
-          // 嵌套规则），SoulHint 有 tabIndex，放里面既非法又会让 Tab 焦点顺序错乱。
-          // head 用 flex 包住两者，提示视觉上仍贴着标题。
-          hint || null
+        e('button', {
+          type: 'button',
+          className: 'soul-accordion-trigger',
+          'aria-expanded': open,
+          'aria-controls': `${id}-body`,
+          onClick: onToggle
+        },
+          e('span', { className: 'soul-accordion-title' }, title),
+          e('span', { className: 'soul-accordion-summary' }, summary),
+          e('span', { className: 'soul-accordion-icon', 'aria-hidden': true }, open ? '−' : '+')
         ),
         open && e('div', { id: `${id}-body`, className: 'soul-accordion-body' }, children)
       )
@@ -1995,7 +2020,7 @@ window.__ModuleLoader__.load({
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error } = state
 
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
@@ -2013,6 +2038,11 @@ window.__ModuleLoader__.load({
       const [localTrailColor, setLocalTrailColor] = React.useState(trailColor || TRAIL_COLOR_FALLBACK)
       const [localTrailSpeed, setLocalTrailSpeed] = React.useState(trailSpeed || 'slow')
       const [localTrailWidth, setLocalTrailWidth] = React.useState(trailWidth || 'thin')
+      // 变更记录保留条数：本地表单值用**数字**（不是字符串），因为它参与 dirty 比较，
+      // 而 sameValue 对数字走 === —— 存字符串会让「200」与 200 永远不等、保存按钮长亮。
+      const [localHistoryMax, setLocalHistoryMax] = React.useState(
+        Number.isFinite(historyMaxEntries) ? historyMaxEntries : HISTORY_MAX_ENTRIES_DEFAULT
+      )
       const [personaName, setPersonaName] = React.useState('')
       // 「存为预设」的命名弹层是否打开。
       //
@@ -2106,9 +2136,9 @@ window.__ModuleLoader__.load({
       //
       // saving 期间仍然整体跳过：保存流程自身会带着响应回填（见 saveConfig →
       // applyConfig → 本 effect），中途再插一次写入只会造成闪烁。
-      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
-      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
-      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
+      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'historyMaxEntries']
+      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth, historyMaxEntries: localHistoryMax }
+      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin', historyMaxEntries: Number.isFinite(historyMaxEntries) ? historyMaxEntries : HISTORY_MAX_ENTRIES_DEFAULT }
       const lastSyncRef = React.useRef(null)
       // 判断某字段是否被用户动过：与「上次同步的快照」比。没有快照（首帧）时
       // 一律视为未动过 —— 首帧本地值本来就来自 store，无从谈起「编辑过」。
@@ -2145,9 +2175,10 @@ window.__ModuleLoader__.load({
         setLocalTrailColor(next.trailColor)
         setLocalTrailSpeed(next.trailSpeed)
         setLocalTrailWidth(next.trailWidth)
+        setLocalHistoryMax(next.historyMaxEntries)
         // 依赖与 serverValues 的来源一致；localValues/sameValue 每次渲染都是新的，
         // 但只在「某字段真要写」时才 setState，故不会形成死循环。
-      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth])
+      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries])
 
       // toast 的消失交给宿主 Toast 组件自己（holdMs 后淡出并回调 onDone）。
       // 此前这里有个 2s 定时器 + 自绘 CSS 动画，两者时长必须手工对齐，
@@ -2162,8 +2193,8 @@ window.__ModuleLoader__.load({
       const sameValue = (a, b) => (typeof a === 'string' && typeof b === 'string'
         ? a.trim() === b.trim()
         : a === b)
-      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth }
-      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries: Number.isFinite(historyMaxEntries) ? historyMaxEntries : HISTORY_MAX_ENTRIES_DEFAULT }
+      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth, historyMaxEntries: localHistoryMax }
       const dirty = FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
 
       // 宿主 savedNotice 语义：一旦用户开始新的编辑（dirty 变 true），
@@ -2642,11 +2673,28 @@ window.__ModuleLoader__.load({
             title: t('group.personas'),
             summary: personasSummary,
             open: openSection === 'personas',
-            onToggle: toggleSection('personas'),
-            // 变更记录入口指引挂在标题旁的问号上：独立一行在个性化区块里太突兀，
-            // hover 展示对低频信息刚好。
-            hint: e(SoulHint, { text: t('history.entryHint') })
+            onToggle: toggleSection('personas')
           },
+            // 保留条数是**容量设置**，不是预设操作，但它只在详情页里被用到 ——
+            // 放在这一组（紧挨「变更记录入口」指引）比另开一组更符合「去哪儿找它」的直觉。
+            e('div', { className: 'soul-field' },
+              e('label', { htmlFor: 'soul-historyMaxEntries' },
+                t('history.maxEntries'),
+                e(SoulHint, { text: t('history.maxEntriesHint') })
+              ),
+              e('select', {
+                id: 'soul-historyMaxEntries',
+                value: String(localHistoryMax),
+                onChange: (ev) => setLocalHistoryMax(Number(ev.target.value))
+              },
+                ...HISTORY_MAX_ENTRIES_OPTIONS.map((count) => e('option', {
+                  key: count,
+                  value: String(count)
+                }, count === HISTORY_MAX_ENTRIES_DEFAULT
+                  ? t('history.maxEntriesDefault', { count: String(count) })
+                  : t('history.maxEntriesOption', { count: String(count) })))
+              )
+            ),
             e('div', { className: 'soul-field' },
               // 加载失败优先于「加载中」：否则失败时界面永远停在加载态，与「还没有预设」无从区分
               personasError
@@ -2920,7 +2968,13 @@ window.__ModuleLoader__.load({
                 onClick: () => { setPersonaName(''); setShowSavePersona(true) }
               }, t('personas.driftAction'))
             ),
-            e('div', { className: 'soul-status' }, t('personas.hint'))
+            // 说明合并成一块（用户要求）：预设的收录范围、以及变更记录搬去了哪儿。
+            // 两条都是「读者需要知道、但不需要操作」的信息，拆成两处反而像两个待办。
+            // 用能直接读到的正文而非 hover 提示 —— 它们解释的正是展开后看到的东西。
+            e('div', { className: 'soul-note' },
+              e('div', null, t('personas.hint')),
+              e('div', null, t('history.entryHint'))
+            )
           ),
 
           e(SoulAccordion, {
@@ -3021,9 +3075,9 @@ window.__ModuleLoader__.load({
         ),
 
         // —— 变更记录：设置页不再留独立指引行 ——
-        // 指引并入「人设预设」折叠标题旁的问号提示（见下方 SoulHint）：
-        // 独立一行在个性化区块里突兀，hover 提示对低频信息更合适。
-        // 这里不再渲染任何 history 状态，渲染成本为零。
+        // 指引并入「人设预设」展开区的说明块（与 personas.hint 合并展示）：
+        // 独立一行在个性化区块里突兀，而折叠标题旁挂 hover 又说不到点上
+        //（它解释的是展开后的东西）。这里不再渲染任何 history 状态，渲染成本为零。
 
         e(SoulAccordion, {
           id: 'soul-prompt',

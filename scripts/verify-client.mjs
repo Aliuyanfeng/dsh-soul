@@ -1657,34 +1657,47 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     assert.equal(findAllByClass(tree, 'soul-error').length, 0, 'warning 不得被当成错误')
   })
 
-  await check('C28 设置页指引：并入人设预设标题的问号提示，不再有独立指引行', async () => {
+  await check('C28 设置页指引：并入「人设预设」展开区的说明块，不再挂在折叠标题旁', async () => {
     const world = await boot()
     world.routes['/api/soul/history'] = () => ({ ok: true, entries: [historyEntry({ id: 'a' })], max: 200, warning: null })
     const zh = world.dicts.zh
-    const tree = await renderSettings(world)
-    // 设置页不得再出现变更记录的列表与手风琴 —— 那是详情页的职责。
-    // 判据用 accordion **标题 span** 而不是整个 accordion 文本：指引提示文案里
-    // 就有「变更记录」四个字，挂在人设预设 head 里会误伤整树文本匹配。
-    const accordionTitles = findAllByClass(tree, 'soul-accordion-title')
-    assert.equal(accordionTitles.some((n) => textOf(n) === zh['group.history']), false,
+
+    // ① 折叠态：变更记录不该在设置页有独立分组，也不该出现在折叠标题旁。
+    const closed = await renderSettings(world)
+    // 判据用 accordion **标题 span** 而不是整个 accordion 文本：指引文案里就有
+    //「变更记录」四个字，整树文本匹配会被自己误伤（首轮假红就是这么来的）。
+    const closedTitles = findAllByClass(closed, 'soul-accordion-title')
+    assert.equal(closedTitles.some((n) => textOf(n) === zh['group.history']), false,
       '设置页不得再保留「变更记录」手风琴分组')
-    // 独立指引行已废除：突兀且占地，低频信息降级为 hover 提示
-    assert.equal(findAllByClass(tree, 'soul-history-entry').length, 0, '设置页不得再保留独立指引行（.soul-history-entry）')
-    // 指引改挂在「人设预设」折叠标题旁的问号提示上（hint 在 trigger 外、head 内）
-    const heads = findAllByClass(tree, 'soul-accordion-head')
-    assert.equal(heads.length >= 1, true, '应存在 accordion head 结构')
-    const personaHead = heads.find((n) => textOf(n).includes(zh['group.personas']))
-    assert.ok(personaHead, '找不到「人设预设」分组')
-    const personaHints = findAllByClass(personaHead, 'soul-hint')
-    assert.equal(personaHints.length, 1, '人设预设标题旁应恰好一个问号提示')
-    assert.equal(textOf(personaHints[0]), zh['history.entryHint'], '提示文案必须是 history.entryHint')
-    // hint 必须在 trigger（button）外：button 内不允许嵌套可聚焦元素
-    assert.equal(findAllByClass(findAllByClass(personaHead, 'soul-accordion-trigger')[0], 'soul-hint').length, 0,
-      '提示不得嵌进 trigger 按钮（交互内容嵌套规则）')
-    // 其余分组不得误挂提示
-    const otherHeads = heads.filter((n) => n !== personaHead)
-    assert.equal(otherHeads.some((n) => findAllByClass(n, 'soul-hint').length > 0), false,
-      '只有人设预设分组挂提示，其他分组不得误挂')
+    // 独立指引行已废除：突兀且占地，低频信息降级为展开区的说明
+    assert.equal(findAllByClass(closed, 'soul-history-entry').length, 0, '设置页不得再保留独立指引行（.soul-history-entry）')
+    // 问号提示连同承载它的 head 层一起删除 —— 留着 head 说明只改了一半
+    assert.equal(findAllByClass(closed, 'soul-accordion-head').length, 0,
+      '折叠标题旁的 head 层应已删除（说明改放展开区内）')
+    assert.equal(textOf(closed).includes(zh['history.entryHint']), false,
+      '折叠态不该出现变更记录指引 —— 它解释的是展开后的东西')
+
+    // ② 展开「人设预设」：两条说明必须同处一个说明块里合并展示。
+    const triggers = findAll(closed, (n) => n.type === 'button' && textOf(n).includes(zh['group.personas']))
+    assert.ok(triggers.length > 0, '应存在「人设预设」分组标题（前置条件）')
+    await triggers[0].props.onClick()
+    const tree = await renderSettings(world)
+
+    const notes = findAllByClass(tree, 'soul-note')
+    assert.equal(notes.length, 1, `说明块应恰好一个，实际 ${notes.length} 个`)
+    const lines = (notes[0].children || []).filter((n) => n && n.type === 'div')
+    assert.equal(lines.length, 2, `说明块应有两行（预设收录范围 + 变更记录去向），实际 ${lines.length} 行`)
+    assert.equal(textOf(lines[0]), zh['personas.hint'], '第一行应是预设收录范围说明')
+    assert.equal(textOf(lines[1]), zh['history.entryHint'], '第二行应是变更记录去向指引')
+    // ③ 说明是正文，不是按钮内容：绝不能嵌进 trigger（button 内不允许嵌可聚焦元素）
+    const openTriggers = findAllByClass(tree, 'soul-accordion-trigger')
+    assert.equal(openTriggers.some((n) => textOf(n).includes(zh['history.entryHint'])), false,
+      '指引不得嵌进 trigger 按钮')
+    // ④ 其余分组的展开区不得误挂说明（说明块是 personas 专属）
+    const bodies = findAllByClass(tree, 'soul-accordion-body')
+    const others = bodies.filter((n) => textOf(n) !== textOf(notes[0].parent) && !(n.children || []).includes(notes[0]))
+    assert.equal(others.some((n) => findAllByClass(n, 'soul-note').length > 0), false,
+      '只有人设预设分组挂说明块，其他分组不得误挂')
   })
 } finally {
   restoreTimers()

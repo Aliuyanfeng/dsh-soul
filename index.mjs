@@ -439,7 +439,7 @@ async function commitConfig(mutate, source) {
 
     // 差分必须在 saveConfig **之后**、且以它返回的配置为基准：saveConfig 会剔除
     // tone / presets / examples 三个废弃字段，拿 mutate 的产物去比会把它们误报成变更。
-    const entry = await auditCommit(current, config, source)
+    const entry = await auditCommit(current, config, source, config.historyMaxEntries)
 
     return { config, changed, promptChanged, entry }
   })
@@ -460,7 +460,7 @@ function httpError(status, message) {
 // 所以「配置写失败却留下记录」在结构上不可能。反过来「配置已写、记录没写成」是可能的
 // （磁盘只读、记录文件被占用）—— 此时把原因记进 lastHistoryFailure 并**继续返回成功**，
 // 因为配置确实已经改了。
-async function auditCommit(current, config, source) {
+async function auditCommit(current, config, source, maxEntries) {
   try {
     const fields = diffFields(current, config)
     const personas = diffPersonas(current.personas, config.personas)
@@ -494,7 +494,7 @@ async function auditCommit(current, config, source) {
       lastHistoryFailure = `变更记录条目构造失败（source=${JSON.stringify(source)}），本次改动未被记录`
       return null
     }
-    await recordHistoryEntry(historyPath(), entry)
+    await recordHistoryEntry(historyPath(), entry, maxEntries)
     lastHistoryFailure = null
     return entry
   } catch (err) {
@@ -1458,7 +1458,15 @@ function registerHistoryRoutes(ctx) {
             return
           }
           const read = await readHistoryFile(historyPath())
-          const payload = toHistoryResponse(read, lastHistoryFailure)
+          // max 必须来自**当前配置**（用户改了保留条数，UI 的「最多保留 N 条」就得跟着变）；
+          // 读配置失败时回退默认值 —— 列表读取不该因为配置层的抖动而 500。
+          let maxEntries
+          try {
+            maxEntries = (await loadConfig()).historyMaxEntries
+          } catch {
+            maxEntries = undefined
+          }
+          const payload = toHistoryResponse(read, lastHistoryFailure, maxEntries)
           // ?limit= 只影响本次返回的条数，**不动 max** —— max 是容量上限（压实后保多少条），
           // 拿它当「本次有多少条」用，客户端会在两种含义之间猜。
           const limit = parseLimit(req.url)

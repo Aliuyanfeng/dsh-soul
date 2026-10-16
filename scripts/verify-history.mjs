@@ -52,7 +52,7 @@ const root = mkdtempSync(join(tmpdir(), 'dsh-soul-history-'))
 // 断言条数写死：新增/删除用例时数字必须一起改。
 // 「本次真的跑了这么多」与「我以为跑了这么多」不是同一件事 —— 少跑的那几条
 // 看起来和黄了没区别，所以 assertCount 不一致时整脚本判失败。
-const EXPECTED_ASSERTIONS = 41
+const EXPECTED_ASSERTIONS = 43
 let fileSeq = 0
 function freshPath(label = 'soul-config.history.jsonl') {
   fileSeq += 1
@@ -393,6 +393,24 @@ await check('pruneEntries 保留尾部并保序（顺序是 planRollback 的判�
   assert.deepEqual(pruneEntries(null), [])
 })
 
+// 保留条数可自定义（0.8.0 打磨）：max 是**配置里的承诺**，不是写死的常量。
+// 最容易犯的错是「把配置读进来了，但压实仍然按模块常量走」—— 那样 UI 显示
+// 「最多保留 50 条」而文件里继续攒 200 条，等到第 201 次写入才按新值截断。
+await check('pruneEntries 的条数上限可由调用方指定，非法值回退模块常量', () => {
+  const entries = []
+  for (let i = 0; i < 120; i++) entries.push(makeEntry({ id: createEntryId(BASE_MS + i, 'abcdef') }))
+  const small = pruneEntries(entries, 50)
+  assert.equal(small.length, 50, '必须真的按传进来的上限截')
+  assert.equal(small[small.length - 1].id, entries[entries.length - 1].id, '仍然保留最新的那批')
+  assert.deepEqual(small.map((e) => e.id), entries.slice(70).map((e) => e.id), '不得重排')
+  // 上限比现有条数大时不凭空补条目
+  assert.equal(pruneEntries(entries, 500).length, 120)
+  // 非法上限一律回退模块常量，而不是「当成 0」把整份日志清空
+  for (const bad of [0, -1, NaN, Infinity, '50', null, undefined]) {
+    assert.equal(pruneEntries(entries, bad).length, 120, `上限 ${String(bad)} 应回退为默认值（120 < 200，故不截）`)
+  }
+})
+
 await check('findEntryIndex 按 id 定位，找不到返回 -1', () => {
   const a = makeEntry({})
   const b = makeEntry({})
@@ -717,6 +735,20 @@ await check('toHistoryResponse 倒序输出并汇总警告', () => {
   assert.match(messy.warning, /末尾不完整/)
   assert.match(messy.warning, /只读取了最近的部分/)
   assert.match(messy.warning, /有 3 行无法解析/)
+})
+
+await check('toHistoryResponse 的 max 来自调用方（配置承诺），非法值才回退常量', () => {
+  const a = makeEntry({})
+  const read = { entries: [a], dropped: 0, truncated: false, trimmedHead: false, error: null }
+  // 配置里写了 50，响应就必须说 50：UI 拿这个数字对用户讲「最多保留 N 条」，
+  // 服务端报常量 200 而实际按 50 压实，就是在对用户撒谎。
+  assert.equal(toHistoryResponse(read, null, 50).max, 50)
+  assert.equal(toHistoryResponse(read, null, 500).max, 500)
+  // 小数/非法值回退常量，绝不把 NaN 或 undefined 送进 JSON
+  assert.equal(toHistoryResponse(read, null, 50.7).max, 50)
+  for (const bad of [undefined, null, 0, -1, NaN, Infinity, '50']) {
+    assert.equal(toHistoryResponse(read, null, bad).max, MAX_ENTRIES, `max=${String(bad)} 应回退模块常量`)
+  }
 })
 
 console.log('模块边界')
