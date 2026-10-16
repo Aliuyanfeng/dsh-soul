@@ -2103,7 +2103,7 @@ check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', (
     ["{ source: 'web', action: 'reset' }", 'HTTP 重置'],
     ["{ source: 'web', action: 'savePreset' }", 'HTTP 保存预设'],
     ["{ source: 'web', action: 'deletePreset' }", 'HTTP 删除预设'],
-    ["{ source: 'persona', action: 'use' }", '应用预设（两条入口共用）'],
+    ["{ source: 'persona', action: 'use', label: entry && typeof entry.name === 'string' ? entry.name : undefined }", '应用预设（两条入口共用，label 带预设名）'],
     ["{ source: 'command', action: 'nickname' }", '/soul <昵称>'],
     ["{ source: 'command', action: 'reset' }", '/soul reset'],
     ["{ source: 'command', action: 'enable' }", '/soul enable'],
@@ -2130,7 +2130,7 @@ check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', (
   // 关联性（光有标注不够，还要落在对的地方）：抽几个有稳定锚点的切片来钉，
   // 防止「标注都在，但张冠李戴」——例如把 confirm 的标注挪到 set 上。
   const personaApply = indexCode.match(/async function applyPersonaEntry\(ctx, entry\)[\s\S]*?\n\}/)?.[0] ?? ''
-  assert.match(personaApply, /\{ source: 'persona', action: 'use' \}/, 'applyPersonaEntry 的来源应是 persona/use')
+  assert.match(personaApply, /\{ source: 'persona', action: 'use', label: entry && typeof entry\.name === 'string' \? entry\.name : undefined \}/, 'applyPersonaEntry 的来源应是 persona/use 且 label 带预设名')
   const toolSlice = indexSource.match(/defineTool\([\s\S]*?\n    \}\)/)?.[0] ?? ''
   assert.match(toolSlice, /\{ source: 'tool', action: 'setPersona' \}/, 'set_persona 工具的来源应是 tool/setPersona')
   assert.match(indexCode, /updateConfig[\s\S]*?\{ source: 'service', action: 'update' \}/, 'updateConfig 的来源应是 service/update')
@@ -2991,6 +2991,20 @@ check('变更记录分组：字段标签覆盖全部审计字段，且只渲染�
   // 时钟回拨（或服务端时间略快）会让差值变负 —— 「-3 分钟前」会被读成记录坏了。
   assert.match(clientCode, /if \(diff < 60 \* 1000\) return t\('history\.timeJustNow'\)/,
     '差值小于一分钟（含负数）都该显示「刚刚」')
+
+  // 0.8.0 打磨：折叠行必须带 label（应用了哪个预设）——不然「应用预设 · 自定义指令」
+  // 答不了用户最常问的那句「我切到哪个人设了」。
+  assert.match(clientCode, /entry\.label === 'string' && entry\.label !== ''/,
+    '折叠摘要必须使用条目的 label（预设名），旧记录无 label 时原样省略')
+  assert.ok(clientSource.includes(`'history.labelSuffix': '：{label}'`) ||
+    clientSource.includes(`'history.labelSuffix': ': {label}'`),
+    '缺少 history.labelSuffix 文案键（zh+en）')
+  // 展开详情必须是「展开即全文」：原值块 + 新值块各自铺开，长文本换行显示。
+  assert.match(clientCode, /soul-history-diff-value/, '展开详情缺少全文值块（.soul-history-diff-value）')
+  assert.match(clientCode, /soul-history-diff-tag/, '值块前必须有「原值/新值」标签（.soul-history-diff-tag）')
+  // 旧的 grid + 箭头布局已被竖排全文取代；残留的 from/to 箭头类名说明只改了一半。
+  assert.equal(/soul-history-diff-from|soul-history-diff-to|soul-history-diff-arrow/.test(clientCode), false,
+    '旧的 88px 网格省略布局残留（soul-history-diff-from/to/arrow）—— 全文块已取代它')
 })
 
 // ---------- 工作区绑定（0.8.1-b）----------

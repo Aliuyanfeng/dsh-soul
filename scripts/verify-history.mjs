@@ -52,7 +52,7 @@ const root = mkdtempSync(join(tmpdir(), 'dsh-soul-history-'))
 // 断言条数写死：新增/删除用例时数字必须一起改。
 // 「本次真的跑了这么多」与「我以为跑了这么多」不是同一件事 —— 少跑的那几条
 // 看起来和黄了没区别，所以 assertCount 不一致时整脚本判失败。
-const EXPECTED_ASSERTIONS = 40
+const EXPECTED_ASSERTIONS = 41
 let fileSeq = 0
 function freshPath(label = 'soul-config.history.jsonl') {
   fileSeq += 1
@@ -243,6 +243,21 @@ await check('buildHistoryEntry 组装出规范条目，字段按白名单投影'
   assert.deepEqual(entry.after, { style: 'humorous' })
   assert.deepEqual(entry.personas, { added: ['甲'], updated: [], removed: [] })
   assert.deepEqual(Object.keys(entry).sort(), ['action', 'after', 'at', 'before', 'configHash', 'id', 'personas', 'source', 'v'])
+  // label：可选的人类可读上下文（如「应用了哪个预设」）。没传就不该出现这个键 ——
+  // 空字符串的 label 比没有 label 更糟，它会在界面上渲染成一个悬空的「：」。
+  const labeled = makeEntry({ label: '苏格拉底式提问者' })
+  assert.equal(labeled.label, '苏格拉底式提问者')
+  assert.equal('label' in makeEntry({}), false, '没给 label 的条目不得带空 label 键')
+  assert.equal(makeEntry({ label: '  ' }).label, undefined, '空白 label 丢弃 —— 不能留下一个看起来「有上下文」的空串')
+})
+
+await check('label 超长丢弃但不拒绝整条记录（它只影响显示，不影响指纹与回滚）', () => {
+  const good = makeEntry({ label: 'x'.repeat(121) })
+  const entry = normalizeHistoryEntry(good)
+  assert.ok(entry, 'label 超长不得让整条记录被丢 —— 丢一条真实变更比丢一句文案严重得多')
+  assert.equal(entry.label, undefined)
+  const fine = normalizeHistoryEntry(makeEntry({ label: 'x'.repeat(120) }))
+  assert.equal(fine.label, 'x'.repeat(120), '恰好在上限内的 label 必须保留')
 })
 
 await check('normalizeHistoryEntry 对形状可疑的条目一律丢弃（它会被写回配置）', () => {

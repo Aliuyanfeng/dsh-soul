@@ -482,6 +482,7 @@ async function auditCommit(current, config, source) {
       at: new Date().toISOString(),
       source: source && source.source,
       action: source && source.action,
+      label: source && source.label,
       configHash: hashConfig(config),
       before: fields.before,
       after: fields.after,
@@ -1213,7 +1214,12 @@ function findActivePersonaName(config) {
 async function applyPersonaEntry(ctx, entry) {
   const { patch, errors } = sanitizeConfig(pickPersonaValues(entry))
   const invalid = Object.keys(errors)
-  const { config: updated, changed, promptChanged } = await commitConfig(c => ({ ...c, ...patch }), { source: 'persona', action: 'use' })
+  // label 带上预设名：审计里「应用预设」这条记录光有字段差，缺「应用的是什么」——
+  // 用户问「昨晚我切到了哪个人设」时，字段差答不上来。
+  const { config: updated, changed, promptChanged } = await commitConfig(
+    c => ({ ...c, ...patch }),
+    { source: 'persona', action: 'use', label: entry && typeof entry.name === 'string' ? entry.name : undefined }
+  )
   if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
   // applied 是「通过校验的字段数」——与 changed（实际产生差异的字段）不同：
   // 全部非法时 applied 为 0，此时不能报「已应用」，也不能报「与当前配置一致」。

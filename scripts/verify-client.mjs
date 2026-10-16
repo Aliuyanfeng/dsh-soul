@@ -1394,6 +1394,9 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
       historyEntry({
         id: 'ccc-3',
         at: new Date(Date.now() + 30 * 1000).toISOString(),
+        source: 'persona',
+        action: 'use',
+        label: '苏格拉底式提问者',
         before: { style: 'professional' },
         after: { style: 'casual' }
       })
@@ -1447,6 +1450,12 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
       '只有预设事件的记录也得有一句「涉及 …」，否则末尾悬着一个空壳')
     assert.equal(textOf(findAllByClass(items[2], 'soul-history-time')[0]), zh['history.timeJustNow'],
       '时间差为负（时钟回拨/服务端稍快）必须归入「刚刚」，不能显示「-1 分钟前」')
+    // ④b label（预设名）必须出现在折叠摘要里 —— 不然「应用预设 · 风格」答不了「应用的是什么」；
+    // 且拼在字段列表**之前**（先说什么预设，再说动了哪些字段，阅读顺序和提问顺序一致）。
+    assert.equal(textOf(findAllByClass(items[2], 'soul-history-fields')[0]),
+      zh['history.fields'].replace('{fields}',
+        `${zh['history.labelSuffix'].replace('{label}', '苏格拉底式提问者')}、${zh['field.style']}`),
+      '应用预设的记录必须在摘要里带预设名')
 
     // ⑤ 拉取失败必须留下痕迹：否则永远停在「加载中」，与「真的没有记录」无从区分
     const bad = await boot()
@@ -1512,28 +1521,35 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
       return hit[0]
     }
     const styleRow = rowOf(zh['field.style'])
-    assert.equal(textOf(findAllByClass(styleRow, 'soul-history-diff-from')[0]), zh['style.professional'])
-    assert.equal(textOf(findAllByClass(styleRow, 'soul-history-diff-to')[0]), zh['style.humorous'])
+    // 「展开即全文」：值放在 .soul-history-diff-value 里，块前有 .soul-history-diff-tag 标「原值/新值」
+    const cellOf = (row, side) => {
+      const cells = findAllByClass(row, 'soul-history-diff-cell')
+      assert.equal(cells.length, side === 'from' ? 2 : 2, `展开行应有两块（原值/新值），实际 ${cells.length}`)
+      const index = side === 'from' ? 0 : 1
+      assert.equal(textOf(findAllByClass(cells[index], 'soul-history-diff-tag')[0]),
+        zh[side === 'from' ? 'history.field.from' : 'history.field.to'],
+        `值块前必须有「${side === 'from' ? '原值' : '新值'}」标签 —— 光靠位置分不清哪边是原值`)
+      return findAllByClass(cells[index], 'soul-history-diff-value')[0]
+    }
+    assert.equal(textOf(cellOf(styleRow, 'from')), zh['style.professional'])
+    assert.equal(textOf(cellOf(styleRow, 'to')), zh['style.humorous'])
     const bioRow = rowOf(zh['field.bio'])
-    assert.equal(textOf(findAllByClass(bioRow, 'soul-history-diff-from')[0]), '旧介绍')
-    assert.equal(textOf(findAllByClass(bioRow, 'soul-history-diff-to')[0]), zh['history.valueEmpty'],
+    assert.equal(textOf(cellOf(bioRow, 'from')), '旧介绍')
+    assert.equal(textOf(cellOf(bioRow, 'to')), zh['history.valueEmpty'],
       '被清空的字段必须显示「（空）」而不是留白 —— 留白会被读成渲染坏了')
     // ④ 布尔字段画的是「已开启/未开启」，不是 true/false
     const toolRow = rowOf(zh['field.toolConfirm'])
-    assert.equal(textOf(findAllByClass(toolRow, 'soul-history-diff-from')[0]), zh['accordion.off'])
-    assert.equal(textOf(findAllByClass(toolRow, 'soul-history-diff-to')[0]), zh['accordion.on'])
+    assert.equal(textOf(cellOf(toolRow, 'from')), zh['accordion.off'])
+    assert.equal(textOf(cellOf(toolRow, 'to')), zh['accordion.on'])
     // ⑤ 只出现在 before 里的键（字段被删掉）也必须占一行，新值那侧显示「（空）」
     const occRow = rowOf(zh['field.occupation'])
-    assert.equal(textOf(findAllByClass(occRow, 'soul-history-diff-from')[0]), '工程师')
-    assert.equal(textOf(findAllByClass(occRow, 'soul-history-diff-to')[0]), zh['history.valueEmpty'],
+    assert.equal(textOf(cellOf(occRow, 'from')), '工程师')
+    assert.equal(textOf(cellOf(occRow, 'to')), zh['history.valueEmpty'],
       '只在 before 里出现的字段必须照常占一行 —— 否则「谁把我这一项删了」就永远查不到')
-    // ⑥ 两列各自带 title：光靠位置分不清哪边是原值
-    assert.equal(findAllByClass(styleRow, 'soul-history-diff-from')[0].props.title, zh['history.field.from'])
-    assert.equal(findAllByClass(styleRow, 'soul-history-diff-to')[0].props.title, zh['history.field.to'])
     // ⑦ 枚举外的取值原样显示（查词典前必须先过取值白名单）
     const speedRow = rowOf(zh['trail.speed'])
-    assert.equal(textOf(findAllByClass(speedRow, 'soul-history-diff-from')[0]), zh['trail.speed.slow'])
-    assert.equal(textOf(findAllByClass(speedRow, 'soul-history-diff-to')[0]), 'turbo',
+    assert.equal(textOf(cellOf(speedRow, 'from')), zh['trail.speed.slow'])
+    assert.equal(textOf(cellOf(speedRow, 'to')), 'turbo',
       '枚举外的取值必须原样显示 —— 直接查词典会渲染成裸键名 `trail.speed.turbo`')
 
     // ⑧ 展开第二条：预设事件单独成行，并**取代**第一条的展开（同时只展开一行）

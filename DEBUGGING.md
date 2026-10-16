@@ -198,7 +198,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | --- | --- | --- | --- |
 | 纯函数 / 契约 | `verify-config` | 125 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
-| 持久化行为 | `verify-history` | 40 | 否 |
+| 持久化行为 | `verify-history` | 41 | 否 |
 | 纯函数（工作区绑定） | `verify-bindings` | 47 | 否 |
 | 客户端行为 | `verify-client` | 28 | 否 |
 | 端到端（保存 → 两条通道都拿到新文本；变更记录四条路由） | `verify-e2e-prompt` | 72 | 否 |

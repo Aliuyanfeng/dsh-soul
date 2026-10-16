@@ -993,16 +993,19 @@ window.__ModuleLoader__.load({
       '.soul-history-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.soul-history-action-armed{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}',
       '.soul-history-detail{padding:0 10px 10px 10px;border-top:.5px solid var(--dsw-alias-settings-card-stroke)}',
-      '.soul-history-diff{display:flex;flex-direction:column;gap:4px;padding-top:8px}',
-      // 三列网格而不是 flex：字段名长度不一（英文标签很长），
-      // 网格才能让「原值 → 新值」在每一行都对齐。
-      '.soul-history-diff-row{display:grid;grid-template-columns:88px minmax(0,1fr) 14px minmax(0,1fr);align-items:start;gap:6px;font-size:12px;line-height:18px}',
+      '.soul-history-diff{display:flex;flex-direction:column;gap:10px;padding-top:8px}',
+      // 「展开即全文」：每行竖排 —— 字段名、原值块、新值块依次铺开。
+      // 曾经是 88px/1fr/14px/1fr 的四列网格 + 单行省略，但自定义指令几百字时
+      // 一行省略号等于没给；竖排让长文本换行铺开，短字段也不吃亏。
+      '.soul-history-diff-row{display:flex;flex-direction:column;gap:4px;font-size:12px;line-height:18px}',
       '.soul-history-diff-field{color:var(--dsw-alias-label-tertiary);word-break:break-word}',
       // pre-wrap：介绍 / 自定义指令里的换行是内容的一部分，压成一行会看不出改了什么。
-      '.soul-history-diff-from,.soul-history-diff-to{min-width:0;white-space:pre-wrap;word-break:break-word}',
-      '.soul-history-diff-from{color:var(--dsw-alias-label-tertiary)}',
-      '.soul-history-diff-to{color:var(--dsw-alias-label-primary)}',
-      '.soul-history-diff-arrow{color:var(--dsw-alias-label-tertiary);text-align:center}',
+      '.soul-history-diff-cell{display:flex;flex-direction:column;gap:2px}',
+      '.soul-history-diff-tag{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}',
+      '.soul-history-diff-value{min-width:0;white-space:pre-wrap;word-break:break-word}',
+      // 原值块垫底色区分「这是被替换掉的」，新值保持正文色；省略号阶段二值同权重，全文阶段必须能一眼分清。
+      '.soul-history-diff-cell:first-of-type .soul-history-diff-value{color:var(--dsw-alias-label-tertiary)}',
+      '.soul-history-diff-value{color:var(--dsw-alias-label-primary)}',
       '.soul-history-diff-persona{margin-top:8px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       '.soul-history-more{align-self:flex-start;margin-top:8px;padding:0;border:0;background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
       '.soul-history-more:hover{text-decoration:underline}',
@@ -1167,6 +1170,9 @@ window.__ModuleLoader__.load({
       'history.personasAdded': '新增预设 {names}',
       'history.personasRemoved': '删除预设 {names}',
       'history.personasUpdated': '覆盖预设 {names}',
+      // —— label：条目的人类可读上下文（0.8.0 打磨）——
+      // 折叠行里「应用预设 · 自定义指令」答不了「应用的是什么」；有 label 时拼在来源后面。
+      'history.labelSuffix': '：{label}',
       'history.source.web': '网页保存',
       'history.source.command': '斜杠命令',
       'history.source.tool': 'Agent 工具',
@@ -1381,6 +1387,7 @@ window.__ModuleLoader__.load({
       'history.personasAdded': 'Added preset {names}',
       'history.personasRemoved': 'Deleted preset {names}',
       'history.personasUpdated': 'Overwrote preset {names}',
+      'history.labelSuffix': ': {label}',
       'history.source.web': 'Web save',
       'history.source.command': 'Slash command',
       'history.source.tool': 'Agent tool',
@@ -1793,6 +1800,9 @@ window.__ModuleLoader__.load({
         if (events.added.length > 0) parts.push(t('history.personasAdded', { names: events.added.join(sep) }))
         if (events.removed.length > 0) parts.push(t('history.personasRemoved', { names: events.removed.join(sep) }))
         if (events.updated.length > 0) parts.push(t('history.personasUpdated', { names: events.updated.join(sep) }))
+        // label（如预设名）紧跟在第一个字段前说出来：「应用预设：苏格拉底式提问者 · 自定义指令」
+        // —— 没有它，这一行答不了「应用的是什么」。旧记录没有 label，原样省略。
+        if (typeof entry.label === 'string' && entry.label !== '') parts.unshift(t('history.labelSuffix', { label: entry.label }))
         return parts.length > 0 ? t('history.fields', { fields: parts.join(sep) }) : t('history.emptyFields')
       }
 
@@ -1884,11 +1894,18 @@ window.__ModuleLoader__.load({
 
                       isOpen && e('div', { className: 'soul-history-detail' },
                         rows.length > 0 && e('div', { className: 'soul-history-diff' },
+                          // 「展开即全文」：原值/新值不再压成单行省略 —— 自定义指令几百字时，
+                          // 一行省略号等于没给。每行竖排：字段名 + 原值块 + 新值块，长文本换行铺开。
                           ...rows.map((row) => e('div', { key: row.key, className: 'soul-history-diff-row' },
                             e('span', { className: 'soul-history-diff-field' }, row.label),
-                            e('span', { className: 'soul-history-diff-from', title: t('history.field.from') }, row.from),
-                            e('span', { className: 'soul-history-diff-arrow', 'aria-hidden': true }, '→'),
-                            e('span', { className: 'soul-history-diff-to', title: t('history.field.to') }, row.to)
+                            row.from !== '' && e('div', { className: 'soul-history-diff-cell' },
+                              e('span', { className: 'soul-history-diff-tag' }, t('history.field.from')),
+                              e('div', { className: 'soul-history-diff-value' }, row.from)
+                            ),
+                            e('div', { className: 'soul-history-diff-cell' },
+                              e('span', { className: 'soul-history-diff-tag' }, t('history.field.to')),
+                              e('div', { className: 'soul-history-diff-value' }, row.to)
+                            )
                           ))
                         ),
                         events.added.length > 0 && e('div', { className: 'soul-history-diff-persona' },
