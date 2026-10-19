@@ -1137,21 +1137,34 @@ window.__ModuleLoader__.load({
       // 「恢复上层设置」用次要色：它可逆，不是破坏性动作
       '.soul-session-chip-clear{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
       '.soul-session-clear-row{display:flex;margin-top:10px}',
-      // —— 会话「人设」的卡牌网格（0.9.0-d 改版）——
+      // —— 会话「人设」：左卡牌网格 + 右详情（0.9.0-d 改版）——
       //
-      // 与设置页的人设卡牌**共用同一套视觉语言**：同样的圆角、描边、浅底、插画 +
-      // 压图标题 + 效果栏。改成网格而不是叠层轮播，是因为会话面板比设置页矮 ——
-      // 一次铺开比翻页更好扫；也从 260px 固定宽收窄到自适应列宽，窄容器下自动换行。
-      '.soul-session-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:2px}',
+      // 与设置页的人设卡牌**共用同一套视觉语言**（圆角、描边、浅底、插画 + 压图标题），
+      // 但布局从「叠层轮播 + 3D 翻面」改成「左侧网格选中 + 右侧详情面板」：
+      // 会话面板没有翻面手势的空间，而「点一下就同时完成选中与看清」更直接。
+      //
+      // 分栏比例用 minmax：窄容器（会话面板本身就不宽）下详情栏不低于 220px，
+      // 卡牌栏至少 160px，放不下时整体换行（而不是把两侧挤成一条缝）。
+      '.soul-session-split{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;margin-top:2px}',
+      '.soul-session-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px;flex:1 1 300px;min-width:160px;align-content:start}',
       // 单张卡：结构抄 .soul-persona-card 的正面（去掉绝对定位与 3D，因为它不再叠层）
-      '.soul-session-card{display:flex;flex-direction:column;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px}',
-      // 生效中的那张：主色描边 + 外发光，与设置页「使用中」同一套强调方式
+      '.soul-session-card{display:flex;flex-direction:column;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;padding:0;text-align:left;cursor:pointer;color:inherit;font-family:inherit}',
+      '.soul-session-card:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
+      // 生效中的那张：主色描边 + 外发光（配置事实）
       '.soul-session-card[data-effective="true"]{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08))}',
+      // 选中的那张：抬高一档 + 细描边（浏览状态，与「生效」是两件事）
+      '.soul-session-card[data-selected="true"]{transform:translateY(-1px);box-shadow:0 2px 12px rgba(0,0,0,.14),0 0 0 1px var(--dsw-alias-brand-primary)}',
       // 卡面里的插画区高度：网格卡比设置页小，1:1 会过高，压到 3:2
       '.soul-session-card .soul-persona-art{aspect-ratio:3/2}',
-      // 卡面按钮：与设置页 .soul-persona-action 同规格（36px 实心主色）
       '.soul-session-card .soul-persona-body{padding:8px 10px 10px;gap:6px}',
-      '.soul-session-card .soul-persona-action{width:100%;height:30px;font-size:12px}',
+      // 右栏详情：复用设置页卡背的元素（.soul-persona-dims / .soul-persona-fulltext），
+      // 这里只补容器与滚动。高度上限避免长文把整个面板撑得比卡牌栏高太多。
+      '.soul-session-detail{flex:1 1 220px;min-width:200px;display:flex;flex-direction:column;gap:8px;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);max-height:340px;overflow:auto}',
+      '.soul-session-detail-empty{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      '.soul-session-detail-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
+      '.soul-session-detail-name{font-size:14px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary)}',
+      '.soul-session-detail-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}',
+      '.soul-session-detail-actions .soul-persona-action{flex:1 1 auto}',
       // 覆盖里的字段名：等宽，便于与配置键对上
       '.soul-session-fields{display:flex;flex-wrap:wrap;gap:6px}',
       '.soul-session-field{padding:1px 6px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:18px}',
@@ -1480,6 +1493,7 @@ window.__ModuleLoader__.load({
       'session.badge': '有覆盖',
       // 卡面按钮：与设置页「使用 / 使用中」同一套语义，只是措辞更贴会话语境
       'session.useCard': '用这个',
+      'session.pickHint': '点左侧任意一张卡，在这里查看它的完整人设。',
       'session.chipInUse': '使用中',
       // —— 工作区人设（详情页，0.9.0-e）——
       'workspaces.title': '工作区人设',
@@ -1797,6 +1811,7 @@ window.__ModuleLoader__.load({
       'session.noOverrides': 'No temporary override.',
       'session.badge': 'overridden',
       'session.useCard': 'Use this',
+      'session.pickHint': 'Pick a card on the left to see its full persona here.',
       'session.chipInUse': 'In use',
       'workspaces.title': 'Workspace personas',
       'workspaces.count': '{bound} / {total} bound',
@@ -2543,6 +2558,11 @@ window.__ModuleLoader__.load({
       const [error, setError] = React.useState(null)
       const [notice, setNotice] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
+      // 右栏详情正在展示哪一张卡（null = 还没选中）。
+      //
+      // 与「生效」是两件事：这个纯属浏览状态，点卡片只换详情、不改配置；
+      // 真正写配置的是详情面板里的「用这个」。初值在下面的 effect 里跟随生效项。
+      const [selectedPersona, setSelectedPersona] = React.useState(null)
 
       // 刻意**不用** React.useCallback：本项目的客户端垫片（scripts/verify-client.mjs）
       // 只实现了 useState / useEffect / useRef —— 用 useCallback 会让整条客户端回归
@@ -2566,6 +2586,8 @@ window.__ModuleLoader__.load({
       // 切到别的会话时重新取：这个组件的 props.sessionId 会随宿主切换而变。
       React.useEffect(() => {
         setNotice(null)
+        // 切会话时清掉选中态：上一屏看的那张卡与这个会话无关，留着会让人以为它在生效
+        setSelectedPersona(null)
         void reload()
         // reload 的闭包只捕获 sessionId（其余是稳定的 setter / controller）
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2633,6 +2655,20 @@ window.__ModuleLoader__.load({
         )
       }
 
+      // 选中态默认跟随「当前生效」：打开 tab 时应先看到自己正在用的是什么，
+      // 而不是一张随机卡片或空详情面板。
+      //
+      // 只在**还没有选中**时跟随（selectedPersona === null）：用户点过别的卡之后，
+      // 覆盖或配置的刷新不该把他的浏览位置抢回去。
+      React.useEffect(() => {
+        if (selectedPersona !== null) return
+        if (view && typeof view.activePersona === 'string' && view.activePersona !== '') {
+          setSelectedPersona(view.activePersona)
+        }
+        // selectedPersona 是「要不要跟随」的判据，必须进依赖；view 变化时重新评估。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [view, selectedPersona])
+
       // 「来源」必须说清是**哪一层**决定的：否则用户看到一个人设名，却不知道该去哪儿改它。
       const sourceText = (() => {
         if (view.source === 'session') return t('session.source.session')
@@ -2657,16 +2693,29 @@ window.__ModuleLoader__.load({
       // 与设置页卡牌的**有意差异**（不是遗漏）：
       //   · 不做 3D 翻面 —— 会话里的卡是"选一个"，不是"读一个"，翻面会掩盖选择成本；
       //   · 不做叠层轮播 —— 会话面板比设置页矮，网格一次铺开比翻页更好扫；
-      //   · 卡面直接给「用这个」动作 —— 会话覆盖是一次性动作，不该再点进详情。
+      // —— 左：卡牌网格（缩略）／右：选中卡的详情 ——
+      //
+      // 为什么改成左右分栏而不是纯网格：网格里每张卡只能放一句效果栏，用户看不出
+      // 「两个预设到底差在哪」。设置页用 3D 翻面解决这件事；会话面板没有翻面手势的
+      // 空间，改用「选中即看详情」—— 一次点击同时完成「选中」与「看清」。
+      //
+      // 选中态与生效态是**两个不同的东西**，必须分开表达：
+      //   · selectedPersona = 右侧详情正在展示哪一张（纯浏览，不影响配置）；
+      //   · isEffective     = 这一张是否正在生效（配置事实）。
+      // 初版选中态默认跟随生效项，所以打开就是「看到自己现在用的是什么」。
       const cardFor = (name) => {
         const entry = state.personas ? state.personas[name] : null
         const builtin = !!(entry && entry.builtin)
-        // ★ 标出当前**实际生效**的那个：覆盖生效时按覆盖算，否则按上层解析结果算
-        const isEffective = hasOverride ? activePersona === name : false
-        return e('div', {
+        const isEffective = hasOverride && activePersona === name
+        const isSelected = selectedPersona === name
+        return e('button', {
           key: name,
+          type: 'button',
           className: 'soul-session-card',
-          'data-effective': isEffective ? 'true' : 'false'
+          'data-effective': isEffective ? 'true' : 'false',
+          'data-selected': isSelected ? 'true' : 'false',
+          'aria-pressed': isSelected ? 'true' : 'false',
+          onClick: () => setSelectedPersona(name)
         },
           e('div', { className: 'soul-persona-art' },
             e('img', {
@@ -2689,7 +2738,35 @@ window.__ModuleLoader__.load({
             )
           ),
           e('div', { className: 'soul-persona-body' },
-            e('div', { className: 'soul-persona-eff' }, personaEffectTextOf(entry, t)),
+            e('div', { className: 'soul-persona-eff' }, personaEffectTextOf(entry, t))
+          )
+        )
+      }
+
+      // 右栏详情：与设置页卡背**逐字相同**的六个维度 + 自定义指令全文，
+      // 外加这一栏独有的操作按钮（用这个 / 恢复上层设置）。
+      const detailOf = (name) => {
+        if (name === null) {
+          return e('div', { className: 'soul-session-detail-empty' }, t('session.pickHint'))
+        }
+        const entry = state.personas ? state.personas[name] : null
+        const builtin = !!(entry && entry.builtin)
+        const isEffective = hasOverride && activePersona === name
+        return e(Fragment, null,
+          e('div', { className: 'soul-session-detail-head' },
+            e('span', { className: 'soul-session-detail-name' }, name),
+            builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
+            isEffective && e('span', { className: 'soul-session-badge' }, t('session.chipInUse'))
+          ),
+          e('div', { className: 'soul-persona-dims' },
+            ...PERSONA_DIM_KEYS.map((dim) => e('div', { className: 'soul-persona-dim', key: dim },
+              e('span', null, t(`field.${dim}`)),
+              e('b', null, personaDimLabelOf(entry, dim, t))
+            ))
+          ),
+          e('div', { className: 'soul-persona-back-label' }, t('personas.customInstructions')),
+          e('div', { className: 'soul-persona-fulltext' }, personaFullTextOf(entry, t)),
+          e('div', { className: 'soul-session-detail-actions' },
             e('button', {
               type: 'button',
               className: isEffective
@@ -2697,7 +2774,13 @@ window.__ModuleLoader__.load({
                 : 'soul-persona-action',
               disabled: busy,
               onClick: () => { void apply(name) }
-            }, isEffective ? t('session.chipInUse') : t('session.useCard'))
+            }, isEffective ? t('session.chipInUse') : t('session.useCard')),
+            hasOverride && isEffective && e('button', {
+              type: 'button',
+              className: 'soul-session-chip soul-session-chip-clear',
+              disabled: busy,
+              onClick: () => { void clear() }
+            }, t('session.clear'))
           )
         )
       }
@@ -2718,20 +2801,15 @@ window.__ModuleLoader__.load({
           ? e('p', { className: 'soul-error-notice', role: 'alert' }, t('session.applyFailed', { reason: error }))
           : e('p', { className: 'soul-saved-notice', role: 'status', 'aria-live': 'polite' }, notice)),
 
-        // 临时覆盖：卡牌网格 + 「恢复上层设置」
+        // 临时覆盖：左卡牌网格 + 右详情面板
         e('div', { className: 'soul-field' },
           e('div', { className: 'soul-field-label' }, t('session.overrideTitle')),
           personaNames.length === 0
             ? e('div', { className: 'soul-status' }, t('session.loading'))
-            : e('div', { className: 'soul-session-grid' }, ...personaNames.map(cardFor)),
-          hasOverride && e('div', { className: 'soul-session-clear-row' },
-            e('button', {
-              type: 'button',
-              className: 'soul-session-chip soul-session-chip-clear',
-              disabled: busy,
-              onClick: () => { void clear() }
-            }, t('session.clear'))
-          ),
+            : e('div', { className: 'soul-session-split' },
+              e('div', { className: 'soul-session-grid' }, ...personaNames.map(cardFor)),
+              e('div', { className: 'soul-session-detail' }, detailOf(selectedPersona))
+            ),
           e('div', { className: 'soul-status' }, t('session.overrideHint'))
         ),
 
@@ -2787,6 +2865,41 @@ window.__ModuleLoader__.load({
       if (raw === '') return personaRowMetaOf(entry, t)
       const firstSentence = raw.split(/[。；;\n]/)[0] || raw
       return firstSentence.length > 60 ? `${firstSentence.slice(0, 60)}…` : firstSentence
+    }
+
+    // —— 卡背（详情面）的三样辅助，模块级 ——
+    //
+    // 列出「一个人设完整的六个维度」。顺序与设置页表单一致（风格 → 标题列表 →
+    // 表情 → 表格 → 回复长度 → 语言），这样卡背读起来与设置页对得上。
+    const PERSONA_DIM_KEYS = ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language']
+
+    // 单个维度的「值」文案。刻意**不把与默认相同的项留空**：设置页里 trait 的默认值
+    // 就是 'default'，而卡背要回答的是「这个人设改了什么」—— 统一标成「默认」比留空
+    // 更清楚（留空会让人以为渲染坏了）。
+    // 语言维度复用 LANGUAGE_OPTIONS 的标签（'中文' / 'English' 两种语言下同名，
+    // 本来就是语言自称，无需翻译）。
+    const personaDimLabelOf = (entry, dim, t) => {
+      const row = entry || {}
+      const value = row[dim]
+      if (dim === 'language') {
+        const opt = LANGUAGE_OPTIONS.find((o) => o.value === value)
+        return opt ? opt.label : t('personas.dimDefault')
+      }
+      if (dim === 'style') {
+        return STYLE_VALUES.includes(value) ? t(`style.${value}`) : t('personas.dimDefault')
+      }
+      // ⚠️ 判据是 TRAIT_VALUES.includes(value)（合法**取值** 'default'|'more'|'less'），
+      // 不是检查 dim —— 这里曾经被误改成检查维度名，结果所有 trait 维度都落到「默认」。
+      return TRAIT_VALUES.includes(value) ? t(`trait.${dim}.${value}`) : t('personas.dimDefault')
+    }
+
+    // 卡背的全文：这一次**不截断**（正面效果栏才截断）。
+    // 预设没写自定义指令时给一句说明，而不是留空 —— 留空会让人以为渲染坏了。
+    const personaFullTextOf = (entry, t) => {
+      const raw = typeof (entry || {}).customInstructions === 'string'
+        ? entry.customInstructions.trim()
+        : ''
+      return raw === '' ? t('personas.noCustomInstructions') : raw
     }
 
     // -------------------------------------------------------------------------
@@ -3845,36 +3958,11 @@ window.__ModuleLoader__.load({
 
       // —— 卡背（详情面）用到的辅助 ——
       //
-      // 列出「一个人设完整的六个维度」。顺序与设置页表单一致（风格 → 标题列表 →
-      // 表情 → 表格 → 回复长度 → 语言），这样卡背读起来与设置页对得上。
-      const PERSONA_DIM_KEYS = ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language']
-
-      // 单个维度的「值」文案。刻意**不把与默认相同的项留空**：设置页里 trait 的默认值
-      // 就是 'default'，而卡背要回答的是「这个人设改了什么」—— 统一标成「默认」比留空
-      // 更清楚（留空会让人以为渲染坏了）。
-      // 语言维度复用 LANGUAGE_OPTIONS 的标签（'中文' / 'English' 两种语言下同名，
-      // 本来就是语言自称，无需翻译）。
-      const personaDimLabel = (entry, dim) => {
-        const row = entry || {}
-        const value = row[dim]
-        if (dim === 'language') {
-          const opt = LANGUAGE_OPTIONS.find((o) => o.value === value)
-          return opt ? opt.label : t('personas.dimDefault')
-        }
-        if (dim === 'style') {
-          return STYLE_VALUES.includes(value) ? t(`style.${value}`) : t('personas.dimDefault')
-        }
-        return TRAIT_VALUES.includes(value) ? t(`trait.${dim}.${value}`) : t('personas.dimDefault')
-      }
-
-      // 卡背的全文：这一次**不截断**（正面效果栏才截断）。
-      // 预设没写自定义指令时给一句说明，而不是留空 —— 留空会让人以为渲染坏了。
-      const personaFullText = (entry) => {
-        const raw = typeof (entry || {}).customInstructions === 'string'
-          ? entry.customInstructions.trim()
-          : ''
-        return raw === '' ? t('personas.noCustomInstructions') : raw
-      }
+      // 0.9.0-d 起这三样提到**模块级**（personaDimLabelOf / personaFullTextOf /
+      // PERSONA_DIM_KEYS 已在模块级）：会话「人设」tab 的右侧详情面板要显示与设置页
+      // 卡背**逐字相同**的维度与全文，各写一份必然漂移。
+      const personaDimLabel = (entry, dim) => personaDimLabelOf(entry, dim, t)
+      const personaFullText = (entry) => personaFullTextOf(entry, t)
 
       const styleOptions = STYLE_VALUES.map((value) => ({ value, label: t(`style.${value}`) }))
       const headingListsOptions = TRAIT_VALUES.map((value) => ({ value, label: t(`trait.headingLists.${value}`) }))

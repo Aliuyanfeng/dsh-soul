@@ -1865,8 +1865,14 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     assert.ok(text.includes(zh['session.title']), '应显示标题')
     assert.ok(text.includes('幽默风趣'), `应显示当前生效人设，实际「${text}」`)
     assert.ok(text.includes(zh['session.source.session']), '来源应标明是「本会话临时覆盖」')
-    assert.equal(findAllByClass(tree, 'soul-session-badge').length, 1, '有覆盖时应显示「有覆盖」标记')
-    // 卡牌：每个预设一张（与设置页同一套卡牌语言），外加一个「恢复上层设置」按钮。
+    // 「有覆盖」标记会出现**两处**：顶部状态行 + 右栏详情头。
+    // 改成左右分栏后两处都要显示 —— 用户点开别的卡时，详情头显示"使用中"而顶部
+    // 仍是"有覆盖"，读起来才是同一套状态。
+    assert.ok(
+      findAllByClass(tree, 'soul-session-badge').length >= 1,
+      '有覆盖时应显示「有覆盖」标记'
+    )
+    // 卡牌：每个预设一张（与设置页同一套卡牌语言）。
     // 0.9.0-d 改版前这里是胶囊（.soul-session-chip）；改成卡牌后断言对象随之更换。
     const cards = findAllByClass(tree, 'soul-session-card')
     assert.equal(cards.length, 2, `应为每个预设渲染一张卡，实际 ${cards.length}`)
@@ -1874,6 +1880,18 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     assert.equal(findAllByClass(cards[0], 'soul-persona-art').length, 1, '卡面应有插画区（与设置页同款）')
     assert.equal(findAllByClass(cards[0], 'soul-persona-art-title').length, 1, '卡面应有压图标题')
     assert.equal(findAllByClass(cards[0], 'soul-persona-eff').length, 1, '卡面应有「这个预设会怎么回答」的效果栏')
+    // 左卡牌 + 右详情：两块都必须存在
+    assert.equal(findAllByClass(tree, 'soul-session-split').length, 1, '应是左右分栏布局')
+    assert.equal(findAllByClass(tree, 'soul-session-detail').length, 1, '应有右栏详情面板')
+    // 右栏要显示与设置页卡背**同款**的六个维度 + 自定义指令全文块
+    // ⚠️ 不能只断言容器存在：容器在但里面一个维度都没有时，界面看起来"有一块空白"，
+    //    而容器断言仍然通过（判断力对照实测：把维度列表换成空数组时漏网）。
+    assert.equal(
+      findAllByClass(tree, 'soul-persona-dim').length,
+      6,
+      `详情栏应列出六个维度（与设置页卡背同款），实际 ${findAllByClass(tree, 'soul-persona-dim').length}`
+    )
+    assert.ok(findAllByClass(tree, 'soul-persona-fulltext').length >= 1, '详情栏应有自定义指令全文块')
     // 生效中的那张卡要标出来，否则用户看不出哪个在用
     const effectiveCards = cards.filter((c) => c.props['data-effective'] === 'true')
     assert.equal(effectiveCards.length, 1, `应恰好一张卡标为生效中，实际 ${effectiveCards.length}`)
@@ -1885,7 +1903,7 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     )
   })
 
-  await check('C37 会话「人设」tab：点卡面按钮即改、清除即恢复，都不经保存按钮', async () => {
+  await check('C37 会话「人设」tab：点卡看详情（不改配置）、右栏「用这个」才改、清除即恢复', async () => {
     const world = await boot()
     const zh = world.dicts.zh
     const posts = []
@@ -1942,15 +1960,30 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     }
 
     let tree = await renderTab()
-    // ① 点某张卡上的「用这个」→ 只提交该预设**声明过**的字段（部分覆盖）
-    //    0.9.0-d 改版后卡面上是按钮而不是整张胶囊，所以先按名字找到卡，再点卡上的按钮。
+    // ① 点卡片选中 → 右栏详情出现「用这个」→ 点它才改配置
+    //
+    //    0.9.0-d 改成左右分栏后，卡面**不再**放操作按钮：点卡 = 换右栏详情（纯浏览），
+    //    改配置的动作收敛到右栏。这两步必须分开验证 —— 否则「点卡直接改配置」这种
+    //    退化（浏览即生效）测不出来。
     const cardFor = (n) => findAllByClass(tree, 'soul-session-card').find((c) => textOf(c).includes(n))
     const humorousCard = cardFor('幽默风趣')
     assert.ok(humorousCard, '应有「幽默风趣」的卡牌')
-    const useBtn = findAllByClass(humorousCard, 'soul-persona-action')[0]
-    assert.ok(useBtn, '卡面上应有操作按钮')
-    // 未生效的卡上按钮文案是「用这个」
-    assert.equal(textOf(useBtn), zh['session.useCard'], '未生效的卡应显示「用这个」')
+    // 卡面上不应有操作按钮（改配置只在右栏）
+    assert.equal(
+      findAllByClass(humorousCard, 'soul-persona-action').length,
+      0,
+      '卡面上不应有操作按钮 —— 点卡只换详情，不该顺带改配置'
+    )
+    await humorousCard.props.onClick()
+    tree = await renderTab()
+    // 选中后右栏显示这张卡的详情，且「用这个」在右栏
+    const detail = findAllByClass(tree, 'soul-session-detail')[0]
+    assert.ok(detail, '应有右栏详情面板')
+    assert.ok(textOf(detail).includes('幽默风趣'), `右栏应显示被选中的那张卡，实际「${textOf(detail).slice(0, 80)}」`)
+    const useBtn = findAllByClass(detail, 'soul-persona-action')[0]
+    assert.ok(useBtn, '右栏应有「用这个」按钮')
+    assert.equal(textOf(useBtn), zh['session.useCard'], '未生效的人设应显示「用这个」')
+    assert.equal(posts.length, 0, '仅仅选中一张卡**不得**改配置（浏览与生效是两件事）')
     await useBtn.props.onClick()
     tree = await renderTab()
     assert.equal(posts.length, 1, `点一次应只发一次请求，实际 ${posts.length}`)
@@ -1969,14 +2002,17 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
         `提交的覆盖里不得含 ${forbidden} —— 服务端会丢弃它，客户端本来就不该发`
       )
     }
-    assert.equal(findAllByClass(tree, 'soul-session-badge').length, 1, '改完应出现「有覆盖」标记')
-    // 生效中的卡：按钮变「使用中」且带 active 样式（与设置页同一套语义）
+    assert.ok(findAllByClass(tree, 'soul-session-badge').length >= 1, '改完应出现「有覆盖」标记')
+    // 生效中的卡：卡片带 data-effective（配置事实），而**按钮在右栏**且变「使用中」
     {
       const effective = findAllByClass(tree, 'soul-session-card').filter((c) => c.props['data-effective'] === 'true')
       assert.equal(effective.length, 1, `应恰好一张卡标为生效中，实际 ${effective.length}`)
-      const activeBtn = findAllByClass(effective[0], 'soul-persona-action')[0]
-      assert.equal(textOf(activeBtn), zh['session.chipInUse'], '生效中的卡按钮应显示「使用中」')
-      assert.ok(String(activeBtn.props.className).includes('soul-persona-active'), '生效中的卡按钮应带 active 样式')
+      // 卡面上没有按钮（浏览与生效分离），所以 active 样式落在右栏那个按钮上
+      const detail = findAllByClass(tree, 'soul-session-detail')[0]
+      const activeBtn = findAllByClass(detail, 'soul-persona-action')[0]
+      assert.ok(activeBtn, '右栏应有操作按钮')
+      assert.equal(textOf(activeBtn), zh['session.chipInUse'], '生效中的人设，右栏按钮应显示「使用中」')
+      assert.ok(String(activeBtn.props.className).includes('soul-persona-active'), '生效中时按钮应带 active 样式')
     }
 
     // ② 点「恢复上层设置」→ clear:true，且覆盖消失

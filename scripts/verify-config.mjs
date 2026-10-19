@@ -3041,8 +3041,10 @@ check('卡背（详情面）展示全部维度与全文，且不动卡片 transf
   assert.match(clientSource, /const PERSONA_DIM_KEYS = \['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language'\]/, '缺少维度 key 列表')
   assert.match(backBlock, /PERSONA_DIM_KEYS\.map/, '背面应由 PERSONA_DIM_KEYS 驱动渲染')
   // ④ 全文**不截断**（正面才截断）
-  const fullFn = clientSource.match(/const personaFullText = \(entry\) => \{[\s\S]*?\n      \}/)?.[0] ?? ''
-  assert.ok(fullFn !== '', '找不到 personaFullText 实现')
+  // 0.9.0-d 起提到模块级（personaFullTextOf，多一个 t 参数）—— 会话 tab 的右栏详情
+  // 与设置页卡背必须显示**逐字相同**的全文，各写一份必然漂移。
+  const fullFn = clientSource.match(/const personaFullTextOf = \(entry, t\) => \{[\s\S]*?\n    \}/)?.[0] ?? ''
+  assert.ok(fullFn !== '', '找不到 personaFullTextOf 实现（模块级版本）')
   assert.equal(/slice\(/.test(fullFn), false, '全文函数不得做 slice 截断（截断是正面效果栏的行为）')
   // ⑤ 滚动必须落在全文块自己身上，不能放 face 上
   //    （放 face 上会让「返回」按钮跟着滚出视野 —— 实测确认）。
