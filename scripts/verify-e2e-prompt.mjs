@@ -27,6 +27,7 @@
  * 退出码：0 = 通过；1 = 存在失败项。
  */
 import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -40,7 +41,7 @@ import { PROFILE_FIELDS } from '../lib/config.mjs'
 // 基线运行应跑出的断言数：E 场景 28 项 + F 损坏场景 8 项 + G 变更记录 16 项
 // + H 撤销拒绝路径 3 项 + W 工作区绑定 15 项 + 2 项判断力对照。跑完时校验，
 // 防止「脚本加/删用例」与文档口径悄悄脱节。
-const EXPECTED_ASSERTIONS = 90
+const EXPECTED_ASSERTIONS = 100
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -134,6 +135,37 @@ function makeCtx(agentSpecs) {
     webServer,
     agents,
     logger: { info() {}, warn() {}, error() {} }
+  }
+
+  // —— 三级作用域需要的两个宿主服务（0.9.0）——
+  //
+  // `workspaceRegistry`：宿主侧工作区权威来源。这里按真实形状提供 list()，
+  // 每个条目的 sessionIds 是 getter（宿主实现里会过滤候选），桩用普通属性即可 ——
+  // 被测代码只读一次并拍平成索引。
+  //
+  // `sessionPersistence`：会话清单的**唯一可信来源**（扫磁盘）。回收判定必须用它，
+  // 绝不能用 agents.list() —— 后者是 live registry。
+  //
+  // 两者都可被用例替换（state.workspaces / state.storedSessions），用来验证失败路径。
+  state.workspaces = []
+  state.storedSessions = []
+  state.workspaceRegistryCalls = 0
+  state.persistenceCalls = 0
+
+  host.workspaceRegistry = {
+    list() {
+      state.workspaceRegistryCalls += 1
+      return state.workspaces
+    }
+  }
+  state.persistenceBroken = false
+  host.sessionPersistence = {
+    async list() {
+      state.persistenceCalls += 1
+      // 用例可置 persistenceBroken 来模拟"服务不可用"（回收必须据此拒绝判定）
+      if (state.persistenceBroken) throw new Error('persistence offline')
+      return state.storedSessions.map((id) => ({ id, header: {} }))
+    }
   }
 
   // Cordis 的语义：`ctx.inject(['x'], cb)` 交给回调的 ctx 上直接挂着 `x`
@@ -1136,6 +1168,208 @@ async function bindingIdentityScenario(entry) {
  * dsh-host-webserver 对重复的 (kind, path) 直接抛错，装配会整个失败）。假宿主
  * 的 register 已与宿主同等严格，故本场景一挂载就会暴露任何重复注册。
  */
+
+// ==================== 三级作用域：真挂载跑通 Global → Workspace → Session ====================
+//
+// 为什么必须真挂载：0.9.0 的合并逻辑此前只有源文本契约（看源码里有没有写对），
+// 那种断言证明不了运行时真的按三层解析 —— 把 configForScope 整段短路成返回 base，
+// 源文本仍然"看起来对"。
+//
+// 场景（真实 index.mjs + 含 workspaceRegistry / sessionPersistence 桩的假 ctx）：
+//   S1  工作区覆盖命中 → 拿到该工作区的人设
+//   S2  S3  索引未命中 → 回退目录绑定，且不串到别的工作区
+//   S4  都没有 → 回落全局
+//   S5  S6  会话覆盖优先级最高，且是字段级的（不清掉工作区层的其它字段）
+//   S7  全局 enabled=false 时任何层都不得注入
+//   S8–S10  persistence 不可用时回收不判定、不删文件、不写孤儿标记
+async function scopeScenario(entry) {
+  const dshHome = mkdtempSync(join(tmpdir(), 'dsh-soul-e2e-scope-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+
+  const results = []
+  const push = (name, ok, detail) => results.push({ name, ok, detail })
+
+  const dirA = mkdtempSync(join(tmpdir(), 'dsh-soul-scope-a-'))
+  const dirB = mkdtempSync(join(tmpdir(), 'dsh-soul-scope-b-'))
+  const configFile = join(dshHome, 'soul-config.json')
+
+  const drain = async (rounds = 8) => {
+    for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => setImmediate(resolve))
+  }
+
+  // 装配某个会话的提示词：直接调 section 的 text provider（宿主就是这么调的）。
+  const promptFor = (ctx, sessionId) => {
+    const section = ctx.state.sections[ctx.state.sections.length - 1]
+    if (!section || typeof section.text !== 'function') return null
+    const agent = ctx.state.agents.find((a) => a.id === sessionId)
+    return section.text({ agent })
+  }
+
+  try {
+    writeFileSync(configFile, JSON.stringify({
+      enabled: true,
+      style: 'professional',
+      language: 'zh',
+      customInstructions: '',
+      personas: {
+        严格审查: { style: 'roast', customInstructions: '安全优先' },
+        极简: { style: 'efficient' }
+      },
+      workspaces: {
+        version: 1,
+        scopes: {
+          ws_strict: { style: 'roast', customInstructions: '安全优先', __persona: '严格审查' },
+          ws_min: { style: 'efficient', __persona: '极简' }
+        }
+      }
+    }, null, 2), 'utf8')
+
+    const mod = await import(pathToFileURL(entry).href + `?t=${Date.now()}-${Math.random()}`)
+    const ctx = makeCtx([
+      { id: 'sess-ws', cwd: dirA },
+      { id: 'sess-cwd', cwd: dirB },
+      { id: 'sess-none' }
+    ])
+    ctx.state.workspaces = [
+      { id: 'ws_strict', title: '项目A', path: dirA, sessionIds: ['sess-ws'] },
+      { id: 'ws_min', title: '项目B', path: dirB, sessionIds: [] }
+    ]
+    ctx.state.storedSessions = ['sess-ws', 'sess-cwd', 'sess-none']
+
+    // 目录绑定：dirB 绑「极简」（验证"索引未命中时回退目录"）
+    writeFileSync(join(dshHome, 'soul-bindings.json'), JSON.stringify({
+      version: 1,
+      bindings: { [dirB]: '极简' }
+    }, null, 2), 'utf8')
+
+    await mod.apply(ctx)
+    // 首轮索引重建是**延后一拍**的（setTimeout 0），必须排空微任务与宏任务
+    await drain()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await drain()
+
+    const pWs = promptFor(ctx, 'sess-ws')
+    push(
+      'S1 会话属于某工作区时，拿到该工作区的人设（工作区层生效）',
+      typeof pWs === 'string' && pWs.includes('安全优先'),
+      JSON.stringify({ head: String(pWs).slice(0, 80) })
+    )
+
+    const pCwd = promptFor(ctx, 'sess-cwd')
+    push(
+      'S2 会话不属于任何工作区时，回退按目录绑定解析（cwd 回退层生效）',
+      // 判据用**编译后的文案**而不是预设名：提示词里不会出现「极简」这个名字，
+      // 它只呈现 style 对应的措辞（efficient → 高效干练）。
+      typeof pCwd === 'string' && pCwd.includes('高效干练'),
+      JSON.stringify({ head: String(pCwd).slice(0, 80) })
+    )
+    push(
+      'S3 cwd 回退不得串到别的工作区的人设',
+      typeof pCwd === 'string' && !pCwd.includes('安全优先'),
+      JSON.stringify({ leaked: typeof pCwd === 'string' && pCwd.includes('安全优先') })
+    )
+
+    const pNone = promptFor(ctx, 'sess-none')
+    push(
+      'S4 既无工作区也无目录绑定时，回落全局配置',
+      typeof pNone === 'string' && pNone !== '',
+      JSON.stringify({ head: String(pNone).slice(0, 80) })
+    )
+
+    const saveRes = await callRoute(ctx, '/api/soul/session-scope', {
+      sessionId: 'sess-ws',
+      overrides: { style: 'humorous' }
+    }, 'POST')
+    await drain()
+    const pSession = promptFor(ctx, 'sess-ws')
+    push(
+      'S5 会话覆盖盖住工作区层（优先级 Session > Workspace）',
+      // ⚠️ 判据必须是 humorous 的**完整措辞**（幽默风趣…），不能用「幽默」这个子串：
+      // roast（吐槽达人）的文案里含「犀利幽默」，而工作区层正是 roast ——
+      // 用子串判断时，会话层即使完全不生效也会命中（判断力对照实测漏网）。
+      saveRes.status === 200 && saveRes.body?.ok === true &&
+        typeof pSession === 'string' && pSession.includes('幽默风趣、适当使用比喻和玩笑'),
+      JSON.stringify({ status: saveRes.status, head: String(pSession).slice(0, 80) })
+    )
+    push(
+      'S6 会话覆盖是字段级的：工作区层的其它字段不被清掉',
+      typeof pSession === 'string' && pSession.includes('安全优先'),
+      JSON.stringify({ keeps: typeof pSession === 'string' && pSession.includes('安全优先') })
+    )
+
+    // enabled：全局关掉后，任何层都不能把它打开
+    writeFileSync(configFile, JSON.stringify({
+      enabled: false,
+      style: 'professional',
+      language: 'zh',
+      workspaces: { version: 1, scopes: { ws_strict: { style: 'roast', enabled: true } } }
+    }, null, 2), 'utf8')
+    const offCtx = makeCtx([{ id: 'sess-ws', cwd: dirA }])
+    offCtx.state.workspaces = [{ id: 'ws_strict', title: '项目A', path: dirA, sessionIds: ['sess-ws'] }]
+    offCtx.state.storedSessions = ['sess-ws']
+    const offMod = await import(pathToFileURL(entry).href + `?t=${Date.now()}-${Math.random()}`)
+    await offMod.apply(offCtx)
+    await drain()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await drain()
+    const pOff = promptFor(offCtx, 'sess-ws')
+    push(
+      'S7 全局 enabled=false 时一切作用域都不得注入人设（总开关盖住所有层）',
+      pOff === '',
+      JSON.stringify({ prompt: String(pOff).slice(0, 60) })
+    )
+
+    // —— 回收：persistence 不可用时不得做任何判定 ——
+    const sessDir = join(dshHome, 'soul-sessions')
+    mkdirSync(sessDir, { recursive: true })
+    const sidecarId = 'session-orphan-candidate'
+    const digest = createHash('sha256').update(sidecarId, 'utf8').digest('hex').slice(0, 32)
+    const sidecarPath = join(sessDir, `${digest}.json`)
+    writeFileSync(sidecarPath, JSON.stringify({
+      schemaVersion: 1,
+      sessionId: sidecarId,
+      overrides: { style: 'casual' },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }, null, 2), 'utf8')
+
+    const gcCtx = makeCtx([{ id: 'sess-ws', cwd: dirA }])
+    gcCtx.state.workspaces = []
+    gcCtx.state.storedSessions = []
+    // 模拟 persistence 不可用（桩读 state.persistenceBroken 后抛错）
+    gcCtx.state.persistenceBroken = true
+    const gcMod = await import(pathToFileURL(entry).href + `?t=${Date.now()}-${Math.random()}`)
+    await gcMod.apply(gcCtx)
+    await drain()
+    const gcRes = await callRoute(gcCtx, '/api/soul/session-scope/gc', {}, 'POST')
+    push(
+      'S8 persistence 不可用时，回收报告 scanComplete=false（不做任何判定）',
+      gcRes.status === 200 && gcRes.body?.ok === true && gcRes.body?.scanComplete === false,
+      JSON.stringify({ status: gcRes.status, scanComplete: gcRes.body?.scanComplete })
+    )
+    const stillThere = existsSync(sidecarPath)
+    push(
+      'S9 persistence 不可用时，绝不删除 sidecar（缺证据时保留）',
+      stillThere,
+      JSON.stringify({ exists: stillThere })
+    )
+    const doc = JSON.parse(readFileSync(sidecarPath, 'utf8'))
+    push(
+      'S10 扫描不完整时不得写入孤儿标记（否则一次临时故障会刷满时间戳）',
+      doc.orphan === undefined,
+      JSON.stringify({ orphan: doc.orphan })
+    )
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(dshHome, { recursive: true, force: true })
+    rmSync(dirA, { recursive: true, force: true })
+    rmSync(dirB, { recursive: true, force: true })
+  }
+
+  return results
+}
 async function bindingRoutesScenario(entry) {
   const dshHome = mkdtempSync(join(tmpdir(), 'dsh-soul-e2e-broutes-'))
   const previous = process.env.DSH_HOME
@@ -1474,6 +1708,17 @@ async function main() {
     for (const r of await bindingRoutesScenario(bindingRoutesSandbox.entry)) record(r.name, r.ok, r.detail)
   } finally {
     rmSync(bindingRoutesSandbox.dir, { recursive: true, force: true })
+  }
+
+  // 三级作用域（0.9.0）：另起沙箱 —— 它的前置是「配置里有 workspaces 且会话归入某个工作区」，
+  // 与前面那些只验证 cwd 绑定的场景互不干扰。
+  console.log('')
+  console.log('S 三级作用域：Global → Workspace → Session（真挂载）')
+  const scopeSandbox = prepareSandbox(PKG_DIR, 'scope')
+  try {
+    for (const r of await scopeScenario(scopeSandbox.entry)) record(r.name, r.ok, r.detail)
+  } finally {
+    rmSync(scopeSandbox.dir, { recursive: true, force: true })
   }
 
   // 判断力对照：把 provider 读的配置源换成 DEFAULT_CONFIG（模拟「配置改了但读不到」），

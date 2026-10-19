@@ -3083,7 +3083,7 @@ window.__ModuleLoader__.load({
       return '…' + (cut >= 0 ? tail.slice(cut) : tail)
     }
 
-    // 「工作区绑定」主体。三块结构见 DESIGN-persona-scope.md §7.3：
+    // 「工作区绑定」主体。三块结构见 docs/DESIGN-persona-scope.md §7.3：
     //   ① 当前会话目录卡（我这个项目现在是谁）② 绑定列表（增删改查）③ 未绑定回落行。
     //
     // 与变更记录同款**懒加载**：本组件只在分组展开时才被渲染（手风琴 body 的
@@ -3131,7 +3131,7 @@ window.__ModuleLoader__.load({
       //
       // 降级判据必须是「调用失败」而不是「预读后端种类」：宿主 UiWorkspaceService
       // 的 pickDirectory() 把底层错误（含 capability 字段）包装成了普通 Error，
-      // 客户端读不到种类。见 DESIGN-persona-scope.md §7.5。
+      // 客户端读不到种类。见 docs/DESIGN-persona-scope.md §7.5。
       async function handlePick() {
         try {
           // 防御：服务可能在按钮渲染后被撤走（插件卸载 / scope 物化），此时按「不可用」处理

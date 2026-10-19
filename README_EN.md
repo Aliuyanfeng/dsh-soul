@@ -49,12 +49,25 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 | Version | Direction | Status |
 | --- | --- | --- |
 | `0.7.2` | Settings-page styling aligned with the host, stacked card carousel, persona changes routed through the host's native approval panel | Released |
-| `0.8.0` | **Change audit and rollback** — every config change recorded (timestamp, source, field-level from→to), with a timeline and undo on the plugin details page (the settings page keeps only a pointer) | [Design doc](./DESIGN-audit-rollback.md), done |
-| `0.9.0` | **Three-level scoping** — Global → Workspace → Session; the workspace picks the persona, a session may override it | [Design doc](./DESIGN-persona-scope.md), designed |
-| `0.8.2` | Self-evolution proposals with diff approval — the Agent proposes persona refinements and the diff goes through the approval panel | Planned |
-| `0.9.0` | Memory layer — long-term memory across sessions, isolated per persona, recalled on demand | Planned |
+| `0.8.0` | **Change audit and rollback** — every config change recorded (timestamp, source, field-level from→to), with a timeline and undo on the plugin details page | Released |
+| `0.9.0` | **Three-level config scoping** — Global → Workspace → Session: the workspace picks the persona, a session may override it, plus conservative cleanup | [Design doc](./docs/DESIGN-config-scope.md), implemented |
+| `0.10.0` | Self-evolution proposals with diff approval — the Agent proposes persona refinements and the diff goes through the approval panel | Planned |
+| `0.11.0` | Memory layer — long-term memory across sessions, isolated per persona, recalled on demand | Planned |
 
-Design rationale lives in the corresponding design document; shipped changes are in [RELEASE_NOTES.md](./RELEASE_NOTES.md) and the release process in [PUBLISHING.md](./PUBLISHING.md). The roadmap states direction, not a commitment — the order may change.
+Design rationale lives in `docs/`; shipped changes are in [RELEASE_NOTES.md](./RELEASE_NOTES.md), the release process in [PUBLISHING.md](./PUBLISHING.md), and the troubleshooting playbook in [DEBUGGING.md](./DEBUGGING.md). The roadmap states direction, not a commitment — the order may change.
+
+### Docs
+
+| File | What it covers |
+| --- | --- |
+| [README.md](./README.md) / [README_EN.md](./README_EN.md) | Features, install, usage (for users) |
+| [RELEASE_NOTES.md](./RELEASE_NOTES.md) | Detailed per-release changelog (for debugging and history) |
+| [DEBUGGING.md](./DEBUGGING.md) | Symptom → cause playbook, how the verification chain is built |
+| [PUBLISHING.md](./PUBLISHING.md) | Release process and npm publishing setup |
+| [QUICK_START.md](./QUICK_START.md) | Shortest path to a working setup |
+| [docs/DESIGN-config-scope.md](./docs/DESIGN-config-scope.md) | Three-level scoping: why these layers, why cleanup is conservative |
+| [docs/DESIGN-audit-rollback.md](./docs/DESIGN-audit-rollback.md) | Change audit: why undo also reverts later changes |
+| [docs/DESIGN-persona-scope.md](./docs/DESIGN-persona-scope.md) | Original directory-binding design (predecessor of 0.9.0; path normalization still in use) |
 
 ## Installation
 

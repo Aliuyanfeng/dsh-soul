@@ -49,12 +49,25 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
 | 版本 | 方向 | 状态 |
 | --- | --- | --- |
 | `0.7.2` | 设置页样式对齐宿主、卡片堆叠轮播、人设变更走宿主原生审批面板 | 已发布 |
-| `0.8.0` | **变更审计与回滚** —— 记录每次配置改动（时间戳、来源、字段级 from→to），插件详情页给时间线与撤销（设置页只留去向指引） | [设计文档](./DESIGN-audit-rollback.md) 已完成 |
-| `0.9.0` | **三级隔离** —— Global → Workspace → Session，工作区决定人设、会话可临时覆盖 | [设计文档](./DESIGN-persona-scope.md) 设计完成待实现 |
-| `0.8.2` | 自演化提议 + diff 审批 —— Agent 提议精炼人设，改动以 diff 走审批面板 | 规划中 |
-| `0.9.0` | 记忆层 —— 跨会话长期记忆，按人设隔离、按需召回 | 规划中 |
+| `0.8.0` | **变更审计与回滚** —— 记录每次配置改动（时间戳、来源、字段级 from→to），插件详情页给时间线与撤销 | 已发布 |
+| `0.9.0` | **三级配置作用域** —— Global → Workspace → Session：工作区决定人设、会话可临时覆盖，附保守回收 | [设计文档](./docs/DESIGN-config-scope.md) 已实现 |
+| `0.10.0` | 自演化提议 + diff 审批 —— Agent 提议精炼人设，改动以 diff 走审批面板 | 规划中 |
+| `0.11.0` | 记忆层 —— 跨会话长期记忆，按人设隔离、按需召回 | 规划中 |
 
-设计与取舍写在对应的设计文档里；已发布的改动见 [RELEASE_NOTES.md](./RELEASE_NOTES.md)，发版流程见 [PUBLISHING.md](./PUBLISHING.md)。路线图是方向而非承诺，顺序可能调整。
+设计与取舍写在 `docs/` 下的设计文档里；已发布的改动见 [RELEASE_NOTES.md](./RELEASE_NOTES.md)，发版流程见 [PUBLISHING.md](./PUBLISHING.md)，排查手册见 [DEBUGGING.md](./DEBUGGING.md)。路线图是方向而非承诺，顺序可能调整。
+
+### 文档
+
+| 文件 | 内容 |
+| --- | --- |
+| [README.md](./README.md) / [README_EN.md](./README_EN.md) | 功能、安装、使用（面向使用者） |
+| [RELEASE_NOTES.md](./RELEASE_NOTES.md) | 每个版本的详细变更记录（面向排查与追溯） |
+| [DEBUGGING.md](./DEBUGGING.md) | 现象 → 原因的排查手册、校验链构成 |
+| [PUBLISHING.md](./PUBLISHING.md) | 发版流程与 npm 发布配置 |
+| [QUICK_START.md](./QUICK_START.md) | 最短上手路径 |
+| [docs/DESIGN-config-scope.md](./docs/DESIGN-config-scope.md) | 三级作用域：为什么这样分层、回收为什么保守 |
+| [docs/DESIGN-audit-rollback.md](./docs/DESIGN-audit-rollback.md) | 变更审计：撤销语义为什么是"连同之后的改动" |
+| [docs/DESIGN-persona-scope.md](./docs/DESIGN-persona-scope.md) | 按目录绑定的原始设计（0.9.0 的前身，路径规范化部分仍在使用） |
 
 ## 安装
 

@@ -1,6 +1,6 @@
 # 三级配置作用域（0.9.0 设计草案）
 
-> 状态：**设计阶段**。本文件取代 `DESIGN-persona-scope.md` 的 §7（UI 形态）与交付计划，
+> 状态：**已实现（0.9.0-a ~ 0.9.0-f 全部完成）**。本文件取代 `docs/DESIGN-persona-scope.md` 的 §7（UI 形态）与交付计划，
 > 但**继承**它的 §1–§6（目标、取舍、路径规范化）与 `lib/bindings.mjs` 全部实现。
 >
 > 前置事实（均已在本机 DSH 运行时核实，不是推测）：
@@ -255,10 +255,11 @@ const stored = new Set((await persistence.list()).map((s) => String(s.id)))
 
 | 步 | 内容 | 独立可验证 |
 | --- | --- | --- |
-| 0.9.0-a | 配置 `revision` + 装配快照一致性 | ✅ 修现有隐患，不依赖其它 |
-| 0.9.0-b | `workspaceRegistry` 索引 + workspaceId 优先、cwd 回退 | ✅ 纯宿主侧 |
-| 0.9.0-c | 工作区平铺卡片 UI（替换设置页分组） | ✅ 依赖 b |
-| 0.9.0-d | Session 覆盖 + sidecar + 合并 | ✅ 依赖 a |
-| 0.9.0-e | 回收（命令 + 按钮，第一版 dry-run） | ✅ 依赖 d |
+| 0.9.0-a | 配置 `revision` + 装配快照一致性 | ✅ **已完成**（`aa45fb4`）|
+| 0.9.0-b | `workspaceRegistry` 索引 + workspaceId 优先、cwd 回退 | ✅ **已完成**（`aa45fb4`）|
+| 0.9.0-c | Session sidecar 存储层（`lib/session-scope.mjs`） | ✅ **已完成**（`342144b`）|
+| 0.9.0-d | 会话「人设」tab（`conversation.view` 槽位） | ✅ **已完成**（`904a181`）|
+| 0.9.0-e | 工作区平铺卡片（插件详情页） | ✅ **已完成**（`715539d`）|
+| 0.9.0-f | 回收双入口（`/soul sessions` + 详情页按钮，默认 dry-run） | ✅ **已完成**（`04f35d5`）|
 
 每一步独立提交、独立跑全链。**a 必须先做**：它是地基，且修的是现在就存在的隐患。

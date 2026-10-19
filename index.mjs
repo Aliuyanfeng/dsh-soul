@@ -102,7 +102,7 @@ function configPath() {
 }
 
 // 变更记录的落盘路径：配置文件的**兄弟文件**（soul-config.json → soul-config.history.jsonl）。
-// 与配置同目录而不塞进配置里，理由见 DESIGN-audit-rollback.md §4.1。
+// 与配置同目录而不塞进配置里，理由见 docs/DESIGN-audit-rollback.md §4.1。
 function historyPath() {
   return historyPathFor(configPath())
 }
@@ -535,7 +535,7 @@ function httpError(status, message) {
 
 // 把一次成功的提交记进变更记录。
 //
-// 时机与失败处理（DESIGN-audit-rollback.md §5）：调用点已在 saveConfig 之后，
+// 时机与失败处理（docs/DESIGN-audit-rollback.md §5）：调用点已在 saveConfig 之后，
 // 所以「配置写失败却留下记录」在结构上不可能。反过来「配置已写、记录没写成」是可能的
 // （磁盘只读、记录文件被占用）—— 此时把原因记进 lastHistoryFailure 并**继续返回成功**，
 // 因为配置确实已经改了。
@@ -850,7 +850,7 @@ function refreshPromptAndInject(ctx, config) {
 
 // ==================== 工作区绑定：按目录解析人设 ====================
 //
-// 三层解析（DESIGN-persona-scope.md §5）：会话显式覆盖 → 目录绑定（最长前缀）→ 全局配置。
+// 三层解析（docs/DESIGN-persona-scope.md §5）：会话显式覆盖 → 目录绑定（最长前缀）→ 全局配置。
 // 0.8.1-b 落地的是中间那层；会话覆盖（0.8.1-c/d）尚未接入，接入点见 resolveForCwd 的注释。
 //
 // 为什么绑定表要单独缓存而不是每次读盘：本节的两个消费者都在**每一轮装配**上 ——
@@ -976,7 +976,7 @@ function resolveBindingForCwd(cwd, userPersonas) {
 
 // ==================== 三级作用域：Global → Workspace → Session ====================
 //
-// 解析链（DESIGN-config-scope.md §2.2）：
+// 解析链（docs/DESIGN-config-scope.md §2.2）：
 //
 //   workspaceId（索引命中） → 工作区覆盖 → 部分覆盖全局
 //        ↓ 索引未命中（服务重启 / 新会话 / 索引空）
@@ -2158,7 +2158,7 @@ function registerBindingRoutes(ctx) {
 
 // ==================== 工作区索引（sessionId → workspaceId）====================
 
-// 维护 sessionWorkspaceIndex 的三条时机（DESIGN-config-scope.md §2.2）：
+// 维护 sessionWorkspaceIndex 的三条时机（docs/DESIGN-config-scope.md §2.2）：
 //
 //   ① 首轮重建 —— 服务刚就绪时索引必然是空的；
 //   ② 宿主工作区变更 —— 加/删工作区、会话移入移出，都会改变映射；
