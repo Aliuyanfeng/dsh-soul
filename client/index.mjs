@@ -1064,6 +1064,15 @@ window.__ModuleLoader__.load({
       '.soul-detail-history-head{display:flex;align-items:baseline;gap:10px}',
       '.soul-detail-history-title{margin:0;font-size:14px;font-weight:500;line-height:20px;color:var(--dsw-alias-label-primary)}',
       '.soul-detail-history-count{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      // 保留条数（0.8.1 从设置页迁来）：一行「标签 + 下拉 + 提示」。
+      // 下拉不撑满整行 —— 它是容量参数，不是表单主字段，铺满会显得比记录本身还重。
+      '.soul-history-retention{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.soul-history-retention label{margin:0;flex:none;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      '.soul-history-retention select{flex:none;width:auto;min-width:112px;padding:4px 8px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px}',
+      '.soul-history-retention select:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      '.soul-history-retention select:disabled{opacity:.6}',
+      // 下拉右侧的问号提示沿用设置页的 SoulHint；这里只压掉它的上边距以对齐这一行
+      '.soul-history-retention .soul-hint{margin-top:0}',
       // —— 设置页指引（0.8.1 双入口）——
       // 列表整体迁去插件详情页后，设置页不再有指引行；去向说明并入「人设预设」
       // 展开区的 .soul-note（见下方 .soul-note 注释），不再单独占一行。
@@ -1377,6 +1386,7 @@ window.__ModuleLoader__.load({
       'history.maxEntriesHint': '变更记录最多保留多少条。超出后自动丢弃最旧的记录；条数越多，可撤销的范围越大。',
       'history.maxEntriesDefault': '{count} 条（默认）',
       'history.maxEntriesOption': '{count} 条',
+      'history.maxEntriesSaved': '保留条数已改为 {count} 条。',
       'history.timeJustNow': '刚刚',
       'history.timeMinutes': '{count} 分钟前',
       'history.timeHours': '{count} 小时前',
@@ -1634,6 +1644,7 @@ window.__ModuleLoader__.load({
       'history.maxEntriesHint': 'How many change-history entries to keep. Older entries are dropped once the limit is reached; a larger number means a longer undo window.',
       'history.maxEntriesDefault': '{count} entries (default)',
       'history.maxEntriesOption': '{count} entries',
+      'history.maxEntriesSaved': 'Entries kept is now {count}.',
       'history.timeJustNow': 'just now',
       'history.timeMinutes': '{count} min ago',
       'history.timeHours': '{count} h ago',
@@ -1750,15 +1761,25 @@ window.__ModuleLoader__.load({
       { value: 'en', label: 'English' }
     ]
 
-    // 表单字段与 store 字段的一一对应（dirty 检测与保存载荷共用）
-    const FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'historyMaxEntries']
+    // 设置页表单驱动的字段（dirty 检测与保存载荷共用）。
+    const FORM_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+
+    // 由**别的界面**就地管理、因而不在这张表单里的配置字段：
+    // `historyMaxEntries` 属于插件详情页的变更记录区块（改完即时落盘，不经保存按钮）。
+    const EXTERNALLY_MANAGED_FIELDS = ['historyMaxEntries']
+
+    // 配置字段全集（宿主 DEFAULT_CONFIG 的对账基准）。
+    // 顺序与 DEFAULT_CONFIG 一致，便于人眼对账；重复字段会让 dirty 判定重复计算。
+    // **表单只认 FORM_FIELD_KEYS** —— 拿全集去判 dirty 会让表单对着一个它并不持有的
+    // 字段反复比较，语义混乱（当前恰好因为两边都是 undefined 而等价，但那是巧合）。
+    const FIELD_KEYS = [...FORM_FIELD_KEYS, ...EXTERNALLY_MANAGED_FIELDS]
 
     // 变更记录保留条数的可选值。**只放整数档位，不做自由输入**：
     // 这是个一次设定、此后不再碰的容量参数，自由输入只会带来
     // 「输 30 被夹到 50」这种需要额外解释的状态。默认档（200）单独标注出来，
     // 用户想回到出厂设置时一眼能找到。
-    const HISTORY_MAX_ENTRIES_OPTIONS = [50, 100, 200, 500]
-    const HISTORY_MAX_ENTRIES_DEFAULT = 200
+    // （0.8.1 起这个下拉在插件详情页的变更记录区块内，不在设置页 —— 见下方
+    //  `HISTORY_MAX_ENTRIES_OPTIONS` 所在位置的说明。）
 
     // 其中真正参与 compilePrompt 的字段子集。
     // 提示词预览只依赖它们：改光轨颜色 / 粗细、切换 set_persona 确认模式都不会改变
@@ -1798,6 +1819,19 @@ window.__ModuleLoader__.load({
     // 一次最多铺开多少条。记录上限是 200 条，全渲染会让这一组比整个设置页还长；
     // 超出的折成一行「还有 N 条」，想看完的人再点一次。
     const HISTORY_RENDER_LIMIT = 20
+
+    // —— 变更记录保留条数（0.8.1 从设置页迁到插件详情页）——
+    //
+    // 它描述的是「这个区块自己保留多少条」，放在它**自己旁边**才是对话该发生的位置：
+    // 用户在详情页看到「最近 37 条 · 最多保留 200 条」，想改这个 200 时就地能改，
+    // 而不必先去设置页的「人设预设」组里找 —— 那个位置解释不清（它既不是预设，
+    // 也只是「变更记录」这个分组的容量，而设置页早已没有变更记录分组了）。
+    //
+    // 档位由服务端 HISTORY_MAX_ENTRIES 与 clampHistoryMaxEntries 兜底；客户端这组
+    // 常量只负责「给哪些选项」。上限 500 因为条目只存变化字段、远在 512 KB 之内；
+    // 下限 50 因为再小则「上一轮就没了」。
+    const HISTORY_MAX_ENTRIES_OPTIONS = [50, 100, 200, 500]
+    const HISTORY_MAX_ENTRIES_DEFAULT = 200
 
     // 枚举字段 → 既有文案键的映射表（模块级：SoulSettings 与 SoulHistorySection 共用）。
     // 枚举值复用设置页的既有文案键（`style.*` / `trait.*` / `trail.speed.*` …），
@@ -1889,12 +1923,24 @@ window.__ModuleLoader__.load({
       if (!subject || subject.kind !== 'bundle' || !subject.pkg || subject.pkg.name !== 'dsh-soul') return null
 
       const state = useSoulController((state) => state)
-      const { history, historyWarning, historyMax, historyError } = state
+      const { history, historyWarning, historyMax, historyError, historyMaxEntries } = state
 
       // 结果提示：与设置页同款双轨 —— 成功绿字（role=status）、失败红字（role=alert），
       // 失败压过成功。独立于 pendingUndo/pendingClear（那两个有 5s 超时）。
       const [notice, setNotice] = React.useState(null)
       const [errorNotice, setErrorNotice] = React.useState(null)
+
+      // —— 保留条数（0.8.1 从设置页迁来）——
+      //
+      // 它是**配置字段**（落 soul-config.json、进审计），但在这里是「就地的容量参数」：
+      // 改完立刻 POST，不等设置页那个保存按钮——用户在详情页改完就走人了，
+      // 要求他再去设置页点一次保存，等于挖了个坑。
+      //
+      // 乐观更新 + 失败回滚：先把本地值改成新值（下拉立刻响应），服务端拒绝
+      // （校验 / 磁盘损坏）时退回原值并报红字。不做「保存中禁用」——这是个
+      // 一次性动作，且服务端有写队列，连点几次只会依次落盘。
+      const [retentionPending, setRetentionPending] = React.useState(false)
+      const savedRetention = Number.isFinite(historyMaxEntries) ? historyMaxEntries : HISTORY_MAX_ENTRIES_DEFAULT
 
       // —— 二次确认与浏览状态（从 SoulSettings 平移，语义不变）——
       const [pendingUndo, setPendingUndo] = React.useState(null)
@@ -1920,6 +1966,36 @@ window.__ModuleLoader__.load({
       const showNotice = (text) => {
         setErrorNotice(null)
         setNotice(text)
+      }
+
+      // 保留条数的就地保存（定义放在 showError / showNotice 之后：它们是被引用的
+      // 绑定，写在前面会在首次渲染时落进 TDZ —— 本文件踩过同一个坑）。
+      const changeRetention = async (next) => {
+        if (retentionPending || next === savedRetention) return
+        setRetentionPending(true)
+        setErrorNotice(null)
+        try {
+          // 只发这一个字段：服务端把 POST 体当 patch 用（`{ ...current, ...patch }`），
+          // 不必回传整份配置 —— 也就不会把别的标签页刚改的字段覆盖回旧值。
+          const payload = await controller.saveConfig({ historyMaxEntries: next })
+          if (!payload) {
+            showError(t('toast.saveFailed'))
+            return
+          }
+          // 服务端会夹取（clampHistoryMaxEntries）：回读它**实际接受**的值，
+          // 而不是相信我们发出去的那个。
+          const applied = Number.isFinite(payload.config && payload.config.historyMaxEntries)
+            ? payload.config.historyMaxEntries
+            : savedRetention
+          showNotice(t('history.maxEntriesSaved', { count: String(applied) }))
+          // 窗口可能变小（例如 200 → 50）：顺手把列表刷新回新窗口，免得界面上
+          // 还挂着按旧上限读来的条目。
+          await controller.loadHistory()
+        } catch (err) {
+          showError(messageOf(err))
+        } finally {
+          setRetentionPending(false)
+        }
       }
 
       const handleUndo = async (id) => {
@@ -2070,6 +2146,29 @@ window.__ModuleLoader__.load({
         e('div', { className: 'soul-detail-history-head' },
           e('h4', { className: 'soul-detail-history-title' }, t('group.history')),
           e('span', { className: 'soul-detail-history-count' }, historySummary)
+        ),
+        // —— 保留条数：与它约束的内容放在一起 ——
+        //
+        // 标题行说「最近 37 条 · 最多保留 200 条」，这个 200 就地可改，不必去设置页找。
+        // 放在列表**之前**而不是之后：它是这个区块的容量设置，读了标题就会想知道它在哪；
+        // 放到几十条记录下面，等于让用户先翻完才看见。
+        // 记录为空 / 读取失败时也照常渲染 —— 容量参数与「当前有几条」无关。
+        e('div', { className: 'soul-history-retention' },
+          e('label', { htmlFor: 'soul-historyMaxEntries' }, t('history.maxEntries')),
+          e('select', {
+            id: 'soul-historyMaxEntries',
+            value: String(savedRetention),
+            disabled: retentionPending,
+            onChange: (ev) => { void changeRetention(Number(ev.target.value)) }
+          },
+            ...HISTORY_MAX_ENTRIES_OPTIONS.map((count) => e('option', {
+              key: count,
+              value: String(count)
+            }, count === HISTORY_MAX_ENTRIES_DEFAULT
+              ? t('history.maxEntriesDefault', { count: String(count) })
+              : t('history.maxEntriesOption', { count: String(count) })))
+          ),
+          e(SoulHint, { text: t('history.maxEntriesHint') })
         ),
         // 结果提示：成功绿字 / 失败红字，与设置页同一套形态（宿主 savedNotice 语义）
         (notice || errorNotice) && (errorNotice
@@ -2558,11 +2657,10 @@ window.__ModuleLoader__.load({
       const [localTrailColor, setLocalTrailColor] = React.useState(trailColor || TRAIL_COLOR_FALLBACK)
       const [localTrailSpeed, setLocalTrailSpeed] = React.useState(trailSpeed || 'slow')
       const [localTrailWidth, setLocalTrailWidth] = React.useState(trailWidth || 'thin')
-      // 变更记录保留条数：本地表单值用**数字**（不是字符串），因为它参与 dirty 比较，
-      // 而 sameValue 对数字走 === —— 存字符串会让「200」与 200 永远不等、保存按钮长亮。
-      const [localHistoryMax, setLocalHistoryMax] = React.useState(
-        Number.isFinite(historyMaxEntries) ? historyMaxEntries : HISTORY_MAX_ENTRIES_DEFAULT
-      )
+      // 变更记录保留条数**不再是设置页的表单字段**（0.8.1 迁到插件详情页的变更记录
+      // 区块，就地改、立刻落盘）。因此它不进 localMap / savedMap / dirty ——
+      // 否则「在详情页改了容量」会让设置页的保存按钮莫名亮起，且点保存会把那份
+      // 详情页刚改的值当成「用户在这里的编辑」再提交一次。
       const [personaName, setPersonaName] = React.useState('')
       // 「存为预设」的命名弹层是否打开。
       //
@@ -2656,9 +2754,9 @@ window.__ModuleLoader__.load({
       //
       // saving 期间仍然整体跳过：保存流程自身会带着响应回填（见 saveConfig →
       // applyConfig → 本 effect），中途再插一次写入只会造成闪烁。
-      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'historyMaxEntries']
-      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth, historyMaxEntries: localHistoryMax }
-      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin', historyMaxEntries: Number.isFinite(historyMaxEntries) ? historyMaxEntries : HISTORY_MAX_ENTRIES_DEFAULT }
+      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
       const lastSyncRef = React.useRef(null)
       // 判断某字段是否被用户动过：与「上次同步的快照」比。没有快照（首帧）时
       // 一律视为未动过 —— 首帧本地值本来就来自 store，无从谈起「编辑过」。
@@ -2695,10 +2793,9 @@ window.__ModuleLoader__.load({
         setLocalTrailColor(next.trailColor)
         setLocalTrailSpeed(next.trailSpeed)
         setLocalTrailWidth(next.trailWidth)
-        setLocalHistoryMax(next.historyMaxEntries)
         // 依赖与 serverValues 的来源一致；localValues/sameValue 每次渲染都是新的，
         // 但只在「某字段真要写」时才 setState，故不会形成死循环。
-      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries])
+      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth])
 
       // toast 的消失交给宿主 Toast 组件自己（holdMs 后淡出并回调 onDone）。
       // 此前这里有个 2s 定时器 + 自绘 CSS 动画，两者时长必须手工对齐，
@@ -2713,9 +2810,9 @@ window.__ModuleLoader__.load({
       const sameValue = (a, b) => (typeof a === 'string' && typeof b === 'string'
         ? a.trim() === b.trim()
         : a === b)
-      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries: Number.isFinite(historyMaxEntries) ? historyMaxEntries : HISTORY_MAX_ENTRIES_DEFAULT }
-      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth, historyMaxEntries: localHistoryMax }
-      const dirty = FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
+      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth }
+      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const dirty = FORM_FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
 
       // 宿主 savedNotice 语义：一旦用户开始新的编辑（dirty 变 true），
       // 上一条「已保存」就过时了 ⇒ 清除。（effect 必须放在 dirty 定义之后：
@@ -3205,26 +3302,9 @@ window.__ModuleLoader__.load({
             open: openSection === 'personas',
             onToggle: toggleSection('personas')
           },
-            // 保留条数是**容量设置**，不是预设操作，但它只在详情页里被用到 ——
-            // 放在这一组（紧挨「变更记录入口」指引）比另开一组更符合「去哪儿找它」的直觉。
-            e('div', { className: 'soul-field' },
-              e('label', { htmlFor: 'soul-historyMaxEntries' },
-                t('history.maxEntries'),
-                e(SoulHint, { text: t('history.maxEntriesHint') })
-              ),
-              e('select', {
-                id: 'soul-historyMaxEntries',
-                value: String(localHistoryMax),
-                onChange: (ev) => setLocalHistoryMax(Number(ev.target.value))
-              },
-                ...HISTORY_MAX_ENTRIES_OPTIONS.map((count) => e('option', {
-                  key: count,
-                  value: String(count)
-                }, count === HISTORY_MAX_ENTRIES_DEFAULT
-                  ? t('history.maxEntriesDefault', { count: String(count) })
-                  : t('history.maxEntriesOption', { count: String(count) })))
-              )
-            ),
+            // 保留条数下拉不在这里 —— 0.8.1 起它跟着变更记录走，落在**插件详情页**
+            // 的变更记录区块里（容量参数与被它约束的内容放在一起才说得通）。
+            // 设置页这一组只负责预设本身与那句去向指引。
             e('div', { className: 'soul-field' },
               // 加载失败优先于「加载中」：否则失败时界面永远停在加载态，与「还没有预设」无从区分
               personasError

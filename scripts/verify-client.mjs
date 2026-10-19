@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 33
+const EXPECTED_ASSERTIONS = 34
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -1963,6 +1963,52 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     // ③ 服务缺席时装配不抛错，设置页仍注册（C31 已覆盖渲染；这里守住「装配」这一层）
     const noPicker = await boot({}, null, { uiWorkspace: null })
     assert.ok(noPicker.section, 'uiWorkspace 缺席时设置栏目仍要注册')
+  })
+
+  await check('C34 保留条数在变更记录区块里就地改并即时落盘，设置页不得再有它', async () => {
+    const entries = [historyEntry({ id: 'r-1', at: new Date().toISOString(), before: { style: 'professional' }, after: { style: 'casual' } })]
+    const world = await boot()
+    const posts = []
+    world.routes['/api/soul/history'] = () => ({ ok: true, entries, max: 200, warning: null })
+    world.routes['/api/soul/config'] = (call) => {
+      if (call.method === 'GET') return { ok: true, config: { ...CONFIG }, configError: null, deliveryWarning: null }
+      posts.push(call.body)
+      // 服务端把 POST 体当 patch 合并，并把（夹取后的）值回传
+      return { ok: true, config: { ...CONFIG, ...call.body }, changed: ['historyMaxEntries'], deliveryWarning: null }
+    }
+    const zh = world.dicts.zh
+
+    // ① 设置页的每个分组里都不得再有这个控件（逐个展开查，避免只看了默认展开的那组）
+    let tree = await renderSettings(world)
+    for (const groupKey of ['group.traits', 'group.personas', 'group.bindings', 'group.tool']) {
+      const btn = findAll(tree, (n) => n.type === 'button' && textOf(n).includes(zh[groupKey]))[0]
+      if (!btn) continue
+      await btn.props.onClick()
+      tree = await renderSettingsSettled(world)
+      assert.equal(findAll(tree, (n) => n.props && n.props.id === 'soul-historyMaxEntries').length, 0,
+        `设置页「${zh[groupKey]}」分组里不得再出现保留条数下拉（0.8.1 已迁到详情页）`)
+    }
+
+    // ② 详情页的变更记录区块里必须有它
+    let detail = await renderDetailSettled(world)
+    const selects = findAll(detail, (n) => n.type === 'select' && n.props.id === 'soul-historyMaxEntries')
+    assert.equal(selects.length, 1, `详情页应恰好一个保留条数下拉，实际 ${selects.length}`)
+    assert.equal(selects[0].props.value, '200', '初始值应来自配置（默认 200）')
+    // 档位完整（50 / 100 / 200 / 500），否则用户没法把窗口调大
+    const options = findAll(selects[0], (n) => n.type === 'option').map((n) => n.props.value)
+    assert.deepEqual(options, ['50', '100', '200', '500'], `档位应为四档，实际 ${JSON.stringify(options)}`)
+
+    // ③ 改一次就落盘，不用等设置页那个保存按钮
+    await selects[0].props.onChange({ target: { value: '500' } })
+    detail = await renderDetailSettled(world)
+    assert.equal(posts.length, 1, `改一次应恰好发一次保存请求，实际 ${posts.length}`)
+    // 只发这一个字段：整份配置回传会覆盖掉别的标签页刚改的东西
+    assert.deepEqual(posts[0], { historyMaxEntries: 500 }, `请求体只该带这一个字段，实际 ${JSON.stringify(posts[0])}`)
+    const after = findAll(detail, (n) => n.type === 'select' && n.props.id === 'soul-historyMaxEntries')[0]
+    assert.equal(after.props.value, '500', '成功后下拉应停在新值上')
+    const okText = findAllByClass(detail, 'soul-saved-notice')
+    assert.equal(okText.length, 1, '成功后应有一行绿字')
+    assert.equal(textOf(okText[0]), zh['history.maxEntriesSaved'].replace('{count}', '500'))
   })
 } finally {
   restoreTimers()

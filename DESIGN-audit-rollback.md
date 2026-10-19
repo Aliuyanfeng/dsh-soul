@@ -286,7 +286,7 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
 | `scripts/verify-history.mjs` | **新增**。`lib/history.mjs` 的纯函数断言组（43 项：含条数上限可由调用方指定、非法值回退常量） | ✅ 0.8.0-a |
 | `package.json` | `verify` 链加入 `verify-history` + `verify:history` 单跑脚本 | ✅ 已实现 |
 | `index.mjs` | `commitConfig(mutate, source)`；16 个调用点补来源（其中 2 个由 `resetConfigWithEscape` / `applyPersonaEntry` 形参穿透）；追加与压实 ✅ 0.8.0-b；四条路由 ✅ 0.8.0-c；`NON_PROMPT_FIELDS` 改为推导 ✅ 打磨轮 | ✅ |
-| `client/index.mjs` | 变更记录区块 **`SoulHistorySection`**（宿主插件详情页槽位）+ 设置页的指引与保留条数下拉；回滚 / 恢复预设 / 清空的二次确认；文案键 | ✅ 0.8.0-d → 0.8.1 双入口 |
+| `client/index.mjs` | 变更记录区块 **`SoulHistorySection`**（宿主插件详情页槽位）+ 设置页的去向指引；**保留条数下拉在详情页区块内**（0.8.1 从设置页迁入，就地改即时落盘）；回滚 / 恢复预设 / 清空的二次确认；文案键 | ✅ 0.8.0-d → 0.8.1 双入口 |
 | `scripts/verify-config.mjs` | 来源标注（每个调用点各自带对）与「提交即留痕」断言；四条路由的契约断言 ✅ 0.8.0-b / 0.8.0-c；保留条数四条契约 + `NON_PROMPT_FIELDS` 推导契约 ✅ 打磨轮（125 → **132 项**） | ✅ |
 | `scripts/verify-e2e-prompt.mjs` | 真实挂载跑一遍四条路由：留痕、撤销、恢复预设、清空、405 / 400 / 409；E10c 对 5 个非提示词字段走真实写路径（38 → **77 项**） | ✅ |
 | `scripts/verify-client.mjs` | 区块渲染、倒序、二次确认、回滚请求体断言（23 → **28 项**，C24–C28） | ✅ 0.8.0-d / 打磨轮 |
@@ -301,7 +301,7 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
 | 0.8.0-a | `lib/history.mjs` 纯函数层 | `verify-history`（40 项：坏行、超长行、原型污染、两个读取窗口边界、压实、回滚链） | ✅ |
 | 0.8.0-b | `commitConfig` 加来源 + 追加 + 两个间接调用者穿透 | `verify-config` 的来源标注断言（14 个调用点逐个归属 + 4 条时机/隔离断言）+ 11 组变异探针全部被拦 | ✅ |
 | 0.8.0-c | 四条 HTTP 路由（含方法校验、`skipped`、`restore-persona`） | `verify-config` 的契约断言 + `verify-e2e-prompt` 的 19 项真实路由探针（含 405、非法 id、手改历史文件）+ 12 组变异探针全部被拦 | ✅ |
-| 0.8.0-d | 设置页「变更记录」分组 | `verify-client`（渲染 / 倒序 / 二次确认 / 请求体） | ✅（0.8.1 双入口后主入口迁至插件详情页，设置页只留指引与保留条数下拉） |
+| 0.8.0-d | 设置页「变更记录」分组 | `verify-client`（渲染 / 倒序 / 二次确认 / 请求体） | ✅（0.8.1 双入口后主入口迁至插件详情页，设置页只留去向指引；保留条数下拉随之迁入详情页区块） |
 
 ## 11. 已知风险
 

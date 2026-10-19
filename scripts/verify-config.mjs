@@ -1825,9 +1825,25 @@ check('客户端复刻的枚举常量与宿主 lib/config.mjs 逐项一致', () 
 check('客户端 FIELD_KEYS 覆盖宿主全部配置字段（dirty 门控不漏字段）', () => {
   // FIELD_KEYS 驱动 dirty 判定与保存载荷。漏一个字段的后果是静默的：
   // 改那个字段后「保存」按钮可能仍被禁用（看起来像界面卡住），或保存结果被判成「无变化」。
+  //
+  // 0.8.1 起 FIELD_KEYS 由两段组合而成（`[...FORM_FIELD_KEYS, ...EXTERNALLY_MANAGED_FIELDS]`）：
+  // 「保留条数」搬去插件详情页后不再属于设置页表单，但**仍然是一个配置字段**，
+  // 必须继续被这张全集表覆盖。所以这里按组合语义解析，而不是要求它仍是单个数组字面量
+  // —— 断言要守的是「全集对不对」，不是「写法长什么样」。
+  const parseKeys = (name) => {
+    const m = clientCode.match(new RegExp(`const ${name} = \\[([^\\]]*)\\]`))
+    assert.ok(m, `客户端缺少 ${name}`)
+    return [...m[1].matchAll(/'([^']*)'/g)].map((x) => x[1])
+  }
   const m = clientCode.match(/const FIELD_KEYS = \[([^\]]*)\]/)
   assert.ok(m, '客户端缺少 FIELD_KEYS')
-  const clientKeys = [...m[1].matchAll(/'([^']*)'/g)].map((x) => x[1])
+  const clientKeys = m[1].includes('...')
+    // 组合式：把每个展开项按同名常量解析出来再拼起来
+    ? m[1].split(',').flatMap((part) => {
+      const spread = part.trim().match(/^\.\.\.(\w+)$/)
+      return spread ? parseKeys(spread[1]) : part.trim().match(/'([^']*)'/g) || []
+    }).map((x) => x.replace(/'/g, ''))
+    : parseKeys('FIELD_KEYS')
   const hostFields = Object.keys(DEFAULT_CONFIG).sort()
   assert.deepEqual(
     [...clientKeys].sort(),
@@ -1836,6 +1852,20 @@ check('客户端 FIELD_KEYS 覆盖宿主全部配置字段（dirty 门控不漏�
   )
   // 顺序无关紧要但重复有害：同一字段出现两次会让 dirty 判定重复计算。
   assert.equal(new Set(clientKeys).size, clientKeys.length, 'FIELD_KEYS 含重复字段')
+  // 组合式写法下，两段不得交叉：表单字段与「别处管理」的字段是互斥集合，
+  // 交叉会让「这个字段归谁管」变成两处都要读才能回答。
+  const formKeys = parseKeys('FORM_FIELD_KEYS')
+  const externalKeys = parseKeys('EXTERNALLY_MANAGED_FIELDS')
+  assert.deepEqual(
+    formKeys.filter((k) => externalKeys.includes(k)),
+    [],
+    'FORM_FIELD_KEYS 与 EXTERNALLY_MANAGED_FIELDS 不得有交集'
+  )
+  // dirty 判定必须只用表单段：拿全集去比，会让表单对一个它并不持有的字段反复比较。
+  // （全集里可能包含表单没有的字段，那样 dirty 会恒为真或恒为假 —— 都不是想要的语义。）
+  const dirtyExpr = clientCode.match(/const dirty = (\w+)\.some\(/)
+  assert.ok(dirtyExpr, '应能读到 dirty 的判定表达式')
+  assert.equal(dirtyExpr[1], 'FORM_FIELD_KEYS', 'dirty 必须只看 FORM_FIELD_KEYS（表单实际持有的字段）')
 })
 
 check('预设应用只有一条实现路径，且非法字段必须回报（HTTP 与 /soul use 共用）', () => {
