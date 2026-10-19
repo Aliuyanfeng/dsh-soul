@@ -200,14 +200,14 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
 | 持久化行为 | `verify-history` | 43 | 否 |
 | 纯函数（工作区绑定） | `verify-bindings` | 47 | 否 |
-| 客户端行为 | `verify-client` | 34 | 否 |
+| 客户端行为 | `verify-client` | 30 | 否 |
 | 端到端（保存 → 两条通道都拿到新文本；变更记录四条路由；工作区绑定路由） | `verify-e2e-prompt` | 90 | 否 |
 | 宿主实现 | `verify-live-prompt` | 20 | 定位不到 DSH 时整脚本跳过 |
 | 版本兼容 | `verify-compat` | 10（声明数；未执行项按 `skipNote` 从声明数里下修后对账） | 定位不到 DSH 时整脚本跳过 |
 | 渲染层 | `verify-trail` | 11 | 起不来浏览器时整脚本跳过 |
 | 渲染层 | `verify-nav-icon` | 16（含 6 项判断力自检） | 同上 |
 
-合计 **426 项**（其中 `verify-compat` 的 10 项在定位不到 DSH 时整脚本跳过、`verify-trail` 的 11 项同上）。
+合计 **422 项**（其中 `verify-compat` 的 10 项在定位不到 DSH 时整脚本跳过、`verify-trail` 的 11 项同上）。
 
 也可以单跑一层：`npm run verify:config` / `verify:store` / `verify:history` / `verify:bindings` / `verify:client` / `verify:e2e` / `verify:host` / `verify:compat` / `verify:trail` / `verify:nav-icon`。
 
@@ -243,6 +243,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | C24–C28 | 变更记录：不展开不拉取 / 展开后按记录渲染时间·来源·字段名 / 原值→新值逐行（含空值与枚举外取值）/ 撤销与清空都走内联二次确认 / 超 20 条折叠、`warning` 不得被当成失败；C28 另守「设置页只留展开区里的说明块，不得挂回折叠标题旁」 |
 | C29–C33 | 工作区绑定（0.8.1-d）：不展开不发请求、展开才拉一次 / 当前目录卡区分「直接绑定」与「继承自上级」且只高亮生效链上的行 / 点选与手输填同一字段、空目录不发请求、成功后清空输入并提示、`uiWorkspace` 缺席时降级为手输 / 点选失败后不再给按钮并把文案换成「请手动粘贴」、解绑走内联二次确认 / `uiWorkspace` 走动态 `inject`、静态依赖表不得含它 |
 | C34 | 保留条数归位：变更记录区块里有它（四档、初始值来自配置）、改一次只发**这一个字段**并当场出绿字；设置页的每个分组里都不得再出现它 |
+| C35 | 「工作区绑定」分组在 0.8.0 前被撤下：逐个分组展开，标题与主体（`.soul-bindings`）都不得出现。**注意这条要喂一条真数据**——空态测不出问题，分组被加回来时两者文本可能都是空的 |
 
 两个实现要点（离线复刻时踩过的坑）：
 

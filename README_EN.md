@@ -50,7 +50,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 | --- | --- | --- |
 | `0.7.2` | Settings-page styling aligned with the host, stacked card carousel, persona changes routed through the host's native approval panel | Released |
 | `0.8.0` | **Change audit and rollback** — every config change recorded (timestamp, source, field-level from→to), with a timeline and undo on the plugin details page (the settings page keeps only a pointer) | [Design doc](./DESIGN-audit-rollback.md), done |
-| `0.8.1` | **Persona workspace binding** — one directory subtree binds one persona, applied automatically on entering the directory | [Design doc](./DESIGN-persona-scope.md), done |
+| `0.9.0` | **Three-level scoping** — Global → Workspace → Session; the workspace picks the persona, a session may override it | [Design doc](./DESIGN-persona-scope.md), designed |
 | `0.8.2` | Self-evolution proposals with diff approval — the Agent proposes persona refinements and the diff goes through the approval panel | Planned |
 | `0.9.0` | Memory layer — long-term memory across sessions, isolated per persona, recalled on demand | Planned |
 

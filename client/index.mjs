@@ -3109,6 +3109,10 @@ window.__ModuleLoader__.load({
       // 工作区绑定摘要：折叠态只看得到这一行，所以要先说「读没读出来」，
       // 再说条数。null = 还没拉过（本分组懒加载，展开前一直是 null）⇒ 显示空态文案，
       // 不显示「0 条」—— 那会把「没加载」误报成「一条都没有」。
+      //
+      // 0.8.1 分组已从设置页撤下，这里暂时无人引用；保留是因为 0.9.0 的工作区
+      // 平铺卡片要用同一套「摘要怎么说」的判断（加载中 / 失败 / 0 条 / N 条）。
+      // 删掉它只会让那段逻辑在 0.9.0 被重写一遍，而那正是容易漏掉「加载中≠空」的地方。
       const bindingsSummary = bindingsError
         ? t('accordion.loadFailed')
         : (bindings === null || !bindings || typeof bindings !== 'object' || Array.isArray(bindings)
@@ -3616,24 +3620,23 @@ window.__ModuleLoader__.load({
             )
           ),
 
-          // 「工作区绑定」夹在「人设预设」与「Agent 工具」之间：它是人设的**选址**问题，
-          // 顺序上紧跟在「有哪些预设」之后才读得通；同时 body 不渲染 ⇒ 不展开就不发请求。
-          e(SoulAccordion, {
-            id: 'soul-bindings',
-            title: t('group.bindings'),
-            summary: bindingsSummary,
-            open: openSection === 'bindings',
-            onToggle: toggleSection('bindings')
-          },
-            e('div', { className: 'soul-note' }, t('bindings.hint')),
-            e(SoulBindings, {
-              useSoulController,
-              controller,
-              t,
-              personaNames,
-              onOpenPersonas: () => setOpenSection('personas')
-            })
-          ),
+          // ——「工作区绑定」分组已从设置页撤下（0.8.0 发布前）——
+          //
+          // 原计划 0.8.1 交付「按目录绑人设」。但它要做的事（让目录决定人设）已经被
+          // 0.9.0 的三级隔离（Global → Workspace → Session）整体接管，而这个分组是
+          // 按「目录字符串」思考的 —— 工作区平铺卡片的交互形态与它完全不同，留下它
+          // 只会让用户先学一套即将被替换的操作方式。
+          //
+          // **只摘渲染，逻辑层一行不动**：
+          //   · lib/bindings.mjs 的路径规范化 / realpath / 前缀匹配是硬资产，0.9.0 直接复用；
+          //   · 宿主侧的 cwd 解析、三条绑定路由、controller 方法全部保留 ——
+          //     没有任何用户持有 soul-bindings.json（特性从未发布），解析恒为 null、
+          //     行为与「没有绑定功能」完全一致，失败方向安全；
+          //   · SoulBindings 组件与 .soul-bindings-* 样式同样保留，0.9.0 重写 UI 时替换。
+          //
+          // 对应的行为用例 C29–C33 已随 UI 一并删除（它们测的是点击这个分组之后的
+          // 交互，分组不在渲染树里就没有可断言的对象）。逻辑层仍由 verify-bindings
+          // （47 项）与 verify-e2e-prompt 的 R1–R13 守着。
 
           e(SoulAccordion, {
             id: 'soul-tools',
