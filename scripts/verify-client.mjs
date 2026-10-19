@@ -1693,7 +1693,7 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     assert.equal(findAllByClass(tree, 'soul-error').length, 0, 'warning 不得被当成错误')
   })
 
-  await check('C28 设置页指引：并入「人设预设」展开区的说明块，不再挂在折叠标题旁', async () => {
+  await check('C28 设置页指引：一条轻提示 + 问号里的全文，不再铺两行正文', async () => {
     const world = await boot()
     world.routes['/api/soul/history'] = () => ({ ok: true, entries: [historyEntry({ id: 'a' })], max: 200, warning: null })
     const zh = world.dicts.zh
@@ -1705,31 +1705,43 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     const closedTitles = findAllByClass(closed, 'soul-accordion-title')
     assert.equal(closedTitles.some((n) => textOf(n) === zh['group.history']), false,
       '设置页不得再保留「变更记录」手风琴分组')
-    // 独立指引行已废除：突兀且占地，低频信息降级为展开区的说明
     assert.equal(findAllByClass(closed, 'soul-history-entry').length, 0, '设置页不得再保留独立指引行（.soul-history-entry）')
-    // 问号提示连同承载它的 head 层一起删除 —— 留着 head 说明只改了一半
     assert.equal(findAllByClass(closed, 'soul-accordion-head').length, 0,
       '折叠标题旁的 head 层应已删除（说明改放展开区内）')
     assert.equal(textOf(closed).includes(zh['history.entryHint']), false,
       '折叠态不该出现变更记录指引 —— 它解释的是展开后的东西')
 
-    // ② 展开「人设预设」：两条说明必须同处一个说明块里合并展示。
+    // ② 展开「人设预设」：两条说明各自一行，正文只有一句话，细节在问号里。
     const triggers = findAll(closed, (n) => n.type === 'button' && textOf(n).includes(zh['group.personas']))
     assert.ok(triggers.length > 0, '应存在「人设预设」分组标题（前置条件）')
     await triggers[0].props.onClick()
     const tree = await renderSettings(world)
 
-    const notes = findAllByClass(tree, 'soul-note')
-    assert.equal(notes.length, 1, `说明块应恰好一个，实际 ${notes.length} 个`)
-    const lines = (notes[0].children || []).filter((n) => n && n.type === 'div')
-    assert.equal(lines.length, 2, `说明块应有两行（预设收录范围 + 变更记录去向），实际 ${lines.length} 行`)
-    assert.equal(textOf(lines[0]), zh['personas.hint'], '第一行应是预设收录范围说明')
-    assert.equal(textOf(lines[1]), zh['history.entryHint'], '第二行应是变更记录去向指引')
-    // ③ 说明是正文，不是按钮内容：绝不能嵌进 trigger（button 内不允许嵌可聚焦元素）
+    const notes = findAllByClass(tree, 'soul-note-inline')
+    assert.equal(notes.length, 2, `应有两行轻提示（预设范围 + 变更记录去向），实际 ${notes.length}`)
+    // 每行都是「一句话 + 一个问号」，正文走 .soul-note-text
+    const texts = notes.map((n) => textOf(findAllByClass(n, 'soul-note-text')[0]))
+    assert.deepEqual(texts, [zh['personas.hint'], zh['history.entryHint']],
+      `两行正文应分别是两条短文案，实际 ${JSON.stringify(texts)}`)
+
+    // ③ 关键：正文**不得**再穷举清单 —— 那些名词在卡片和按钮上本来就看得到。
+    //    细节只能出现在问号的 tooltip 里（.soul-hint-tip），不能混进正文。
+    for (const key of ['personas.hint', 'history.entryHint']) {
+      assert.ok(zh[key].length <= 40, `${key} 应是短句（≤40 字），实际 ${zh[key].length} 字：${zh[key]}`)
+    }
+    const tips = findAllByClass(tree, 'soul-hint-tip').map((n) => textOf(n))
+    assert.ok(tips.includes(zh['personas.hintDetail']), '预设的完整说明应在问号 tooltip 里')
+    assert.ok(tips.includes(zh['history.entryHintMore']), '变更记录的去向全文应在问号 tooltip 里')
+    // 反向：tooltip 的细节文字绝不能漏进正文（那等于没瘦身）
+    const bodyText = texts.join('')
+    for (const detailKey of ['personas.hintDetail', 'history.entryHintMore']) {
+      assert.equal(bodyText.includes(zh[detailKey]), false, `正文不得混入 ${detailKey} 的全文`)
+    }
+    // ④ 说明是正文，不是按钮内容：绝不能嵌进 trigger（button 内不允许嵌可聚焦元素）
     const openTriggers = findAllByClass(tree, 'soul-accordion-trigger')
     assert.equal(openTriggers.some((n) => textOf(n).includes(zh['history.entryHint'])), false,
       '指引不得嵌进 trigger 按钮')
-    // ④ 其余分组的展开区不得误挂说明（说明块是 personas 专属）
+    // ⑤ 其余分组的展开区不得误挂说明（说明块是 personas 专属）
     const bodies = findAllByClass(tree, 'soul-accordion-body')
     const others = bodies.filter((n) => textOf(n) !== textOf(notes[0].parent) && !(n.children || []).includes(notes[0]))
     assert.equal(others.some((n) => findAllByClass(n, 'soul-note').length > 0), false,

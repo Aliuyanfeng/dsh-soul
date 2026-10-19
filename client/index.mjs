@@ -826,6 +826,10 @@ window.__ModuleLoader__.load({
       // 混了两件事。行距靠 line-height 自然撑开，不上边框（不是引用也不是分隔）。
       '.soul-note{margin-top:10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       '.soul-note > div + div{margin-top:2px}',
+      // 一句话 + 一个问号：正文不再换行成段，问号挂在句子末尾（0.8.1 文案瘦身）。
+      // align-items:baseline 让问号与 12px 文字同基线 —— 用 center 会让它看起来浮起来。
+      '.soul-note-inline{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}',
+      '.soul-note-text{min-width:0}',
       '.soul-dirty{color:var(--dsw-alias-state-warn-primary)}',
       // —— 人设预设：竖版卡牌 + 堆叠轮播 ——
       // 方案 B：插画是卡面主视觉（方形满铺），名称与摘要压在图上由渐变承接，
@@ -1262,7 +1266,13 @@ window.__ModuleLoader__.load({
       'personas.builtin': '内置',
       'personas.drift': '当前配置与任何预设都不一致。',
       'personas.driftAction': '存为新预设',
-      'personas.hint': '预设只保存 Agent 的人设（风格 / 特质 / 回复长度 / 输出语言 / 自定义指令），不含「关于你」；内置预设随插件提供，不可删除',
+      // 一句话就够了：用户的真实疑问只有「存了这个会不会连我的昵称也一起换掉」。
+      // 「不可删除」不再写进正文 —— 每张内置卡上都挂着「内置」徽标、且根本没有删除按钮，
+      // 说第二遍只是噪音。
+      'personas.hint': '预设只含 Agent 的人格；你的昵称与自我介绍不随预设切换。',
+      // hover 里的全文：原来那段正文原样保留在这里，需要细节的人仍能读到，
+      // 不需要的人不必被它占两行。
+      'personas.hintDetail': '预设有风格、特质（标题和列表 / 表情符号 / 表格）、回复长度、输出语言、自定义指令；不含「关于你」里的昵称、职业与自我介绍。内置预设随插件提供，不可删除。',
       'style.professional': '专业严谨',
       'style.casual': '轻松自然',
       'style.humorous': '幽默风趣',
@@ -1379,8 +1389,11 @@ window.__ModuleLoader__.load({
       // 服务端没带回容量上限时的退路：宁可不提「最多保留 N 条」，也不编一个数字出来。
       'history.summaryCount': '最近 {count} 条',
       // 双入口（0.8.1）：主入口在插件详情页，设置页不再留独立指引行（突兀且占地）；
-      // 改为「人设预设」折叠标题旁的问号提示（SoulHint），文案缩成一句，hover 展示。
-      'history.entryHint': '变更记录已移至插件详情页：撤销、恢复预设、清空都在那里。',
+      // 变更记录的主入口在插件详情页。这里不再罗列「撤销、恢复预设、清空都在那里」
+      // —— 那是三个按钮的名字，点进去自然看得到；罗列只会把一行提示撑成一段话。
+      'history.entryHint': '改动都能撤销',
+      // hover 全文：具体的「在哪儿、能做什么」。正文只留一句判断，细节按需展开。
+      'history.entryHintMore': '变更记录在插件详情页（插件管理 → 已安装插件 → dsh-soul）：撤销某次改动及其之后的全部改动、恢复被删的预设、清空记录，都在那里。',
       // —— 变更记录保留条数（0.8.0 打磨）——
       'history.maxEntries': '保留条数',
       'history.maxEntriesHint': '变更记录最多保留多少条。超出后自动丢弃最旧的记录；条数越多，可撤销的范围越大。',
@@ -1523,7 +1536,8 @@ window.__ModuleLoader__.load({
       'personas.builtin': 'Built-in',
       'personas.drift': 'The current config matches no preset.',
       'personas.driftAction': 'Save as new preset',
-      'personas.hint': 'A persona saves the agent personality only (style / traits / reply length / reply language / custom instructions), never your own identity fields; built-ins ship with the plugin and cannot be deleted',
+      'personas.hint': 'Personas hold only the agent personality; your nickname and bio never switch with a persona.',
+      'personas.hintDetail': 'A persona covers style, traits (headings & lists / emoji / tables), reply length, reply language and custom instructions — never the nickname, occupation or bio under "About you". Built-in personas ship with the plugin and cannot be deleted.',
       'style.professional': 'Professional',
       'style.casual': 'Casual',
       'style.humorous': 'Humorous',
@@ -1638,7 +1652,8 @@ window.__ModuleLoader__.load({
       // Dual entry (0.8.1): the full view lives on the plugin detail page; the
       // settings group becomes a pointer line so a low-frequency feature stops
       // occupying the settings page permanently.
-      'history.entryHint': 'Change history has moved to the plugin details page: undo, restore preset, and clear all live there.',
+      'history.entryHint': 'Every change can be undone',
+      'history.entryHintMore': 'Change history lives on the plugin details page (Plugin manager → Installed plugins → dsh-soul): undo a change together with everything after it, restore a deleted preset, and clear the log.',
       // —— Change history retention (0.8.0 polish) ——
       'history.maxEntries': 'Entries kept',
       'history.maxEntriesHint': 'How many change-history entries to keep. Older entries are dropped once the limit is reached; a larger number means a longer undo window.',
@@ -3578,12 +3593,26 @@ window.__ModuleLoader__.load({
                 onClick: () => { setPersonaName(''); setShowSavePersona(true) }
               }, t('personas.driftAction'))
             ),
-            // 说明合并成一块（用户要求）：预设的收录范围、以及变更记录搬去了哪儿。
-            // 两条都是「读者需要知道、但不需要操作」的信息，拆成两处反而像两个待办。
-            // 用能直接读到的正文而非 hover 提示 —— 它们解释的正是展开后看到的东西。
-            e('div', { className: 'soul-note' },
-              e('div', null, t('personas.hint')),
-              e('div', null, t('history.entryHint'))
+            // —— 说明：一条轻提示 + 一个可点的去向，不再铺两行正文 ——
+            //
+            // 原来这里是两行灰字，每行都在复述用户已经能从界面里看到的东西：
+            //   ·「风格 / 特质 / 回复长度 / 输出语言 / 自定义指令」—— 就是卡片上那几行；
+            //   ·「内置预设不可删除」—— 每张内置卡都有「内置」徽标、且没有删除按钮；
+            //   ·「撤销、恢复预设、清空都在那里」—— 是详情页上三个按钮的名字。
+            // 名词语气+穷举，读起来像条款。现在只留**用户真正会问的那一个判断**
+            //（「存这个会不会把我的昵称也换掉」），其余降级为问号里的 hover 全文。
+            e('div', { className: 'soul-note soul-note-inline' },
+              e('span', { className: 'soul-note-text' }, t('personas.hint')),
+              e(SoulHint, { text: t('personas.hintDetail') })
+            ),
+            // 变更记录：一行「改动都能撤销」+ 问号里的全文。
+            //
+            // 这里**刻意不放「打开插件详情」按钮**：宿主 settings.section 槽位的
+            // slotInject 是空串（见 dsh-cordis-client-runner 的槽位清单），设置页
+            // 拿不到任何导航能力，点了也没法跳转 —— 一个点不动的按钮比没有更糟。
+            e('div', { className: 'soul-note soul-note-inline' },
+              e('span', { className: 'soul-note-text' }, t('history.entryHint')),
+              e(SoulHint, { text: t('history.entryHintMore') })
             )
           ),
 
