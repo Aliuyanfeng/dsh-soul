@@ -301,7 +301,7 @@ loadConfig → mutate → diffFields/diffPersonas → saveConfig → recordHisto
 | 0.8.0-a | `lib/history.mjs` 纯函数层 | `verify-history`（40 项：坏行、超长行、原型污染、两个读取窗口边界、压实、回滚链） | ✅ |
 | 0.8.0-b | `commitConfig` 加来源 + 追加 + 两个间接调用者穿透 | `verify-config` 的来源标注断言（14 个调用点逐个归属 + 4 条时机/隔离断言）+ 11 组变异探针全部被拦 | ✅ |
 | 0.8.0-c | 四条 HTTP 路由（含方法校验、`skipped`、`restore-persona`） | `verify-config` 的契约断言 + `verify-e2e-prompt` 的 19 项真实路由探针（含 405、非法 id、手改历史文件）+ 12 组变异探针全部被拦 | ✅ |
-| 0.8.0-d | 设置页「变更记录」分组 | `verify-client`（渲染 / 倒序 / 二次确认 / 请求体） | ⬜ |
+| 0.8.0-d | 设置页「变更记录」分组 | `verify-client`（渲染 / 倒序 / 二次确认 / 请求体） | ✅（0.8.1 双入口后主入口迁至插件详情页，设置页只留指引与保留条数下拉） |
 
 ## 11. 已知风险
 
