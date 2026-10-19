@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 28
+const EXPECTED_ASSERTIONS = 33
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -143,13 +143,22 @@ function createRuntime() {
       dirty = false
       queue = []
     },
-    /** 渲染 + 跑本轮 effect，直到状态不再变化（含 effect / handler 里已 resolve 的 promise）。 */
+    /**
+     * 渲染 + 跑 effect，直到**状态与异步副作用都稳定**，并返回稳定后的那棵树。
+     *
+     * 踩过的坑：上一版在 `if (!dirty) return tree` 时返回的是**倒数第二轮**渲染的树 ——
+     * 而「最后一轮」什么都没做（dirty 仍为 false，是上一轮的 false 摆在那）。于是
+     * 由 `await` 触发的 setState（例如点「绑定」后 handleBind 里 resolve 的那次）
+     * 虽然被记进了 frame，却**永远没有出现在返回的树里**：断言看到的是旧画面。
+     */
     async settle(root) {
+      let tree = null
       for (let pass = 0; pass < 40; pass++) {
         dirty = false
         queue = []
-        const tree = render(root, 'root')
-        for (const { frame, slot, fn } of queue) {
+        tree = render(root, 'root')
+        const effects = queue
+        for (const { frame, slot, fn } of effects) {
           const key = `${frame.key}#${slot}`
           const previous = cleanups.get(key)
           if (typeof previous === 'function') previous()
@@ -157,7 +166,12 @@ function createRuntime() {
           cleanups.set(key, typeof returned === 'function' ? returned : null)
         }
         await drain()
-        if (!dirty) return tree
+        if (!dirty) {
+          // 本帧的 effect 都已执行完。若这一帧**一个 effect 都没跑**，它就是最终画面
+          // （上一轮的 tree 与它等价）；否则这一帧仍是「状态刚被 effect 改写、尚未重画」
+          // 的中间态，必须再渲一轮才把新状态画出来。
+          return effects.length === 0 ? tree : render(root, 'root')
+        }
       }
       throw new Error('渲染未收敛（40 轮仍在变化）—— hook 依赖或 effect 里可能有自激循环')
     }
@@ -245,7 +259,7 @@ const interpolate = (text, params) =>
   String(text).replace(/\{(\w+)\}/g, (all, key) => (params && key in params ? String(params[key]) : all))
 
 /** 载入真实客户端 bundle 并装配插件（返回真实 controller 与设置页组件）。 */
-function loadClient(routes) {
+function loadClient(routes, options = {}) {
   let factory = null
   const domNode = () => ({
     style: { setProperty() {}, removeProperty() {} },
@@ -319,9 +333,31 @@ function loadClient(routes) {
   // **装配层**」—— 此前它们全在 SoulSettings 组件内，设置页没挂载时全部失效
   // （底栏人设名因此不刷新）。stub 原本是空实现，这里让它可观测。
   const captured = { provide: {}, sections: [], dicts: null, runtime, events: { window: [], document: [] } }
+  // 目录点选服务桩：默认可用，用例可换成 `{ throw: '...' }` 走降级路径。
+  // 宿主 UiWorkspaceService.pickDirectory() 返回 string | null，失败时抛普通 Error
+  // （capability 被包在 cause 里、客户端读不到）—— 桩必须同形，见 DESIGN §7.5。
+  captured.uiWorkspace = {
+    pickDirectory: async () => null
+  }
+  // inject 的语义要跟宿主一致：**同步回调**、回调里的 ctx 就是新 scope。
+  // 返回的是一个可 unload 的 fiber；这里只记录已触发次数与卸载函数。
+  captured.injected = []
+  captured.uiWorkspaceAbsent = options.uiWorkspace === null
   const ctx = {
     provide: (name, value) => { captured.provide[name] = value },
     effect: (fn) => { const dispose = fn(); if (typeof dispose === 'function') captured.sections.push({ dispose }) },
+    // 动态 inject：只有 uiWorkspace 一个依赖。**不调用**回调 = 服务缺席，
+    // 正好用来断言「缺席时插件照常装配、只是点选按钮降级」。
+    inject: (deps, cb) => {
+      captured.injected.push({ deps, cb })
+      const requested = Array.isArray(deps) ? deps : Object.keys(deps || {})
+      if (!requested.includes('uiWorkspace')) return
+      if (captured.uiWorkspaceAbsent) return
+      cb({
+        uiWorkspace: captured.uiWorkspace,
+        effect: (fn) => { const dispose = fn(); if (typeof dispose === 'function') captured.sections.push({ dispose }) }
+      })
+    },
     locale: {
       register: (_ns, dicts) => { captured.dicts = dicts },
       bind: () => (key, params) => interpolate((captured.dicts?.zh || {})[key] ?? key, params)
@@ -362,7 +398,7 @@ function loadClient(routes) {
  * **从未被执行过**：把它改成真实形状，整套 C 系列依然全绿（实测）。这正是「测试替身
  * 与真实协议漂移」的典型：桩喂了一个真实环境不可达的输入，测试永远看不到真问题。
  */
-async function boot(configPayload = {}, personaPayload = null) {
+async function boot(configPayload = {}, personaPayload = null, options = {}) {
   fetchCalls = []
   timerQueue = []
   const routes = {
@@ -373,12 +409,12 @@ async function boot(configPayload = {}, personaPayload = null) {
     // 默认形状贴近宿主：对象 map + activeName（不是数组、不是 activePersona）
     '/api/soul/personas': () => (personaPayload || {
       ok: true,
-      personas: { 苏格拉底式提问者: { style: 'professional', builtin: true } },
+      personas: { 苏格拉底式提问者: { style: 'professional', builtin: true }, 极简主义者: { style: 'efficient' } },
       activeName: null
     }),
     '/api/soul/prompt': () => ({ ok: true, prompt: 'P', enabled: true })
   }
-  const world = loadClient(routes)
+  const world = loadClient(routes, options)
   for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
   return world
 }
@@ -1698,6 +1734,235 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     const others = bodies.filter((n) => textOf(n) !== textOf(notes[0].parent) && !(n.children || []).includes(notes[0]))
     assert.equal(others.some((n) => findAllByClass(n, 'soul-note').length > 0), false,
       '只有人设预设分组挂说明块，其他分组不得误挂')
+  })
+
+  // ==================== 工作区绑定分组（0.8.1-d）====================
+
+  /**
+   * 绑定接口的宿主形状：`send(res, 200, { ok: true, ...await bindingsView(ctx) })`
+   * （服务端 index.mjs 的三条路由都是这个形状）。
+   * **ok 不能漏**：客户端 postJSON 在 `payload.ok !== true` 时直接抛错，
+   * 桩少了 ok 会被误读成「保存失败」，整条成功链路就用不上（实测踩过）。
+   */
+  function bindingsRoute(bindingMap, extra = {}) {
+    return () => ({
+      ok: true,
+      bindings: bindingMap,
+      invalid: [],
+      dropped: 0,
+      warning: null,
+      max: 50,
+      maxPathLength: 260,
+      sessions: [],
+      ...extra
+    })
+  }
+
+  /** 展开「工作区绑定」分组并等异步拉取落地，返回整棵树。 */
+  async function openBindings(world) {
+    const closed = await renderSettings(world)
+    const triggers = findAll(closed, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.bindings']))
+    assert.equal(triggers.length, 1, `应恰好一个「工作区绑定」分组标题，实际 ${triggers.length}`)
+    await triggers[0].props.onClick()
+    await renderSettingsSettled(world)
+    for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+    return renderSettings(world)
+  }
+
+  async function renderSettingsSettled(world) {
+    await world.runtime.settle(rootElement(world))
+    for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+    return world.runtime.settle(rootElement(world))
+  }
+
+  await check('C29 工作区绑定：分组缺席时不发请求，展开才拉取一次（懒加载）', async () => {
+    const world = await boot()
+    const hits = []
+    world.routes['/api/soul/bindings'] = (call) => {
+      hits.push(call.method)
+      return bindingsRoute({})()
+    }
+    const closed = await renderSettings(world)
+    // ① 折叠态：body 不渲染 ⇒ 组件不挂载 ⇒ 一个请求都不该发出
+    assert.equal(findAllByClass(closed, 'soul-bindings').length, 0, '折叠态不该渲染绑定主体')
+    assert.equal(hits.length, 0, `折叠态不得请求绑定表，实际 ${JSON.stringify(hits)}`)
+    const zh = world.dicts.zh
+    // 折叠标题的摘要要能说出「还没有绑定」，而不是一串原始 key
+    const triggers = findAll(closed, (n) => n.type === 'button' && textOf(n).includes(zh['group.bindings']))
+    assert.ok(textOf(triggers[0]).includes(zh['bindings.empty']), `折叠摘要应显示空态，实际「${textOf(triggers[0])}」`)
+
+    // ② 展开：挂载即拉取，方法必须是 GET
+    const tree = await openBindings(world)
+    assert.equal(findAllByClass(tree, 'soul-bindings').length, 1, '展开后应渲染绑定主体')
+    assert.deepEqual(hits, ['GET'], `展开一次应恰好发一次 GET，实际 ${JSON.stringify(hits)}`)
+  })
+
+  await check('C30 工作区绑定：当前目录卡区分「直接绑定」与「上级继承」，并标出当前行', async () => {
+    const world = await boot()
+    world.routes['/api/soul/bindings'] = (call) => bindingsRoute(
+      { 'D:\\项目A': '苏格拉底式提问者', 'D:\\项目A\\sub': '极简主义者', 'D:\\项目C': '极简主义者' },
+      {
+        sessions: [
+          { sessionId: 's-empty', cwd: null, persona: '苏格拉底式提问者', binding: null },
+          {
+            sessionId: 's-1',
+            cwd: 'D:\\项目A\\sub\\deep',
+            persona: '极简主义者',
+            binding: { dir: 'D:\\项目A\\sub', inherited: false }
+          }
+        ]
+      }
+    )(call)
+    const worldZh = world.dicts.zh
+    const tree = await openBindings(world)
+    const currentCard = findAllByClass(tree, 'soul-bindings-current')
+    assert.equal(currentCard.length, 1, `当前目录卡应恰好一张，实际 ${currentCard.length}`)
+
+    // ① 没有 cwd 的会话不算「当前」：优先挑有目录的那个
+    const cardText = textOf(currentCard[0])
+    assert.ok(cardText.includes('deep'), `当前目录卡应展示有 cwd 的那个会话，实际「${cardText}」`)
+    assert.equal(cardText.includes(worldZh['bindings.noCwd']), false, '不该拿无目录会话当当前会话')
+    // ② 生效人设与来源都写出来
+    assert.ok(cardText.includes(worldZh['bindings.effective']), '卡内应有「生效人设」')
+    assert.ok(cardText.includes('极简主义者'), `卡内应显示生效人设名，实际「${cardText}」`)
+    assert.ok(cardText.includes('sub'), '来源应指向直接绑定的目录')
+    assert.equal(cardText.includes(worldZh['bindings.sourceGlobal']), false, '有绑定时不得说走全局配置')
+
+    // ③ 列表：三行；「命中当前目录」= 当前目录本身或其祖先（正是生效的继承链），
+    // 所以高亮的必须是 A\sub 与它的上级 A，D:\项目C 这条无关绑定不得高亮
+    const rows = findAllByClass(tree, 'soul-bindings-row')
+    assert.equal(rows.length, 3, `应渲染三条绑定，实际 ${rows.length}`)
+    const currentRows = rows.filter((n) => n.props['data-current'] === 'true')
+    assert.equal(currentRows.length, 2, `命中的应恰是当前目录及其上级，实际 ${currentRows.length} 条`)
+    assert.equal(currentRows.some((n) => textOf(n).includes('项目C')), false,
+      '不构成祖先关系的绑定不得标成当前目录')
+    // ④ 子目录行画了树形前缀（父在子前，可读成「一条绑定 = 一棵子树」）
+    assert.equal(findAllByClass(tree, 'soul-bindings-tree').length, 1, '子目录行应有一个 └ 前缀')
+    assert.ok(textOf(rows[0]).includes('└') === false, '父目录行不该带前缀')
+  })
+
+  await check('C31 工作区绑定：点选与手输填同一字段，空目录不发请求，成功后清空输入并提示', async () => {
+    const world = await boot()
+    const saved = []
+    world.routes['/api/soul/bindings'] = (call) => {
+      if (call.method === 'GET') return bindingsRoute({})()
+      saved.push(call.body)
+      return bindingsRoute({ [call.body.dir]: call.body.persona })()
+    }
+    world.captured.uiWorkspace.pickDirectory = async () => 'D:\\项目B'
+    const zh = world.dicts.zh
+    let tree = await openBindings(world)
+
+    // ① 空目录点「绑定」：只给提示，不发请求
+    const bindBtn = () => findAllByClass(tree, 'soul-bindings-bind')[0]
+    await bindBtn().props.onClick()
+    tree = await renderSettingsSettled(world)
+    assert.equal(saved.length, 0, '目录为空时不得发保存请求')
+    const errs = findAllByClass(tree, 'soul-error-notice')
+    assert.equal(errs.length, 1, `应给出一条红字提示，实际 ${errs.length}`)
+    assert.equal(textOf(errs[0]), zh['bindings.needDir'])
+
+    // ② 点「选择目录…」：把路径填进**同一个**输入框
+    const pick = findAllByClass(tree, 'soul-bindings-pick')
+    assert.equal(pick.length, 1, '目录选择服务可用时应渲染点选按钮')
+    await pick[0].props.onClick()
+    tree = await renderSettingsSettled(world)
+    const input = findAll(tree, (n) => n.type === 'input' && n.props.id === 'soul-bindings-dir')[0]
+    assert.ok(input, '应存在目录输入框')
+    assert.equal(input.props.value, 'D:\\项目B', `点选结果应填入输入框，实际「${input.props.value}」`)
+
+    // ③ 再点「绑定」：真的发一次 POST，带上目录与人设
+    await bindBtn().props.onClick()
+    tree = await renderSettingsSettled(world)
+    assert.equal(saved.length, 1, `应发一次保存请求，实际 ${saved.length}`)
+    assert.equal(saved[0].dir, 'D:\\项目B')
+    assert.equal(typeof saved[0].persona, 'string')
+    assert.ok(saved[0].persona.length > 0, '人设不得为空（下拉应默认选中第一项）')
+    const notice = findAllByClass(tree, 'soul-saved-notice')
+    assert.equal(notice.length, 1, '成功后应有一行绿字')
+    assert.ok(textOf(notice[0]).includes(saved[0].persona), `绿字应包含人设名，实际「${textOf(notice[0])}」`)
+    const after = findAll(tree, (n) => n.type === 'input' && n.props.id === 'soul-bindings-dir')[0]
+    assert.equal(after.props.value, '', '成功后应清空输入框，方便接着绑下一个目录')
+
+    // ④ 服务缺席：插件照常装配、点选按钮不出现、手输路径仍可用
+    saved.length = 0
+    const noPicker = await boot({}, null, { uiWorkspace: null })
+    const noPickerSaved = []
+    noPicker.routes['/api/soul/bindings'] = (call) => {
+      if (call.method === 'GET') return bindingsRoute({})()
+      noPickerSaved.push(call.body)
+      return bindingsRoute({ [call.body.dir]: call.body.persona })()
+    }
+    let tree2 = await openBindings(noPicker)
+    assert.equal(findAllByClass(tree2, 'soul-bindings').length, 1, 'uiWorkspace 缺席时绑定主体仍要渲染（降级而非失效）')
+    assert.equal(findAllByClass(tree2, 'soul-bindings-pick').length, 0, '服务缺席时不得渲染点选按钮')
+    const manual = findAll(tree2, (n) => n.type === 'input' && n.props.id === 'soul-bindings-dir')[0]
+    await manual.props.onChange({ target: { value: 'D:\\手输' } })
+    tree2 = await renderSettingsSettled(noPicker)
+    await findAllByClass(tree2, 'soul-bindings-bind')[0].props.onClick()
+    await renderSettingsSettled(noPicker)
+    assert.deepEqual(noPickerSaved.map((b) => b.dir), ['D:\\手输'], '手输路径必须照常可保存')
+  })
+
+  await check('C32 工作区绑定：点选失败降级为手输且不再重复给按钮；解绑过二次确认', async () => {
+    const world = await boot()
+    const removed = []
+    world.routes['/api/soul/bindings'] = (call) => {
+      return bindingsRoute(
+        { 'D:\\项目A': '苏格拉底式提问者' },
+        { sessions: [{ sessionId: 's-1', cwd: 'D:\\项目A', persona: '苏格拉底式提问者', binding: { dir: 'D:\\项目A', inherited: false } }] }
+      )()
+    }
+    // 删除走的是**另一条路径** /api/soul/bindings/delete（服务端 index.mjs 第三条路由）
+    world.routes['/api/soul/bindings/delete'] = (call) => {
+      removed.push(call.body)
+      return bindingsRoute({})()
+    }
+    // 宿主 pickDirectory 失败：包一层普通 Error（capability 在 cause 里，读不到）
+    world.captured.uiWorkspace.pickDirectory = async () => {
+      throw new Error('directory picker unavailable')
+    }
+    const zh = world.dicts.zh
+    let tree = await openBindings(world)
+
+    // ① 点选失败：红字给出原因，并换成「请手动粘贴」的说明；按钮不再出现
+    await findAllByClass(tree, 'soul-bindings-pick')[0].props.onClick()
+    tree = await renderSettingsSettled(world)
+    assert.equal(findAllByClass(tree, 'soul-bindings-pick').length, 0, '失败后不得再给点选按钮（能力不会中途恢复）')
+    const hint = findAllByClass(tree, 'soul-bindings-hint')
+    assert.equal(hint.length, 1, '失败后应就地说明「改为手动粘贴」')
+    assert.equal(textOf(hint[0]), zh['bindings.pickerUnavailable'])
+    assert.equal(findAllByClass(tree, 'soul-error-notice').length, 1, '失败原因本身也要可见')
+
+    // ② 解绑：第一次点只进入待确认，一个请求都不发
+    const unarm = () => findAllByClass(tree, 'soul-bindings-action').find((n) => textOf(n) === zh['bindings.unbind'])
+    const armed = () => findAllByClass(tree, 'soul-bindings-action-armed')
+    assert.ok(unarm(), '列表行应有「解绑」按钮')
+    await unarm().props.onClick()
+    tree = await renderSettingsSettled(world)
+    assert.equal(removed.length, 0, '第一次点「解绑」不得发请求')
+    assert.equal(armed().length, 1, '第一次点后应变成「确认解绑？」（armed 态）')
+    assert.equal(textOf(armed()[0]), zh['bindings.unbindArmed'])
+    // ③ 第二次点才真的删
+    await armed()[0].props.onClick()
+    tree = await renderSettingsSettled(world)
+    assert.equal(removed.length, 1, '第二次点才发删除请求')
+    assert.equal(removed[0].dir, 'D:\\项目A')
+  })
+
+  await check('C33 工作区绑定：uiWorkspace 走动态 inject，绝不进静态 inject 数组', async () => {
+    const world = await boot()
+    // ① 装配期真的发起了 uiWorkspace 的动态注入（宿主缺服务时插件仍会激活）
+    const dynamic = world.captured.injected.filter((entry) => (Array.isArray(entry.deps) ? entry.deps : Object.keys(entry.deps || {})).includes('uiWorkspace'))
+    assert.equal(dynamic.length, 1, `应恰好发起一次 uiWorkspace 动态注入，实际 ${dynamic.length}`)
+    // ② 静态依赖表里不能有它 —— 否则缺服务时整插件不激活
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    const staticInject = source.match(/const inject = \[[^\]]*\]/)
+    assert.ok(staticInject, '应能读到静态 inject 数组')
+    assert.equal(staticInject[0].includes('uiWorkspace'), false, `静态 inject 不得含 uiWorkspace：${staticInject[0]}`)
+    // ③ 服务缺席时装配不抛错，设置页仍注册（C31 已覆盖渲染；这里守住「装配」这一层）
+    const noPicker = await boot({}, null, { uiWorkspace: null })
+    assert.ok(noPicker.section, 'uiWorkspace 缺席时设置栏目仍要注册')
   })
 } finally {
   restoreTimers()

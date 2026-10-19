@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 134
+const EXPECTED_ASSERTIONS = 137
 
 let passed = 0
 const failures = []
@@ -3508,6 +3508,84 @@ check('工作区绑定：纯函数层不依赖宿主，隐私边界不破', () =
   // 绑定文件是配置文件的**兄弟**：由 configPath() 推导，测试把配置指到临时目录时绑定自动跟随。
   assert.match(indexCode, /function bindingsPath\(\)[\s\S]{0,120}?bindingsPathFor\(configPath\(\)\)/,
     '绑定文件路径应由 configPath() 推导（「配置在哪、绑定就在哪」是结构事实）')
+})
+
+// ---------- 设置页「工作区绑定」：渲染层契约（0.8.1-d）----------
+//
+// 行为层在 verify-client C29–C33；这里守的是**源码文本才能看清**的那几条：
+// uiWorkspace 必须动态注入、组件引用的每个 bindings.* 键都要在两种语言里存在、
+// 每个用到的 class 都要有对应样式规则。缺任何一条都不会让任何断言变红 ——
+// 只有真机上会显示成原始 key 或裸 HTML。
+
+check('工作区绑定：uiWorkspace 只走动态 inject，静态依赖表不得含它', () => {
+  // 静态数组里多一个服务 = 缺它时**整个插件不激活**（设置页与人设卡一起消失）
+  const staticInject = clientCode.match(/const inject = \[[^\]]*\]/)
+  assert.ok(staticInject, '应能读到静态 inject 数组')
+  assert.equal(
+    /uiWorkspace/.test(staticInject[0]),
+    false,
+    `uiWorkspace 不得进静态 inject（缺服务会让整插件不激活）：${staticInject[0]}`
+  )
+  assert.match(
+    clientCode,
+    /ctx\.inject\(\s*\['uiWorkspace'\]/,
+    '必须用动态 ctx.inject([\'uiWorkspace\'], …) 获取目录点选服务'
+  )
+  // 只靠「按钮渲染时判空」是不够的：服务可能在按钮画出来**之后**被撤走
+  // （插件卸载 / scope 卸载 / 物化顺序变化），此时点下去就是对 null 取属性，
+  // 用户看到的是一个看不懂的 TypeError。handlePick 自己必须再守一次。
+  assert.match(
+    clientCode,
+    /async function handlePick\(\)[\s\S]{0,200}if \(!directoryPicker\)/,
+    'handlePick 必须自己判空（服务可能在渲染后才被撤走）'
+  )
+})
+
+check('工作区绑定：SoulBindings 引用的 bindings.* 键在 zh / en 里都存在', () => {
+  const zhText = extractObject(clientSource, 'const zh = {')
+  const enText = extractObject(clientSource, 'const en = {')
+  const zhKeys = objectKeys(zhText)
+  const enKeys = objectKeys(enText)
+  // 从组件源码里抓它实际用到的键（而不是手抄一份清单 —— 手抄清单不会跟着组件变）
+  const at = clientCode.indexOf('function SoulBindings(props)')
+  assert.ok(at !== -1, '应存在 SoulBindings 组件')
+  const body = clientCode.slice(at)
+  const used = new Set([...body.matchAll(/t\('(bindings\.[A-Za-z]+)'/g)].map((m) => m[1]))
+  assert.ok(used.size >= 20, `SoulBindings 里抓到的 bindings.* 键数偏少：${used.size}`)
+  for (const key of used) {
+    assert.ok(zhKeys.has(key), `zh 词典缺键 ${key}（真机上会直接显示原始 key）`)
+    assert.ok(enKeys.has(key), `en 词典缺键 ${key}（英文界面下会漏出中文或原始 key）`)
+  }
+  // 带占位符的文案要两种语言都带同样的占位符，否则某种语言下 {} 会原样打出来
+  for (const key of ['bindings.bound', 'bindings.unbound', 'bindings.count', 'bindings.moreSessions', 'bindings.invalid']) {
+    const slot = (text) => {
+      const line = text.split('\n').find((l) => l.trim().startsWith(`'${key}':`))
+      assert.ok(line, `${key} 应存在`)
+      return [...line.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort()
+    }
+    assert.deepEqual(slot(zhText), slot(enText), `${key} 的占位符在 zh / en 必须一致`)
+  }
+})
+
+check('工作区绑定：组件用到的 class 都有 CSS 规则', () => {
+  // 只抓「组件自己命名」的 soul-bindings-* / .soul-bindings，复用宿主式既有 class 的不算
+  const at = clientCode.indexOf('function SoulBindings(props)')
+  const body = clientCode.slice(at)
+  const classes = new Set(
+    [...body.matchAll(/className: '([^']+)'/g)]
+      .flatMap((m) => m[1].split(/\s+/))
+      .filter((c) => c === 'soul-bindings' || c.startsWith('soul-bindings-'))
+  )
+  assert.ok(classes.size >= 10, `抓到的绑定专属 class 数偏少：${classes.size}`)
+  for (const cls of classes) {
+    // 选择器可以出现在规则开头，也可以在一个**组合**选择器里（`.a,.b{`）——
+    // 只认行首会把「与既有按钮共用一条描边规则」误判成「没有样式」
+    assert.match(
+      clientCode,
+      new RegExp(`'\\.${cls}[{,:\\[ ]|,\\.${cls}[{,:\\[ ]`),
+      `class .${cls} 没有样式规则（会渲染成裸 HTML）`
+    )
+  }
 })
 
 // 「断言数一致」与「每一项真的通过」是两回事：前者只防脚本与声明漂移，

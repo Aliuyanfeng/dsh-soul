@@ -196,18 +196,18 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 | 层 | 脚本 | 断言数 | 会不会跳过 |
 | --- | --- | --- | --- |
-| 纯函数 / 契约 | `verify-config` | 134 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
+| 纯函数 / 契约 | `verify-config` | 137 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
 | 持久化行为 | `verify-history` | 43 | 否 |
 | 纯函数（工作区绑定） | `verify-bindings` | 47 | 否 |
-| 客户端行为 | `verify-client` | 28 | 否 |
+| 客户端行为 | `verify-client` | 33 | 否 |
 | 端到端（保存 → 两条通道都拿到新文本；变更记录四条路由；工作区绑定路由） | `verify-e2e-prompt` | 90 | 否 |
 | 宿主实现 | `verify-live-prompt` | 20 | 定位不到 DSH 时整脚本跳过 |
 | 版本兼容 | `verify-compat` | 10（声明数；未执行项按 `skipNote` 从声明数里下修后对账） | 定位不到 DSH 时整脚本跳过 |
 | 渲染层 | `verify-trail` | 11 | 起不来浏览器时整脚本跳过 |
 | 渲染层 | `verify-nav-icon` | 16（含 6 项判断力自检） | 同上 |
 
-合计 **417 项**（其中 `verify-compat` 的 10 项在定位不到 DSH 时整脚本跳过、`verify-trail` 的 11 项同上）。
+合计 **425 项**（其中 `verify-compat` 的 10 项在定位不到 DSH 时整脚本跳过、`verify-trail` 的 11 项同上）。
 
 也可以单跑一层：`npm run verify:config` / `verify:store` / `verify:history` / `verify:bindings` / `verify:client` / `verify:e2e` / `verify:host` / `verify:compat` / `verify:trail` / `verify:nav-icon`。
 
@@ -223,7 +223,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 `verify-trail` / `verify-nav-icon` 覆盖的是**渲染层**（DOM 里的 SVG），而设置页的**交互行为**此前只有「源文本契约」——即断言 `client/index.mjs` 里出现了某段写法。那种断言证明不了运行时真的走了那条分支：把 `if (!payload)` 改成常量、或让 `resetConfig` 永不返回 `undefined`，源码看起来依然正确。
 
-`verify-client` 把**真实的 `client/index.mjs` 原样载入**（不复制、不裁剪），在纯 Node 里用一小撮 React 垫片 + 假 `window` / `document` / `fetch` / 定时器跑真实的 `apply(ctx)`，然后**像用户一样点按钮**，断言**用户实际会看到的那句提示**。27 个用例守着两类东西：0.7.1 修过而此前没有行为回归看护的几处，以及 0.8.0 新增的「变更记录」分组：
+`verify-client` 把**真实的 `client/index.mjs` 原样载入**（不复制、不裁剪），在纯 Node 里用一小撮 React 垫片 + 假 `window` / `document` / `fetch` / 定时器跑真实的 `apply(ctx)`，然后**像用户一样点按钮**，断言**用户实际会看到的那句提示**。33 个用例守着两类东西：0.7.1 修过而此前没有行为回归看护的几处，以及 0.8.0 / 0.8.1 新增的「变更记录」与「工作区绑定」分组：
 
 | 用例 | 守的是什么 |
 | --- | --- |
@@ -241,11 +241,13 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | C21 | 底栏展示当前人设，未匹配时显示「自定义」 |
 | C23 | 全局轮询注册在装配层（不依赖设置页是否挂载） |
 | C24–C28 | 变更记录：不展开不拉取 / 展开后按记录渲染时间·来源·字段名 / 原值→新值逐行（含空值与枚举外取值）/ 撤销与清空都走内联二次确认 / 超 20 条折叠、`warning` 不得被当成失败；C28 另守「设置页只留展开区里的说明块，不得挂回折叠标题旁」 |
+| C29–C33 | 工作区绑定（0.8.1-d）：不展开不发请求、展开才拉一次 / 当前目录卡区分「直接绑定」与「继承自上级」且只高亮生效链上的行 / 点选与手输填同一字段、空目录不发请求、成功后清空输入并提示、`uiWorkspace` 缺席时降级为手输 / 点选失败后不再给按钮并把文案换成「请手动粘贴」、解绑走内联二次确认 / `uiWorkspace` 走动态 `inject`、静态依赖表不得含它 |
 
 两个实现要点（离线复刻时踩过的坑）：
 
 - 必须接管 `setInterval`，不只是 `setTimeout` —— 设置页「关于你」分组每 2s 轮询刷新，不接管则事件循环永不空，脚本打印完最后一行却不退出（看起来像挂住）；
-- `fetch` 桩要能表达「HTTP 200 但 `payload.ok === false`」这种失败形态，因为 `postJSON` 正是按 `!response.ok || payload.ok !== true` 判失败的。
+- `fetch` 桩要能表达「HTTP 200 但 `payload.ok === false`」这种失败形态，因为 `postJSON` 正是按 `!response.ok || payload.ok !== true` 判失败的。反过来更常踩：**桩忘了写 `ok: true`**（服务端每条路由都是 `send(res, 200, { ok: true, ... })`），于是「保存成功」被客户端当成失败，整条成功链路一次都没被走过 —— 0.8.1-d 实测踩到，C31 当场抓到；
+- `settle()` 返回的必须是**稳定后那一帧**的树：只在 effect 里 `setState`、直到某轮没 effect 才收敛的写法，会把「刚被 effect 改写、还没重画」的旧树当结果返回，断言看到的永远是上一屏（同一轮实测：绿字明明已进 store 却读不到）。修法是——本轮跑过 effect 且已不 dirty 时**再渲染一帧**再返回。
 
 无浏览器时的补跑（两段式，本机 sandbox 常拦子进程，此路必用）：
 

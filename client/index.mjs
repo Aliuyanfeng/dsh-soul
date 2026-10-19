@@ -86,6 +86,22 @@ window.__ModuleLoader__.load({
       // historyMax 是「当前配置承诺的上限」（响应带回），historyMaxEntries 是
       // 设置表单里的那份值 —— 保存成功后两者应相等。
       historyMaxEntries: 200,
+      // —— 工作区绑定（0.8.1）——
+      // 与 history 同款：null = 还没拉过，[] = 拉过且确实没有绑定。
+      // 「这个项目还没绑过」与「还没去看」是两件事，界面上不给它们同一种空白。
+      bindings: null,
+      // 失效引用（绑定的人设已不存在）与坏行丢弃数，都由服务端如实标注
+      bindingsInvalid: [],
+      bindingsDropped: null,
+      // 「记录可能不完整」的原因，不是失败（同 historyWarning）
+      bindingsWarning: null,
+      bindingsError: null,
+      // 服务端承诺的上限（MAX_BINDINGS / MAX_PATH_LENGTH），由响应带回，
+      // 不在客户端写死 —— 两边各写一份迟早会不一致
+      bindingsMax: null,
+      bindingsMaxPath: null,
+      // 活动会话的解析结果（只读状态：哪个目录现在用的是谁）
+      bindingsSessions: [],
       saving: false,
       error: null
     }
@@ -609,6 +625,78 @@ window.__ModuleLoader__.load({
         return await this.postJSON('/api/soul/history/clear')
       }
 
+      // —— 工作区绑定（0.8.1）——
+      async fetchBindings() {
+        return await this.postJSON('/api/soul/bindings', null, { method: 'GET' })
+      }
+
+      // 把服务端返回的绑定视图整块写进 store。
+      //
+      // 绑定的每个字段都是「服务端说了算」：失效引用由服务端按当前预设库算出，
+      // sessions 的生效人设由服务端走与真实装配同一条解析路径得出。客户端只负责
+      // 原样保留 —— 自己再算一遍只会有两种结果：算对了白算，算错了两个地方打架。
+      applyBindings(s, payload) {
+        // bindings 是**对象**（目录 → 人设名），不是数组 —— 服务端 bindingsView
+        // 直接透传 soul-bindings.json 的映射。上一版这里写的是 Array.isArray 兜底，
+        // 一旦为假就会把整张表静默吞成空：界面显示「还没有绑定任何目录」而文件里
+        // 其实有。故按对象判，且**缺字段时保留旧值**而不是清空。
+        const raw = payload.bindings
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) s.bindings = raw
+        else if (raw === null || Array.isArray(raw)) s.bindings = {}
+        s.bindingsInvalid = Array.isArray(payload.invalid) ? payload.invalid : []
+        s.bindingsDropped = Number.isFinite(payload.dropped) ? payload.dropped : 0
+        // warning 是「看到的不是全部」，不是失败，所以不写进 bindingsError
+        s.bindingsWarning = payload.warning ? String(payload.warning) : null
+        s.bindingsMax = Number.isFinite(payload.max) ? payload.max : s.bindingsMax
+        s.bindingsMaxPath = Number.isFinite(payload.maxPathLength)
+          ? payload.maxPathLength
+          : s.bindingsMaxPath
+        s.bindingsSessions = Array.isArray(payload.sessions) ? payload.sessions : []
+      }
+
+      // 拉取绑定视图并写 store。
+      //
+      // 失败必须留下痕迹（同 loadHistory）：界面停在「加载中」与「确实没有绑定」
+      // 长得一样，而这一组的全部意义就是回答「我这个项目现在是谁」。
+      async loadBindings() {
+        if (this.disposed) return
+        try {
+          const payload = await this.fetchBindings()
+          this.store.update((s) => {
+            this.applyBindings(s, payload)
+            s.bindingsError = null
+          })
+        } catch (err) {
+          this.store.update((s) => {
+            s.bindingsError = messageOf(err)
+          })
+        }
+      }
+
+      // 新增或改绑一个目录。写成功的结果里带回完整视图，直接铺进 store，
+      // 省掉一次「写完立刻再拉一遍」的往返。
+      async saveBinding(dir, persona) {
+        const payload = await this.postJSON('/api/soul/bindings', { dir, persona })
+        if (!this.disposed) {
+          this.store.update((s) => {
+            this.applyBindings(s, payload)
+            s.bindingsError = null
+          })
+        }
+        return payload
+      }
+
+      async removeBinding(dir) {
+        const payload = await this.postJSON('/api/soul/bindings/delete', { dir })
+        if (!this.disposed) {
+          this.store.update((s) => {
+            this.applyBindings(s, payload)
+            s.bindingsError = null
+          })
+        }
+        return payload
+      }
+
       // 统一请求：body 为 null 时不携带请求体（GET 用）
       async postJSON(path, body, overrides = {}) {
         const url = new URL(path, hostBase())
@@ -1022,6 +1110,53 @@ window.__ModuleLoader__.load({
       '.soul-history-more{align-self:flex-start;margin-top:8px;padding:0;border:0;background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
       '.soul-history-more:hover{text-decoration:underline}',
       '.soul-history-more:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      // —— 设置页「工作区绑定」分组（0.8.1-d）——
+      // 外层容器只负责块间距：三段是 .soul-field，彼此之间要留出与其它分组一致的空。
+      '.soul-bindings{display:flex;flex-direction:column;gap:14px}',
+      // 尺寸全部抄本文件既有的宿主对齐规格：输入框复用 .soul-field 的控件规则，
+      // 小按钮复用 .soul-history-action（24px 高 / 描边 / brand 文字），
+      // 危险态复用 .soul-history-action-armed 的语义（实心危险色 + 换文案）。
+      // 这里只补「绑定」独有的排版：路径与元信息的折叠、列表的树形前缀、当前目录的高亮。
+      // 当前会话目录卡：一行等宽路径 + 两行元信息（生效人设 / 来源），
+      // 路径靠 title 给全文、靠 shortenPath 截中段 —— 不换行，避免长路径把卡片撑高
+      '.soul-bindings-current{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1)}',
+      // 路径用等宽字体：宿主主题**没有** --dsw-font-mono 这个 token（实测校对过），
+      // 引一个不存在的 var() 只会静默回退，所以这里直接给系统等宽字体栈。
+      '.soul-bindings-path{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary)}',
+      '.soul-bindings-meta{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      // 输入框 + 「选择目录…」同一行：按钮不缩放（flex:none），输入框吃满剩余宽度
+      '.soul-bindings-new{display:flex;align-items:center;gap:8px;margin-bottom:8px}',
+      '.soul-bindings-new:last-child{margin-bottom:0}',
+      '.soul-bindings-new label{margin:0;flex:none}',
+      '.soul-bindings-pick,.soul-bindings-bind{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;height:32px;padding:0 10px;border:.5px solid var(--dsw-alias-brand-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.soul-bindings-pick:hover,.soul-bindings-bind:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-bindings-pick:focus-visible,.soul-bindings-bind:focus-visible,.soul-bindings-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      // 人设下拉不许被压到看不见：flex:none + 固定最小宽度
+      '.soul-bindings-new select{flex:none;width:auto;min-width:120px}',
+      // 降级提示：与 .soul-status 同色同字号，贴在选择器原位（说明为什么按钮不见了）
+      '.soul-bindings-hint{margin:-2px 0 8px 0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      // 列表：与 .soul-history-list 同规格（紧凑、无项目符号）
+      '.soul-bindings-rows{display:flex;flex-direction:column;gap:6px;margin:10px 0 0 0;padding:0;list-style:none}',
+      '.soul-bindings-row{display:flex;align-items:center;gap:6px;min-height:32px;padding:4px 8px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1)}',
+      // 高亮命中当前会话的那一条：左侧一道 brand 竖条，比整块上色更安静
+      '.soul-bindings-row[data-current="true"]{border-color:var(--dsw-alias-brand-primary);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}',
+      '.soul-bindings-tree{flex:none;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
+      // 目录名是这一行的主体：吃掉剩余宽度，过长则省略（全文在 title）
+      '.soul-bindings-dir{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary)}',
+      '.soul-bindings-here{flex:none;padding:0 6px;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent);color:var(--dsw-alias-brand-primary);font-size:11px;line-height:18px}',
+      '.soul-bindings-bad{flex:none;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px}',
+      '.soul-bindings-select{flex:none;width:auto;min-width:96px;max-width:160px}',
+      '.soul-bindings-action{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;height:24px;padding:0 8px;border:.5px solid var(--dsw-alias-brand-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.soul-bindings-action:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-bindings-action-armed{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}',
+      // 未绑定回落行：虚线框＝「这是规则、不是一条记录」
+      '.soul-bindings-fallback{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border:.5px dashed var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm)}',
+      '.soul-bindings-fallback-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      // 「看到的不是全部」不是失败：用次要色，与红字错误（.soul-error）区分。
+      // 宿主主题**没有**黄色 warning token（实测：--dsw-alias-label-warning /
+      // --dsw-alias-state-warning-primary 都不存在），自己硬编一个黄色又会跟主题脱节，
+      // 所以按「不重要但要知道」处理，与同组其它提示同色。
+      '.soul-bindings-warning{color:var(--dsw-alias-label-secondary)}',
       // 开了「减少动态效果」时：光轨层与卡片停动画。
       // 结果提示（绿字/红字）不需要在这里照顾 —— 它们是静态文字、没有动画。
       '@media (prefers-reduced-motion:reduce){.soul-trail-layer{animation:none}.soul-persona-card{animation:none!important;transition:none}}'
@@ -1147,6 +1282,45 @@ window.__ModuleLoader__.load({
       'meta.tables.less': '少用表格',
       'meta.language.zh': '中文',
       'meta.language.en': '英文',
+      // —— 工作区绑定（0.8.1）——
+      'group.bindings': '工作区绑定',
+      'bindings.hint': '绑定记住的是目录而不是会话：在绑定的目录（含子目录）里开的会话自动用这个人设。保存后立刻对活动会话生效，其他目录不受影响。',
+      // 当前会话目录卡
+      'bindings.currentTitle': '当前会话目录',
+      'bindings.noSession': '当前没有活动会话，所以没有「现在用什么」可显示。',
+      'bindings.noCwd': '这个会话没有工作目录，任何绑定都不会命中 —— 它会用全局配置。',
+      'bindings.effective': '生效人设',
+      'bindings.source': '来源',
+      'bindings.sourceGlobal': '全局配置（没有绑定的目录都归它管）',
+      'bindings.sourceInherited': '{dir}（上级目录继承）',
+      'bindings.choose': '选择目录…',
+      'bindings.manualLabel': '目录路径',
+      'bindings.manualPlaceholder': '粘贴一个绝对路径，例如 D:\\项目A',
+      'bindings.bindDir': '绑定',
+      // 结果提示：就地在分组内显示绿字/红字（与变更记录同款，不用 toast）
+      'bindings.needDir': '先填一个目录，或者点「选择目录…」。',
+      'bindings.bound': '已绑定：{dir} → {name}',
+      'bindings.unbound': '已解绑：{dir}',
+      'bindings.unbindMissing': '这条绑定已经不在列表里了（可能是在别处删掉的），刷新一下即可。',
+      'bindings.pickerUnavailable': '当前连接方式无法调起系统目录选择器，请手动粘贴路径。',
+      'bindings.moreSessions': '另有 {count} 个活动会话',
+      // 绑定列表
+      'bindings.listTitle': '已绑定的目录',
+      'bindings.loading': '加载中...',
+      'bindings.loadFailed': '无法读取工作区绑定：{reason}',
+      'bindings.empty': '还没有绑定任何目录。',
+      'bindings.count': '共 {count} 条 · 最多 {max} 条',
+      'bindings.here': '当前目录',
+      'bindings.persona': '使用的人设',
+      'bindings.unbind': '解绑',
+      'bindings.unbindArmed': '确认解绑？',
+      'bindings.invalid': '人设「{name}」已不存在',
+      'bindings.invalidHint': '这条绑定不会生效，改绑或解绑它。',
+      'bindings.dropped': '有 {count} 行无效记录已被忽略。',
+      'bindings.warning': '绑定表可能不完整：{reason}',
+      'bindings.maxPath': '路径上限 {max} 字符。',
+      'bindings.fallback': '未绑定的目录使用全局配置',
+      'bindings.change': '改',
       'group.tool': 'Agent 工具',
       'field.toolConfirm': '人设变更需确认',
       'hint.toolConfirm': '开启后，Agent 改人设会先在输入框处弹出审批面板（Enter 允许 / Esc 拒绝）。若会话审批通道不可用（策略为 never），则退化为待确认提议，需用 /soul confirm 处理 —— 此时建议关闭本开关，否则每次改动都要手输命令。',
@@ -1368,6 +1542,42 @@ window.__ModuleLoader__.load({
       'meta.tables.less': 'Fewer tables',
       'meta.language.zh': 'Chinese',
       'meta.language.en': 'English',
+      // —— Workspace bindings (0.8.1) ——
+      'group.bindings': 'Workspace bindings',
+      'bindings.hint': 'A binding remembers a directory, not a session: sessions opened in that directory (or below it) use the bound persona. Saving takes effect for active sessions right away; other directories are untouched.',
+      'bindings.currentTitle': 'Current session directory',
+      'bindings.noSession': 'No active session, so there is no "in effect right now" to show.',
+      'bindings.noCwd': 'This session has no working directory, so no binding can match it — it uses the global config.',
+      'bindings.effective': 'Persona in effect',
+      'bindings.source': 'Source',
+      'bindings.sourceGlobal': 'Global config (everything unbound falls back to it)',
+      'bindings.sourceInherited': '{dir} (inherited from a parent directory)',
+      'bindings.choose': 'Choose directory…',
+      'bindings.manualLabel': 'Directory path',
+      'bindings.manualPlaceholder': 'Paste an absolute path, e.g. D:\\project-a',
+      'bindings.bindDir': 'Bind',
+      'bindings.needDir': 'Enter a directory first, or use "Choose directory…".',
+      'bindings.bound': 'Bound: {dir} → {name}',
+      'bindings.unbound': 'Unbound: {dir}',
+      'bindings.unbindMissing': 'This binding is no longer in the list (it was probably removed elsewhere); reload to refresh.',
+      'bindings.pickerUnavailable': 'This connection cannot open the system directory picker; paste the path instead.',
+      'bindings.moreSessions': '{count} more active session(s)',
+      'bindings.listTitle': 'Bound directories',
+      'bindings.loading': 'Loading...',
+      'bindings.loadFailed': 'Could not read the workspace bindings: {reason}',
+      'bindings.empty': 'No directory is bound yet.',
+      'bindings.count': '{count} total · up to {max}',
+      'bindings.here': 'This directory',
+      'bindings.persona': 'Persona',
+      'bindings.unbind': 'Unbind',
+      'bindings.unbindArmed': 'Unbind it?',
+      'bindings.invalid': 'Persona "{name}" no longer exists',
+      'bindings.invalidHint': 'This binding will not take effect; rebind or remove it.',
+      'bindings.dropped': '{count} invalid line(s) were ignored.',
+      'bindings.warning': 'The binding table may be incomplete: {reason}',
+      'bindings.maxPath': 'Path limit {max} characters.',
+      'bindings.fallback': 'Unbound directories use the global config',
+      'bindings.change': 'Change',
       'group.tool': 'Agent tools',
       'field.toolConfirm': 'Require confirmation for persona changes',
       'hint.toolConfirm': 'When on, persona changes by the agent first raise an approval panel above the input box (Enter = allow, Esc = reject). If the session approval channel is unavailable (policy = never), it falls back to a pending proposal applied only via /soul confirm. Under full permissions the panel never appears, so turning this switch off is recommended.',
@@ -2015,12 +2225,322 @@ window.__ModuleLoader__.load({
       )
     }
 
-        function SoulSettings(props) {
+    // -------------------------------------------------------------------------
+    // 设置页「工作区绑定」分组（0.8.1）
+    // -------------------------------------------------------------------------
+
+    // 目录点选服务。由 apply() 里的 ctx.inject(['uiWorkspace'], ...) 动态写入 ——
+    // **不能**把它加进静态 inject 数组（`const inject = ['slots','locale']`）：
+    // uiWorkspace 缺失时整个插件都不会激活，设置页连同人设卡一起消失。
+    // null = 这个连接拿不到该服务，界面直接走手输路径。
+    let directoryPicker = null
+
+    // 路径截中段显示：保留结尾（`…\dsh-plugin`）。用户靠结尾区分项目、靠开头区分盘符，
+    // 两者都要时优先结尾 —— 同一盘下的项目前缀往往一样长。完整路径交给 title。
+    function shortenPath(raw, max) {
+      const text = typeof raw === 'string' ? raw : String(raw == null ? '' : raw)
+      const limit = Number.isFinite(max) ? max : 44
+      if (text.length <= limit) return text
+      const tail = text.slice(text.length - (limit - 1))
+      // 从第一个分隔符处切，避免留下半截目录名（`…-plugin` 比 `…\dsh-plugin` 难认）
+      const cut = Math.max(tail.indexOf('\\'), tail.indexOf('/'))
+      return '…' + (cut >= 0 ? tail.slice(cut) : tail)
+    }
+
+    // 「工作区绑定」主体。三块结构见 DESIGN-persona-scope.md §7.3：
+    //   ① 当前会话目录卡（我这个项目现在是谁）② 绑定列表（增删改查）③ 未绑定回落行。
+    //
+    // 与变更记录同款**懒加载**：本组件只在分组展开时才被渲染（手风琴 body 的
+    // `open && ...`），所以挂载即等于「用户主动打开了它」，effect 里拉一次即可。
+    // 刻意不进 2 秒轮询 —— 绑定是配置不是状态，轮询只会让「手机上改了、桌面上跳」。
+    function SoulBindings(props) {
+      const { useSoulController, controller, personaNames, onOpenPersonas } = props
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const state = useSoulController((state) => state)
+      const {
+        bindings, bindingsInvalid, bindingsDropped, bindingsWarning, bindingsError,
+        bindingsMax, bindingsMaxPath, bindingsSessions, activePersona
+      } = state
+
+      // 下拉选项：内置优先的稳定顺序由 SoulSettings 算好传进来（同一份排序）。
+      const names = Array.isArray(personaNames) ? personaNames : []
+      const [draftDir, setDraftDir] = React.useState('')
+      const [draftPersona, setDraftPersona] = React.useState('')
+      const [pickerFailed, setPickerFailed] = React.useState(false)
+      const [pendingUnbind, setPendingUnbind] = React.useState(null)
+      const [notice, setNotice] = React.useState(null)
+      const [errorNotice, setErrorNotice] = React.useState(null)
+
+      React.useEffect(() => {
+        if (!controller.canRefresh()) return
+        void controller.loadBindings()
+      }, [])
+
+      // 解绑的二次确认 5 秒后自动复位（与删除预设同一套 armed 态，不用原生 confirm）
+      React.useEffect(() => {
+        if (pendingUnbind === null) return undefined
+        const timer = setTimeout(() => setPendingUnbind(null), 5000)
+        return () => clearTimeout(timer)
+      }, [pendingUnbind])
+
+      const showError = (text) => { setErrorNotice(text); setNotice(null) }
+      const showNotice = (text) => { setNotice(text); setErrorNotice(null) }
+
+      // 草稿人设默认取列表第一项 —— 下拉不能空着等用户点，那看着像坏了
+      const effectiveDraftPersona = names.includes(draftPersona)
+        ? draftPersona
+        : (names.length > 0 ? names[0] : '')
+
+      // 调起系统目录选择器。取消返回空串（什么都不做），失败抛错。
+      //
+      // 降级判据必须是「调用失败」而不是「预读后端种类」：宿主 UiWorkspaceService
+      // 的 pickDirectory() 把底层错误（含 capability 字段）包装成了普通 Error，
+      // 客户端读不到种类。见 DESIGN-persona-scope.md §7.5。
+      async function handlePick() {
+        try {
+          // 防御：服务可能在按钮渲染后被撤走（插件卸载 / scope 物化），此时按「不可用」处理
+          if (!directoryPicker) throw new Error(t('bindings.pickerUnavailable'))
+          const picked = await directoryPicker.pickDirectory()
+          // null = 用户取消：不是错误，不该弹红字
+          if (typeof picked === 'string' && picked !== '') setDraftDir(picked)
+        } catch (err) {
+          setPickerFailed(true)
+          showError(messageOf(err))
+        }
+      }
+
+      async function handleBind() {
+        const dir = draftDir.trim()
+        if (dir === '') {
+          showError(t('bindings.needDir'))
+          return
+        }
+        try {
+          await controller.saveBinding(dir, effectiveDraftPersona)
+          setDraftDir('')
+          showNotice(t('bindings.bound', { dir: shortenPath(dir), name: effectiveDraftPersona }))
+        } catch (err) {
+          // 服务端的拒绝文案可以直接展示（它已经写清了是哪一类问题），不再包一层前缀
+          showError(messageOf(err))
+        }
+      }
+
+      async function handleRebind(dir, persona) {
+        try {
+          await controller.saveBinding(dir, persona)
+          showNotice(t('bindings.bound', { dir: shortenPath(dir), name: persona }))
+        } catch (err) {
+          showError(messageOf(err))
+        }
+      }
+
+      async function handleUnbind(dir) {
+        if (pendingUnbind !== dir) {
+          setPendingUnbind(dir)
+          setErrorNotice(null)
+          return
+        }
+        setPendingUnbind(null)
+        try {
+          const payload = await controller.removeBinding(dir)
+          // removed 为假 = 这条绑定已经不在表里了（另一个窗口删的），不必谎报成功
+          if (payload && payload.removed === false) showError(t('bindings.unbindMissing'))
+          else showNotice(t('bindings.unbound', { dir: shortenPath(dir) }))
+        } catch (err) {
+          showError(messageOf(err))
+        }
+      }
+
+      const table = bindings && typeof bindings === 'object' && !Array.isArray(bindings) ? bindings : {}
+      const dirs = Object.keys(table)
+      // 失效引用：服务端按当前预设库算好后标注，客户端只负责画出来（不自动删除 ——
+      // 用户可能只是临时删了那个预设、打算改名回来）
+      const invalidNames = new Map()
+      for (const item of Array.isArray(bindingsInvalid) ? bindingsInvalid : []) {
+        if (item && typeof item.dir === 'string') invalidNames.set(item.dir, String(item.persona))
+      }
+      // 层级排序：父目录排在子目录前，用 `└` 标出「这是上一条的子树」。
+      // 同一个 `D:\项目A` 既绑了自身又绑了子目录时，先看父再看子才读得懂继承关系。
+      const sortedDirs = dirs.slice().sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+
+      // 当前会话：优先挑有 cwd 的那个 —— 没有目录的会话任何绑定都不会命中，
+      // 拿它当「当前」会让整张卡说的都不是用户眼前这个项目。
+      const sessions = Array.isArray(bindingsSessions) ? bindingsSessions : []
+      const withCwd = sessions.filter((s) => s && typeof s.cwd === 'string' && s.cwd !== '')
+      const current = withCwd.length > 0 ? withCwd[0] : (sessions.length > 0 ? sessions[0] : null)
+      const currentCwd = current && typeof current.cwd === 'string' && current.cwd !== '' ? current.cwd : null
+      const moreCount = sessions.length - (current ? 1 : 0)
+      const binding = current && current.binding ? current.binding : null
+      const effectivePersona = current && current.persona ? String(current.persona) : ''
+      // 「直接绑在本目录」与「继承自上级」的区别只体现在这里：没有它，用户在子目录里
+      // 看到别的人设会以为是 bug。判别已在宿主做过（客户端拿原始串比较会被盘符大小写骗过）。
+      const sourceText = !binding
+        ? t('bindings.sourceGlobal')
+        : (binding.inherited
+            ? t('bindings.sourceInherited', { dir: shortenPath(binding.dir) })
+            : shortenPath(binding.dir))
+
+      return e('div', { className: 'soul-bindings' },
+        // ① 当前会话目录卡 —— 先回答「我这个项目现在是谁」，再让用户改
+        e('div', { className: 'soul-field' },
+          e('div', { className: 'soul-field-label' }, t('bindings.currentTitle')),
+          current === null
+            ? e('div', { className: 'soul-status' }, t('bindings.noSession'))
+            : (currentCwd === null
+                ? e('div', { className: 'soul-status' }, t('bindings.noCwd'))
+                : e('div', null,
+                    e('div', { className: 'soul-bindings-current' },
+                      e('code', {
+                        className: 'soul-bindings-path',
+                        title: currentCwd
+                      }, shortenPath(currentCwd)),
+                      e('div', { className: 'soul-bindings-meta' },
+                        e('div', null, `${t('bindings.effective')}：${effectivePersona || t('quick.custom')}`),
+                        e('div', null, `${t('bindings.source')}：${sourceText}`)
+                      )
+                    ),
+                    moreCount > 0 && e('div', { className: 'soul-status' },
+                      t('bindings.moreSessions', { count: String(moreCount) }))
+                  ))
+        ),
+
+        // ② 新建 / 改绑入口。点选与手输填的是**同一个字段** —— 选择器只是把路径
+        // 填进来，不是另一条独立的路径，所以两者不会给出不同的结果。
+        e('div', { className: 'soul-field' },
+          e('label', { htmlFor: 'soul-bindings-dir' }, t('bindings.manualLabel')),
+          e('div', { className: 'soul-bindings-new' },
+            e('input', {
+              type: 'text',
+              id: 'soul-bindings-dir',
+              value: draftDir,
+              placeholder: t('bindings.manualPlaceholder'),
+              onChange: (ev) => setDraftDir(ev.target.value)
+            }),
+            // 失败过一次就不再给按钮：宿主的能力在启动时判定一次、之后不会变，
+            // 留着它只会让用户反复点一个确定会失败的东西。
+            // 服务**压根没注入**时同理（那些连接方式拿不到 uiWorkspace）：按钮不能出现，
+            // 否则点下去只会在 handlePick 里对 null 取属性、抛一个用户看不懂的 TypeError。
+            !pickerFailed && directoryPicker !== null && e('button', {
+              type: 'button',
+              className: 'soul-bindings-pick',
+              onClick: () => { void handlePick() }
+            }, t('bindings.choose'))
+          ),
+          pickerFailed && e('div', { className: 'soul-bindings-hint' }, t('bindings.pickerUnavailable')),
+          e('div', { className: 'soul-bindings-new' },
+            e('label', { htmlFor: 'soul-bindings-persona' }, t('bindings.persona')),
+            e('select', {
+              id: 'soul-bindings-persona',
+              value: effectiveDraftPersona,
+              onChange: (ev) => setDraftPersona(ev.target.value)
+            }, names.map((name) => e('option', { key: name, value: name }, name))),
+            e('button', {
+              type: 'button',
+              className: 'soul-bindings-bind',
+              disabled: names.length === 0,
+              onClick: () => { void handleBind() }
+            }, t('bindings.bindDir'))
+          ),
+          bindingsMaxPath && e('div', { className: 'soul-status' },
+            t('bindings.maxPath', { max: String(bindingsMaxPath) }))
+        ),
+
+        // ③ 绑定列表
+        e('div', { className: 'soul-field' },
+          e('div', { className: 'soul-field-label' }, t('bindings.listTitle')),
+          bindingsError
+            ? e('div', { className: 'soul-error' }, t('bindings.loadFailed', { reason: bindingsError }))
+            : (bindings === null
+                ? e('div', { className: 'soul-status' }, t('bindings.loading'))
+                : (sortedDirs.length === 0
+                    ? e('div', { className: 'soul-status' }, t('bindings.empty'))
+                    : e('div', null,
+                        e('div', { className: 'soul-status' },
+                          t('bindings.count', {
+                            count: String(sortedDirs.length),
+                            max: Number.isFinite(bindingsMax) ? String(bindingsMax) : '—'
+                          })),
+                        e('ul', { className: 'soul-bindings-rows' },
+                          sortedDirs.map((dir, at) => {
+                            // 与前面渲染过的某条构成父子关系时画 `└`，把「一条绑定 =
+                            // 一棵子树」画出来 —— 否则用户看不出为什么两个目录会用同一个人设
+                            const parent = sortedDirs.slice(0, at).find((prev) => (
+                              dir.startsWith(prev + '\\') || dir.startsWith(prev + '/')
+                            ))
+                            const isCurrent = currentCwd !== null && (
+                              currentCwd === dir ||
+                              currentCwd.startsWith(dir + '\\') ||
+                              currentCwd.startsWith(dir + '/')
+                            )
+                            const invalidName = invalidNames.get(dir)
+                            const value = invalidName || String(table[dir])
+                            const isInvalid = invalidName !== undefined
+                            return e('li', {
+                              key: dir,
+                              className: 'soul-bindings-row',
+                              'data-current': isCurrent ? 'true' : 'false'
+                            },
+                              parent && e('span', { className: 'soul-bindings-tree', 'aria-hidden': true }, '└'),
+                              e('code', { className: 'soul-bindings-dir', title: dir }, shortenPath(dir)),
+                              isCurrent && e('span', { className: 'soul-bindings-here' }, t('bindings.here')),
+                              isInvalid && e('span', { className: 'soul-bindings-bad' },
+                                t('bindings.invalid', { name: invalidName })),
+                              // 失效引用也画在下拉里（作为唯一选项）：让用户看到「现在写的是谁」，
+                              // 而不是看见一个空下拉、以为这条记录没有值
+                              e('select', {
+                                className: 'soul-bindings-select',
+                                value,
+                                'aria-label': t('bindings.persona'),
+                                onChange: (ev) => { void handleRebind(dir, ev.target.value) }
+                              },
+                                isInvalid && e('option', { value }, invalidName),
+                                names.map((name) => e('option', { key: name, value: name }, name))
+                              ),
+                              e('button', {
+                                type: 'button',
+                                className: pendingUnbind === dir
+                                  ? 'soul-bindings-action soul-bindings-action-armed'
+                                  : 'soul-bindings-action',
+                                onClick: () => { void handleUnbind(dir) }
+                              }, pendingUnbind === dir ? t('bindings.unbindArmed') : t('bindings.unbind'))
+                            )
+                          })
+                        )
+                      ))
+        ),
+
+        // ④ 未绑定回落行：把隐式行为显式写成一条可改的规则
+        e('div', { className: 'soul-bindings-fallback' },
+          e('span', { className: 'soul-bindings-fallback-text' },
+            `${t('bindings.fallback')} · ${activePersona || t('quick.custom')}`),
+          e('button', {
+            type: 'button',
+            className: 'soul-bindings-action',
+            onClick: onOpenPersonas
+          }, t('bindings.change'))
+        ),
+
+        // 「看到的不是全部」与「失败了」是两件事：前者是黄字警告，后者是红字
+        Number.isFinite(bindingsDropped) && bindingsDropped > 0 && e('div', { className: 'soul-status' },
+          t('bindings.dropped', { count: String(bindingsDropped) })),
+        bindingsWarning && e('div', { className: 'soul-status soul-bindings-warning' },
+          t('bindings.warning', { reason: bindingsWarning })),
+        errorNotice && e('p', { className: 'soul-error-notice', role: 'alert' }, errorNotice),
+        !errorNotice && notice && e('p', {
+          className: 'soul-saved-notice',
+          role: 'status',
+          'aria-live': 'polite'
+        }, notice)
+      )
+      )
+    }
+
+    function SoulSettings(props) {
       const { useSoulController, controller } = props
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
 
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
@@ -2474,6 +2994,16 @@ window.__ModuleLoader__.load({
       const personasSummary = personasError
         ? t('accordion.loadFailed')
         : (personas === null ? t('status.loading') : `${Object.keys(personas).length} ${t('accordion.personas')}`)
+      // 工作区绑定摘要：折叠态只看得到这一行，所以要先说「读没读出来」，
+      // 再说条数。null = 还没拉过（本分组懒加载，展开前一直是 null）⇒ 显示空态文案，
+      // 不显示「0 条」—— 那会把「没加载」误报成「一条都没有」。
+      const bindingsSummary = bindingsError
+        ? t('accordion.loadFailed')
+        : (bindings === null || !bindings || typeof bindings !== 'object' || Array.isArray(bindings)
+            ? t('bindings.empty')
+            : (Object.keys(bindings).length === 0
+                ? t('bindings.empty')
+                : t('bindings.count', { count: String(Object.keys(bindings).length), max: Number.isFinite(bindingsMax) ? String(bindingsMax) : '—' })))
       const toolSummary = localToolConfirm ? t('accordion.on') : t('accordion.off')
       const promptSummary = promptText.length > 0
         ? t(promptIsDraft ? 'prompt.summaryDraft' : 'prompt.summaryChars', { n: String(promptText.length) })
@@ -2977,6 +3507,25 @@ window.__ModuleLoader__.load({
             )
           ),
 
+          // 「工作区绑定」夹在「人设预设」与「Agent 工具」之间：它是人设的**选址**问题，
+          // 顺序上紧跟在「有哪些预设」之后才读得通；同时 body 不渲染 ⇒ 不展开就不发请求。
+          e(SoulAccordion, {
+            id: 'soul-bindings',
+            title: t('group.bindings'),
+            summary: bindingsSummary,
+            open: openSection === 'bindings',
+            onToggle: toggleSection('bindings')
+          },
+            e('div', { className: 'soul-note' }, t('bindings.hint')),
+            e(SoulBindings, {
+              useSoulController,
+              controller,
+              t,
+              personaNames,
+              onOpenPersonas: () => setOpenSection('personas')
+            })
+          ),
+
           e(SoulAccordion, {
             id: 'soul-tools',
             title: t('group.tool'),
@@ -3337,6 +3886,21 @@ window.__ModuleLoader__.load({
           clearInterval(timer)
         }
       }, 'dsh-soul: global refresh polling')
+
+      // —— 目录点选服务（0.8.1-d）——
+      //
+      // 用**动态** ctx.inject 拿 uiWorkspace，而不是把它写进上面的静态 inject 数组：
+      // 静态数组里少一个服务，整个插件就不激活（设置页、人设卡、底栏一起消失）。
+      // 目录选择器只是「能点一下就填路径」的便利，缺了它手输照常可用 ⇒ 必须可缺。
+      // 服务到齐时写进模块级 directoryPicker，SoulBindings 的「选择目录…」才可见；
+      // 调用失败（宿主 pickDirectory 抛错）时组件自行降级为手输，见 §7.5。
+      ctx.inject(['uiWorkspace'], (scope) => {
+        directoryPicker = scope.uiWorkspace
+        scope.effect(() => () => {
+          // 服务撤走 = 界面上不该再出现那个按钮（回调可能已被替换成新的 scope）
+          if (directoryPicker === scope.uiWorkspace) directoryPicker = null
+        }, 'dsh-soul: directory picker teardown')
+      })
 
       // 暗色适配说明：原生 <select> 的弹出选项列表由浏览器按 color-scheme 渲染。
       // 宿主主题呈现器会把 html 的 color-scheme 与 body[data-ds-dark-theme] 随主题

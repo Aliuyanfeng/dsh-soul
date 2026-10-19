@@ -30,7 +30,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSyn
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { assertCount } from './lib/skip-report.mjs'
+import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 内置人设的期望值直接取代码里的同一份数据（它的数据契约另有 verify-config 钉住），
 // 免得 e2e 里再抄一份「极简主义者 = efficient / less」这类会悄悄漂移的常量。
 // 「关于你」的字段名单同理取自配置层唯一来源（PROFILE_FIELDS）。
@@ -1039,7 +1039,12 @@ async function bindingIdentityScenario(entry) {
 
   try {
     if (!linkReady) {
-      push('W11 前置条件：Junction 可用（造不出来则 W11–W13 无判别力）', false, '无法创建 junction / symlink')
+      // 这是**环境前置**，不是产品断言：受限沙箱 / 系统限制下造不出 junction，
+      // W11–W13 那条断言根本没机会执行。按 skipNote 如实申报「未执行」，
+      // 而不是塞一条永远红的失败项 —— 那会让整链常年红灯，真失败的项反而被淹没。
+      if (!skipNote('verify-e2e-prompt', 1, '无法创建 junction / symlink，W11–W13（链接身份键）未执行', '在可建链接的环境（或非沙箱终端）重跑')) {
+        push('W11 前置条件：Junction 可用（造不出来则 W11–W13 无判别力）', false, '无法创建 junction / symlink')
+      }
     } else {
       // ── 展示键优先：身份键不得改写另一条已存在的绑定 ────────────────────────
       // 两个键各自绑不同人设：入口目录那条（展示键）与真实目录那条。realpath 会把
