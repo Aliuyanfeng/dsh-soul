@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 142
+const EXPECTED_ASSERTIONS = 143
 
 let passed = 0
 const failures = []
@@ -3508,6 +3508,28 @@ check('0.9.0-b 工作区层：sessionId → workspaceId 索引接入，且失败
   assert.equal(/if \(false\)|if \(!false\)/.test(scope), false, '不得用常量短路工作区层')
 })
 
+check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', () => {
+  // .soul-persona-badge 有两套外观：
+  //   · 卡面（压在插画上）：absolute + 玻璃底 + 白字
+  //   · 卡背头（行内流）  ：描边式 + 灰字，靠 .soul-persona-back-head 里的
+  //     position:static 重置掉 absolute
+  //
+  // 坏情况是两套外观**同时对同一个元素生效**：卡背那条不写 position，但字段
+  // 优先级高于卡面那条 —— 于是卡面徽标变成「absolute 定位 + 描边式字号」的混合体，
+  // 在插画上漂。会话「人设」tab 的卡面徽标就曾因此漂移（它没有 .soul-persona-back-head
+  // 包裹，上面那条 static 重置不生效）。
+  const rules = [...clientCode.matchAll(/'([^']+)\{([^']*)\}'/g)]
+    .filter((m) => m[1].includes('.soul-persona-badge'))
+  const backRules = rules.filter((m) => m[1].includes('.soul-persona-back-head'))
+  const bareRules = rules.filter((m) => /^\.soul-persona-badge$/.test(m[1].trim()))
+  assert.equal(bareRules.length, 1, `裸 .soul-persona-badge 规则应恰好一条（卡面版），实际 ${bareRules.length}`)
+  assert.equal(backRules.length, 2, `卡背上下文规则应恰好两条（static 重置 + 卡背外观），实际 ${backRules.length}`)
+  // 裸规则必须有 absolute（卡面要压图）；卡背规则里不得再写 position:absolute
+  assert.match(bareRules[0][2], /position:absolute/, '裸规则应是卡面版（absolute，压在插画上）')
+  for (const r of backRules) {
+    assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
+  }
+})
 check('0.9.0-d hook 顺序：所有 hook 都在组件顶层提前 return 之前', () => {
   // React error #310（Rendered more hooks than during the previous render）：
   // hook 写在 `if (view === null) return ...` 之后时，首屏条件满足就跳过该 hook、

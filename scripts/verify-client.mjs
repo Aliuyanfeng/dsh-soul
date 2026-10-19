@@ -1892,6 +1892,21 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
       `详情栏应列出六个维度（与设置页卡背同款），实际 ${findAllByClass(tree, 'soul-persona-dim').length}`
     )
     assert.ok(findAllByClass(tree, 'soul-persona-fulltext').length >= 1, '详情栏应有自定义指令全文块')
+    // 左侧是**叠层轮转**而非平铺：卡片带 style.transform（translateX/scale）与 data-current
+    {
+      const styled = cards.filter((c) => c.props.style && typeof c.props.style.transform === 'string')
+      assert.equal(styled.length, cards.length, '每张卡都应有叠层 transform（不是平铺）')
+      // 判据不能只是「是字符串」：transform: '' 也是字符串。
+      // 必须真的含 translateX，否则把叠层写成平铺、再留个空 transform 也能过。
+      for (const c of styled) {
+        assert.ok(
+          c.props.style.transform.includes('translateX'),
+          `叠层 transform 必须含 translateX，实际「${c.props.style.transform}」`
+        )
+      }
+      const centers = cards.filter((c) => c.props['data-current'] === 'true')
+      assert.equal(centers.length, 1, `应恰好一张中心卡（data-current），实际 ${centers.length}`)
+    }
     // 生效中的那张卡要标出来，否则用户看不出哪个在用
     const effectiveCards = cards.filter((c) => c.props['data-effective'] === 'true')
     assert.equal(effectiveCards.length, 1, `应恰好一张卡标为生效中，实际 ${effectiveCards.length}`)

@@ -1024,7 +1024,12 @@ window.__ModuleLoader__.load({
       // 类名保留是为了兼容既有断言与「空占位不能是可点控件」这条历史契约。
       '.soul-persona-slot{display:none}',
       // 徽标：对齐宿主的 rowTag 规格（.5px 描边、radius-xs、11px/16px）
-      '.soul-persona-badge{border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-xs);color:var(--dsw-alias-label-secondary);flex:none;padding:0 6px;font-size:11px;line-height:16px;white-space:nowrap}',
+      // ⚠️ 这条是**卡背头**的徽标样式（描边式、inline、灰字），必须限定在 .soul-persona-back-head 内。
+      // 若不限定，它会覆盖卡面那条（absolute、玻璃底、白字）—— 而它自己又不写 position，
+      // 于是卡面徽标变成「白字玻璃底 + absolute 定位 + 描边式字号」的混合体，在插画上漂。
+      // 会话「人设」tab 的卡面徽标曾因此漂移：它没有 .soul-persona-back-head 包裹，
+      // 上面那条 position:static 的重置不生效。
+      '.soul-persona-back-head .soul-persona-badge{border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-xs);color:var(--dsw-alias-label-secondary);flex:none;padding:0 6px;font-size:11px;line-height:16px;white-space:nowrap}',
       // ——「存为新预设」命名弹层（方案 A）——
       // 遮罩用 fixed 全屏 + 半透明；层级要低于 toast（toast 是 10000），
       // 因为保存成功后 toast 要能盖在弹层之上被看到。
@@ -1141,14 +1146,16 @@ window.__ModuleLoader__.load({
       //
       // 与设置页的人设卡牌**共用同一套视觉语言**（圆角、描边、浅底、插画 + 压图标题），
       // 但布局从「叠层轮播 + 3D 翻面」改成「左侧网格选中 + 右侧详情面板」：
-      // 会话面板没有翻面手势的空间，而「点一下就同时完成选中与看清」更直接。
-      //
-      // 分栏比例用 minmax：窄容器（会话面板本身就不宽）下详情栏不低于 220px，
-      // 卡牌栏至少 160px，放不下时整体换行（而不是把两侧挤成一条缝）。
+      // 会话面板横向空间窄，左侧是**叠层轮转**而非平铺：中心大卡 + 两侧各露边一张。
+      // 比例：左栏 260px（正好容下 260px 的叠层）+ 右栏自适应；放不下时整体换行。
       '.soul-session-split{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;margin-top:2px}',
-      '.soul-session-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px;flex:1 1 300px;min-width:160px;align-content:start}',
-      // 单张卡：结构抄 .soul-persona-card 的正面（去掉绝对定位与 3D，因为它不再叠层）
-      '.soul-session-card{display:flex;flex-direction:column;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;padding:0;text-align:left;cursor:pointer;color:inherit;font-family:inherit}',
+      // 叠层容器：卡片绝对定位到同一格，靠内联 transform 偏移（与设置页同构）。
+      // overflow:hidden 让两侧露边卡在容器边缘被自然裁掉，观感与设置页一致。
+      '.soul-session-grid{position:relative;width:100%;min-width:160px;height:340px;flex:0 1 260px;overflow:hidden}',
+      // 单张卡：结构抄 .soul-persona-card 的正面（去掉 3D 翻面 —— 翻面由右栏详情承担）。
+      // ⚠️ 这里**不得**写任何 transform：叠层偏移由内联 style 持有（translateX/scale）；
+      // 若 CSS 也给 transform，两者会互相覆盖。
+      '.soul-session-card{position:absolute;top:0;bottom:0;left:0;right:0;width:180px;margin:0 auto;display:flex;flex-direction:column;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;cursor:pointer}',
       '.soul-session-card:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       // 生效中的那张：主色描边 + 外发光（配置事实）
       '.soul-session-card[data-effective="true"]{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08))}',
@@ -2695,32 +2702,39 @@ window.__ModuleLoader__.load({
       // 与设置页的「人设预设」用**同一套卡牌语言**（同样的圆角/描边/插画/压图标题），
       // 理由不是"顺手复用"：用户在设置页学会「一张卡 = 一个人设，点卡面上的按钮就用它」，
       // 到了会话里面对同一个概念（人设），切换成本最低的方式就是长成一样。
+      // —— 左：卡牌轮转（叠层）／右：选中卡的详情 ——
       //
-      // 与设置页卡牌的**有意差异**（不是遗漏）：
-      //   · 不做 3D 翻面 —— 会话里的卡是"选一个"，不是"读一个"，翻面会掩盖选择成本；
-      //   · 不做叠层轮播 —— 会话面板比设置页矮，网格一次铺开比翻页更好扫；
-      // —— 左：卡牌网格（缩略）／右：选中卡的详情 ——
+      // 轮转而非平铺：会话面板横向空间本来就窄，平铺会把每张卡挤到「名字 + 一句效果」
+      // 看不出差异；叠层轮转与设置页的人设卡牌**同构**，用户在设置页学会的
+      // 「左右露边 = 可翻，中心大卡 = 正在看」在这里直接复用。
       //
-      // 为什么改成左右分栏而不是纯网格：网格里每张卡只能放一句效果栏，用户看不出
-      // 「两个预设到底差在哪」。设置页用 3D 翻面解决这件事；会话面板没有翻面手势的
-      // 空间，改用「选中即看详情」—— 一次点击同时完成「选中」与「看清」。
+      // 与设置页轮转的两点差异（会话面板高度有限，简化几何）：
+      //   · 偏移步长收窄到 68px / 0.94 / 0.88（设置页 92px / 0.9 / 0.8）—— 三张同屏
+      //     时总宽约 260px，正好卡进左栏；
+      //   · 不做 3D 翻面（右栏详情已承担「看清」，翻面会与它重复）。
       //
       // 选中态与生效态是**两个不同的东西**，必须分开表达：
-      //   · selectedPersona = 右侧详情正在展示哪一张（纯浏览，不影响配置）；
-      //   · isEffective     = 这一张是否正在生效（配置事实）。
-      // 初版选中态默认跟随生效项，所以打开就是「看到自己现在用的是什么」。
-      const cardFor = (name) => {
+      //   · selectedPersona = 中心大卡（右栏详情跟着变，纯浏览，不影响配置）；
+      //   · isEffective     = 这一张是否正在生效（配置事实，名字前加 ★）。
+      const cardFor = (name, offset) => {
         const entry = state.personas ? state.personas[name] : null
         const builtin = !!(entry && entry.builtin)
         const isEffective = hasOverride && activePersona === name
-        const isSelected = selectedPersona === name
-        return e('button', {
+        return e('div', {
           key: name,
-          type: 'button',
           className: 'soul-session-card',
           'data-effective': isEffective ? 'true' : 'false',
-          'data-selected': isSelected ? 'true' : 'false',
-          'aria-pressed': isSelected ? 'true' : 'false',
+          'data-current': offset === 0 ? 'true' : 'false',
+          'aria-hidden': offset === 0 ? undefined : 'true',
+          // 偏移归**叠层**所有（内联 transform）；与 CSS 里 hover/焦点态的
+          // translateY 微抬无关 —— 两者若合成一个 transform 会互相打架。
+          style: {
+            transform: `translateX(${offset * 68}px) scale(${1 - Math.abs(offset) * 0.06})`,
+            zIndex: String(10 - Math.abs(offset)),
+            opacity: offset === 0 ? '1' : '0.55'
+          },
+          // 中心卡与侧边卡都可点：中心 = 选中自己（右栏已显示，无副作用）；
+          // 侧边 = 翻页。统一给 onClick 避免「中心卡不可点」这种反直觉。
           onClick: () => setSelectedPersona(name)
         },
           e('div', { className: 'soul-persona-art' },
@@ -2734,11 +2748,15 @@ window.__ModuleLoader__.load({
               onError: (ev) => { ev.target.style.display = 'none' }
             }),
             e('div', { className: 'soul-persona-art-veil', 'aria-hidden': true }),
+            // 内置徽标 + 位置指示都压在插画上；两者都是 absolute，靠
+            // .soul-persona-badge / .soul-persona-card-pos 的 top/left/right 定位
             builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
-            isEffective && e('span', { className: 'soul-persona-card-pos' }, '★'),
+            // 位置指示只出现在中心卡：两侧露边卡也标「i / n」会三个同时显示同一个数
+            offset === 0 && e('span', { className: 'soul-persona-card-pos' }, `${stackOrder.indexOf(name) + 1} / ${personaNames.length}`),
+            // 生效标记走名字前的 ★（与设置页一致），不再另开绝对定位元素
             e('div', { className: 'soul-persona-art-title' },
               e('span', { className: 'soul-persona-name' },
-                e('span', { className: 'soul-persona-label' }, name)
+                e('span', { className: 'soul-persona-label' }, isEffective ? `★ ${name}` : name)
               ),
               e('div', { className: 'soul-persona-meta' }, personaRowMetaOf(entry, t))
             )
@@ -2748,6 +2766,11 @@ window.__ModuleLoader__.load({
           )
         )
       }
+
+      // 叠层偏移量：中心 = 0，两侧各一张露边（与设置页同构）。
+      // 顺序由 stackOrder 决定：中心永远是 selectedPersona，其余按 personaNames 顺排。
+      const visibleOffsets = personaNames.length <= 1 ? [0] : (personaNames.length === 2 ? [-1, 0] : [-1, 0, 1])
+      const stackOrder = [selectedPersona, ...personaNames.filter((n) => n !== selectedPersona)]
 
       // 右栏详情：与设置页卡背**逐字相同**的六个维度 + 自定义指令全文，
       // 外加这一栏独有的操作按钮（用这个 / 恢复上层设置）。
@@ -2807,13 +2830,20 @@ window.__ModuleLoader__.load({
           ? e('p', { className: 'soul-error-notice', role: 'alert' }, t('session.applyFailed', { reason: error }))
           : e('p', { className: 'soul-saved-notice', role: 'status', 'aria-live': 'polite' }, notice)),
 
-        // 临时覆盖：左卡牌网格 + 右详情面板
+        // 临时覆盖：左侧叠层轮转（中心大卡 + 两侧露边）+ 右侧详情面板
         e('div', { className: 'soul-field' },
           e('div', { className: 'soul-field-label' }, t('session.overrideTitle')),
           personaNames.length === 0
             ? e('div', { className: 'soul-status' }, t('session.loading'))
             : e('div', { className: 'soul-session-split' },
-              e('div', { className: 'soul-session-grid' }, ...personaNames.map(cardFor)),
+              // 叠层：中心卡 = selectedPersona（offset 0），左/右各露出前一个/后一个。
+              // 顺序用 stackOrder（selectedPersona 永远排头），槽位取模避免越界。
+              e('div', { className: 'soul-session-grid' },
+                ...visibleOffsets.map((offset) => {
+                  const at = Math.min(Math.max(0, offset + 1), stackOrder.length - 1)
+                  return cardFor(stackOrder[at], offset)
+                })
+              ),
               e('div', { className: 'soul-session-detail' }, detailOf(selectedPersona))
             ),
           e('div', { className: 'soul-status' }, t('session.overrideHint'))
