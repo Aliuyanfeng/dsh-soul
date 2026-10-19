@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 141
+const EXPECTED_ASSERTIONS = 142
 
 let passed = 0
 const failures = []
@@ -3508,6 +3508,50 @@ check('0.9.0-b 工作区层：sessionId → workspaceId 索引接入，且失败
   assert.equal(/if \(false\)|if \(!false\)/.test(scope), false, '不得用常量短路工作区层')
 })
 
+check('0.9.0-d hook 顺序：所有 hook 都在组件顶层提前 return 之前', () => {
+  // React error #310（Rendered more hooks than during the previous render）：
+  // hook 写在 `if (view === null) return ...` 之后时，首屏条件满足就跳过该 hook、
+  // 首屏条件不满足就执行它 ⇒ 两次渲染的 hook 数不同，整个 slot 崩溃。
+  //
+  // ⚠️ 测试台**测不出来**：垫片每次 settle 走完整渲染循环，组件从不经历
+  // 「先 null 后有值」的两段式挂载，hook 数自然稳定。这是垫片与真实 React 的差异，
+  // 只能靠源码契约守住。
+  //
+  // 判据：每个 `      React.useXXX` 出现的行号，都不得晚于同一函数体内**组件顶层**的
+  // 第一个 `      if (...) {` + `        return`（6/8 空格缩进 —— 函数内的 `apply`
+  // 之类也会 return，但它们缩进更深，不会被误判）。
+  const lines = clientSource.split('\n')
+  const components = [
+    'SoulSessionPersona', 'SoulWorkspaces', 'SoulSessions',
+    'SoulHistorySection', 'SoulSettings', 'SoulQuickToggle', 'SoulBindings'
+  ]
+  for (const name of components) {
+    const start = lines.findIndex((l) => l.includes(`function ${name}(`))
+    if (start === -1) continue
+    let end = start
+    for (let k = start + 1; k < lines.length; k += 1) {
+      if (lines[k] === '    }') { end = k; break }
+    }
+    const body = lines.slice(start, end + 1)
+    let firstEarlyReturn = -1
+    for (let k = 0; k < body.length - 2; k += 1) {
+      if (/^      if \(/.test(body[k]) && /^        return /.test(body[k + 1])) {
+        firstEarlyReturn = k
+        break
+      }
+    }
+    if (firstEarlyReturn === -1) continue
+    for (let k = 0; k < body.length; k += 1) {
+      if (/^      React\.use[A-Z]/.test(body[k])) {
+        assert.ok(
+          k < firstEarlyReturn,
+          `${name} 的 hook（第 ${start + k + 1} 行）晚于顶层提前 return（第 ${start + firstEarlyReturn + 1} 行）` +
+            ' —— 会让两次渲染的 hook 数不同，触发 React error #310'
+        )
+      }
+    }
+  }
+})
 check('0.9.0-c 会话层：装配走内存缓存，回收只认 sessionPersistence', () => {
   // 同 0.9.0-b 的教训：纯函数层测好了不等于接上了。这组守**接线**。
 

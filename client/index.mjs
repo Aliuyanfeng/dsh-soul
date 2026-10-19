@@ -2640,6 +2640,26 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // ⚠️ 所有 hook 必须声明在**任何提前 return 之前**。
+      //
+      // 这个 effect 原先写在 `if (view === null) return ...` 后面，于是：
+      //   首屏 view === null  → 提前 return，effect 没执行（hook 数 = 5）
+      //   view 到达后          → effect 执行（hook 数 = 6）
+      // React 检测到「本次渲染的 hook 比上次多」⇒ error #310
+      // （Rendered more hooks than during the previous render）整块 tab 崩溃。
+      //
+      // 测试台没抓到，是因为它每次 settle 都走完整的渲染循环、且组件从不经过
+      // 「先 null 后有值」的两段式挂载。**这是垫片与真实 React 的差异，不是产品逻辑
+      // 正确性的证据** —— 教训：hook 顺序在垫片里测不出来，只能靠代码纪律。
+      React.useEffect(() => {
+        if (selectedPersona !== null) return
+        if (view && typeof view.activePersona === 'string' && view.activePersona !== '') {
+          setSelectedPersona(view.activePersona)
+        }
+        // selectedPersona 是「要不要跟随」的判据，必须进依赖；view 变化时重新评估。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [view, selectedPersona])
+
       // 会话 id 缺席（宿主在诊断 / 空白会话时可能不传）：如实说明，不假装能改。
       if (sessionId === null) {
         return e('div', { className: 'soul-session-persona' },
@@ -2654,20 +2674,6 @@ window.__ModuleLoader__.load({
             : e('div', { className: 'soul-status' }, t('session.loading'))
         )
       }
-
-      // 选中态默认跟随「当前生效」：打开 tab 时应先看到自己正在用的是什么，
-      // 而不是一张随机卡片或空详情面板。
-      //
-      // 只在**还没有选中**时跟随（selectedPersona === null）：用户点过别的卡之后，
-      // 覆盖或配置的刷新不该把他的浏览位置抢回去。
-      React.useEffect(() => {
-        if (selectedPersona !== null) return
-        if (view && typeof view.activePersona === 'string' && view.activePersona !== '') {
-          setSelectedPersona(view.activePersona)
-        }
-        // selectedPersona 是「要不要跟随」的判据，必须进依赖；view 变化时重新评估。
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [view, selectedPersona])
 
       // 「来源」必须说清是**哪一层**决定的：否则用户看到一个人设名，却不知道该去哪儿改它。
       const sourceText = (() => {
