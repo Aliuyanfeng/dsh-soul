@@ -48,6 +48,24 @@ import {
   writeBindingsFile
 } from './lib/bindings.mjs'
 import {
+  MAX_SESSION_ID_LENGTH,
+  ORPHAN_GRACE_MS,
+  SESSION_DIR_NAME,
+  SESSION_ENVELOPE_ONLY_FIELDS,
+  SESSION_OVERRIDE_FIELDS,
+  SESSION_SCOPE_VERSION,
+  createSessionScopeDoc,
+  decideSessionScopeFate,
+  isSessionId,
+  listSessionScopes,
+  quarantineSessionScope,
+  readSessionScope,
+  sanitizeSessionOverride,
+  sessionScopeDirFor,
+  sessionScopePathFor,
+  writeSessionScope
+} from './lib/session-scope.mjs'
+import {
   MAX_WORKSPACE_SCOPES,
   WORKSPACE_SCOPE_VERSION,
   mergeWorkspaceOverride,
@@ -1046,36 +1064,48 @@ function sessionIdOfAgent(agent) {
 // 否则「绑定生效了吗」将无法用任何已有操作来验证。
 //
 // `enabled` 刻意**不在**任何覆盖范围内：全局总开关始终说话。
-function configForScope(base, cwd, workspaceId) {
+//
+// `sessionOverride` 由调用方从**内存缓存**取（见 sessionOverrides）。这里不读盘：
+// 装配是同步的，读盘会把 Promise 塞进提示词。
+function configForScope(base, cwd, workspaceId, sessionOverride) {
   // ① 工作区层：workspaceId 优先，cwd 回退。
   const scopes = workspaceScopesOf(base)
   const workspaceOverride = workspaceId ? resolveWorkspaceOverride(workspaceId, scopes) : null
+  let merged = base
+  let source = 'global'
+  let binding = null
+
   if (workspaceOverride) {
-    return {
-      config: mergeWorkspaceOverride(base, workspaceOverride),
-      source: 'workspace',
-      workspaceId,
-      binding: null
+    merged = mergeWorkspaceOverride(base, workspaceOverride)
+    source = 'workspace'
+  } else {
+    // ② 目录回退（0.8.1 语义）：索引没命中时，目录仍是可信信息。
+    const resolved = resolveBindingForCwd(cwd, base.personas)
+    if (resolved) {
+      const persona = resolvePersona(resolved.persona, base.personas)
+      if (persona) {
+        const { patch } = sanitizeConfig(pickPersonaValues(persona))
+        merged = { ...base, ...patch }
+        source = 'directory'
+        binding = resolved
+      }
     }
   }
 
-  // ② 目录回退（0.8.1 语义）：索引没命中时，目录仍是可信信息。
-  const resolved = resolveBindingForCwd(cwd, base.personas)
-  if (resolved) {
-    const persona = resolvePersona(resolved.persona, base.personas)
-    if (persona) {
-      const { patch } = sanitizeConfig(pickPersonaValues(persona))
-      return { config: { ...base, ...patch }, source: 'directory', workspaceId: null, binding: resolved }
-    }
+  // ③ 会话层：最贴近用户当下意图，优先级最高。
+  //    它盖的是**字段**，不是整份配置 —— 只改 style 的会话覆盖，其余字段仍来自上层。
+  if (sessionOverride) {
+    merged = mergeSessionOverride(merged, sessionOverride)
+    source = 'session'
   }
 
-  return { config: base, source: 'global', workspaceId: null, binding: null }
+  return { config: merged, source, workspaceId: workspaceId || null, binding }
 }
 
 // 兼容既有调用点：只按 cwd 解析（不含工作区层）。
 // 保留这个名字是因为 verify-*.mjs 与若干注释按它描述契约；新代码应直接用 configForScope。
 function configForCwd(base, cwd) {
-  const { config, binding } = configForScope(base, cwd, null)
+  const { config, binding } = configForScope(base, cwd, null, null)
   return { config, binding }
 }
 
@@ -1085,6 +1115,77 @@ function workspaceScopesOf(config) {
   if (!raw || typeof raw !== 'object') return {}
   const { scopes } = sanitizeWorkspaceScopes(raw)
   return scopes
+}
+
+// ==================== 会话级覆盖（0.9.0-c）====================
+//
+// 存储：`$DSH_HOME/soul-sessions/{sha256(sessionId)[:32]}.json`（与 soul-config.json 同级）。
+// 校验与回收状态机在 lib/session-scope.mjs；这里只负责**内存缓存**与合并。
+//
+// 为什么必须有缓存：装配路径是同步的（宿主 `section.text(context)` 同步调用），
+// 不能在里面 await 一次读盘。所以：
+//   · 缓存按需加载（首次遇到某个 sessionId 时排一个异步读盘）；
+//   · 读盘完成后写回缓存，下一轮装配即可命中；
+//   · 写入（用户改覆盖）时同步更新缓存，**不等**磁盘 —— 让「改完立刻生效」成立。
+//
+// 失效方向是安全的：缓存未命中 ⇒ 这一轮按上层配置（工作区/全局）走，
+// 最坏是"第一次生效慢一拍"，不会给出错误的人设。
+const sessionOverrides = new Map()   // sessionId → override（已校验）
+const sessionOverridesInFlight = new Set()
+// 读过的 sessionId（含"读过但确实没有覆盖"）：避免每轮都重新排一次读盘
+const sessionOverridesKnown = new Set()
+
+// 读出某个会话的覆盖（同步，只查缓存）。
+//
+// 未命中时排一次异步加载并返回 null —— 本轮按上层走，下一轮生效。
+function sessionOverridesOrNull(sessionId) {
+  if (sessionId === null) return null
+  if (sessionOverridesKnown.has(sessionId)) return sessionOverrides.get(sessionId) || null
+  // 首次遇到：排一次读盘。in-flight 集合防止同一会话在一轮里被排多次。
+  if (!sessionOverridesInFlight.has(sessionId)) {
+    sessionOverridesInFlight.add(sessionId)
+    void loadSessionOverride(sessionId).finally(() => {
+      sessionOverridesInFlight.delete(sessionId)
+    })
+  }
+  return null
+}
+
+// 读一个会话的 sidecar 进缓存。
+async function loadSessionOverride(sessionId) {
+  try {
+    const filePath = sessionScopePathFor(configPath(), sessionId)
+    const result = await readSessionScope(filePath, sessionId)
+    sessionOverridesKnown.add(sessionId)
+    if (result.override) sessionOverrides.set(sessionId, result.override)
+    else sessionOverrides.delete(sessionId)
+    return result.override
+  } catch {
+    // 读失败不记为"已知"：下次装配会重试（可能是临时权限问题）
+    return null
+  }
+}
+
+// 清掉某个会话的缓存（写入后调用，或 GC 删文件后调用）。
+function forgetSessionOverride(sessionId) {
+  sessionOverrides.delete(sessionId)
+  sessionOverridesKnown.delete(sessionId)
+}
+
+// 会话覆盖的合并：部分覆盖 + 白名单 + 包封字段保护。
+//
+// 与 mergeWorkspaceOverride 同一条语义（字段级、不整份替换），但两处独立实现 ——
+// 它们服务不同的数据来源，共享会让一处改动悄悄影响另一处。语义一致性由断言守住。
+function mergeSessionOverride(base, override) {
+  if (!override || typeof override !== 'object') return base
+  const patch = {}
+  for (const [key, value] of Object.entries(override)) {
+    if (SESSION_ENVELOPE_ONLY_FIELDS.includes(key)) continue
+    if (!SESSION_OVERRIDE_FIELDS.includes(key)) continue
+    patch[key] = value
+  }
+  if (Object.keys(patch).length === 0) return base
+  return { ...base, ...patch }
 }
 
 // 从装配上下文里取该会话的工作目录。
@@ -2260,6 +2361,315 @@ function registerWorkspaceRoutes(ctx) {
   })
 }
 
+// ==================== 会话级覆盖路由（0.9.0-c）====================
+
+// 会话覆盖的读写 + 回收。三条路由：
+//   GET  /api/soul/session-scope?sessionId=...   读该会话的覆盖与解析结果
+//   POST /api/soul/session-scope                 设置 / 清除该会话的覆盖
+//   POST /api/soul/session-scope/gc              回收（默认 dry-run）
+//
+// 与工作区覆盖的区别：工作区写**配置**（走 commitConfig、进审计、有变更历史）；
+// 会话写**状态**（sidecar、不进审计）。这不是疏漏：「改了这次会话用什么人设」是
+// 一次性的临时动作，记进变更历史只会把时间线淹没。
+function registerSessionScopeRoutes(ctx) {
+  ctx.inject(['webServer'], (wsCtx) => {
+    const send = (res, status, body) => {
+      res.writeHead(status, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(body))
+    }
+
+    // 会话覆盖的「当前值 + 解析结果」，供会话内 tab 显示。
+    //
+    // 全部在宿主算：客户端拿不到 sessionId → workspaceId 的权威映射（那是宿主侧索引）。
+    const sessionScopeView = async (sessionId) => {
+      const config = await loadConfig()
+      const override = await loadSessionOverride(sessionId)
+      const workspaceId = sessionWorkspaceIndex.get(String(sessionId)) || null
+      const resolved = configForScope(config, null, workspaceId, override)
+
+      // 生效人设名：走与真实装配**同一条路径**，否则 tab 上显示的与模型拿到的不一致。
+      return {
+        sessionId,
+        workspaceId,
+        override: override || null,
+        source: resolved.source,
+        activePersona: findActivePersonaName(resolved.config),
+        workspaceTitle: (() => {
+          if (workspaceId === null) return null
+          const registry = ctx.get('workspaceRegistry')
+          if (!registry || typeof registry.list !== 'function') return null
+          try {
+            const hit = registry.list().find((w) => String(w.id) === workspaceId)
+            return hit && typeof hit.title === 'string' ? hit.title : null
+          } catch {
+            return null
+          }
+        })()
+      }
+    }
+
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/session-scope',
+      handler: async (req, res) => {
+        try {
+          if (req.method === 'GET') {
+            const url = new URL(req.url, 'http://localhost')
+            const sessionId = url.searchParams.get('sessionId') || ''
+            if (!isSessionId(sessionId)) {
+              send(res, 400, { ok: false, error: '缺少或非法的 sessionId' })
+              return
+            }
+            send(res, 200, { ok: true, ...(await sessionScopeView(sessionId)) })
+            return
+          }
+
+          if (req.method !== 'POST') {
+            send(res, 405, { ok: false, error: 'Method not allowed' })
+            return
+          }
+
+          const parsed = await readJsonBody(req)
+          if (!parsed.ok) {
+            send(res, parsed.status, { ok: false, error: parsed.error })
+            return
+          }
+
+          const sessionId = parsed.body && parsed.body.sessionId
+          if (!isSessionId(sessionId)) {
+            send(res, 400, { ok: false, error: '缺少或非法的 sessionId' })
+            return
+          }
+
+          const filePath = sessionScopePathFor(configPath(), sessionId)
+
+          // `clear: true` = 清除覆盖。显式动作而非"传空对象"，因为空对象与
+          // "只想改一个字段、其余保留"在语义上无法区分。
+          if (parsed.body && parsed.body.clear === true) {
+            // 删文件：用 quarantine 而不是 rm？—— 这里**必须是真删**：
+            // 用户主动清除覆盖，把一个 .bad 文件留在磁盘上只会污染 GC 的清单。
+            // 但删除失败要如实报告，不能假装成功。
+            let removed = false
+            try {
+              const { rm } = await import('node:fs/promises')
+              await rm(filePath, { force: true })
+              removed = true
+            } catch (err) {
+              send(res, 500, { ok: false, error: `清除失败：${String((err && err.message) || err)}` })
+              return
+            }
+            forgetSessionOverride(sessionId)
+            if (removed) refreshPromptAndInject(ctx, await loadConfig())
+            send(res, 200, { ok: true, ...(await sessionScopeView(sessionId)) })
+            return
+          }
+
+          // 设置覆盖：白名单过滤，enabled 等包封字段一律丢弃。
+          const { override, dropped } = sanitizeSessionOverride(parsed.body && parsed.body.overrides)
+          if (override === null) {
+            send(res, 400, {
+              ok: false,
+              error: dropped.length > 0
+                ? `没有可用的覆盖字段（被忽略：${dropped.join(', ')}）`
+                : '缺少 overrides'
+            })
+            return
+          }
+
+          // 保留原有的 createdAt 与孤儿标记：重写覆盖不等于"这个会话是新出现的"。
+          const previous = await readSessionScope(filePath, sessionId)
+          const now = Date.now()
+          const doc = {
+            ...createSessionScopeDoc(sessionId, override, now),
+            createdAt: (previous.doc && previous.doc.createdAt) || new Date(now).toISOString(),
+            ...(previous.orphan ? { orphan: previous.orphan } : {})
+          }
+          await writeSessionScope(filePath, doc)
+
+          // **先写缓存再刷新提示词**：缓存更新是同步的，保证紧接着的那一轮装配
+          // 一定能看到新值。若等磁盘异步完成再刷，装配可能先跑、读到旧缓存。
+          sessionOverrides.set(sessionId, override)
+          sessionOverridesKnown.add(sessionId)
+          refreshPromptAndInject(ctx, await loadConfig())
+
+          send(res, 200, { ok: true, dropped, ...(await sessionScopeView(sessionId)) })
+        } catch (err) {
+          send(res, 500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
+
+    // —— 回收：默认 dry-run ——
+    //
+    // 判定依据是 `sessionPersistence.list()`（扫磁盘会话文件），**绝不是** `agents.list()`
+    // （那是 live registry，会话切走就消失，用它判定会误删正在使用的覆盖）。
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/session-scope/gc',
+      handler: async (req, res) => {
+        if (req.method !== 'POST') {
+          send(res, 405, { ok: false, error: 'Method not allowed' })
+          return
+        }
+        try {
+          const parsed = await readJsonBody(req)
+          if (!parsed.ok) {
+            send(res, parsed.status, { ok: false, error: parsed.error })
+            return
+          }
+          // 只有显式 apply:true 才会真的删。默认 dry-run。
+          const apply = parsed.body && parsed.body.apply === true
+
+          const plan = await planSessionGc(ctx)
+          const result = { ok: true, dryRun: !apply, ...plan }
+
+          if (apply && plan.collectable.length > 0) {
+            const removed = []
+            for (const item of plan.collectable) {
+              try {
+                const { rm } = await import('node:fs/promises')
+                await rm(item.path, { force: true })
+                forgetSessionOverride(item.sessionId)
+                removed.push(item.sessionId)
+              } catch (err) {
+                result.errors = result.errors || []
+                result.errors.push({ sessionId: item.sessionId, error: String((err && err.message) || err) })
+              }
+            }
+            result.removed = removed
+            if (removed.length > 0) refreshPromptAndInject(ctx, await loadConfig())
+          }
+
+          send(res, 200, result)
+        } catch (err) {
+          send(res, 500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
+  })
+}
+
+// 规划一次回收：读全部 sidecar、比对磁盘会话清单、跑状态机。
+//
+// 关键：`scanComplete` 反映的是「本轮会话清单是否可信」。拿不到
+// `sessionPersistence` 时它必须是 false —— 那会让状态机对**所有**条目返回 keep，
+// 于是「服务不可用」不会演变成「把所有覆盖当孤儿删掉」。
+async function planSessionGc(ctx) {
+  const dir = sessionScopeDirFor(configPath())
+  const files = await listSessionScopes(dir)
+
+  // 磁盘上的会话清单。
+  let stored = null
+  let persistenceProblem = null
+  const persistence = ctx.get('sessionPersistence')
+  if (!persistence || typeof persistence.list !== 'function') {
+    persistenceProblem = 'sessionPersistence 服务不可用：无法确认哪些会话仍然存在，本轮不做任何判定'
+  } else {
+    try {
+      const listed = await persistence.list()
+      stored = new Set(
+        (Array.isArray(listed) ? listed : [])
+          .map((item) => (item && item.id !== undefined ? String(item.id) : ''))
+          .filter((id) => id !== '')
+      )
+    } catch (err) {
+      persistenceProblem = `列出会话失败：${String((err && err.message) || err)}；本轮不做任何判定`
+    }
+  }
+
+  const scanComplete = stored !== null && persistenceProblem === null
+  const now = Date.now()
+
+  const entries = []
+  for (const file of files) {
+    const item = {
+      file: file.name,
+      path: file.path,
+      sessionId: null,
+      action: 'keep',
+      reason: '',
+      graceDaysLeft: null,
+      failure: null
+    }
+
+    // 从内容里读 sessionId（文件名是哈希，无法反查）。读不出就只报告，不动它。
+    let doc
+    try {
+      doc = JSON.parse(await (await import('node:fs/promises')).readFile(file.path, 'utf8'))
+    } catch (err) {
+      item.action = 'quarantine'
+      item.reason = `sidecar 读不出来或不是合法 JSON：${String((err && err.message) || err)}`
+      entries.push(item)
+      continue
+    }
+
+    const sessionId = doc && typeof doc.sessionId === 'string' ? doc.sessionId : null
+    if (!isSessionId(sessionId)) {
+      item.action = 'quarantine'
+      item.reason = 'sidecar 内缺少合法的 sessionId（无法与文件名互相校验）'
+      entries.push(item)
+      continue
+    }
+    item.sessionId = sessionId
+
+    // 内容与文件名必须互相对应：改个文件名就能让某个会话读到另一个会话的覆盖。
+    const expectedName = sessionScopePathFor(configPath(), sessionId)
+    if (expectedName !== file.path) {
+      item.action = 'quarantine'
+      item.reason = `文件名与内容里的 sessionId 不符（期望 ${expectedName.split(/[\\/]/).pop()}）`
+      entries.push(item)
+      continue
+    }
+
+    const parsedDoc = (await readSessionScope(file.path, sessionId))
+    if (parsedDoc.failure) {
+      item.action = 'quarantine'
+      item.reason = parsedDoc.failure
+      entries.push(item)
+      continue
+    }
+
+    const decision = decideSessionScopeFate({
+      orphan: parsedDoc.orphan,
+      presentOnDisk: scanComplete ? stored.has(sessionId) : false,
+      scanComplete,
+      now
+    })
+    item.action = decision.action
+    item.reason = decision.reason
+    if (decision.orphan && decision.action === 'keep') {
+      const age = now - Date.parse(decision.orphan.firstSeenAt)
+      item.graceDaysLeft = Math.max(0, Math.ceil((ORPHAN_GRACE_MS - age) / (24 * 3600 * 1000)))
+    }
+
+    // 标记 / 撤销标记都要落盘 —— 但**只在扫描完整时**。扫描不完整时状态机返回 keep，
+    // 那时不该写任何东西（否则一次临时的服务故障会把所有条目刷上已扫描时间）。
+    if (decision.action === 'mark' || decision.action === 'clear-mark') {
+      try {
+        const nextDoc = decision.action === 'clear-mark'
+          ? { ...doc, orphan: undefined }
+          : { ...doc, orphan: decision.orphan }
+        if (decision.action === 'clear-mark') delete nextDoc.orphan
+        await writeSessionScope(file.path, nextDoc)
+      } catch (err) {
+        item.markError = String((err && err.message) || err)
+      }
+    }
+
+    entries.push(item)
+  }
+
+  return {
+    scanComplete,
+    persistenceProblem,
+    total: entries.length,
+    markable: entries.filter((e) => e.action === 'mark'),
+    collectable: entries.filter((e) => e.action === 'collect'),
+    quarantine: entries.filter((e) => e.action === 'quarantine'),
+    entries
+  }
+}
+
 // ==================== 斜杠命令 ====================
 
 // 宿主端无 locale 服务（CommandInvocation 不携带 UI 语言，settings 中亦无语言字段），
@@ -2768,11 +3178,15 @@ function registerSystemPrompt(ctx) {
           // sessionId 走索引拿 workspaceId；拿不到就让 configForScope 回退到 cwd。
           const sessionId = sessionIdOfAgent(agent)
           const workspaceId = sessionId === null ? null : (sessionWorkspaceIndex.get(sessionId) || null)
-          const prompt = compilePrompt(configForScope(snap.value, cwdOfAgent(agent), workspaceId).config)
+          // 会话层覆盖走**内存缓存**（同步），未命中时它会在后台排一次读盘，
+          // 本轮按上层配置走 —— 下一轮生效。装配里绝不能 await。
+          const sessionOverride = sessionOverridesOrNull(sessionId)
+          const resolved = configForScope(snap.value, cwdOfAgent(agent), workspaceId, sessionOverride)
+          const prompt = compilePrompt(resolved.config)
           // 记下「这一轮实际用的是哪一版」：排查「改了却没生效」时，第一个要回答的就是它。
           // 只写不读，不影响任何行为（deliveryState 由状态端点序列化给设置页）。
           deliveryState.lastAssembledRevision = snap.revision
-          deliveryState.lastAssembledScope = workspaceId === null ? 'cwd' : 'workspace'
+          deliveryState.lastAssembledScope = resolved.source
           return prompt
         }
       })
@@ -3156,6 +3570,7 @@ export async function apply(ctx) {
   registerHistoryRoutes(ctx)
   registerBindingRoutes(ctx)
   registerWorkspaceRoutes(ctx)
+  registerSessionScopeRoutes(ctx)
   registerCommands(ctx)
   registerSystemPrompt(ctx)
   registerTools(ctx)

@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 139
+const EXPECTED_ASSERTIONS = 140
 
 let passed = 0
 const failures = []
@@ -3437,7 +3437,7 @@ check('0.9.0-b 工作区层：sessionId → workspaceId 索引接入，且失败
   )
   assert.match(
     opts,
-    /configForScope\(\s*snap\.value\s*,\s*cwdOfAgent\(agent\)\s*,\s*workspaceId\s*\)/,
+    /configForScope\(\s*snap\.value\s*,\s*cwdOfAgent\(agent\)\s*,\s*workspaceId\s*,/,
     'configForScope 必须收到 workspaceId（第三个参数）—— 漏传就退化成只有 cwd 回退'
   )
   // 反向：索引未命中时要能退化，不能因为查不到就抛错
@@ -3465,6 +3465,61 @@ check('0.9.0-b 工作区层：sessionId → workspaceId 索引接入，且失败
   assert.ok(wsAt < dirAt, '工作区层必须排在目录回退**之前** —— 顺序反了会让稳定的 workspaceId 被目录字符串盖掉')
   // 反向：工作区层的判断不能是死代码（短路让它永不生效）
   assert.equal(/if \(false\)|if \(!false\)/.test(scope), false, '不得用常量短路工作区层')
+})
+
+check('0.9.0-c 会话层：装配走内存缓存，回收只认 sessionPersistence', () => {
+  // 同 0.9.0-b 的教训：纯函数层测好了不等于接上了。这组守**接线**。
+
+  // ① 装配路径必须把会话覆盖传进 configForScope（第四个参数）
+  const opts = stripComments(extractObject(indexSource, 'spCtx.systemPrompt.section('))
+  // 正则不能用 `[^)]*` 跨越参数里的括号（`cwdOfAgent(agent)` 就有 `)`）。
+  // 改为从调用名开始取一段，再要求 workspaceId 与 sessionOverride 按序出现。
+  const callMatch = opts.match(/configForScope\([\s\S]{0,200}?\)\n/)
+  assert.ok(callMatch, '找不到 configForScope 的调用')
+  assert.match(
+    callMatch[0],
+    /workspaceId[\s\S]{0,60}sessionOverride/,
+    'configForScope 的调用应依次传入 workspaceId 与会话覆盖 —— 漏传 sessionOverride 则会话层永不生效'
+  )
+  assert.match(opts, /sessionOverridesOrNull\(/, '装配必须查会话覆盖缓存')
+  // 反向：装配里绝不能读盘（同步调用，返回 Promise 会被当成提示词文本）
+  assert.equal(/readSessionScope|await /.test(opts), false, '装配路径不得读盘、不得有 await')
+
+  // ② 缓存未命中时**不能**阻塞：它必须返回 null 并排一次后台加载
+  const fn = stripComments(extractObject(indexSource, 'function sessionOverridesOrNull'))
+  assert.ok(fn !== '', '找不到 sessionOverridesOrNull')
+  assert.match(fn, /sessionOverridesKnown\.has/, '必须区分「已知没有覆盖」与「还没加载过」')
+  assert.match(fn, /void loadSessionOverride\(/, '未命中时应排一次后台加载（不阻塞本轮）')
+  assert.match(fn, /return null/, '未命中必须返回 null（本轮按上层走），不得抛错')
+
+  // ③ 写入路径必须**先写缓存再刷新提示词**（否则紧接着的那轮装配读到旧值）
+  const route = stripComments(indexSource)
+  const cacheAt = route.indexOf('sessionOverrides.set(sessionId, override)')
+  const refreshAt = route.indexOf('refreshPromptAndInject(ctx, await loadConfig())', cacheAt)
+  assert.ok(cacheAt !== -1, '设置会话覆盖后必须同步更新缓存')
+  assert.ok(refreshAt > cacheAt, '缓存更新必须排在 refreshPromptAndInject **之前**')
+
+  // ④ 回收：默认 dry-run，且判定依据是 sessionPersistence
+  const gc = stripComments(extractObject(indexSource, 'async function planSessionGc'))
+  assert.ok(gc !== '', '找不到 planSessionGc')
+  assert.match(gc, /ctx\.get\('sessionPersistence'\)/, '回收必须以 sessionPersistence 为判定依据')
+  // 这是设计红线：agents.list 是 live registry，会话切走就消失
+  assert.equal(
+    /agents\.list|\bctx\.get\('agents'\)/.test(gc),
+    false,
+    '回收绝不能用 agents.list() 判定会话已删除 —— 那是 live registry，会误删正在使用的覆盖'
+  )
+  assert.match(gc, /scanComplete/, '必须计算本轮扫描是否完整')
+  assert.match(
+    gc,
+    /presentOnDisk: scanComplete \? stored\.has\(sessionId\) : false/,
+    '扫描不完整时 presentOnDisk 必须为 false，让状态机走「不做判定」分支'
+  )
+  // 反向：扫描不完整时绝不能写孤儿标记（否则一次临时故障会把所有条目刷上时间）
+  assert.match(gc, /decision\.action === 'mark' \|\| decision\.action === 'clear-mark'/, '只有这两种动作才落盘')
+  // dry-run 是默认：只有显式 apply:true 才删
+  const applyGuard = stripComments(indexSource).match(/const apply = parsed\.body && parsed\.body\.apply === true/)
+  assert.ok(applyGuard !== null, '必须只有显式 apply:true 才真正删除（默认 dry-run）')
 })
 
 check('工作区绑定：读盘只在装配路径之外，且失败不阻塞启动', () => {
