@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 33
+const EXPECTED_ASSERTIONS = 34
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -2177,6 +2177,93 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     const okText = findAllByClass(detail, 'soul-saved-notice')
     assert.equal(okText.length, 1, '成功后应有一行绿字')
     assert.equal(textOf(okText[0]), zh['history.maxEntriesSaved'].replace('{count}', '500'))
+  })
+
+  await check('C39 会话覆盖清理：默认只预览、确认才删、扫描不完整时不给清理按钮', async () => {
+    const world = await boot()
+    const zh = world.dicts.zh
+    const posts = []
+    let plan = {
+      ok: true,
+      dryRun: true,
+      scanComplete: true,
+      persistenceProblem: null,
+      total: 3,
+      markable: [{ sessionId: 's-watching' }],
+      collectable: [{ sessionId: 's-old', file: 'a.json', reason: '缺席超过 30 天' }],
+      quarantine: [{ sessionId: 's-bad', file: 'b.json', reason: '内容损坏' }],
+      entries: []
+    }
+    world.routes['/api/soul/session-scope/gc'] = (call) => {
+      posts.push(call.body || {})
+      if (call.body && call.body.apply === true) {
+        plan = { ...plan, dryRun: false, collectable: [], removed: ['s-old'] }
+      }
+      return plan
+    }
+
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'plugins.detail.section' && s.options.id === 'soul-detail-sessions')
+    assert.ok(slot, '必须注册到 plugins.detail.section 槽位（id=soul-detail-sessions）')
+    const OWN = { kind: 'bundle', pkg: { name: 'dsh-soul' } }
+
+    const render = async () => {
+      const props = { ...slot.options.inject(), subject: OWN }
+      const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
+      const t = (k, p) => {
+        const raw = zh[k] ?? k
+        return p ? raw.replace(/\{(\w+)\}/g, (m, name) => (p[name] === undefined ? m : String(p[name]))) : raw
+      }
+      await world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t } })
+      for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+      return world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t } })
+    }
+
+    // ① 打开页面**不自动扫描**：清理是运维动作，不该在打开详情页时悄悄跑一遍
+    let tree = await render()
+    assert.equal(posts.length, 0, '打开详情页不得自动发起清理扫描')
+    assert.ok(textOf(tree).includes(zh['sessions.previewHint']), '未预览时应给出「预览不会删」的说明')
+    assert.equal(findAllByClass(tree, 'soul-ws-action-armed').length, 0, '未预览时不得出现确认按钮')
+
+    // ② 点「清理可回收项」→ 只发一次 dry-run（body 里**没有** apply:true）
+    const firstBtn = () => findAll(findAllByClass(tree, 'soul-sessions-actions')[0], (n) => n.type === 'button')[0]
+    await firstBtn().props.onClick()
+    tree = await render()
+    assert.equal(posts.length, 1, '点一次应只发一次扫描请求')
+    assert.equal(posts[0].apply, undefined, '第一次点击**不得**带 apply:true —— 默认必须站在「不删」一侧')
+    const armed = findAllByClass(tree, 'soul-ws-action-armed')
+    assert.equal(armed.length, 1, '预览出可回收项后应出现确认按钮')
+    assert.equal(textOf(armed[0]), zh['sessions.collectArmed'].replace('{count}', '1'))
+
+    // ③ 点确认 → 才发 apply:true
+    await armed[0].props.onClick()
+    tree = await render()
+    assert.equal(posts.length, 2, '确认应再发一次请求')
+    assert.equal(posts[1].apply, true, '确认时**必须**带 apply:true')
+    assert.ok(textOf(tree).includes(zh['sessions.collected'].replace('{count}', '1')), '应报告清理结果')
+
+    // ④ 扫描不完整 → 明确说明「没做判定」，且**不给清理按钮**
+    world.runtime.unmount()
+    posts.length = 0
+    // ⚠️ 桩必须让 collectable **非空**：扫描不完整时状态机对所有条目返回 keep，
+    // 所以真实数据下 collectable 必然是空的 —— 但如果桩也给它空，
+    // 「界面上是否显示清理按钮只取决于 collectable」这个缺陷就永远测不出来。
+    // 这里刻意构造"不完整 + 有可回收项"这个真实世界不该出现、但代码可能误判的形态。
+    plan = {
+      ok: true,
+      dryRun: true,
+      scanComplete: false,
+      persistenceProblem: 'sessionPersistence 不可用',
+      total: 3,
+      markable: [],
+      collectable: [{ sessionId: 's-should-not-show', file: 'c.json', reason: '不应出现' }],
+      quarantine: [],
+      entries: []
+    }
+    tree = await render()
+    await firstBtn().props.onClick()
+    tree = await render()
+    assert.ok(textOf(tree).includes(zh['sessions.scanIncomplete']), '扫描不完整时必须说清没做判定')
+    assert.equal(findAllByClass(tree, 'soul-ws-action-armed').length, 0, '扫描不完整时不得给出确认删除的入口')
   })
 } finally {
   restoreTimers()

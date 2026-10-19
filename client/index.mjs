@@ -731,6 +731,18 @@ window.__ModuleLoader__.load({
         return await this.postJSON('/api/soul/workspaces/delete', { workspaceId })
       }
 
+      // —— 会话覆盖清理（0.9.0-f）——
+      //
+      // 默认 dry-run：不传 apply 就**绝不会删**。真删必须显式 apply:true ——
+      // 这个默认值站在"不删"那一侧，因为删除不可逆。
+      async scanSessionScopeGc() {
+        return await this.postJSON('/api/soul/session-scope/gc', {})
+      }
+
+      async applySessionScopeGc() {
+        return await this.postJSON('/api/soul/session-scope/gc', { apply: true })
+      }
+
       // 统一请求：body 为 null 时不携带请求体（GET 用）
       async postJSON(path, body, overrides = {}) {
         const url = new URL(path, hostBase())
@@ -1151,6 +1163,9 @@ window.__ModuleLoader__.load({
       // 内联展开的人设胶囊：占满整行，与卡片内容左对齐
       '.soul-ws-picker{flex-basis:100%;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:.5px solid var(--dsw-alias-settings-card-stroke)}',
       '.soul-ws-picker-label{flex:none;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      // 会话清理的按钮行：与设置页的 .soul-buttons **分开命名**（那个 class 语义是
+      // 「保存按钮区」，复用它会让"保存设置在哪里"这类断言抓到错误的块 —— 实测抓到过）。
+      '.soul-sessions-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px}',
       // 保留条数（0.8.1 从设置页迁来）：一行「标签 + 下拉 + 提示」。
       // 下拉不撑满整行 —— 它是容量参数，不是表单主字段，铺满会显得比记录本身还重。
       '.soul-history-retention{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
@@ -1466,6 +1481,18 @@ window.__ModuleLoader__.load({
       'workspaces.unbindDone': '已解除「{title}」的人设绑定。',
       'workspaces.applyFailed': '设置失败：{reason}',
       'workspaces.pickPersona': '选择人设',
+      // —— 会话覆盖清理（0.9.0-f）——
+      'sessions.title': '会话覆盖',
+      'sessions.hint': '会话里临时改过的人设。会话不存在后会先观察 30 天，确认不回再清理。',
+      'sessions.scanning': '正在检查…',
+      'sessions.scanFailed': '无法完成检查：{reason}',
+      'sessions.scanIncomplete': '宿主未提供会话清单，本次不做任何判定 —— 「没看到」不等于「已删除」。',
+      'sessions.summary': '共 {total} 个 · 待观察 {markable} · 可回收 {collectable} · 损坏 {quarantine}',
+      'sessions.collect': '清理可回收项',
+      'sessions.collectArmed': '确认清理 {count} 项？',
+      'sessions.collected': '已清理 {count} 项。',
+      'sessions.nothing': '没有可回收的条目。',
+      'sessions.previewHint': '预览不会删除任何文件；确认后才会真的清理。',
       'group.tool': 'Agent 工具',
       'field.toolConfirm': '人设变更需确认',
       'hint.toolConfirm': '开启后，Agent 改人设会先在输入框处弹出审批面板（Enter 允许 / Esc 拒绝）。若会话审批通道不可用（策略为 never），则退化为待确认提议，需用 /soul confirm 处理 —— 此时建议关闭本开关，否则每次改动都要手输命令。',
@@ -1768,6 +1795,17 @@ window.__ModuleLoader__.load({
       'workspaces.unbindDone': 'Unbound the persona from "{title}".',
       'workspaces.applyFailed': 'Could not apply: {reason}',
       'workspaces.pickPersona': 'Pick a persona',
+      'sessions.title': 'Session overrides',
+      'sessions.hint': 'Personas changed for a single session. After the session disappears they are watched for 30 days before cleanup.',
+      'sessions.scanning': 'Checking…',
+      'sessions.scanFailed': 'Could not finish the check: {reason}',
+      'sessions.scanIncomplete': 'The host did not provide a session list, so nothing was decided — "not seen" is not "deleted".',
+      'sessions.summary': '{total} total · {markable} watching · {collectable} collectable · {quarantine} corrupt',
+      'sessions.collect': 'Clean up collectable',
+      'sessions.collectArmed': 'Delete {count} item(s)?',
+      'sessions.collected': 'Cleaned up {count} item(s).',
+      'sessions.nothing': 'Nothing to collect.',
+      'sessions.previewHint': 'Previewing deletes nothing; files are removed only after you confirm.',
       'group.tool': 'Agent tools',
       'field.toolConfirm': 'Require confirmation for persona changes',
       'hint.toolConfirm': 'When on, persona changes by the agent first raise an approval panel above the input box (Enter = allow, Esc = reject). If the session approval channel is unavailable (policy = never), it falls back to a pending proposal applied only via /soul confirm. Under full permissions the panel never appears, so turning this switch off is recommended.',
@@ -2845,6 +2883,132 @@ window.__ModuleLoader__.load({
           : e('p', { className: 'soul-saved-notice', role: 'status', 'aria-live': 'polite' }, notice)),
         e('div', { className: 'soul-note' }, t('workspaces.hint')),
         body
+      )
+    }
+
+    // -------------------------------------------------------------------------
+    // 会话覆盖清理（0.9.0-f）—— 插件详情页的第三个区块
+    // -------------------------------------------------------------------------
+    //
+    // 为什么也要一个按钮（而不是只留命令）：命令是给愿意敲的人的，而"我这儿攒了一堆
+    // 不知道哪来的会话配置"是所有人都会遇到的事 —— 那时他们不会想到去查文档。
+    //
+    // 交互刻意做成两步：先**预览**（不删任何东西），确认后才清理。
+    // 删除不可逆，且回收依据（会话清单）可能不可用，所以默认永远站在"不删"一侧。
+    function SoulSessions(props) {
+      const { controller } = props
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const subject = props.subject || null
+      if (!subject || subject.kind !== 'bundle' || !subject.pkg || subject.pkg.name !== 'dsh-soul') return null
+
+      const [plan, setPlan] = React.useState(null)
+      const [error, setError] = React.useState(null)
+      const [notice, setNotice] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+      // 已预览、待确认（null = 还没预览过）
+      const [armedCount, setArmedCount] = React.useState(null)
+
+      const scan = async () => {
+        if (busy) return
+        setBusy(true)
+        setError(null)
+        setNotice(null)
+        try {
+          const payload = await controller.scanSessionScopeGc()
+          setPlan(payload)
+          // 预览一次即 arm：按钮文案随之变成「确认清理 N 项？」
+          setArmedCount(Array.isArray(payload.collectable) ? payload.collectable.length : 0)
+        } catch (err) {
+          setPlan(null)
+          setError(messageOf(err))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const apply = async () => {
+        if (busy || plan === null) return
+        // 第二次点击才真删；第一次只 arm（按钮文案已经说明了后果）
+        if (armedCount === null) { void scan(); return }
+        if (armedCount === 0) { void scan(); return }
+        setBusy(true)
+        setError(null)
+        try {
+          const payload = await controller.applySessionScopeGc()
+          setPlan(payload)
+          setArmedCount(null)
+          const removed = Array.isArray(payload.removed) ? payload.removed.length : 0
+          setNotice(t('sessions.collected', { count: String(removed) }))
+        } catch (err) {
+          setError(messageOf(err))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const collectable = plan && Array.isArray(plan.collectable) ? plan.collectable.length : 0
+      const body = (() => {
+        if (error !== null && plan === null) {
+          return e('div', { className: 'soul-error' }, t('sessions.scanFailed', { reason: error }))
+        }
+        if (plan === null) {
+          // 还没点「预览」：不自动扫描。清理是运维动作，不该在打开详情页时悄悄跑一遍。
+          return e('div', { className: 'soul-status' }, t('sessions.previewHint'))
+        }
+        return e(Fragment, null,
+          // 扫描不完整 → 明确说"没做判定"，并**隐藏清理按钮**（没有判定就没有可清理项）
+          plan.scanComplete === false
+            ? e('div', { className: 'soul-status' }, t('sessions.scanIncomplete'))
+            : e('div', { className: 'soul-status' },
+              t('sessions.summary', {
+                total: String(plan.total || 0),
+                markable: String((plan.markable || []).length),
+                collectable: String(collectable),
+                quarantine: String((plan.quarantine || []).length)
+              })),
+          // 可回收清单：让用户在删之前看见具体是哪些
+          collectable > 0 && e('div', { className: 'soul-field' },
+            e('div', { className: 'soul-field-label' }, t('sessions.collect')),
+            ...plan.collectable.slice(0, 20).map((item) => e('code', {
+              key: item.sessionId || item.file,
+              className: 'soul-session-field'
+            }, String(item.sessionId || item.file)))
+          ),
+          plan.scanComplete !== false && collectable === 0 && e('div', { className: 'soul-status' }, t('sessions.nothing'))
+        )
+      })()
+
+      return e('section', { className: 'soul-detail-history', 'data-soul-sessions': 'true' },
+        e('div', { className: 'soul-detail-history-head' },
+          e('h4', { className: 'soul-detail-history-title' }, t('sessions.title'))
+        ),
+        (notice || error) && (error
+          ? e('p', { className: 'soul-error-notice', role: 'alert' }, t('sessions.scanFailed', { reason: error }))
+          : e('p', { className: 'soul-saved-notice', role: 'status', 'aria-live': 'polite' }, notice)),
+        e('div', { className: 'soul-note' }, t('sessions.hint')),
+        body,
+        // 用独立 class 而不是 .soul-buttons：那个 class 属于**设置页的保存按钮区**，
+        // 复用会让「保存设置在哪里」这类断言抓到错误的块（verify-config 立刻抓到过）。
+        e('div', { className: 'soul-sessions-actions' },
+          e('button', {
+            type: 'button',
+            className: 'soul-ws-action',
+            disabled: busy,
+            onClick: () => { void scan() }
+          }, busy ? t('sessions.scanning') : t('sessions.collect')),
+          // 真删按钮的三个条件缺一不可：
+          //   ① 预览过（armedCount !== null）；
+          //   ② 有可回收项；
+          //   ③ **本轮扫描完整** —— 扫描不完整时状态机对一切返回 keep，那时即便
+          //      列表里出现 collectable（服务端逻辑变更 / 数据异常），也不该给删除入口。
+          //      这是"缺证据时保留"在 UI 上的最后一道闸。
+          armedCount !== null && collectable > 0 && plan !== null && plan.scanComplete !== false && e('button', {
+            type: 'button',
+            className: 'soul-ws-action soul-ws-action-armed',
+            disabled: busy,
+            onClick: () => { void apply() }
+          }, t('sessions.collectArmed', { count: String(collectable) }))
+        )
       )
     }
 
@@ -4837,6 +5001,21 @@ window.__ModuleLoader__.load({
           controller
         })
       }, SoulWorkspaces))
+
+      // —— 会话覆盖清理（0.9.0-f）——
+      // 同一槽位、order 60：排在变更记录之后（它是这三块里最低频的运维动作）。
+      ctx.slots.inject('plugins.detail.section', () => ctx.slots.register({
+        name: 'plugins.detail.section',
+        id: 'soul-detail-sessions',
+        order: 60,
+        locale: NS,
+        inject: () => ({
+          hooks: {
+            soulController: controller.store
+          },
+          controller
+        })
+      }, SoulSessions))
 
       // 初始配置的拉取已并入上面的全局轮询 —— 它的 refresh() 在注册时立即执行一次
       // （含 loadConfig + loadPersonas），这里再调一次就是同一次装配发两个相同请求。

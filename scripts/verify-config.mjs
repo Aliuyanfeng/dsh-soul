@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 140
+const EXPECTED_ASSERTIONS = 141
 
 let passed = 0
 const failures = []
@@ -1943,6 +1943,31 @@ check('命令层的三处行为契约（覆盖列 / 键名大小写 / 昵称兜�
       `COMMAND_KEYWORDS 不应包含 ${key}：那会改变「非关键字即昵称」的既有语义`
     )
   }
+})
+
+check('0.9.0-f 回收命令：/soul sessions 默认 dry-run，只有 --apply 才删', () => {
+  // 关键字必须登记，否则整串会被当成昵称（`/soul sessions` 会把昵称改成 "sessions"）
+  assert.match(indexCode, /COMMAND_KEYWORDS = new Set\(\[[^\]]*'sessions'/, 'COMMAND_KEYWORDS 应包含 sessions')
+
+  const body = indexCode.match(/if \(first === 'sessions'\)[\s\S]*?\n          \}/)
+  assert.ok(body, '找不到 /soul sessions 分支')
+  // ① 默认 dry-run：不传 --apply 时绝不能删除任何东西
+  assert.match(body[0], /--apply/, '应识别 --apply 开关')
+  assert.match(body[0], /planSessionGc\(ctx\)/, '应复用与 HTTP 路由同一个规划函数（两处判定必须一致）')
+  // ② 反向：命令分支里**不得**出现任何直接删除文件的调用 ——
+  //    删除只能发生在已经显式 apply 的路径上，而这条命令默认不 apply。
+  assert.equal(
+    /rm\(|unlink|rmSync/.test(body[0]),
+    false,
+    '/soul sessions 不得直接删文件：它的职责是出报告，真删由显式 apply 的路径执行'
+  )
+
+  // ③ 报告文案必须区分「扫描不可用」与「没有可回收项」——两者都表现为"没东西"
+  const zhTable = indexSource.slice(indexSource.indexOf('  zh: {'))
+  const report = zhTable.match(/sessionsGcReport:[\s\S]*?\n    \},/)
+  assert.ok(report, '缺少 sessionsGcReport 文案')
+  assert.match(report[0], /plan\.scanComplete/, '报告必须区分扫描是否完整')
+  assert.match(report[0], /--apply/, 'dry-run 时必须告诉用户怎么真删')
 })
 
 check('枚举值 trim 与文本字段同规则', () => {

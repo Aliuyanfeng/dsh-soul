@@ -2737,6 +2737,34 @@ const COMMAND_MESSAGES = {
     // 否则一条陈旧提议会一直挂着而无法判断新鲜度（proposedAt 此前只写不读）。
     pendingHint: (at) => `⚠ 有待确认的人设变更（提出于 ${at}）：/soul confirm 确认，/soul reject 拒绝`,
     noPending: '没有待确认的人设变更',
+    // 会话覆盖回收报告。
+    //
+    // 三种情形要给三种不同的说法，否则用户会误判：
+    //   · 扫描不完整（拿不到 sessionPersistence）→ 说清"没做任何判定"，并解释为什么；
+    //   · dry-run → 列出**将删**的清单，并告诉用户怎么真删；
+    //   · apply → 只报结果。
+    // 无论哪种，"没有被判定的条目"都要能从上一次输出里看出来。
+    sessionsGcReport: (plan, apply) => {
+      const lines = []
+      lines.push(apply ? '🧹 会话覆盖清理' : '🧹 会话覆盖清理（预演，未删除任何文件）')
+      lines.push(plan.scanComplete
+        ? '会话清单：完整'
+        : `会话清单：不可用 —— ${plan.persistenceProblem || '原因未知'}`)
+      lines.push(`共 ${plan.total} 个文件 · 待观察 ${plan.markable.length} 个 · 可回收 ${plan.collectable.length} 个 · 损坏 ${plan.quarantine.length} 个`)
+      if (!plan.scanComplete) {
+        lines.push('会话清单不可用时不会标记也不会删除 —— 「没看到」不等于「已删除」。')
+      }
+      for (const item of plan.collectable.slice(0, 20)) {
+        lines.push(`  ✕ ${item.sessionId} —— ${item.reason}`)
+      }
+      for (const item of plan.quarantine.slice(0, 20)) {
+        lines.push(`  ⚠ ${item.file} —— ${item.reason}`)
+      }
+      if (!apply && plan.collectable.length > 0) {
+        lines.push('执行 /soul sessions --apply 可删除上面列出的条目。')
+      }
+      return lines.join('\n')
+    },
     confirmDone: (detail) => `✅ 已应用人设变更：${detail}`,
     rejectDone: '✅ 已拒绝待确认的人设变更',
     saveDone: (name) => `✅ 已保存预设「${name}」`,
@@ -2832,6 +2860,28 @@ const COMMAND_MESSAGES = {
     // 否则一条陈旧提议会一直挂着而无法判断新鲜度（proposedAt 此前只写不读）。
     pendingHint: (at) => `⚠ Pending persona proposal (raised at ${at}): /soul confirm to apply, /soul reject to discard`,
     noPending: 'No pending persona proposal',
+    // 会话覆盖回收报告。格式与中文版逐项对应（两边都由同一次 planSessionGc 驱动）。
+    sessionsGcReport: (plan, apply) => {
+      const lines = []
+      lines.push(apply ? '🧹 Session-scope cleanup' : '🧹 Session-scope cleanup (dry run — nothing deleted)')
+      lines.push(plan.scanComplete
+        ? 'Session list: complete'
+        : `Session list: UNAVAILABLE — ${plan.persistenceProblem || 'unknown reason'}`)
+      lines.push(`Files: ${plan.total} · candidates: ${plan.markable.length} · collectable: ${plan.collectable.length} · corrupt: ${plan.quarantine.length}`)
+      if (!plan.scanComplete) {
+        lines.push('No entry is marked or deleted while the session list is unavailable — "not seen" is not "deleted".')
+      }
+      for (const item of plan.collectable.slice(0, 20)) {
+        lines.push(`  ✕ ${item.sessionId} — ${item.reason}`)
+      }
+      for (const item of plan.quarantine.slice(0, 20)) {
+        lines.push(`  ⚠ ${item.file} — ${item.reason}`)
+      }
+      if (!apply && plan.collectable.length > 0) {
+        lines.push('Run `/soul sessions --apply` to delete the entries listed above.')
+      }
+      return lines.join('\n')
+    },
     confirmDone: (detail) => `✅ Persona changes applied: ${detail}`,
     rejectDone: '✅ Pending persona proposal discarded',
     saveDone: (name) => `✅ Persona "${name}" saved`,
@@ -2878,7 +2928,7 @@ function commandMessages(config) {
 }
 
 // /soul 子命令关键字（命中走子命令；否则整体视为昵称）
-const COMMAND_KEYWORDS = new Set(['show', 'reset', 'enable', 'disable', 'save', 'use', 'list', 'del', 'delete', 'rm', 'set', 'confirm', 'reject'])
+const COMMAND_KEYWORDS = new Set(['show', 'reset', 'enable', 'disable', 'save', 'use', 'list', 'del', 'delete', 'rm', 'set', 'confirm', 'reject', 'sessions'])
 
 // /soul set 中按布尔解析的键；其余键以原始字符串交给 sanitizeConfig 校验
 const COMMAND_BOOLEAN_KEYS = new Set(['enabled', 'trailEnabled'])
@@ -2912,8 +2962,8 @@ function registerCommands(ctx) {
   ctx.inject(['commands'], (cmdCtx) => {
     cmdCtx.commands.register({
       name: 'soul',
-      description: '查看或管理个性化设置。用法：/soul [show|set|save|use|list|del|confirm|reject|reset|enable|disable|昵称]',
-      input: { hint: '[show|set k=v|save <名>|use <名>|list|del <名>|confirm|reject|reset|enable|disable|昵称]' },
+      description: '查看或管理个性化设置。用法：/soul [show|set|save|use|list|del|confirm|reject|reset|enable|disable|sessions|昵称]',
+      input: { hint: '[show|set k=v|save <名>|use <名>|list|del <名>|confirm|reject|reset|enable|disable|sessions [--apply]|昵称]' },
       async handler(invocation) {
         // 保留原始大小写用于昵称/预设名，仅关键字匹配时忽略大小写
         const raw = String(invocation.rawInput || '').trim()
@@ -3122,6 +3172,20 @@ function registerCommands(ctx) {
             if (!pendingPersonaProposal) return { kind: 'error', text: t.noPending }
             pendingPersonaProposal = null
             return { kind: 'success', text: t.rejectDone }
+          }
+
+          // —— 会话覆盖回收（0.9.0-f）——
+          //
+          // 刻意收敛成**一个子命令**（`/soul sessions`）而不是散落的 `gc` / `sessions`：
+          // 将来会话覆盖还会有别的运维动作（导出、清空全部），共用一个前缀才不会
+          // 让 `/soul` 的子命令表继续膨胀。
+          //
+          // 默认 dry-run：`/soul sessions` 只列清单，`/soul sessions --apply` 才真删。
+          // 删除是不可逆的，默认值必须站在"不删"那一侧。
+          if (first === 'sessions') {
+            const apply = /\B--apply\b/.test(rest)
+            const plan = await planSessionGc(ctx)
+            return { kind: 'success', text: t.sessionsGcReport(plan, apply) }
           }
 
           // 理论不可达：关键字表与上方分支一一对应
