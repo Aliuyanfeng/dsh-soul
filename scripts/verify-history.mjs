@@ -109,10 +109,21 @@ process.on('exit', () => {
 
 console.log('契约常量与投影')
 
-await check('auditFields 与 DEFAULT_CONFIG 的键一一对应，且不含 personas', () => {
+await check('auditFields 从 DEFAULT_CONFIG 推导但排除复合结构，且不含 personas', () => {
   const fields = auditFields()
-  assert.deepEqual(fields, Object.keys(DEFAULT_CONFIG).sort(), '应从 DEFAULT_CONFIG 推导，避免将来加字段时两边漂移')
+  // 仍是「从 DEFAULT_CONFIG 推导」——但排除项必须**显式列举**，不能靠过滤器猜。
+  // 这样将来再加字段时它自动进来；而某个字段被排除，一定是因为这里写明了理由。
+  const EXCLUDED = ['personas', 'workspaces']
+  assert.deepEqual(
+    fields,
+    Object.keys(DEFAULT_CONFIG).filter((k) => !EXCLUDED.includes(k)).sort(),
+    '应从 DEFAULT_CONFIG 推导（减去显式排除项），避免将来加字段时两边漂移'
+  )
   assert.ok(!fields.includes('personas'), 'personas 不是活动配置字段，它的变化单独记为事件')
+  // workspaces（0.9.0）：嵌套结构 + 由工作区标识作键。放进字段差分会让时间线显示成
+  // 「[object Object] → [object Object]」，且每加一个工作区都会改变 configHash，
+  // 令所有历史回滚因「与当前配置对不上」而失败 —— 与 personas 同一类问题。
+  assert.ok(!fields.includes('workspaces'), 'workspaces 是复合结构，不得进字段差分与指纹')
   assert.ok(Object.isFrozen(fields) === false, 'auditFields() 返回副本，调用方改它不该影响内部状态')
   fields.push('注入的键')
   assert.ok(!auditFields().includes('注入的键'), '每次调用都应返回独立副本')

@@ -196,10 +196,11 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 
 | 层 | 脚本 | 断言数 | 会不会跳过 |
 | --- | --- | --- | --- |
-| 纯函数 / 契约 | `verify-config` | 137 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
+| 纯函数 / 契约 | `verify-config` | 139 | 否（本机未装 DSH 时，set_persona 的行为层那 1 项跳过） |
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
 | 持久化行为 | `verify-history` | 43 | 否 |
 | 纯函数（工作区绑定） | `verify-bindings` | 47 | 否 |
+| 纯函数（三级作用域） | `verify-scope` | 21 | 否 |
 | 客户端行为 | `verify-client` | 30 | 否 |
 | 端到端（保存 → 两条通道都拿到新文本；变更记录四条路由；工作区绑定路由） | `verify-e2e-prompt` | 90 | 否 |
 | 宿主实现 | `verify-live-prompt` | 20 | 定位不到 DSH 时整脚本跳过 |
@@ -207,7 +208,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | 渲染层 | `verify-trail` | 11 | 起不来浏览器时整脚本跳过 |
 | 渲染层 | `verify-nav-icon` | 16（含 6 项判断力自检） | 同上 |
 
-合计 **422 项**（其中 `verify-compat` 的 10 项在定位不到 DSH 时整脚本跳过、`verify-trail` 的 11 项同上）。
+合计 **444 项**（其中 `verify-compat` 的 10 项在定位不到 DSH 时整脚本跳过、`verify-trail` 的 11 项同上）。
 
 也可以单跑一层：`npm run verify:config` / `verify:store` / `verify:history` / `verify:bindings` / `verify:client` / `verify:e2e` / `verify:host` / `verify:compat` / `verify:trail` / `verify:nav-icon`。
 

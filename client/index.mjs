@@ -1780,8 +1780,11 @@ window.__ModuleLoader__.load({
     const FORM_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
 
     // 由**别的界面**就地管理、因而不在这张表单里的配置字段：
-    // `historyMaxEntries` 属于插件详情页的变更记录区块（改完即时落盘，不经保存按钮）。
-    const EXTERNALLY_MANAGED_FIELDS = ['historyMaxEntries']
+    //   · `historyMaxEntries` —— 插件详情页的变更记录区块（改完即时落盘，不经保存按钮）；
+    //   · `workspaces` —— 插件详情页的「工作区人设」区块（同上，0.9.0）。
+    // 两者都是复合/非表单语义：设置页的「保存设置」不该顺手提交它们，否则用户在详情页
+    // 改完的值会被设置页那份**不知道它改过**的旧表单覆盖回去。
+    const EXTERNALLY_MANAGED_FIELDS = ['historyMaxEntries', 'workspaces']
 
     // 配置字段全集（宿主 DEFAULT_CONFIG 的对账基准）。
     // 顺序与 DEFAULT_CONFIG 一致，便于人眼对账；重复字段会让 dirty 判定重复计算。

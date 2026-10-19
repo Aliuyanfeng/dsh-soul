@@ -33,7 +33,7 @@ import {
   sanitizeConfig,
   sanitizePersonaName
 } from '../lib/config.mjs'
-import { MAX_ENTRIES } from '../lib/history.mjs'
+import { MAX_ENTRIES, auditFields } from '../lib/history.mjs'
 import {
   BUILTIN_PERSONAS,
   builtinPersonaNames,
@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 137
+const EXPECTED_ASSERTIONS = 139
 
 let passed = 0
 const failures = []
@@ -1792,7 +1792,22 @@ check('NON_PROMPT_FIELDS 由 DEFAULT_CONFIG 减去 PROMPT_INPUT_FIELDS 推导，
   const nonPromptSide = all.filter((key) => !registered.has(key))
   assert.equal(promptSide.length + nonPromptSide.length, all.length, 'DEFAULT_CONFIG 键分类不完整')
   assert.deepEqual(promptSide.slice().sort(), [...PROMPT_INPUT_FIELDS].sort(), 'PROMPT_INPUT_FIELDS 里出现了 DEFAULT_CONFIG 之外的键')
-  assert.equal(nonPromptSide.length, 6, `不影响提示词的字段数应为 6（requireToolConfirmation + 4 个 trail* + historyMaxEntries），实际 ${nonPromptSide.length}`)
+  // 不写死数字：列出**必须**落在非提示词一侧的字段。
+  //
+  // 0.8.1 及以前这里钉的是 `nonPromptSide.length === 6`。加一个配置字段就得改数字 ——
+  // 而那正是「数字变了再改成新数字」的仪式：它防不住真正的错误（漏登记一个**提示词**
+  // 字段，那由上面 ② 守），只会在每次加字段时逼人改常量。改为按语义断言。
+  const mustBeNonPrompt = ['requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'historyMaxEntries', 'workspaces']
+  for (const key of mustBeNonPrompt) {
+    assert.equal(
+      registered.has(key),
+      false,
+      `${key} 不应出现在 PROMPT_INPUT_FIELDS —— 它不影响提示词文本，登记进去会让「改它」无谓地重启提示词并向活动会话注入`
+    )
+  }
+  // workspaces 尤其危险：它是**复合结构**且由工作区标识作键。若把它算进提示词字段，
+  // 每加一个工作区都会向所有活动会话注入一条「配置已更新」。
+  assert.equal(all.includes('workspaces'), true, 'DEFAULT_CONFIG 应包含 workspaces（0.9.0）')
 })
 
 check('客户端复刻的枚举常量与宿主 lib/config.mjs 逐项一致', () => {
@@ -2284,7 +2299,12 @@ check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', (
     ["{ source: 'service', action: 'update' }", 'soulConfig.updateConfig'],
     ["{ source: 'service', action: 'reset' }", 'soulConfig.resetConfig'],
     ["{ source: 'rollback', action: 'rollback' }", 'HTTP 撤销'],
-    ["{ source: 'restorePersona', action: 'restorePreset' }", 'HTTP 恢复预设']
+    ["{ source: 'restorePersona', action: 'restorePreset' }", 'HTTP 恢复预设'],
+    // 0.9.0：工作区覆盖的两条写入路径（绑定 / 解绑）。
+    // 两者都走 commitConfig —— 所以它们**也进审计**：用户改了「这个项目用什么人设」，
+    // 在变更记录里应当可查（这与 workspaces 字段不进 AUDIT_FIELDS 不矛盾：
+    // 字段差分看不见它，但"谁在什么时候提交了一次配置"仍然留痕）。
+    ["{ source: 'web', action: 'save' }", 'HTTP 保存（含工作区绑定 / 解绑）']
   ]
   const found = expected.filter(([literal]) => indexCode.includes(literal))
   assert.deepEqual(
@@ -2292,8 +2312,30 @@ check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', (
     expected.map(([literal]) => literal),
     `缺少来源标注：${expected.filter(([l]) => !indexCode.includes(l)).map(([, who]) => who).join('、')}`
   )
-  const total = indexCode.match(/\{ source: '[a-z][A-Za-z]*', action: '/g) || []
-  assert.equal(total.length, expected.length, `来源标注应有 ${expected.length} 处，实际 ${total.length} 处——多出来的是未登记的写路径`)
+  // 反向：不得有**未登记**的写路径。
+  //
+  // 判据从"字面量出现次数"改为"去重后与登记表逐一比对"：同一段标注源码里出现多次
+  // （例如工作区绑定与解绑共用 `{ source: 'web', action: 'save' }`）是**正常**的 ——
+  // 它仍然是同一条写路径语义。真正要拦的是"出现了表里没有的标注"。
+  //
+  // 正则只取到 `action: 'xx'` 为止（不吞后面的 `, label: ...`）：persona 那条带 label，
+  // 用整段匹配会得到与登记表不同的串，报出一个假失败。
+  const foundSets = new Set(
+    [...indexCode.matchAll(/\{ source: '([a-z][A-Za-z]*)', action: '([A-Za-z]*)'/g)]
+      .map((m) => `{ source: '${m[1]}', action: '${m[2]}' }`)
+  )
+  const registered = new Set(
+    expected.map(([literal]) => {
+      const m = literal.match(/\{ source: '([^']+)', action: '([^']+)'/)
+      return m ? `{ source: '${m[1]}', action: '${m[2]}' }` : literal
+    })
+  )
+  const unregistered = [...foundSets].filter((literal) => !registered.has(literal))
+  assert.deepEqual(
+    unregistered,
+    [],
+    `发现未登记的写路径标注：${unregistered.join('、')}。新写路径必须同时登记到本表，否则审计无从判断来源。`
+  )
 
   // 关联性（光有标注不够，还要落在对的地方）：抽几个有稳定锚点的切片来钉，
   // 防止「标注都在，但张冠李戴」——例如把 confirm 的标注挪到 set 上。
@@ -3101,16 +3143,23 @@ check('变更记录分组：字段标签覆盖全部审计字段，且只渲染�
   // 这一组把服务端记录**逐字段**画给用户看。画的是 `before`/`after` 里的键名 ——
   // 键名是英文标识符，一旦某个键没有对应文案，界面上就会明晃晃写着 `trailWidth`。
   // 静态断言检查不了「新增配置字段时会不会漏」，所以这里做的是**覆盖率**断言：
-  // 以 lib/config.mjs 的 DEFAULT_CONFIG 为唯一真源，比对客户端标签表。
-  const configSource = readFileSync(new URL('../lib/config.mjs', import.meta.url), 'utf8')
-  const defaultBlock = configSource.match(/export const DEFAULT_CONFIG = \{([\s\S]*?)\n\}/)?.[1] ?? ''
-  assert.ok(defaultBlock !== '', '找不到 lib/config.mjs 的 DEFAULT_CONFIG')
-  const auditKeys = []
-  for (const line of defaultBlock.split('\n')) {
-    const m = line.match(/^\s{2}([A-Za-z][A-Za-z0-9]*):/)
-    if (m) auditKeys.push(m[1])
+  // 以 `AUDIT_FIELDS` 为唯一真源，比对客户端标签表。
+  //
+  // ⚠️ 不能用「正则从 DEFAULT_CONFIG 源码里抓键」：那会把**刻意排除**在审计之外的
+  // 字段也算进来（`personas` 与 0.9.0 的 `workspaces`）。它们不进 AUDIT_FIELDS，
+  // 也就永远不会出现在时间线的 before/after 里 —— 要求它们有标签是在要求一件
+  // 没用的事，而多出来的标签又会触发下面「多出来的标签指向不存在的字段」。
+  // 所以直接用运行时导出的可审计字段清单（默认导出即审计字段）。
+  const auditKeys = auditFields()
+  assert.ok(auditKeys.length >= 16, `可审计字段至少应有 16 个，实际 ${auditKeys.length}`)
+  // 反向确认「排除」是真的生效了：这两个字段绝不该出现在审计里
+  for (const excluded of ['personas', 'workspaces']) {
+    assert.equal(
+      auditKeys.includes(excluded),
+      false,
+      `${excluded} 不得进 AUDIT_FIELDS —— 复合结构在字段差分里读不出意义，且它随外部标识增删会让历史回滚失效`
+    )
   }
-  assert.ok(auditKeys.length >= 16, `DEFAULT_CONFIG 至少应有 16 个字段，实际解析出 ${auditKeys.length}`)
 
   // 收尾的 `}` 是缩进的（客户端里的块都在函数体内），用顶格 `\n}` 会一路吞到远处
   // ——首版就是这么把 231 个键算进来的。
@@ -3191,12 +3240,17 @@ check('工作区绑定：provider 每轮按会话 cwd 解析，且必须是同�
     /text:\s*\(?\s*assembly\s*\)?\s*=>/,
     'section 的 text 必须是接受装配上下文的函数（不看 assembly 就无法按 cwd 解析绑定）'
   )
+  // 0.9.0 起 text 回调先取 `const agent = assembly && assembly.agent` 再传下去
+  // （因为要同时取 sessionId 与 cwd）。判据因此松绑为「必须经 assembly 取到 agent 且
+  // 对 undefined 安全」—— 而不是锁死 `cwdOfAgent(assembly && assembly.agent)` 这一种写法。
+  // 守的语义没变：不看入参就退化成全局一份文本；不对 undefined 安全就在诊断装配时抛错。
   assert.match(
     opts,
-    /cwdOfAgent\(\s*assembly\s*&&\s*assembly\.agent\s*\)/,
-    'text 回调应经 cwdOfAgent(assembly && assembly.agent) 取会话目录 —— 直接 assembly.agent 会在诊断装配（agent 缺席）时抛错'
+    /assembly\s*&&\s*assembly\.agent/,
+    'text 回调必须从 assembly 取 agent（宿主在诊断装配时不传 agent，故须用 && 容忍 undefined）'
   )
-  assert.match(opts, /configForCwd\(/, 'text 回调必须经 configForCwd 合成该目录生效的配置')
+  assert.match(opts, /cwdOfAgent\(/, 'text 回调必须经 cwdOfAgent 取会话目录')
+  assert.match(opts, /configForScope\(/, 'text 回调必须经 configForScope 合成该作用域生效的配置')
   assert.equal(/async\s*\(?\s*assembly/.test(opts), false, 'text 回调不得是 async')
   assert.equal(/await /.test(opts), false, 'text 回调内不得出现 await')
 
@@ -3208,10 +3262,88 @@ check('工作区绑定：provider 每轮按会话 cwd 解析，且必须是同�
     false,
     'text 回调里不得做 realpath（异步 I/O）：它必须是同步的，身份解析只能在 loadBindings() 对键做一次'
   )
+  // 「保存后下一轮立即生效」的前提是**每次求值都重新取当前配置**，而不是把配置
+  // 闭包进回调（那样只在注册时读一次，之后永远用旧值）。
+  //
+  // 0.9.0-a 起取法从「直接读 configCache」改为 `snapshotConfig()`：后者返回
+  // `{ revision, value }` 的快照，保证同一轮装配只用一份配置（configCache 由写队列
+  // 整体替换，一次装配里多次读可能读到两个版本）。所以这里不锁死写法，而是钉住
+  // 两个本质：① 回调里调用了快照函数；② 这个函数内部确实读模块级 configCache。
   assert.match(
     opts,
+    /snapshotConfig\(\)/,
+    'text 回调应经 snapshotConfig() 取当前配置快照（每轮重新取，且同一轮只用一份）'
+  )
+  const snapshotFn = indexSource.match(/function snapshotConfig\(\)\s*\{[\s\S]*?\n\}/)
+  assert.ok(snapshotFn, '找不到 snapshotConfig() 的实现')
+  assert.match(
+    snapshotFn[0],
     /configCache \|\| DEFAULT_CONFIG/,
-    'text 回调仍应读 configCache（保存后下一轮立即生效）'
+    'snapshotConfig 必须读模块级 configCache —— 否则保存后下一轮拿不到新配置'
+  )
+  // 反向：不得把配置固化进闭包（那是「注册时读一次」的错误形态）
+  assert.equal(
+    /const\s+\w+\s*=\s*configCache\b[^]*?text:/.test(opts),
+    false,
+    '不得在 section 注册前把 configCache 固化进闭包 —— 那样保存后不会生效'
+  )
+})
+
+check('0.9.0-a 配置快照：修订号单调递增，装配只取一次快照', () => {
+  // 为什么需要这条：system prompt 的 section.text 由宿主**同步**、且**每个 step 都调用**
+  // 一次。configCache 由写队列整体替换，若一次装配里读了两次配置（例如先取 base、
+  // 再在合成函数里又读一遍），装配期间发生写入就会让**同一轮用上两个版本**。
+  // 症状是「System Prompt Updated 已出现、模型却仍用旧昵称」——过去只能靠猜。
+
+  // ① 修订号存在且只在一处自增
+  const bumps = [...indexSource.matchAll(/bumpConfigRevision\(\)/g)]
+  assert.ok(bumps.length >= 2, `修订号应在读盘与写入后各 +1（实际 ${bumps.length} 处调用）`)
+  assert.match(indexSource, /let configRevision = 0/, '缺少单调修订号的初始值')
+  // 反向：不得有第二处直接自增（那会让「+1 的时机」散落成多处）。
+  // 判据要把 bumpConfigRevision **自己**的实现体排除掉 —— 它当然要 += 1。
+  const bumpBody = indexSource.match(/function bumpConfigRevision\(\)\s*\{[\s\S]*?\n\}/)
+  assert.ok(bumpBody, '找不到 bumpConfigRevision() 的实现')
+  const outsideBump = indexSource.replace(bumpBody[0], '')
+  const direct = [...outsideBump.matchAll(/configRevision\s*\+\+|configRevision\s*\+=/g)]
+  assert.equal(direct.length, 0, '只允许经 bumpConfigRevision() 自增，不得在别处直接改 configRevision')
+
+  // ② 读盘成功与写入成功都必须 bump —— 漏一处就会出现「改了配置但修订号不动」
+  const loadBody = indexSource.match(/async function loadConfig\(\)[\s\S]*?\n\}/)
+  assert.ok(loadBody, '找不到 loadConfig')
+  assert.match(loadBody[0], /bumpConfigRevision\(\)/, 'loadConfig 读盘成功后必须 bump')
+  const saveBody = indexSource.match(/async function saveConfig\(config\)[\s\S]*?\n\}/)
+  assert.ok(saveBody, '找不到 saveConfig')
+  assert.match(saveBody[0], /bumpConfigRevision\(\)/, 'saveConfig 写盘成功后必须 bump')
+  // 「损坏」分支刻意不 bump：它没有替换 configCache，修订号不该前进
+  assert.equal(
+    /failure\)\s*\{[^}]*bumpConfigRevision/.test(loadBody[0]),
+    false,
+    '读盘失败（配置损坏）不得 bump —— 它没有替换缓存'
+  )
+
+  // ③ 快照必须同时给出 revision 与 value，且 value 回落 DEFAULT_CONFIG
+  const snap = indexSource.match(/function snapshotConfig\(\)\s*\{[\s\S]*?\n\}/)
+  assert.ok(snap, '找不到 snapshotConfig()')
+  assert.match(snap[0], /revision:\s*configRevision/, '快照应带上当时的修订号')
+  assert.match(snap[0], /value:\s*configCache \|\| DEFAULT_CONFIG/, '快照应带上当时的配置值')
+  assert.equal(/await/.test(snap[0]), false, 'snapshotConfig 必须同步 —— revision 与 value 之间不能有 await')
+
+  // ④ 装配路径：快照先取，之后只用它。这是本步的核心契约。
+  const opts = stripComments(extractObject(indexSource, 'spCtx.systemPrompt.section('))
+  assert.match(opts, /const snap = snapshotConfig\(\)/, 'text 回调应先取一次快照')
+  assert.match(opts, /snap\.value/, '合成配置时必须用快照里的值，而不是重新读 configCache')
+  // 反向：text 回调体内不得再出现裸的 configCache 读取（那就是"第二个版本"的入口）
+  assert.equal(
+    /configCache/.test(opts),
+    false,
+    'text 回调内不得直接读 configCache —— 必须经快照，否则同一轮可能用上两个版本'
+  )
+  // ⑤ 快照的版本号要落到诊断状态，否则「哪一版进了模型」仍然无处可查
+  assert.match(opts, /lastAssembledRevision = snap\.revision/, '应把本轮使用的修订号记进诊断状态')
+  assert.match(
+    indexSource,
+    /lastAssembledRevision: deliveryState\.lastAssembledRevision/,
+    '状态端点应外发 lastAssembledRevision，否则新字段只是死数据'
   )
 })
 
@@ -3246,21 +3378,30 @@ check('工作区绑定：注入通道逐 agent 编译，不共用一份全局文
 })
 
 check('工作区绑定：合成配置只覆盖人设字段，全局总开关不被覆盖', () => {
-  const fn = stripComments(extractObject(indexSource, 'function configForCwd'))
-  assert.ok(fn !== '', '找不到 configForCwd 函数体')
-  assert.match(fn, /resolveBindingForCwd\(/, '应先按目录解析绑定')
+  // 0.9.0 起解析链收口在 configForScope（工作区层 → 目录回退 → 全局），
+  // configForCwd 退化为「不带工作区层的薄包装」。断言对象随之移动，
+  // 但守的三件事一字未变：白名单、同一套校验、enabled 不可触碰。
+  const fn = stripComments(extractObject(indexSource, 'function configForScope'))
+  assert.ok(fn !== '', '找不到 configForScope 函数体')
+  assert.match(fn, /resolveBindingForCwd\(/, '目录回退层必须仍按目录解析绑定')
   assert.match(
     fn,
     /pickPersonaValues\(persona\)/,
     '必须用 pickPersonaValues 走白名单 —— 直接展开条目会把磁盘上残留的「关于你」写回活动配置'
   )
   assert.match(fn, /sanitizeConfig\(/, '合成的补丁要经同一套校验（与 /personas/use 的取值语义逐字段一致）')
-  // `enabled` 不属于 PERSONA_FIELDS：关掉插件后，绑定的目录也不该偷偷注入人设。
+  // 工作区层同样必须是**部分覆盖 + 白名单**，不能把整个 workspaces 对象铺进配置。
+  assert.match(fn, /mergeWorkspaceOverride\(/, '工作区层必须经 mergeWorkspaceOverride 合并（部分覆盖 + 白名单）')
+  // `enabled` 不属于任何覆盖范围：关掉插件后，绑定的目录也不该偷偷注入人设。
   assert.equal(
     /\benabled\b/.test(fn),
     false,
-    'configForCwd 不得触碰 enabled —— 全局总开关必须始终说话'
+    'configForScope 不得触碰 enabled —— 全局总开关必须始终说话'
   )
+  // 反向：薄包装只该转调，不该自己再实现一遍合并（两份实现必然漂移）
+  const thin = stripComments(extractObject(indexSource, 'function configForCwd'))
+  assert.ok(thin !== '', '找不到 configForCwd 薄包装')
+  assert.match(thin, /configForScope\(/, 'configForCwd 应转调 configForScope，不得保留第二份合并实现')
   const cwdOf = stripComments(extractObject(indexSource, 'function cwdOfAgent'))
   assert.ok(cwdOf !== '', '找不到 cwdOfAgent 函数体')
   assert.match(
@@ -3273,6 +3414,57 @@ check('工作区绑定：合成配置只覆盖人设字段，全局总开关不�
     /typeof cwd === 'string' && cwd\.trim\(\) !== ''/,
     '空串 / 非字符串的 cwd 必须当成「没有会话信息」，否则 normalizeDirPath 会拿它去匹配'
   )
+})
+
+check('0.9.0-b 工作区层：sessionId → workspaceId 索引接入，且失败安全', () => {
+  // 这组是**接线**断言。零依赖纯函数层的正确性由 verify-scope 守着，但"接线有没有接上"
+  // 是另一回事 —— 判断力对照实测：把装配里的索引查询改成常量 null、把 sessionId 取成
+  // null、删掉事件重建、甚至把工作区层整段短路，全部漏网（因为没有任何断言看住接线）。
+  // 接线错了的症状是"工作区绑定了却从不生效"，且不报错。
+
+  // ① sessionId 的取值：agent.id 就是 sessionId（宿主 typert lookup 以 SessionId 为 wire 类型）
+  const sidFn = stripComments(extractObject(indexSource, 'function sessionIdOfAgent'))
+  assert.ok(sidFn !== '', '找不到 sessionIdOfAgent')
+  assert.match(sidFn, /agent\?\.id/, 'sessionId 必须取自 agent.id —— 宿主注册 typert lookup 时用的正是该字段')
+  assert.match(sidFn, /typeof id === 'string'/, '必须校验类型：非字符串的 id 不能当索引键')
+
+  // ② 索引查询确实发生在装配路径里，且结果传给了 configForScope
+  const opts = stripComments(extractObject(indexSource, 'spCtx.systemPrompt.section('))
+  assert.match(
+    opts,
+    /sessionWorkspaceIndex\.get\(sessionId\)/,
+    '装配时必须查 sessionWorkspaceIndex —— 否则工作区层永远命中不到'
+  )
+  assert.match(
+    opts,
+    /configForScope\(\s*snap\.value\s*,\s*cwdOfAgent\(agent\)\s*,\s*workspaceId\s*\)/,
+    'configForScope 必须收到 workspaceId（第三个参数）—— 漏传就退化成只有 cwd 回退'
+  )
+  // 反向：索引未命中时要能退化，不能因为查不到就抛错
+  assert.match(opts, /\|\|\s*null/, '索引未命中必须退化成 null（走 cwd 回退），不得抛错')
+
+  // ③ 索引重建的三个时机，缺一个都会让「工作区改了却不生效」
+  const reg = stripComments(extractObject(indexSource, 'function registerWorkspaceIndex'))
+  assert.ok(reg !== '', '找不到 registerWorkspaceIndex')
+  assert.match(reg, /rebuildWorkspaceIndex\(ctx\)/, '必须调用重建函数')
+  assert.match(reg, /ctx\.on\('domain\/changed'/, '必须订阅宿主的工作区域变更事件')
+  assert.match(reg, /pendingWorkspaceRescan/, '必须有"装配未命中就重扫"的兜底 —— 事件改名时否则会静默停止更新')
+  assert.match(reg, /ctx\.effect\(/, '定时器必须挂在 ctx.effect 里，否则插件卸载后仍在跑')
+
+  // ④ 重建本身必须递归安全：服务缺席返回 false 而不是抛错
+  const rebuild = stripComments(extractObject(indexSource, 'function rebuildWorkspaceIndex'))
+  assert.ok(rebuild !== '', '找不到 rebuildWorkspaceIndex')
+  assert.match(rebuild, /typeof registry\.list !== 'function'/, '服务缺席必须优雅降级（返回 false），不能让插件装配失败')
+  assert.match(rebuild, /try\s*\{/, 'list() 与 sessionIds getter 都可能抛错，必须包 try')
+
+  // ⑤ 工作区层与目录层的顺序：workspace 优先，目录回退
+  const scope = stripComments(extractObject(indexSource, 'function configForScope'))
+  const wsAt = scope.indexOf('resolveWorkspaceOverride')
+  const dirAt = scope.indexOf('resolveBindingForCwd')
+  assert.ok(wsAt !== -1 && dirAt !== -1, 'configForScope 必须同时含工作区层与目录回退层')
+  assert.ok(wsAt < dirAt, '工作区层必须排在目录回退**之前** —— 顺序反了会让稳定的 workspaceId 被目录字符串盖掉')
+  // 反向：工作区层的判断不能是死代码（短路让它永不生效）
+  assert.equal(/if \(false\)|if \(!false\)/.test(scope), false, '不得用常量短路工作区层')
 })
 
 check('工作区绑定：读盘只在装配路径之外，且失败不阻塞启动', () => {

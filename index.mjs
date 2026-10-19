@@ -47,6 +47,14 @@ import {
   resolvePersonaForCwd,
   writeBindingsFile
 } from './lib/bindings.mjs'
+import {
+  MAX_WORKSPACE_SCOPES,
+  WORKSPACE_SCOPE_VERSION,
+  mergeWorkspaceOverride,
+  resolveWorkspaceOverride,
+  sanitizeWorkspaceScopes,
+  validateWorkspaceBinding
+} from './lib/workspace-scope.mjs'
 import { createInjectionSource } from './lib/injection.mjs'
 import { isBuiltinPersona, builtinPersonaNames, mergePersonas, personaMatches, resolvePersona, declaredPersonaKeys } from './lib/personas.mjs'
 import { configWriteRefusal, describeConfigFailure, moveAsideConfigFile, readConfigFile, writeConfigFile } from './lib/store.mjs'
@@ -354,6 +362,36 @@ const MAX_BODY_BYTES = 64 * 1024
 // 内存中的配置缓存
 let configCache = null
 
+// 配置的**单调修订号**：每次配置真的被替换（读盘成功、写入成功、重置）+1。
+//
+// 为什么需要它：system prompt 的 section.text 是宿主**同步**调用的，每次装配都读
+// `configCache` —— 而 configCache 由写队列整体替换。若一次装配过程中间发生了写入，
+// 同一轮里 section 多次求值时可能拿到**两个不同版本**的配置，症状正是「System Prompt
+// Updated 已出现、模型却仍用旧昵称」这一类难以复现的问题。
+//
+// 有了修订号，装配侧可以：
+//   ① 先取一次快照再求值（见 snapshotConfig），保证一轮只用一份配置；
+//   ② 把「这一轮实际用了哪一版」记进诊断状态，事后能回答「进模型的是哪一版」。
+//
+// 刻意**不**做「装配期间禁止写入」：装配是纯读，写入走队列，加锁只会让保存变慢。
+// 单调号足以定位，不需要互斥。
+let configRevision = 0
+
+function bumpConfigRevision() {
+  configRevision += 1
+}
+
+// 取当前配置的不可变快照。装配路径上**只调用一次**，后续全部基于它。
+//
+// 返回的 revision 与 value 是同一时刻的配对：先读 revision 再读 value（或反过来）
+// 在单线程里等价，因为两者之间没有 await —— 一旦有 await，就又会读到两个版本。
+function snapshotConfig() {
+  return {
+    revision: configRevision,
+    value: configCache || DEFAULT_CONFIG
+  }
+}
+
 // 磁盘上的配置存在但不可用（读不出来 / 不是合法 JSON）时的记录。
 // 置位后 saveConfig 会拒绝写入，避免把损坏的配置静默清空成默认值。
 let configLoadFailure = null
@@ -379,6 +417,7 @@ async function loadConfig() {
   }
 
   configCache = exists ? migrateConfig(value) : { ...DEFAULT_CONFIG }
+  bumpConfigRevision()
   return configCache
 }
 
@@ -397,6 +436,7 @@ async function saveConfig(config) {
   delete clean.examples
   await writeConfigFile(configPath(), clean)
   configCache = clean
+  bumpConfigRevision()
   return clean
 }
 
@@ -657,7 +697,9 @@ const deliveryState = {
   delivered: 0,            // 最近一次成功注入的会话数
   failed: 0,               // 最近一次注入抛错的会话数
   injectionProblem: null,  // 未能如实送达的原因；正常为 null
-  sectionRegisteredAt: null // section 最近一次注册成功的时间（ISO）
+  sectionRegisteredAt: null, // section 最近一次注册成功的时间（ISO）
+  lastAssembledRevision: null, // 最近一次装配实际使用的配置修订号（排查「改了没生效」用）
+  lastAssembledScope: null // 最近一次装配用的是哪一层：'workspace' | 'cwd'
 }
 
 // 同一原因只告一次警，避免每次保存都刷屏；一旦恢复正常则清掉记录，
@@ -913,22 +955,136 @@ function resolveBindingForCwd(cwd, userPersonas) {
   return { dir: display(resolved.dir), persona: resolved.persona, shadowed }
 }
 
-// 把「全局配置 + 一次目录解析结果」合成为该目录实际生效的配置。
+// ==================== 三级作用域：Global → Workspace → Session ====================
+//
+// 解析链（DESIGN-config-scope.md §2.2）：
+//
+//   workspaceId（索引命中） → 工作区覆盖 → 部分覆盖全局
+//        ↓ 索引未命中（服务重启 / 新会话 / 索引空）
+//   cwd 前缀匹配（lib/bindings.mjs 既有能力） → 目录绑定 → 部分覆盖全局
+//        ↓ 都没有
+//   Global
+//
+// **失败方向必须安全**：任何一环不可用，只能在「更精确」与「更宽松」之间移动，
+// 不能变成「错误的人设」。
+
+// sessionId → workspaceId 的**只读快照**。
+//
+// 为什么是快照而不是"每次问宿主"：`systemPrompt.section.text` 是宿主**同步**调用的，
+// 里面不能有 await、也不能做线性扫描（每次装配 × 每个工作区 × 每个 sessionIds getter）。
+// 所以索引在装配路径**之外**维护，装配时只查表。
+//
+// 键与值都用 String：宿主用品牌类型（WorkspaceId / SessionId），把它们当字符串比较
+// 是唯一稳定做法（品牌类型在运行时就是字符串，但对象比较会因代理包装而失配）。
+let sessionWorkspaceIndex = new Map()
+
+// 索引最后一次成功重建的时间（ISO）。诊断用：排查「工作区绑定为什么没生效」时，
+// 第一个要看的就是索引有没有建起来。
+let workspaceIndexBuiltAt = null
+
+// 重建索引。**同步且不做 I/O** —— workspaceRegistry.list() 是内存投影。
+//
+// `sessionIds` 是 getter，每次访问都会过滤一遍（宿主内部按 candidateMatches 校验），
+// 因此这里只遍历一次并把结果拍平成 Map，绝不把这个 getter 存下来反复问。
+function rebuildWorkspaceIndex(ctx) {
+  const registry = ctx.get('workspaceRegistry')
+  if (!registry || typeof registry.list !== 'function') {
+    // 服务缺席不是错误：没有它就只能走 cwd 回退，而那正是 0.8.1 的语义。
+    return false
+  }
+
+  let listed
+  try {
+    listed = registry.list()
+  } catch {
+    return false
+  }
+
+  const next = new Map()
+  for (const workspace of Array.isArray(listed) ? listed : []) {
+    const id = workspace && workspace.id !== undefined ? String(workspace.id) : ''
+    if (id === '') continue
+    let sessionIds
+    try {
+      sessionIds = workspace.sessionIds
+    } catch {
+      // 单个工作区的 getter 抛错不该让整张索引失败（宿主注释：候选会话可能已被移出）
+      continue
+    }
+    for (const sessionId of Array.isArray(sessionIds) ? sessionIds : []) {
+      next.set(String(sessionId), id)
+    }
+  }
+
+  sessionWorkspaceIndex = next
+  workspaceIndexBuiltAt = new Date().toISOString()
+  return true
+}
+
+// 从装配上下文里取 sessionId。
+//
+// `agent.id` **就是** sessionId —— 宿主注册 typert lookup 时用的正是
+// `wireTypeSymbol: "@deepseek-ai/dsh-session/types#SessionId"`，
+// `resolve: (sessionId) => this.get(sessionId)`。
+//
+// 诊断装配时 agent 缺席，返回 null。
+function sessionIdOfAgent(agent) {
+  const id = agent?.id
+  if (typeof id === 'string' && id.trim() !== '') return id
+  if (typeof id === 'number') return String(id)
+  return null
+}
+
+// 把「全局配置 + 一次作用域解析结果」合成为该会话实际生效的配置。
+//
+// 三层顺序固定：先工作区（或目录），再会话覆盖。后者能盖前者 —— 这正是
+// 「本次会话临时改用教学模式」的语义。
 //
 // 用预设的**部分覆盖**语义（与 /api/soul/personas/use 同一条规则）：只覆盖条目实际
-// 声明过的字段，未声明的保持全局值。这条复用不是巧合 —— 用户在设置页点「使用」
+// 声明过的字段，未声明的保持上层值。这条复用不是巧合 —— 用户在设置页点「使用」
 // 一个预设时看到的效果，必须与他在该目录里自动拿到的效果**逐字段一致**，
 // 否则「绑定生效了吗」将无法用任何已有操作来验证。
 //
-// `enabled` 刻意**不在**覆盖范围内（它不属于 PERSONA_FIELDS）：全局总开关始终说话，
-// 关掉插件后绑定的目录也不会偷偷注入人设。
-function configForCwd(base, cwd) {
+// `enabled` 刻意**不在**任何覆盖范围内：全局总开关始终说话。
+function configForScope(base, cwd, workspaceId) {
+  // ① 工作区层：workspaceId 优先，cwd 回退。
+  const scopes = workspaceScopesOf(base)
+  const workspaceOverride = workspaceId ? resolveWorkspaceOverride(workspaceId, scopes) : null
+  if (workspaceOverride) {
+    return {
+      config: mergeWorkspaceOverride(base, workspaceOverride),
+      source: 'workspace',
+      workspaceId,
+      binding: null
+    }
+  }
+
+  // ② 目录回退（0.8.1 语义）：索引没命中时，目录仍是可信信息。
   const resolved = resolveBindingForCwd(cwd, base.personas)
-  if (!resolved) return { config: base, binding: null }
-  const persona = resolvePersona(resolved.persona, base.personas)
-  if (!persona) return { config: base, binding: null }
-  const { patch } = sanitizeConfig(pickPersonaValues(persona))
-  return { config: { ...base, ...patch }, binding: resolved }
+  if (resolved) {
+    const persona = resolvePersona(resolved.persona, base.personas)
+    if (persona) {
+      const { patch } = sanitizeConfig(pickPersonaValues(persona))
+      return { config: { ...base, ...patch }, source: 'directory', workspaceId: null, binding: resolved }
+    }
+  }
+
+  return { config: base, source: 'global', workspaceId: null, binding: null }
+}
+
+// 兼容既有调用点：只按 cwd 解析（不含工作区层）。
+// 保留这个名字是因为 verify-*.mjs 与若干注释按它描述契约；新代码应直接用 configForScope。
+function configForCwd(base, cwd) {
+  const { config, binding } = configForScope(base, cwd, null)
+  return { config, binding }
+}
+
+// 读出配置里的工作区覆盖表（已校验过的形态）。
+function workspaceScopesOf(config) {
+  const raw = config && config.workspaces
+  if (!raw || typeof raw !== 'object') return {}
+  const { scopes } = sanitizeWorkspaceScopes(raw)
+  return scopes
 }
 
 // 从装配上下文里取该会话的工作目录。
@@ -1152,7 +1308,18 @@ function registerRoutes(ctx) {
               // （不依赖任何缓存，见 scripts/verify-live-prompt.mjs）
               section: {
                 registered: deliveryState.sectionRegisteredAt !== null,
-                registeredAt: deliveryState.sectionRegisteredAt
+                registeredAt: deliveryState.sectionRegisteredAt,
+                // 当前内存里的配置修订号，以及最近一次装配实际用到的那个。
+                // 两者不相等是**正常**的（装配发生在写入之前）；但用户报告「改了没生效」
+                // 时，若 lastAssembledRevision 长期不前进，问题就锁定在装配没被触发，
+                // 而不是配置没写进去 —— 这正是过去只能靠猜的那一步。
+                configRevision,
+                lastAssembledRevision: deliveryState.lastAssembledRevision,
+                lastAssembledScope: deliveryState.lastAssembledScope,
+                // 工作区索引：有了它才能把 sessionId 换成 workspaceId。
+                // 为 null 表示从未重建成功 —— 此时一切解析都退化为 cwd 前缀匹配。
+                workspaceIndexBuiltAt,
+                workspaceIndexSize: sessionWorkspaceIndex.size
               },
               injection
             },
@@ -1887,6 +2054,212 @@ function registerBindingRoutes(ctx) {
   })
 }
 
+// ==================== 工作区索引（sessionId → workspaceId）====================
+
+// 维护 sessionWorkspaceIndex 的三条时机（DESIGN-config-scope.md §2.2）：
+//
+//   ① 首轮重建 —— 服务刚就绪时索引必然是空的；
+//   ② 宿主工作区变更 —— 加/删工作区、会话移入移出，都会改变映射；
+//   ③ 兜底重扫 —— 装配时发现「有 sessionId 但索引里没有」就标记，下一拍重建。
+//
+// ③ 是必需的：②依赖宿主的事件名（内部约定，可能改名）。没有兜底的话，
+// 事件一旦改名，索引会**静默停止更新** —— 表现为「工作区绑定时灵时不灵」，
+// 而 ③ 让它的失败形态退化成「多扫一次内存投影」，代价可以忽略。
+function registerWorkspaceIndex(ctx) {
+  const rebuild = () => rebuildWorkspaceIndex(ctx)
+
+  // ① 首轮：延后一拍，给宿主服务一个物化窗口。
+  const firstTimer = setTimeout(rebuild, 0)
+  if (typeof firstTimer.unref === 'function') firstTimer.unref()
+
+  // ② 事件：宿主工作区域变更。事件名取自 dsh-workspace 的 domain 事件。
+  //    订阅失败（宿主无该事件）不是错误 —— 还有 ③ 兜底。
+  try {
+    ctx.on('domain/changed', () => { rebuild() })
+  } catch {
+    // 事件名不存在时 ctx.on 可能直接抛错；吞掉，靠 ③。
+  }
+
+  // ③ 兜底：装配时未命中的 sessionId 会被记下来，这里周期性重扫。
+  //    用 5s 而不是每轮：索引是内存投影，重建本身很轻，但没必要每个 step 都做。
+  const sweepTimer = setInterval(() => {
+    if (pendingWorkspaceRescan === 0) return
+    pendingWorkspaceRescan = 0
+    rebuild()
+  }, 5000)
+  if (typeof sweepTimer.unref === 'function') sweepTimer.unref()
+
+  ctx.effect(() => () => {
+    clearTimeout(firstTimer)
+    clearInterval(sweepTimer)
+  }, 'dsh-soul: workspace index')
+}
+
+// 装配时发现「有 sessionId 但索引查不到」的次数。由 section.text 递增（同步、无副作用），
+// 由上面的定时器消费。刻意用计数器而不是 Set：装配是每轮都跑的，Set 会无限增长。
+let pendingWorkspaceRescan = 0
+
+// ==================== 工作区路由 ====================
+
+// 工作区覆盖的读写。与绑定路由**刻意分开**：绑定是独立的 soul-bindings.json，
+// 工作区覆盖是 soul-config.json 的一个字段 —— 后者必须走配置写队列与审计。
+function registerWorkspaceRoutes(ctx) {
+  ctx.inject(['webServer'], (wsCtx) => {
+    const send = (res, status, body) => {
+      res.writeHead(status, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(body))
+    }
+
+    // 一次性读全：宿主的工作区列表 + 当前配置里的覆盖表 + 每个工作区的解析结果。
+    //
+    // 全部由**宿主**算，设置页/详情页只负责画 —— 它们拿不到 workspaceRegistry
+    // （客户端侧是 `workspaces` 服务，是另一份投影）。
+    const workspaceView = async () => {
+      const config = await loadConfig()
+      const registry = ctx.get('workspaceRegistry')
+      const scopes = workspaceScopesOf(config)
+
+      const workspaces = []
+      let indexProblem = null
+      if (!registry || typeof registry.list !== 'function') {
+        indexProblem = 'workspaceRegistry 服务不可用：无法列出宿主的工作区。'
+      } else {
+        let listed = []
+        try {
+          listed = registry.list()
+        } catch (err) {
+          indexProblem = `列出工作区失败：${String((err && err.message) || err)}`
+        }
+        const personaNames = { ...(config.personas || {}) }
+        for (const workspace of Array.isArray(listed) ? listed : []) {
+          const id = workspace && workspace.id !== undefined ? String(workspace.id) : null
+          if (id === null) continue
+          const override = resolveWorkspaceOverride(id, scopes)
+          // 失效引用：覆盖指向的人设已不存在。**如实标出但不自动删除** ——
+          // 用户可能只是临时改名，删掉就再也找不回来了（与绑定表同一条约定）。
+          const invalidPersona = override && typeof override.__persona === 'string'
+            ? !(override.__persona in personaNames)
+            : false
+          workspaces.push({
+            workspaceId: id,
+            title: typeof workspace.title === 'string' ? workspace.title : '',
+            path: typeof workspace.path === 'string' ? workspace.path : '',
+            sessionCount: Array.isArray(workspace.sessionIds) ? workspace.sessionIds.length : 0,
+            bound: override !== null,
+            invalidPersona
+          })
+        }
+      }
+
+      return {
+        workspaces,
+        indexProblem,
+        max: MAX_WORKSPACE_SCOPES,
+        // 供 UI 展示「当前有几条覆盖」。数字取自配置而非上面的列表：
+        // 覆盖可以指向一个已被删除的工作区，那种条目仍占着表。
+        boundCount: Object.keys(scopes).length
+      }
+    }
+
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/workspaces',
+      handler: async (req, res) => {
+        if (req.method === 'GET') {
+          try {
+            send(res, 200, { ok: true, ...(await workspaceView()) })
+          } catch (err) {
+            send(res, 500, { ok: false, error: String(err.message || err) })
+          }
+          return
+        }
+        if (req.method !== 'POST') {
+          send(res, 405, { ok: false, error: 'Method not allowed' })
+          return
+        }
+
+        try {
+          const parsed = await readJsonBody(req)
+          if (!parsed.ok) {
+            send(res, parsed.status, { ok: false, error: parsed.error })
+            return
+          }
+
+          const config = await loadConfig()
+          const verdict = validateWorkspaceBinding(parsed.body, config.personas)
+          if (!verdict.ok) {
+            send(res, 400, { ok: false, error: verdict.error })
+            return
+          }
+
+          // 走配置写队列：与 HTTP 保存 / 命令 / 工具共用同一条串行路径，
+          // 并自动获得变更审计（source = web, action = save）。
+          await commitConfig((current) => {
+            const scopes = workspaceScopesOf(current)
+            scopes[verdict.workspaceId] = verdict.override
+            const next = { ...current, workspaces: { version: WORKSPACE_SCOPE_VERSION, scopes } }
+            return next
+          }, { source: 'web', action: 'save' })
+
+          // 工作区改的是**人设**，必须重算提示词并注入 —— commitConfig 的
+          // promptChanged 看不见 workspaces（它不在 AUDIT_FIELDS / PROMPT_INPUT_FIELDS 里）。
+          const fresh = await loadConfig()
+          refreshPromptAndInject(ctx, fresh)
+
+          send(res, 200, { ok: true, ...(await workspaceView()) })
+        } catch (err) {
+          send(res, 500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
+
+    // 解绑：把某个工作区从覆盖表里删掉。与绑定路由的 /delete 同一形态。
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/workspaces/delete',
+      handler: async (req, res) => {
+        if (req.method !== 'POST') {
+          send(res, 405, { ok: false, error: 'Method not allowed' })
+          return
+        }
+        try {
+          const parsed = await readJsonBody(req)
+          if (!parsed.ok) {
+            send(res, parsed.status, { ok: false, error: parsed.error })
+            return
+          }
+          const workspaceId = parsed.body && parsed.body.workspaceId
+          if (typeof workspaceId !== 'string' || workspaceId.trim() === '') {
+            send(res, 400, { ok: false, error: '缺少 workspaceId' })
+            return
+          }
+
+          let removed = false
+          await commitConfig((current) => {
+            const scopes = workspaceScopesOf(current)
+            if (!(workspaceId in scopes)) return current
+            removed = true
+            const next = { ...scopes }
+            delete next[workspaceId]
+            // 删空后把字段整个去掉：留一个 `{ version, scopes: {} }` 会让「从未设过」
+            // 与「设过又全删了」在磁盘上不可区分，排查时看不出真相。
+            const empty = Object.keys(next).length === 0
+            return { ...current, workspaces: empty ? undefined : { version: WORKSPACE_SCOPE_VERSION, scopes: next } }
+          }, { source: 'web', action: 'save' })
+
+          if (removed) {
+            const fresh = await loadConfig()
+            refreshPromptAndInject(ctx, fresh)
+          }
+          send(res, 200, { ok: true, removed, ...(await workspaceView()) })
+        } catch (err) {
+          send(res, 500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
+  })
+}
+
 // ==================== 斜杠命令 ====================
 
 // 宿主端无 locale 服务（CommandInvocation 不携带 UI 语言，settings 中亦无语言字段），
@@ -2383,10 +2756,24 @@ function registerSystemPrompt(ctx) {
           // 返回 Promise 会被当成 section 文本对象塞进提示词。所以这里只做纯字符串
           // 比较——路径的身份解析（realpath）已在 loadBindings() 里对**键**做过一次。
           //
+          // ⚠️ 也必须**只取一次快照**：configCache 由写队列整体替换。若这里分两次读
+          // （例如先 configCache、再在 configForCwd 里又读一遍），装配期间发生写入就会
+          // 让同一轮用上两个版本的配置。快照先取，之后全用它。
+          //
           // `assembly.agent` 在诊断装配时缺席（宿主注释写明 `absent on diagnostics`），
           // cwdOfAgent 对 undefined 返回 null ⇒ configForCwd 原样返回全局配置。
-          const base = configCache || DEFAULT_CONFIG
-          return compilePrompt(configForCwd(base, cwdOfAgent(assembly && assembly.agent)).config)
+          const snap = snapshotConfig()
+          const agent = assembly && assembly.agent
+          // 快照必须**整体**使用：连同索引一起，本轮只取一次。
+          // sessionId 走索引拿 workspaceId；拿不到就让 configForScope 回退到 cwd。
+          const sessionId = sessionIdOfAgent(agent)
+          const workspaceId = sessionId === null ? null : (sessionWorkspaceIndex.get(sessionId) || null)
+          const prompt = compilePrompt(configForScope(snap.value, cwdOfAgent(agent), workspaceId).config)
+          // 记下「这一轮实际用的是哪一版」：排查「改了却没生效」时，第一个要回答的就是它。
+          // 只写不读，不影响任何行为（deliveryState 由状态端点序列化给设置页）。
+          deliveryState.lastAssembledRevision = snap.revision
+          deliveryState.lastAssembledScope = workspaceId === null ? 'cwd' : 'workspace'
+          return prompt
         }
       })
 
@@ -2768,9 +3155,11 @@ export async function apply(ctx) {
   registerPersonaRoutes(ctx)
   registerHistoryRoutes(ctx)
   registerBindingRoutes(ctx)
+  registerWorkspaceRoutes(ctx)
   registerCommands(ctx)
   registerSystemPrompt(ctx)
   registerTools(ctx)
+  registerWorkspaceIndex(ctx)
 }
 
 export { name }
