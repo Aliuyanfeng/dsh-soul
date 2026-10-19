@@ -1866,17 +1866,26 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     assert.ok(text.includes('幽默风趣'), `应显示当前生效人设，实际「${text}」`)
     assert.ok(text.includes(zh['session.source.session']), '来源应标明是「本会话临时覆盖」')
     assert.equal(findAllByClass(tree, 'soul-session-badge').length, 1, '有覆盖时应显示「有覆盖」标记')
-    // 胶囊：每个预设一个 + 一个「恢复上层设置」
-    const chips = findAllByClass(tree, 'soul-session-chip')
-    assert.ok(chips.length >= 3, `应有预设胶囊与清除按钮，实际 ${chips.length}`)
+    // 卡牌：每个预设一张（与设置页同一套卡牌语言），外加一个「恢复上层设置」按钮。
+    // 0.9.0-d 改版前这里是胶囊（.soul-session-chip）；改成卡牌后断言对象随之更换。
+    const cards = findAllByClass(tree, 'soul-session-card')
+    assert.equal(cards.length, 2, `应为每个预设渲染一张卡，实际 ${cards.length}`)
+    // 卡面必须复用设置页那套元素：插画 + 压图标题 + 效果栏
+    assert.equal(findAllByClass(cards[0], 'soul-persona-art').length, 1, '卡面应有插画区（与设置页同款）')
+    assert.equal(findAllByClass(cards[0], 'soul-persona-art-title').length, 1, '卡面应有压图标题')
+    assert.equal(findAllByClass(cards[0], 'soul-persona-eff').length, 1, '卡面应有「这个预设会怎么回答」的效果栏')
+    // 生效中的那张卡要标出来，否则用户看不出哪个在用
+    const effectiveCards = cards.filter((c) => c.props['data-effective'] === 'true')
+    assert.equal(effectiveCards.length, 1, `应恰好一张卡标为生效中，实际 ${effectiveCards.length}`)
+    assert.ok(textOf(effectiveCards[0]).includes('幽默风趣'), '生效中的应是当前覆盖的那个预设')
     assert.equal(
-      chips.filter((c) => textOf(c) === zh['session.clear']).length,
+      findAllByClass(tree, 'soul-session-chip').filter((c) => textOf(c) === zh['session.clear']).length,
       1,
       '有覆盖时必须给出「恢复上层设置」'
     )
   })
 
-  await check('C37 会话「人设」tab：点胶囊即改、清除即恢复，都不经保存按钮', async () => {
+  await check('C37 会话「人设」tab：点卡面按钮即改、清除即恢复，都不经保存按钮', async () => {
     const world = await boot()
     const zh = world.dicts.zh
     const posts = []
@@ -1933,10 +1942,16 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     }
 
     let tree = await renderTab()
-    // ① 点「幽默风趣」→ 只提交该预设**声明过**的字段（部分覆盖）
-    const chip = findAllByClass(tree, 'soul-session-chip').find((c) => textOf(c) === '幽默风趣')
-    assert.ok(chip, '应有点「幽默风趣」的胶囊')
-    await chip.props.onClick()
+    // ① 点某张卡上的「用这个」→ 只提交该预设**声明过**的字段（部分覆盖）
+    //    0.9.0-d 改版后卡面上是按钮而不是整张胶囊，所以先按名字找到卡，再点卡上的按钮。
+    const cardFor = (n) => findAllByClass(tree, 'soul-session-card').find((c) => textOf(c).includes(n))
+    const humorousCard = cardFor('幽默风趣')
+    assert.ok(humorousCard, '应有「幽默风趣」的卡牌')
+    const useBtn = findAllByClass(humorousCard, 'soul-persona-action')[0]
+    assert.ok(useBtn, '卡面上应有操作按钮')
+    // 未生效的卡上按钮文案是「用这个」
+    assert.equal(textOf(useBtn), zh['session.useCard'], '未生效的卡应显示「用这个」')
+    await useBtn.props.onClick()
     tree = await renderTab()
     assert.equal(posts.length, 1, `点一次应只发一次请求，实际 ${posts.length}`)
     assert.deepEqual(posts[0], {
@@ -1955,6 +1970,14 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
       )
     }
     assert.equal(findAllByClass(tree, 'soul-session-badge').length, 1, '改完应出现「有覆盖」标记')
+    // 生效中的卡：按钮变「使用中」且带 active 样式（与设置页同一套语义）
+    {
+      const effective = findAllByClass(tree, 'soul-session-card').filter((c) => c.props['data-effective'] === 'true')
+      assert.equal(effective.length, 1, `应恰好一张卡标为生效中，实际 ${effective.length}`)
+      const activeBtn = findAllByClass(effective[0], 'soul-persona-action')[0]
+      assert.equal(textOf(activeBtn), zh['session.chipInUse'], '生效中的卡按钮应显示「使用中」')
+      assert.ok(String(activeBtn.props.className).includes('soul-persona-active'), '生效中的卡按钮应带 active 样式')
+    }
 
     // ② 点「恢复上层设置」→ clear:true，且覆盖消失
     const clearChip = findAllByClass(tree, 'soul-session-chip').find((c) => textOf(c) === zh['session.clear'])

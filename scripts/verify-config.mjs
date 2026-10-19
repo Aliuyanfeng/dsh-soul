@@ -1672,16 +1672,30 @@ check('客户端的动效尊重 prefers-reduced-motion（光轨 / 圆点）', ()
   )
 })
 
-check('客户端预设行摘要不读「关于你」', () => {
+check('客户端预设行摘要不读「关于你」，且三处共用同一份实现', () => {
   // 行摘要显示「这个预设会改变什么」。身份字段已不属于预设，摘要再显示昵称就会
   // 与「应用它不会动昵称」自相矛盾。
-  const block = clientCode.match(/const personaRowMeta = \(entry\) => \{([\s\S]*?)return parts\.join/)
-  assert.ok(block, '缺少 personaRowMeta')
+  //
+  // 0.9.0-d 起这个函数提到模块级（personaRowMetaOf，多一个 t 参数），因为会话 tab
+  // 与工作区卡片也要用同一份措辞。判据随之改到新名字 —— 守的语义一字未变。
+  const block = clientCode.match(/const personaRowMetaOf = \(entry, t\) => \{([\s\S]*?)return parts\.join/)
+  assert.ok(block, '缺少 personaRowMetaOf（模块级版本）')
   for (const key of PROFILE_FIELDS) {
     assert.equal(block[1].includes(`row.${key}`), false, `预设行摘要不应读取 ${key}`)
   }
   // 反向防空过：摘要仍要读人设维度，否则「不读身份字段」会因为整个函数被掏空而假通过
   assert.ok(/row\.style/.test(block[1]), '预设行摘要仍应读 style')
+  // 三处必须共用同一份实现：设置页 / 会话 tab / 工作区卡片各自写一份的话，
+  // 同一个预设会在三处显示三种摘要（本项目已因手工同步的清单踩过两次）。
+  assert.equal(
+    (clientCode.match(/const personaRowMetaOf = /g) || []).length,
+    1,
+    'personaRowMetaOf 只能有一份实现'
+  )
+  assert.ok(
+    /const personaRowMeta = \(entry\) => personaRowMetaOf\(entry, t\)/.test(clientCode),
+    '设置页应薄包装到模块级实现，不得保留第二份'
+  )
 })
 
 check('服务端五条写路径都拒绝内置名，读取路径都走合并库', () => {

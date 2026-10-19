@@ -1136,6 +1136,22 @@ window.__ModuleLoader__.load({
       '.soul-session-chip-active{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}',
       // 「恢复上层设置」用次要色：它可逆，不是破坏性动作
       '.soul-session-chip-clear{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
+      '.soul-session-clear-row{display:flex;margin-top:10px}',
+      // —— 会话「人设」的卡牌网格（0.9.0-d 改版）——
+      //
+      // 与设置页的人设卡牌**共用同一套视觉语言**：同样的圆角、描边、浅底、插画 +
+      // 压图标题 + 效果栏。改成网格而不是叠层轮播，是因为会话面板比设置页矮 ——
+      // 一次铺开比翻页更好扫；也从 260px 固定宽收窄到自适应列宽，窄容器下自动换行。
+      '.soul-session-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:2px}',
+      // 单张卡：结构抄 .soul-persona-card 的正面（去掉绝对定位与 3D，因为它不再叠层）
+      '.soul-session-card{display:flex;flex-direction:column;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px}',
+      // 生效中的那张：主色描边 + 外发光，与设置页「使用中」同一套强调方式
+      '.soul-session-card[data-effective="true"]{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08))}',
+      // 卡面里的插画区高度：网格卡比设置页小，1:1 会过高，压到 3:2
+      '.soul-session-card .soul-persona-art{aspect-ratio:3/2}',
+      // 卡面按钮：与设置页 .soul-persona-action 同规格（36px 实心主色）
+      '.soul-session-card .soul-persona-body{padding:8px 10px 10px;gap:6px}',
+      '.soul-session-card .soul-persona-action{width:100%;height:30px;font-size:12px}',
       // 覆盖里的字段名：等宽，便于与配置键对上
       '.soul-session-fields{display:flex;flex-wrap:wrap;gap:6px}',
       '.soul-session-field{padding:1px 6px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:18px}',
@@ -1462,6 +1478,9 @@ window.__ModuleLoader__.load({
       'session.applyFailed': '设置失败：{reason}',
       'session.noOverrides': '没有临时覆盖。',
       'session.badge': '有覆盖',
+      // 卡面按钮：与设置页「使用 / 使用中」同一套语义，只是措辞更贴会话语境
+      'session.useCard': '用这个',
+      'session.chipInUse': '使用中',
       // —— 工作区人设（详情页，0.9.0-e）——
       'workspaces.title': '工作区人设',
       'workspaces.count': '{bound} / {total} 已绑定',
@@ -1777,6 +1796,8 @@ window.__ModuleLoader__.load({
       'session.applyFailed': 'Could not apply: {reason}',
       'session.noOverrides': 'No temporary override.',
       'session.badge': 'overridden',
+      'session.useCard': 'Use this',
+      'session.chipInUse': 'In use',
       'workspaces.title': 'Workspace personas',
       'workspaces.count': '{bound} / {total} bound',
       'workspaces.hint': 'A workspace persona applies only to sessions opened in that workspace; unbound workspaces fall back to the global config.',
@@ -2627,6 +2648,60 @@ window.__ModuleLoader__.load({
         ? view.activePersona
         : t('session.noPersona')
 
+      // —— 卡牌网格 ——
+      //
+      // 与设置页的「人设预设」用**同一套卡牌语言**（同样的圆角/描边/插画/压图标题），
+      // 理由不是"顺手复用"：用户在设置页学会「一张卡 = 一个人设，点卡面上的按钮就用它」，
+      // 到了会话里面对同一个概念（人设），切换成本最低的方式就是长成一样。
+      //
+      // 与设置页卡牌的**有意差异**（不是遗漏）：
+      //   · 不做 3D 翻面 —— 会话里的卡是"选一个"，不是"读一个"，翻面会掩盖选择成本；
+      //   · 不做叠层轮播 —— 会话面板比设置页矮，网格一次铺开比翻页更好扫；
+      //   · 卡面直接给「用这个」动作 —— 会话覆盖是一次性动作，不该再点进详情。
+      const cardFor = (name) => {
+        const entry = state.personas ? state.personas[name] : null
+        const builtin = !!(entry && entry.builtin)
+        // ★ 标出当前**实际生效**的那个：覆盖生效时按覆盖算，否则按上层解析结果算
+        const isEffective = hasOverride ? activePersona === name : false
+        return e('div', {
+          key: name,
+          className: 'soul-session-card',
+          'data-effective': isEffective ? 'true' : 'false'
+        },
+          e('div', { className: 'soul-persona-art' },
+            e('img', {
+              className: 'soul-persona-art-img',
+              src: new URL(`/api/soul/persona-art/${encodeURIComponent(name)}`, hostBase()).href,
+              alt: '',
+              loading: 'lazy',
+              decoding: 'async',
+              draggable: 'false',
+              onError: (ev) => { ev.target.style.display = 'none' }
+            }),
+            e('div', { className: 'soul-persona-art-veil', 'aria-hidden': true }),
+            builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
+            isEffective && e('span', { className: 'soul-persona-card-pos' }, '★'),
+            e('div', { className: 'soul-persona-art-title' },
+              e('span', { className: 'soul-persona-name' },
+                e('span', { className: 'soul-persona-label' }, name)
+              ),
+              e('div', { className: 'soul-persona-meta' }, personaRowMetaOf(entry, t))
+            )
+          ),
+          e('div', { className: 'soul-persona-body' },
+            e('div', { className: 'soul-persona-eff' }, personaEffectTextOf(entry, t)),
+            e('button', {
+              type: 'button',
+              className: isEffective
+                ? 'soul-persona-action soul-persona-active'
+                : 'soul-persona-action',
+              disabled: busy,
+              onClick: () => { void apply(name) }
+            }, isEffective ? t('session.chipInUse') : t('session.useCard'))
+          )
+        )
+      }
+
       return e('div', { className: 'soul-session-persona' },
         e('div', { className: 'soul-session-head' },
           e('h4', { className: 'soul-session-title' }, t('session.title')),
@@ -2643,20 +2718,14 @@ window.__ModuleLoader__.load({
           ? e('p', { className: 'soul-error-notice', role: 'alert' }, t('session.applyFailed', { reason: error }))
           : e('p', { className: 'soul-saved-notice', role: 'status', 'aria-live': 'polite' }, notice)),
 
-        // 临时覆盖：一排人设胶囊 + 一个「恢复上层设置」
+        // 临时覆盖：卡牌网格 + 「恢复上层设置」
         e('div', { className: 'soul-field' },
           e('div', { className: 'soul-field-label' }, t('session.overrideTitle')),
-          e('div', { className: 'soul-session-chips' },
-            ...personaNames.map((name) => e('button', {
-              key: name,
-              type: 'button',
-              className: hasOverride && activePersona === name
-                ? 'soul-session-chip soul-session-chip-active'
-                : 'soul-session-chip',
-              disabled: busy,
-              onClick: () => { void apply(name) }
-            }, name)),
-            hasOverride && e('button', {
+          personaNames.length === 0
+            ? e('div', { className: 'soul-status' }, t('session.loading'))
+            : e('div', { className: 'soul-session-grid' }, ...personaNames.map(cardFor)),
+          hasOverride && e('div', { className: 'soul-session-clear-row' },
+            e('button', {
               type: 'button',
               className: 'soul-session-chip soul-session-chip-clear',
               disabled: busy,
@@ -2685,6 +2754,40 @@ window.__ModuleLoader__.load({
     // SESSION_OVERRIDE_FIELDS 逐项一致）。客户端这份只用于「从预设里挑字段」，
     // 真正的校验在服务端 —— 客户端过滤只是少发几个必然被丢弃的键。
     const SESSION_OVERRIDE_KEYS = ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions']
+
+    // -------------------------------------------------------------------------
+    // 卡牌文案（模块级）—— 设置页、会话 tab、工作区卡片共用同一套措辞
+    // -------------------------------------------------------------------------
+    //
+    // 为什么必须共用而不是各写一份：同一个预设在设置页显示「专业严谨 · 多列表」、
+    // 在会话里显示「专业严谨」，用户会以为它们是两个东西。语义一致只能靠同一份实现，
+    // 靠"记得同步"是不行的（这个项目已经因为手工同步的清单踩过两次）。
+    //
+    // 依赖注入的 `t`：渲染器按槽位 locale 注入翻译函数，模块级函数拿不到闭包里的 t。
+
+    // 预设摘要：风格 + 所有「偏离默认值」的维度。
+    const personaRowMetaOf = (entry, t) => {
+      const row = entry || {}
+      const parts = []
+      if (STYLE_VALUES.includes(row.style)) parts.push(t(`style.${row.style}`))
+      else if (row.style) parts.push(row.style)
+      for (const [field, allowed] of Object.entries(META_FIELD_VALUES)) {
+        const value = row[field]
+        if (!value || value === META_FIELD_DEFAULTS[field]) continue
+        if (!allowed.includes(value)) continue
+        parts.push(t(`meta.${field}.${value}`))
+      }
+      return parts.join(' · ')
+    }
+
+    // 卡面效果栏：优先 customInstructions（人格差异的主要载体），没有则退回摘要。
+    // 截断到第一句或 60 字：卡面空间有限，CSS 侧还有 3 行 line-clamp 兜底。
+    const personaEffectTextOf = (entry, t) => {
+      const raw = typeof (entry || {}).customInstructions === 'string' ? entry.customInstructions.trim() : ''
+      if (raw === '') return personaRowMetaOf(entry, t)
+      const firstSentence = raw.split(/[。；;\n]/)[0] || raw
+      return firstSentence.length > 60 ? `${firstSentence.slice(0, 60)}…` : firstSentence
+    }
 
     // -------------------------------------------------------------------------
     // 工作区人设（0.9.0-e）—— 注册到宿主的 `plugins.detail.section` 槽位
@@ -3854,33 +3957,12 @@ window.__ModuleLoader__.load({
       // 预设只描述 Agent 的人格，不含「关于你」（昵称 / 职业 / 介绍）—— 那是使用者
       // 的身份信息，不随预设切换。所以摘要里不再出现昵称，剩下的恰好也是比较两个
       // 预设时最需要看到的信息。
-      const personaRowMeta = (entry) => {
-        const row = entry || {}
-        const parts = []
-        if (STYLE_VALUES.includes(row.style)) parts.push(t(`style.${row.style}`))
-        else if (row.style) parts.push(row.style)
-        for (const [field, allowed] of Object.entries(META_FIELD_VALUES)) {
-          const value = row[field]
-          if (!value || value === META_FIELD_DEFAULTS[field]) continue
-          if (!allowed.includes(value)) continue
-          parts.push(t(`meta.${field}.${value}`))
-        }
-        return parts.join(' · ')
-      }
-
-      // 卡牌效果栏文本：优先用预设的 customInstructions（它是人格差异的主要载体），
-      // 没有则退回维度摘要。为什么取 customInstructions 而不是摘要：摘要只说
-      // 「专业严谨 · 默认」这类档位，而卡牌需要一句话说清「这个预设会怎么回答」。
       //
-      // 截断到第一句或 60 字：卡面空间有限，CSS 侧还有 3 行 line-clamp 兜底。
-      const personaEffectText = (entry) => {
-        const raw = typeof (entry || {}).customInstructions === 'string' ? entry.customInstructions.trim() : ''
-        if (raw === '') return personaRowMeta(entry)
-        // 按中文句号/分号/换行切第一句；无标点时整段交给 CSS 截断
-        const firstSentence = raw.split(/[。；;\n]/)[0] || raw
-        const text = firstSentence.length > 60 ? `${firstSentence.slice(0, 60)}…` : firstSentence
-        return text
-      }
+      // 0.9.0 起这两个函数提到**模块级**（personaRowMetaOf / personaEffectTextOf）：
+      // 会话「人设」tab 与工作区卡片也要用同一种措辞 —— 同一个预设在两处显示不同的
+      // 摘要，用户会以为它们不是同一个东西。这里保留同名薄包装，避免改动大量调用点。
+      const personaRowMeta = (entry) => personaRowMetaOf(entry, t)
+      const personaEffectText = (entry) => personaEffectTextOf(entry, t)
 
       return e('div', { className: 'soul-section' },
         e('div', { className: 'soul-title-row' },
