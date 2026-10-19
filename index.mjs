@@ -67,6 +67,7 @@ import {
 } from './lib/session-scope.mjs'
 import {
   MAX_WORKSPACE_SCOPES,
+  WORKSPACE_PERSONA_REF,
   WORKSPACE_SCOPE_VERSION,
   mergeWorkspaceOverride,
   resolveWorkspaceOverride,
@@ -2238,15 +2239,21 @@ function registerWorkspaceRoutes(ctx) {
           const override = resolveWorkspaceOverride(id, scopes)
           // 失效引用：覆盖指向的人设已不存在。**如实标出但不自动删除** ——
           // 用户可能只是临时改名，删掉就再也找不回来了（与绑定表同一条约定）。
-          const invalidPersona = override && typeof override.__persona === 'string'
-            ? !(override.__persona in personaNames)
-            : false
+          // 引用字段说明「当初绑的是谁」：预设被改名/删除后，覆盖的字段值仍在生效，
+          // 但界面必须能说出这条覆盖已经指向空气 —— 否则用户看到一堆陌生字段无从判断。
+          const refName = override && typeof override[WORKSPACE_PERSONA_REF] === 'string'
+            ? override[WORKSPACE_PERSONA_REF]
+            : null
+          const invalidPersona = refName !== null && !(refName in personaNames)
           workspaces.push({
             workspaceId: id,
             title: typeof workspace.title === 'string' ? workspace.title : '',
             path: typeof workspace.path === 'string' ? workspace.path : '',
             sessionCount: Array.isArray(workspace.sessionIds) ? workspace.sessionIds.length : 0,
             bound: override !== null,
+            // 绑的是哪个预设：界面要显示它，而不是只说"已绑定"。
+            // 失效时仍原样返回 —— 用户需要看到"它原本指向谁"才能判断怎么处理。
+            persona: refName,
             invalidPersona
           })
         }

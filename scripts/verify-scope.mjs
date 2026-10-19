@@ -18,6 +18,7 @@ import {
   MAX_WORKSPACE_ID_LENGTH,
   MAX_WORKSPACE_SCOPES,
   WORKSPACE_OVERRIDE_FIELDS,
+  WORKSPACE_PERSONA_REF,
   WORKSPACE_SCOPE_VERSION,
   isEmptyOverride,
   isWorkspaceKey,
@@ -30,7 +31,7 @@ import {
   validateWorkspaceBinding
 } from '../lib/workspace-scope.mjs'
 
-const EXPECTED_ASSERTIONS = 21
+const EXPECTED_ASSERTIONS = 22
 
 let passed = 0
 function check(name, fn) {
@@ -258,13 +259,38 @@ check('overrideFromPersona 对不存在 / 空的预设返回 null', () => {
 
 // ==================== 绑定请求校验 ====================
 
-check('validateWorkspaceBinding：正常请求给出可用覆盖', () => {
+check('validateWorkspaceBinding：正常请求给出可用覆盖，并记下绑定的是谁', () => {
   const personas = { 极简: { style: 'efficient' } }
   const verdict = validateWorkspaceBinding({ workspaceId: 'ws_a1', persona: '极简' }, personas)
   assert.equal(verdict.ok, true)
   assert.equal(verdict.workspaceId, 'ws_a1')
   assert.equal(verdict.persona, '极简')
-  assert.deepEqual(verdict.override, { style: 'efficient' })
+  // 覆盖里必须带引用字段：预设日后被改名/删除时，界面才能说出「它原本指向谁」，
+  // 而不是只剩一堆说不出出处的字段值。
+  assert.deepEqual(verdict.override, { style: 'efficient', [WORKSPACE_PERSONA_REF]: '极简' })
+  // 引用字段不参与合并（它不是可覆盖字段）
+  const merged = mergeWorkspaceOverride({ enabled: true, style: 'professional' }, verdict.override)
+  assert.equal(merged.style, 'efficient')
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(merged, WORKSPACE_PERSONA_REF),
+    false,
+    '引用字段绝不能进配置 —— 它是元数据，不是人设字段'
+  )
+})
+
+check('引用字段：只有它时算空覆盖，且 sanitize 保留它但不算 dropped', () => {
+  // 预设被删、字段全失效后可能只剩引用字段。它不该挡住目录回退层。
+  assert.equal(isEmptyOverride({ [WORKSPACE_PERSONA_REF]: '已删除的预设' }), true)
+  assert.equal(isEmptyOverride({ [WORKSPACE_PERSONA_REF]: 'x', style: 'casual' }), false)
+  const { override, dropped } = sanitizeWorkspaceOverride({
+    style: 'casual',
+    [WORKSPACE_PERSONA_REF]: '极简'
+  })
+  assert.equal(override[WORKSPACE_PERSONA_REF], '极简')
+  assert.deepEqual(dropped, [], '引用字段不是「被丢弃的字段」')
+  // 脏的引用字段被忽略（不留半条）
+  assert.equal(sanitizeWorkspaceOverride({ style: 'casual', [WORKSPACE_PERSONA_REF]: 42 }).override[WORKSPACE_PERSONA_REF], undefined)
+  assert.equal(sanitizeWorkspaceOverride({ style: 'casual', [WORKSPACE_PERSONA_REF]: '  ' }).override[WORKSPACE_PERSONA_REF], undefined)
 })
 
 check('validateWorkspaceBinding：拒绝路径当键、空人设、不存在的人设', () => {

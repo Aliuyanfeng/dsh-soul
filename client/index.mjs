@@ -715,6 +715,22 @@ window.__ModuleLoader__.load({
         return await this.postJSON('/api/soul/session-scope', { sessionId, clear: true })
       }
 
+      // —— 工作区人设（0.9.0-e）——
+      //
+      // 与绑定、会话覆盖都不同：工作区列表是**宿主**的，插件只能列与改，
+      // 不能增删（那是侧边栏的职责）。所以这里只有读 + 绑定/解绑。
+      async fetchWorkspaces() {
+        return await this.postJSON('/api/soul/workspaces', null, { method: 'GET' })
+      }
+
+      async saveWorkspacePersona(workspaceId, persona) {
+        return await this.postJSON('/api/soul/workspaces', { workspaceId, persona })
+      }
+
+      async removeWorkspacePersona(workspaceId) {
+        return await this.postJSON('/api/soul/workspaces/delete', { workspaceId })
+      }
+
       // 统一请求：body 为 null 时不携带请求体（GET 用）
       async postJSON(path, body, overrides = {}) {
         const url = new URL(path, hostBase())
@@ -1111,6 +1127,30 @@ window.__ModuleLoader__.load({
       // 覆盖里的字段名：等宽，便于与配置键对上
       '.soul-session-fields{display:flex;flex-wrap:wrap;gap:6px}',
       '.soul-session-field{padding:1px 6px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:18px}',
+      // —— 工作区人设平铺卡片（0.9.0-e）——
+      // 竖排卡片而非下拉：工作区通常 3–10 个，每张要同时表达「名字 + 路径 + 绑定态」。
+      '.soul-ws-list{display:flex;flex-direction:column;gap:8px}',
+      '.soul-ws-card{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1)}',
+      // 已绑定：左侧一道主色竖条（与「命中当前目录」同一套视觉语义）
+      '.soul-ws-card-bound{box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}',
+      '.soul-ws-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}',
+      '.soul-ws-title{font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.soul-ws-path{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:18px}',
+      '.soul-ws-invalid{display:flex;flex-wrap:wrap;gap:6px;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px}',
+      '.soul-ws-actions{display:flex;align-items:center;gap:8px;flex:none}',
+      '.soul-ws-persona{color:var(--dsw-alias-brand-primary);font-size:12px;line-height:18px}',
+      '.soul-ws-unbound{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
+      '.soul-ws-action{box-sizing:border-box;display:inline-flex;align-items:center;height:26px;padding:0 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.soul-ws-action:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
+      '.soul-ws-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      '.soul-ws-action:disabled{opacity:.5;cursor:default}',
+      // 「绑定人设」是这一页的主操作：实心主色
+      '.soul-ws-action-primary{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}',
+      // 解绑 armed：危险色（与删除预设同一套）
+      '.soul-ws-action-armed{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}',
+      // 内联展开的人设胶囊：占满整行，与卡片内容左对齐
+      '.soul-ws-picker{flex-basis:100%;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:.5px solid var(--dsw-alias-settings-card-stroke)}',
+      '.soul-ws-picker-label{flex:none;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       // 保留条数（0.8.1 从设置页迁来）：一行「标签 + 下拉 + 提示」。
       // 下拉不撑满整行 —— 它是容量参数，不是表单主字段，铺满会显得比记录本身还重。
       '.soul-history-retention{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
@@ -1407,6 +1447,25 @@ window.__ModuleLoader__.load({
       'session.applyFailed': '设置失败：{reason}',
       'session.noOverrides': '没有临时覆盖。',
       'session.badge': '有覆盖',
+      // —— 工作区人设（详情页，0.9.0-e）——
+      'workspaces.title': '工作区人设',
+      'workspaces.count': '{bound} / {total} 已绑定',
+      'workspaces.hint': '工作区里的人设只作用于该工作区下的会话；未绑定的回落全局配置。',
+      'workspaces.unbound': '未绑定',
+      'workspaces.bind': '绑定人设',
+      'workspaces.rebind': '改绑',
+      'workspaces.unbind': '解除绑定',
+      'workspaces.unbindArmed': '确认解除？',
+      'workspaces.empty': '还没有工作区。在侧边栏「添加工作区」后回来这里配置人设。',
+      'workspaces.loading': '加载中...',
+      'workspaces.loadFailed': '无法读取工作区：{reason}',
+      'workspaces.serverProblem': '宿主服务不可用：{reason}',
+      'workspaces.invalid': '人设「{name}」已不存在',
+      'workspaces.invalidHint': '这条绑定不会生效；改绑或解除它。',
+      'workspaces.applied': '「{name}」已绑定到「{title}」。',
+      'workspaces.unbindDone': '已解除「{title}」的人设绑定。',
+      'workspaces.applyFailed': '设置失败：{reason}',
+      'workspaces.pickPersona': '选择人设',
       'group.tool': 'Agent 工具',
       'field.toolConfirm': '人设变更需确认',
       'hint.toolConfirm': '开启后，Agent 改人设会先在输入框处弹出审批面板（Enter 允许 / Esc 拒绝）。若会话审批通道不可用（策略为 never），则退化为待确认提议，需用 /soul confirm 处理 —— 此时建议关闭本开关，否则每次改动都要手输命令。',
@@ -1691,6 +1750,24 @@ window.__ModuleLoader__.load({
       'session.applyFailed': 'Could not apply: {reason}',
       'session.noOverrides': 'No temporary override.',
       'session.badge': 'overridden',
+      'workspaces.title': 'Workspace personas',
+      'workspaces.count': '{bound} / {total} bound',
+      'workspaces.hint': 'A workspace persona applies only to sessions opened in that workspace; unbound workspaces fall back to the global config.',
+      'workspaces.unbound': 'Not bound',
+      'workspaces.bind': 'Bind persona',
+      'workspaces.rebind': 'Change',
+      'workspaces.unbind': 'Unbind',
+      'workspaces.unbindArmed': 'Unbind?',
+      'workspaces.empty': 'No workspaces yet. Add one from the sidebar, then come back here to set its persona.',
+      'workspaces.loading': 'Loading...',
+      'workspaces.loadFailed': 'Could not read workspaces: {reason}',
+      'workspaces.serverProblem': 'Host service unavailable: {reason}',
+      'workspaces.invalid': 'Persona "{name}" no longer exists',
+      'workspaces.invalidHint': 'This binding will not take effect; rebind or remove it.',
+      'workspaces.applied': '"{name}" is now bound to "{title}".',
+      'workspaces.unbindDone': 'Unbound the persona from "{title}".',
+      'workspaces.applyFailed': 'Could not apply: {reason}',
+      'workspaces.pickPersona': 'Pick a persona',
       'group.tool': 'Agent tools',
       'field.toolConfirm': 'Require confirmation for persona changes',
       'hint.toolConfirm': 'When on, persona changes by the agent first raise an approval panel above the input box (Enter = allow, Esc = reject). If the session approval channel is unavailable (policy = never), it falls back to a pending proposal applied only via /soul confirm. Under full permissions the panel never appears, so turning this switch off is recommended.',
@@ -2570,6 +2647,206 @@ window.__ModuleLoader__.load({
     // SESSION_OVERRIDE_FIELDS 逐项一致）。客户端这份只用于「从预设里挑字段」，
     // 真正的校验在服务端 —— 客户端过滤只是少发几个必然被丢弃的键。
     const SESSION_OVERRIDE_KEYS = ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions']
+
+    // -------------------------------------------------------------------------
+    // 工作区人设（0.9.0-e）—— 注册到宿主的 `plugins.detail.section` 槽位
+    // -------------------------------------------------------------------------
+    //
+    // 为什么在插件详情页而不是设置页：设置页是**快捷调整**（风格/语言/开关），
+    // 而这里是「这个项目用什么人设」的结构性配置 —— 低频、需要空间（平铺卡片）、
+    // 而且与变更记录放在同一页更符合"这是我的插件怎么配"的心智模型。
+    //
+    // 为什么平铺而不是下拉：工作区通常 3–10 个，每个有 title 与"是否已绑定"两个
+    // 信息维度；下拉关闭时只能显示一项，用户必须展开才知道有哪些、哪些还没绑。
+    // **未绑定的排前面** —— 那正是用户来这里要处理的事。
+    function SoulWorkspaces(props) {
+      const { controller, useSoulController } = props
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const subject = props.subject || null
+      // 只服务自己的详情页（与变更记录同一判据）。
+      if (!subject || subject.kind !== 'bundle' || !subject.pkg || subject.pkg.name !== 'dsh-soul') return null
+
+      const state = useSoulController((state) => state)
+      const [view, setView] = React.useState(null)
+      const [error, setError] = React.useState(null)
+      const [notice, setNotice] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+      // 正在展开人设选择的工作区（null = 没有）
+      const [picking, setPicking] = React.useState(null)
+      // 待确认解绑的工作区（内联二次确认，与删除预设同一套）
+      const [pendingUnbind, setPendingUnbind] = React.useState(null)
+
+      const reload = async () => {
+        try {
+          const payload = await controller.fetchWorkspaces()
+          setView(payload)
+          setError(null)
+        } catch (err) {
+          // ⚠️ 失败时必须清空 view：否则界面继续渲染**上一次成功**的列表，
+          // 用户看到的是过期数据却以为是当前的（错误提示与旧卡片同屏，更混乱）。
+          setView(null)
+          setError(messageOf(err))
+        }
+      }
+
+      React.useEffect(() => {
+        void reload()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+
+      // 解绑的二次确认 5 秒后复位（同设置页的 armed 态）
+      React.useEffect(() => {
+        if (pendingUnbind === null) return undefined
+        const timer = setTimeout(() => setPendingUnbind(null), 5000)
+        return () => clearTimeout(timer)
+      }, [pendingUnbind])
+
+      const personaNames = state.personas
+        ? Object.keys(state.personas).sort((a, b) => {
+          const aBuiltin = state.personas[a] && state.personas[a].builtin ? 0 : 1
+          const bBuiltin = state.personas[b] && state.personas[b].builtin ? 0 : 1
+          return aBuiltin - bBuiltin
+        })
+        : []
+
+      const bind = async (workspace, persona) => {
+        if (busy) return
+        setBusy(true)
+        setError(null)
+        try {
+          const payload = await controller.saveWorkspacePersona(workspace.workspaceId, persona)
+          setView(payload)
+          setPicking(null)
+          setNotice(t('workspaces.applied', { name: persona, title: workspace.title || workspace.path }))
+        } catch (err) {
+          setError(messageOf(err))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const unbind = async (workspace) => {
+        if (pendingUnbind !== workspace.workspaceId) {
+          setPendingUnbind(workspace.workspaceId)
+          return
+        }
+        setPendingUnbind(null)
+        if (busy) return
+        setBusy(true)
+        setError(null)
+        try {
+          const payload = await controller.removeWorkspacePersona(workspace.workspaceId)
+          setView(payload)
+          setNotice(t('workspaces.unbindDone', { title: workspace.title || workspace.path }))
+        } catch (err) {
+          setError(messageOf(err))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      // 加载中 / 失败 / 空 三态必须分开（0.8.0 的 C14 就是被"加载中显示成空"抓到的）
+      const body = (() => {
+        if (error !== null && view === null) {
+          return e('div', { className: 'soul-error' }, t('workspaces.loadFailed', { reason: error }))
+        }
+        if (view === null) {
+          return e('div', { className: 'soul-status' }, t('workspaces.loading'))
+        }
+        if (view.indexProblem) {
+          // 宿主服务不可用：如实说明，不给一个"看起来是空的"列表
+          return e('div', { className: 'soul-error' }, t('workspaces.serverProblem', { reason: view.indexProblem }))
+        }
+        const items = Array.isArray(view.workspaces) ? view.workspaces : []
+        if (items.length === 0) {
+          return e('div', { className: 'soul-status' }, t('workspaces.empty'))
+        }
+
+        // 未绑定的排前面：那正是用户来这一页要处理的事
+        const sorted = items.slice().sort((a, b) => {
+          if (a.bound !== b.bound) return a.bound ? 1 : -1
+          return String(a.title || a.path).localeCompare(String(b.title || b.path))
+        })
+
+        return e('div', { className: 'soul-ws-list' }, ...sorted.map((ws) => {
+          const title = ws.title || ws.path
+          const armed = pendingUnbind === ws.workspaceId
+          const isPicking = picking === ws.workspaceId
+          return e('div', {
+            key: ws.workspaceId,
+            className: ws.bound ? 'soul-ws-card soul-ws-card-bound' : 'soul-ws-card',
+            'data-bound': ws.bound ? 'true' : 'false'
+          },
+            e('div', { className: 'soul-ws-main' },
+              e('div', { className: 'soul-ws-title' }, title),
+              e('code', { className: 'soul-ws-path', title: ws.path }, ws.path),
+              ws.invalidPersona && e('div', { className: 'soul-ws-invalid' },
+                e('span', null, t('workspaces.invalid', { name: ws.persona || '' })),
+                e('span', { className: 'soul-status' }, t('workspaces.invalidHint')))
+            ),
+            e('div', { className: 'soul-ws-actions' },
+              // 已绑定：显示当前人设名 + 改绑 / 解绑
+              ws.bound
+                ? e(Fragment, null,
+                  e('span', { className: 'soul-ws-persona' }, ws.persona || t('workspaces.bound')),
+                  e('button', {
+                    type: 'button',
+                    className: 'soul-ws-action',
+                    disabled: busy,
+                    onClick: () => setPicking(isPicking ? null : ws.workspaceId)
+                  }, t('workspaces.rebind')),
+                  e('button', {
+                    type: 'button',
+                    className: armed ? 'soul-ws-action soul-ws-action-armed' : 'soul-ws-action',
+                    disabled: busy,
+                    onClick: () => { void unbind(ws) }
+                  }, t(armed ? 'workspaces.unbindArmed' : 'workspaces.unbind'))
+                )
+                : e(Fragment, null,
+                  e('span', { className: 'soul-ws-unbound' }, t('workspaces.unbound')),
+                  e('button', {
+                    type: 'button',
+                    className: 'soul-ws-action soul-ws-action-primary',
+                    disabled: busy || personaNames.length === 0,
+                    onClick: () => setPicking(isPicking ? null : ws.workspaceId)
+                  }, t('workspaces.bind'))
+                )
+            ),
+            // 内联展开人设胶囊（不另开弹层）：一次点击完成绑定
+            isPicking && e('div', { className: 'soul-ws-picker' },
+              e('span', { className: 'soul-ws-picker-label' }, t('workspaces.pickPersona')),
+              e('div', { className: 'soul-session-chips' },
+                ...personaNames.map((name) => e('button', {
+                  key: name,
+                  type: 'button',
+                  className: 'soul-session-chip',
+                  disabled: busy,
+                  onClick: () => { void bind(ws, name) }
+                }, name))
+              )
+            )
+          )
+        }))
+      })()
+
+      const boundCount = Array.isArray(view && view.workspaces)
+        ? view.workspaces.filter((w) => w.bound).length
+        : 0
+      const total = Array.isArray(view && view.workspaces) ? view.workspaces.length : 0
+
+      return e('section', { className: 'soul-detail-history', 'data-soul-workspaces': 'true' },
+        e('div', { className: 'soul-detail-history-head' },
+          e('h4', { className: 'soul-detail-history-title' }, t('workspaces.title')),
+          e('span', { className: 'soul-detail-history-count' },
+            t('workspaces.count', { bound: String(boundCount), total: String(total) }))
+        ),
+        (notice || error) && (error
+          ? e('p', { className: 'soul-error-notice', role: 'alert' }, t('workspaces.applyFailed', { reason: error }))
+          : e('p', { className: 'soul-saved-notice', role: 'status', 'aria-live': 'polite' }, notice)),
+        e('div', { className: 'soul-note' }, t('workspaces.hint')),
+        body
+      )
+    }
 
     // 输入框工具栏快捷开关：复用全局 soulController，和设置页保持同一份状态。
     function SoulQuickToggle(props) {
@@ -4543,6 +4820,23 @@ window.__ModuleLoader__.load({
           sessionId: typeof sessionId === 'string' ? sessionId : null
         })
       }, SoulSessionPersona))
+
+      // —— 工作区人设（0.9.0-e）——
+      //
+      // 注册到插件详情页：与变更记录同一槽位，宿主为每个注册者渲染一个区块。
+      // 不与设置页放在一起的原因写在 SoulWorkspaces 头注释里（低频 + 需要空间）。
+      ctx.slots.inject('plugins.detail.section', () => ctx.slots.register({
+        name: 'plugins.detail.section',
+        id: 'soul-detail-workspaces',
+        order: 40, // 排在变更记录（50）之前：人设是"怎么配"，记录是"改过什么"
+        locale: NS,
+        inject: () => ({
+          hooks: {
+            soulController: controller.store
+          },
+          controller
+        })
+      }, SoulWorkspaces))
 
       // 初始配置的拉取已并入上面的全局轮询 —— 它的 refresh() 在注册时立即执行一次
       // （含 loadConfig + loadPersonas），这里再调一次就是同一次装配发两个相同请求。

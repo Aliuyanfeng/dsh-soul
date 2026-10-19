@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 32
+const EXPECTED_ASSERTIONS = 33
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -140,6 +140,13 @@ function createRuntime() {
     unmount() {
       for (const fn of cleanups.values()) if (typeof fn === 'function') fn()
       cleanups.clear()
+      // ⚠️ 必须**同时清掉 frames**：它是按渲染路径缓存的 hook 状态（useState 的当前值、
+      // 已跑过的 deps）。只跑 cleanup 而不清 frames，下一次 render 会复用旧的
+      // values/deps —— 于是「重新挂载」实际是「接着上次的状态继续」，effect 因为
+      // deps 未变而不再执行。判断力对照实测：不清 frames 时，换掉路由后重进页面
+      // 仍然显示上一次成功的数据，看起来像"组件没重新加载"。
+      frames.clear()
+      frameStack = []
       dirty = false
       queue = []
     },
@@ -1960,13 +1967,169 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
   })
 
 
-  // ==================== 工作区绑定分组 ====================
-  //
-  // 这块的 UI 用例（原 C29–C33）已随设置页分组一并删除：分组在 0.8.0 发布前被撤下，
-  // 而它们断言的是「点开分组之后」的交互，没有渲染入口就没有可断言的对象。
-  //
-  // **逻辑层没有失去看护**：路径规范化 / 前缀匹配 / 损坏与版本处理由 verify-bindings
-  // （47 项）守着；宿主侧 cwd 解析、三条绑定路由、写入即生效、解绑语义由
+  await check('C38 工作区人设：平铺卡片（未绑定排前）、内联选人设、解绑过二次确认', async () => {
+    const world = await boot()
+    const zh = world.dicts.zh
+    const posts = []
+    let view = {
+      ok: true,
+      indexProblem: null,
+      max: 200,
+      boundCount: 1,
+      workspaces: [
+        { workspaceId: 'ws_a', title: 'dsh-plugin', path: 'D:\\p\\dsh-plugin', sessionCount: 2, bound: true, invalidPersona: false },
+        { workspaceId: 'ws_b', title: 'dsh-soul', path: 'D:\\p\\dsh-soul', sessionCount: 1, bound: false, invalidPersona: false },
+        { workspaceId: 'ws_c', title: 'aaa-newest', path: 'D:\\p\\aaa', sessionCount: 0, bound: false, invalidPersona: false }
+      ]
+    }
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: { 苏格拉底式提问者: { style: 'professional', builtin: true }, 极简主义者: { style: 'efficient' } },
+      activeName: null
+    })
+    world.routes['/api/soul/workspaces'] = (call) => {
+      if (call.method === 'GET') return view
+      posts.push({ path: '/api/soul/workspaces', body: call.body })
+      view = {
+        ...view,
+        workspaces: view.workspaces.map((w) => (w.workspaceId === call.body.workspaceId ? { ...w, bound: true } : w))
+      }
+      return view
+    }
+    world.routes['/api/soul/workspaces/delete'] = (call) => {
+      posts.push({ path: '/api/soul/workspaces/delete', body: call.body })
+      view = {
+        ...view,
+        workspaces: view.workspaces.map((w) => (w.workspaceId === call.body.workspaceId ? { ...w, bound: false } : w))
+      }
+      return view
+    }
+    await world.controller.loadPersonas()
+
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'plugins.detail.section' && s.options.id === 'soul-detail-workspaces')
+    assert.ok(slot, '必须注册到 plugins.detail.section 槽位')
+
+    // ⚠️ `subject` 由**宿主**在渲染详情页时注入，不在注册时的 inject 里。
+    // 组件靠它判断"这个详情页是不是自己的"，所以测试必须自己补上 ——
+    // 漏补的话组件一律 return null，看起来像"组件坏了"（本用例初版就读到 0 张卡片）。
+    const OWN_SUBJECT = { kind: 'bundle', pkg: { name: 'dsh-soul' } }
+
+    const render = async () => {
+      const props = { ...slot.options.inject(), subject: OWN_SUBJECT }
+      const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
+      const t = (k, p) => {
+        const raw = zh[k] ?? k
+        return p ? raw.replace(/\{(\w+)\}/g, (m, name) => (p[name] === undefined ? m : String(p[name]))) : raw
+      }
+      // ⚠️ 顺序必须是「先渲染 → 再等 → 再渲染」：组件在**首次渲染**时才挂载、
+      // effect 才排上异步加载。先等再渲染的话，等的是"还没发出去的请求"，
+      // 于是永远停在加载态（本用例初版就是这么读到 0 张卡片的）。
+      await world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t } })
+      for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+      return world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t } })
+    }
+
+    // `reload` 的 effect 依赖是 `[]` —— 组件只在**挂载那一次**拉数据。
+    // 测试里换掉路由后再调 render() 并不会重跑 effect（依赖没变），
+    // 所以「换路由 → 重进页面」必须显式重建：先 unmount 再 render。
+    const remount = async () => {
+      world.runtime.unmount()
+      return await render()
+    }
+
+    // ① 只服务自己的详情页
+    let tree = await render()
+    const props0 = { ...slot.options.inject(), subject: OWN_SUBJECT }
+    // settle 返回的是渲染树节点（组件返回 null 时外层仍有一层），所以判据是**没有内容**，
+    // 而不是 strictEqual(null)。
+    const otherTree = await world.runtime.settle({
+      type: slot.component,
+      props: { ...props0, subject: { kind: 'bundle', pkg: { name: 'other-plugin' } }, useSoulController: (s) => s(world.controller.store.getSnapshot()), t: (k) => zh[k] ?? k }
+    })
+    assert.equal(textOf(otherTree || {}).trim(), '', '其他插件的详情页必须不渲染任何内容')
+    assert.equal(findAllByClass(otherTree || {}, 'soul-ws-card').length, 0, '其他插件的详情页不得出现工作区卡片')
+
+    // ② 平铺卡片，且**未绑定的排在前面**（那正是用户来这一页要处理的）
+    const cards = findAllByClass(tree, 'soul-ws-card')
+    assert.equal(cards.length, 3, `应渲染三张工作区卡片，实际 ${cards.length}`)
+    const titles = cards.map((c) => textOf(findAllByClass(c, 'soul-ws-title')[0]))
+    assert.deepEqual(titles, ['aaa-newest', 'dsh-soul', 'dsh-plugin'],
+      `未绑定的应排前面并按标题排序，实际 ${JSON.stringify(titles)}`)
+    assert.equal(cards[0].props['data-bound'], 'false')
+    assert.equal(cards[2].props['data-bound'], 'true')
+
+    // ②b 「加载中」「加载失败」「确实没有工作区」是三件不同的事。
+    //     这一组曾经在 0.8.0 的 C14 上被真实抓到过（懒加载分组把失败显示成"加载中"），
+    //     所以这里逐个验证三态各自的文案，而不是只测成功路径。
+    {
+      const saved = world.routes['/api/soul/workspaces']
+      // 失败：必须显示原因，不能停在「加载中」。
+      // 桩用 `ok:false` 而不是抛错 —— postJSON 只把 `payload.error` 翻进异常消息，
+      // 抛错会变成 "HTTP 500"，测不到"原因被展示"这件事。
+      world.routes['/api/soul/workspaces'] = () => ({ ok: false, error: 'boom' })
+      const failTree = await remount()
+      assert.equal(
+        textOf(failTree).includes(zh['workspaces.loading']),
+        false,
+        '读取失败时不得停在「加载中」—— 那与"确实没有工作区"长得一样'
+      )
+      assert.ok(textOf(failTree).includes('boom'), `失败时应把原因显示出来，实际「${textOf(failTree)}」`)
+
+      // 空列表：显示空态文案，而不是加载中
+      world.routes['/api/soul/workspaces'] = () => ({ ok: true, indexProblem: null, max: 200, boundCount: 0, workspaces: [] })
+      const emptyTree = await remount()
+      assert.ok(textOf(emptyTree).includes(zh['workspaces.empty']), '没有工作区时应显示空态文案')
+      assert.equal(textOf(emptyTree).includes(zh['workspaces.loading']), false, '空态不得显示成加载中')
+
+      // 服务不可用（indexProblem）：如实说明，且**不**显示空态
+      world.routes['/api/soul/workspaces'] = () => ({ ok: true, indexProblem: 'registry 不可用', max: 200, boundCount: 0, workspaces: [] })
+      const problemTree = await remount()
+      assert.ok(textOf(problemTree).includes('registry 不可用'), '服务不可用时应如实说明原因')
+      assert.equal(
+        textOf(problemTree).includes(zh['workspaces.empty']),
+        false,
+        '服务不可用时不得显示成"还没有工作区"—— 那会让用户以为自己的数据没了'
+      )
+      world.routes['/api/soul/workspaces'] = saved
+    }
+
+    // ③ 点「绑定人设」→ 内联展开人设胶囊（不弹层）
+    tree = await remount()
+    const freshCards = findAllByClass(tree, 'soul-ws-card')
+    const bindBtn = findAllByClass(freshCards[0], 'soul-ws-action').find((b) => textOf(b) === zh['workspaces.bind'])
+    assert.ok(bindBtn, '未绑定的卡片应有「绑定人设」')
+    await bindBtn.props.onClick()
+    tree = await render()
+    const chips = findAllByClass(tree, 'soul-session-chip')
+    assert.ok(chips.length >= 2, `应展开人设胶囊，实际 ${chips.length}`)
+    assert.equal(findAllByClass(tree, 'soul-ws-picker').length, 1, '只展开一个选择器')
+
+    // ④ 点一个人设 → 发一次绑定请求
+    const pick = chips.find((c) => textOf(c) === '极简主义者')
+    assert.ok(pick, '应有「极简主义者」胶囊')
+    await pick.props.onClick()
+    tree = await render()
+    assert.equal(posts.length, 1, `应发一次绑定请求，实际 ${posts.length}`)
+    assert.deepEqual(posts[0], { path: '/api/soul/workspaces', body: { workspaceId: 'ws_c', persona: '极简主义者' } })
+    assert.equal(findAllByClass(tree, 'soul-ws-picker').length, 0, '绑定后应收起选择器')
+
+    // ⑤ 解绑：第一次点只 arm，第二次才发请求
+    tree = await render()
+    const boundCard = findAllByClass(tree, 'soul-ws-card')[2]
+    const unbindBtn = () => findAllByClass(tree, 'soul-ws-action').find((b) => textOf(b) === zh['workspaces.unbind'])
+    assert.ok(unbindBtn(), '已绑定的卡片应有「解除绑定」')
+    await unbindBtn().props.onClick()
+    tree = await render()
+    assert.equal(posts.length, 1, '第一次点解绑不得发请求')
+    const armed = findAllByClass(tree, 'soul-ws-action-armed')
+    assert.equal(armed.length, 1, '第一次点后应进入 armed 态')
+    assert.equal(textOf(armed[0]), zh['workspaces.unbindArmed'])
+    await armed[0].props.onClick()
+    tree = await render()
+    assert.equal(posts.length, 2, '第二次点才发解绑请求')
+    assert.equal(posts[1].path, '/api/soul/workspaces/delete')
+  })
+
   // verify-e2e-prompt 的 W1–W15 与 R1–R13 守着。0.9.0 用工作区平铺卡片重写 UI 时，
   // 会在这里补新的行为用例。
 
