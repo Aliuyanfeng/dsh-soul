@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 30
+const EXPECTED_ASSERTIONS = 32
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -1791,6 +1791,172 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     // ② 折叠态整树文本里也不该出现它的说明文案
     assert.equal(textOf(tree).includes(zh['bindings.hint']), false,
       '设置页不得出现工作区绑定的说明文案')
+  })
+
+  await check('C36 会话「人设」tab：常驻注册、拿到 sessionId、按来源显示生效人设', async () => {
+    const world = await boot()
+    const zh = world.dicts.zh
+
+    // ① 槽位：注册到 conversation.view（列表槽位），且 inject 必须把 sessionId 传下去。
+    //    这是插件拿到「当前会话 id」的唯一正规入口 —— 设置页的 slotInject 是空串。
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.view')
+    assert.ok(slot, '必须注册到 conversation.view 槽位（否则会话里没有「人设」tab）')
+    assert.equal(slot.options.id, 'soul-persona')
+    assert.equal(typeof slot.options.label, 'function', 'label 必须是函数（语言切换时需重新解析）')
+    const injected = slot.options.inject('session-abc')
+    assert.equal(injected.sessionId, 'session-abc', 'inject 必须把 sessionId 原样传给组件')
+    assert.ok(injected.controller, 'inject 必须传 controller')
+    // 宿主不传 sessionId 时（空白会话）必须是 null，而不是 undefined —— 组件靠它判"能不能改"
+    assert.equal(slot.options.inject(undefined).sessionId, null)
+
+    // ② 渲染：有覆盖时显示「有覆盖」标记、当前人设与来源
+    world.routes['/api/soul/session-scope'] = (call) => {
+      if (call.method === 'GET') {
+        return {
+          ok: true,
+          sessionId: 'session-abc',
+          workspaceId: 'ws_1',
+          override: { style: 'humorous' },
+          source: 'session',
+          activePersona: '幽默风趣',
+          workspaceTitle: 'dsh-plugin'
+        }
+      }
+      return { ok: true, sessionId: 'session-abc', override: null, source: 'workspace', activePersona: '极简主义者', workspaceTitle: 'dsh-plugin' }
+    }
+
+    const renderTab = async () => {
+      const props = slot.options.inject('session-abc')
+      const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
+      const tree = await world.runtime.settle({
+        type: slot.component,
+        props: { ...props, useSoulController, t: (k, p) => {
+          const raw = zh[k] ?? k
+          return p ? raw.replace(/\{(\w+)\}/g, (m, name) => (p[name] === undefined ? m : String(p[name]))) : raw
+        } }
+      })
+      for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+      return world.runtime.settle({
+        type: slot.component,
+        props: { ...props, useSoulController, t: (k, p) => {
+          const raw = zh[k] ?? k
+          return p ? raw.replace(/\{(\w+)\}/g, (m, name) => (p[name] === undefined ? m : String(p[name]))) : raw
+        } }
+      })
+    }
+
+    // 先让预设加载完（组件靠 state.personas 生成胶囊）
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: { 苏格拉底式提问者: { style: 'professional', builtin: true }, 幽默风趣: { style: 'humorous' } },
+      activeName: null
+    })
+    await world.controller.loadPersonas()
+
+    const tree = await renderTab()
+    const text = textOf(tree)
+    assert.ok(text.includes(zh['session.title']), '应显示标题')
+    assert.ok(text.includes('幽默风趣'), `应显示当前生效人设，实际「${text}」`)
+    assert.ok(text.includes(zh['session.source.session']), '来源应标明是「本会话临时覆盖」')
+    assert.equal(findAllByClass(tree, 'soul-session-badge').length, 1, '有覆盖时应显示「有覆盖」标记')
+    // 胶囊：每个预设一个 + 一个「恢复上层设置」
+    const chips = findAllByClass(tree, 'soul-session-chip')
+    assert.ok(chips.length >= 3, `应有预设胶囊与清除按钮，实际 ${chips.length}`)
+    assert.equal(
+      chips.filter((c) => textOf(c) === zh['session.clear']).length,
+      1,
+      '有覆盖时必须给出「恢复上层设置」'
+    )
+  })
+
+  await check('C37 会话「人设」tab：点胶囊即改、清除即恢复，都不经保存按钮', async () => {
+    const world = await boot()
+    const zh = world.dicts.zh
+    const posts = []
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.view')
+    assert.ok(slot, '前置条件：conversation.view 已注册')
+
+    let current = {
+      ok: true,
+      sessionId: 'session-abc',
+      workspaceId: 'ws_1',
+      override: null,
+      source: 'workspace',
+      activePersona: '苏格拉底式提问者',
+      workspaceTitle: 'dsh-plugin'
+    }
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      // 桩必须带上**真实预设会有的元数据**（updatedAt / builtin）与「关于你」字段：
+      // 否则「客户端是否筛掉非覆盖字段」这件事根本测不出来 —— 判断力对照实测：
+      // 把筛选循环换成 Object.assign 时，不带元数据的桩让断言全部放行。
+      personas: {
+        苏格拉底式提问者: { style: 'professional', builtin: true, updatedAt: '2026-01-01T00:00:00Z' },
+        幽默风趣: {
+          style: 'humorous',
+          replyLength: 'concise',
+          nickname: '不该被提交的昵称',
+          occupation: '不该被提交的职业',
+          updatedAt: '2026-01-01T00:00:00Z'
+        }
+      },
+      activeName: null
+    })
+    world.routes['/api/soul/session-scope'] = (call) => {
+      if (call.method === 'GET') return current
+      posts.push(call.body)
+      if (call.body && call.body.clear === true) {
+        current = { ...current, override: null, source: 'workspace', activePersona: '苏格拉底式提问者' }
+      } else {
+        current = { ...current, override: call.body.overrides, source: 'session', activePersona: '幽默风趣' }
+      }
+      return current
+    }
+    await world.controller.loadPersonas()
+
+    const renderTab = async () => {
+      const props = slot.options.inject('session-abc')
+      const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
+      const t = (k, p) => {
+        const raw = zh[k] ?? k
+        return p ? raw.replace(/\{(\w+)\}/g, (m, name) => (p[name] === undefined ? m : String(p[name]))) : raw
+      }
+      for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+      return world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t } })
+    }
+
+    let tree = await renderTab()
+    // ① 点「幽默风趣」→ 只提交该预设**声明过**的字段（部分覆盖）
+    const chip = findAllByClass(tree, 'soul-session-chip').find((c) => textOf(c) === '幽默风趣')
+    assert.ok(chip, '应有点「幽默风趣」的胶囊')
+    await chip.props.onClick()
+    tree = await renderTab()
+    assert.equal(posts.length, 1, `点一次应只发一次请求，实际 ${posts.length}`)
+    assert.deepEqual(posts[0], {
+      sessionId: 'session-abc',
+      overrides: { style: 'humorous', replyLength: 'concise' }
+    }, `应只带预设声明过的字段，实际 ${JSON.stringify(posts[0])}`)
+    // ⚠️ 反向断言：预设条目的元数据与非人设字段**绝不能**被提交。
+    // 只断言"带了正确的两个字段"会漏掉「整份预设照发」的形态 —— 判断力对照实测：
+    // 把筛选循环换成 `Object.assign(overrides, entry)` 时，原版本全部放行。
+    const submitted = posts[0].overrides || {}
+    for (const forbidden of ['updatedAt', 'builtin', 'name', 'nickname', 'enabled']) {
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(submitted, forbidden),
+        false,
+        `提交的覆盖里不得含 ${forbidden} —— 服务端会丢弃它，客户端本来就不该发`
+      )
+    }
+    assert.equal(findAllByClass(tree, 'soul-session-badge').length, 1, '改完应出现「有覆盖」标记')
+
+    // ② 点「恢复上层设置」→ clear:true，且覆盖消失
+    const clearChip = findAllByClass(tree, 'soul-session-chip').find((c) => textOf(c) === zh['session.clear'])
+    assert.ok(clearChip, '应有「恢复上层设置」')
+    await clearChip.props.onClick()
+    tree = await renderTab()
+    assert.equal(posts.length, 2, '清除应再发一次请求')
+    assert.deepEqual(posts[1], { sessionId: 'session-abc', clear: true })
+    assert.equal(findAllByClass(tree, 'soul-session-badge').length, 0, '清除后不该再有「有覆盖」标记')
   })
 
 

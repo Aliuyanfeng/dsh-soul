@@ -697,6 +697,24 @@ window.__ModuleLoader__.load({
         return payload
       }
 
+      // —— 会话级覆盖（0.9.0-d）——
+      //
+      // 与绑定刻意分开：会话覆盖是**状态**（随会话生灭），绑定是**配置**。
+      // 因此这里不写 store 的全局字段，由调用组件自己持有结果 —— 一份覆盖只对
+      // 它所属的那个会话有意义，塞进全局 store 会让两个会话的 tab 互相串味。
+      async fetchSessionScope(sessionId) {
+        const query = `?sessionId=${encodeURIComponent(sessionId)}`
+        return await this.postJSON(`/api/soul/session-scope${query}`, null, { method: 'GET' })
+      }
+
+      async saveSessionScope(sessionId, overrides) {
+        return await this.postJSON('/api/soul/session-scope', { sessionId, overrides })
+      }
+
+      async clearSessionScope(sessionId) {
+        return await this.postJSON('/api/soul/session-scope', { sessionId, clear: true })
+      }
+
       // 统一请求：body 为 null 时不携带请求体（GET 用）
       async postJSON(path, body, overrides = {}) {
         const url = new URL(path, hostBase())
@@ -1068,6 +1086,31 @@ window.__ModuleLoader__.load({
       '.soul-detail-history-head{display:flex;align-items:baseline;gap:10px}',
       '.soul-detail-history-title{margin:0;font-size:14px;font-weight:500;line-height:20px;color:var(--dsw-alias-label-primary)}',
       '.soul-detail-history-count{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      // —— 会话「人设」tab（0.9.0-d）——
+      // 它是 conversation.view 的一种，宿主把它画在对话区里，所以要自带内边距与
+      // 最大宽度（不像设置页有外层容器）。参数抄宿主的 viewArea 排版：
+      // 内容左对齐、与对话区同宽的上限，宽屏下不铺满整行。
+      '.soul-session-persona{display:flex;flex-direction:column;gap:16px;max-width:720px;margin:0 auto;padding:20px 4px;color:var(--dsw-alias-label-primary)}',
+      '.soul-session-head{display:flex;align-items:baseline;gap:8px}',
+      '.soul-session-title{margin:0;font-size:14px;font-weight:500;line-height:20px}',
+      // 「有覆盖」标记：一眼看出这个会话与外面的设置不同，避免用户以为改的是全局
+      '.soul-session-badge{padding:0 6px;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent);color:var(--dsw-alias-brand-primary);font-size:11px;line-height:18px}',
+      // 当前生效卡：与设置页 .soul-bindings-current 同款观感（描边 + 浅底）
+      '.soul-session-current{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1)}',
+      '.soul-session-current-name{font-size:14px;line-height:22px;font-weight:500}',
+      '.soul-session-current-source{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      // 人设胶囊：可点即选，选中的用主色实心（与设置页的「使用中」同一套色彩语义）
+      '.soul-session-chips{display:flex;flex-wrap:wrap;gap:8px}',
+      '.soul-session-chip{box-sizing:border-box;display:inline-flex;align-items:center;height:28px;padding:0 12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.soul-session-chip:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
+      '.soul-session-chip:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      '.soul-session-chip:disabled{opacity:.5;cursor:default}',
+      '.soul-session-chip-active{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}',
+      // 「恢复上层设置」用次要色：它可逆，不是破坏性动作
+      '.soul-session-chip-clear{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
+      // 覆盖里的字段名：等宽，便于与配置键对上
+      '.soul-session-fields{display:flex;flex-wrap:wrap;gap:6px}',
+      '.soul-session-field{padding:1px 6px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:18px}',
       // 保留条数（0.8.1 从设置页迁来）：一行「标签 + 下拉 + 提示」。
       // 下拉不撑满整行 —— 它是容量参数，不是表单主字段，铺满会显得比记录本身还重。
       '.soul-history-retention{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
@@ -1340,6 +1383,30 @@ window.__ModuleLoader__.load({
       'bindings.maxPath': '路径上限 {max} 字符。',
       'bindings.fallback': '未绑定的目录使用全局配置',
       'bindings.change': '改',
+      // —— 会话级人设（0.9.0-d）——
+      // tab 标题：与设置页「个性化」、详情页「人设预设」同一套用词。
+      'session.tabLabel': '人设',
+      'session.title': '本会话的人设',
+      'session.current': '当前生效',
+      'session.workspace': '所属工作区',
+      'session.workspaceUnknown': '未归入任何工作区',
+      'session.source.global': '全局配置',
+      'session.source.workspace': '工作区「{name}」',
+      'session.source.directory': '目录绑定',
+      'session.source.session': '本会话临时覆盖',
+      'session.noPersona': '自定义（与任何预设都不匹配）',
+      'session.overrideTitle': '临时改用',
+      'session.overrideHint': '只影响这个会话；新会话仍按工作区或全局设置。',
+      'session.pickPersona': '换成预设…',
+      'session.customOverrides': '自定义字段',
+      'session.clear': '恢复上层设置',
+      'session.cleared': '已恢复上层设置。',
+      'session.applied': '本会话已改用「{name}」。',
+      'session.loading': '加载中...',
+      'session.loadFailed': '无法读取本会话的人设：{reason}',
+      'session.applyFailed': '设置失败：{reason}',
+      'session.noOverrides': '没有临时覆盖。',
+      'session.badge': '有覆盖',
       'group.tool': 'Agent 工具',
       'field.toolConfirm': '人设变更需确认',
       'hint.toolConfirm': '开启后，Agent 改人设会先在输入框处弹出审批面板（Enter 允许 / Esc 拒绝）。若会话审批通道不可用（策略为 never），则退化为待确认提议，需用 /soul confirm 处理 —— 此时建议关闭本开关，否则每次改动都要手输命令。',
@@ -1602,6 +1669,28 @@ window.__ModuleLoader__.load({
       'bindings.maxPath': 'Path limit {max} characters.',
       'bindings.fallback': 'Unbound directories use the global config',
       'bindings.change': 'Change',
+      'session.tabLabel': 'Persona',
+      'session.title': 'Persona for this session',
+      'session.current': 'In effect',
+      'session.workspace': 'Workspace',
+      'session.workspaceUnknown': 'Not in any workspace',
+      'session.source.global': 'Global config',
+      'session.source.workspace': 'Workspace "{name}"',
+      'session.source.directory': 'Directory binding',
+      'session.source.session': 'Temporary override for this session',
+      'session.noPersona': 'Custom (matches no preset)',
+      'session.overrideTitle': 'Temporarily use',
+      'session.overrideHint': 'Affects this session only; new sessions follow the workspace or global setting.',
+      'session.pickPersona': 'Switch to a preset…',
+      'session.customOverrides': 'Custom fields',
+      'session.clear': 'Restore inherited setting',
+      'session.cleared': 'Restored the inherited setting.',
+      'session.applied': 'This session now uses "{name}".',
+      'session.loading': 'Loading...',
+      'session.loadFailed': 'Could not read this session\'s persona: {reason}',
+      'session.applyFailed': 'Could not apply: {reason}',
+      'session.noOverrides': 'No temporary override.',
+      'session.badge': 'overridden',
       'group.tool': 'Agent tools',
       'field.toolConfirm': 'Require confirmation for persona changes',
       'hint.toolConfirm': 'When on, persona changes by the agent first raise an approval panel above the input box (Enter = allow, Esc = reject). If the session approval channel is unavailable (policy = never), it falls back to a pending proposal applied only via /soul confirm. Under full permissions the panel never appears, so turning this switch off is recommended.',
@@ -2292,6 +2381,195 @@ window.__ModuleLoader__.load({
               )))
       )
     }
+
+    // -------------------------------------------------------------------------
+    // 会话级人设（0.9.0-d）—— 注册到宿主的 `conversation.view` 列表槽位
+    // -------------------------------------------------------------------------
+    //
+    // 为什么在这里而不在设置页：会话覆盖**只对这个会话**有意义，而设置页的槽位
+    // scope 是 `root`，拿不到 sessionId（宿主契约：settings.section 不注入会话）。
+    // `conversation.view` 的 inject 回调是 `(sessionId) => props`，这是插件能拿到
+    // 当前会话 id 的唯一正规入口。
+    //
+    // 与设置页的第二个区别：这里的改动**即时生效**，没有"保存"按钮 ——
+    // 用户在对话中途想换个风格，不该先跑去设置页。
+    function SoulSessionPersona(props) {
+      const { controller, useSoulController } = props
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      // 宿主把当前会话 id 通过槽位 inject 传进来（conversation.view 的约定）。
+      const sessionId = typeof props.sessionId === 'string' && props.sessionId !== '' ? props.sessionId : null
+      // 全局 store：预设列表、配置都在这里（与设置页同一份）。
+      const state = useSoulController((state) => state)
+
+      // 本会话的解析结果**独立于全局 store**：一份覆盖只对它所属的会话有意义，
+      // 塞进全局 store 会让两个会话的 tab 互相串味。
+      const [view, setView] = React.useState(null)
+      const [error, setError] = React.useState(null)
+      const [notice, setNotice] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+
+      // 刻意**不用** React.useCallback：本项目的客户端垫片（scripts/verify-client.mjs）
+      // 只实现了 useState / useEffect / useRef —— 用 useCallback 会让整条客户端回归
+      // 在这个组件上一头撞死（历史上已经踩过一次）。这里的依赖只有 sessionId，
+      // 用普通函数 + 显式依赖数组完全等价，而且垫片也能跑。
+      const reload = async () => {
+        if (sessionId === null) {
+          setView(null)
+          setError(null)
+          return
+        }
+        try {
+          const payload = await controller.fetchSessionScope(sessionId)
+          setView(payload)
+          setError(null)
+        } catch (err) {
+          setError(messageOf(err))
+        }
+      }
+
+      // 切到别的会话时重新取：这个组件的 props.sessionId 会随宿主切换而变。
+      React.useEffect(() => {
+        setNotice(null)
+        void reload()
+        // reload 的闭包只捕获 sessionId（其余是稳定的 setter / controller）
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [sessionId])
+
+      // 预设名列表与设置页同一套排序（内置优先），避免两处顺序不一致。
+      const personaNames = state.personas
+        ? Object.keys(state.personas).sort((a, b) => {
+          const aBuiltin = state.personas[a] && state.personas[a].builtin ? 0 : 1
+          const bBuiltin = state.personas[b] && state.personas[b].builtin ? 0 : 1
+          return aBuiltin - bBuiltin
+        })
+        : []
+
+      const apply = async (personaName) => {
+        if (sessionId === null || busy) return
+        const entry = state.personas ? state.personas[personaName] : null
+        if (!entry) return
+        setBusy(true)
+        setError(null)
+        try {
+          // 只提交该预设**声明过**的字段（部分覆盖），与「应用预设」「工作区绑定」
+          // 走同一条语义 —— 否则三处效果不一致，用户没法用任一处验证另一处。
+          const overrides = {}
+          for (const key of SESSION_OVERRIDE_KEYS) {
+            if (key in entry) overrides[key] = entry[key]
+          }
+          const payload = await controller.saveSessionScope(sessionId, overrides)
+          setView(payload)
+          setNotice(t('session.applied', { name: personaName }))
+        } catch (err) {
+          setError(messageOf(err))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const clear = async () => {
+        if (sessionId === null || busy) return
+        setBusy(true)
+        setError(null)
+        try {
+          const payload = await controller.clearSessionScope(sessionId)
+          setView(payload)
+          setNotice(t('session.cleared'))
+        } catch (err) {
+          setError(messageOf(err))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      // 会话 id 缺席（宿主在诊断 / 空白会话时可能不传）：如实说明，不假装能改。
+      if (sessionId === null) {
+        return e('div', { className: 'soul-session-persona' },
+          e('div', { className: 'soul-status' }, t('session.workspaceUnknown'))
+        )
+      }
+
+      if (view === null) {
+        return e('div', { className: 'soul-session-persona' },
+          error
+            ? e('div', { className: 'soul-error' }, t('session.loadFailed', { reason: error }))
+            : e('div', { className: 'soul-status' }, t('session.loading'))
+        )
+      }
+
+      // 「来源」必须说清是**哪一层**决定的：否则用户看到一个人设名，却不知道该去哪儿改它。
+      const sourceText = (() => {
+        if (view.source === 'session') return t('session.source.session')
+        if (view.source === 'workspace') {
+          return t('session.source.workspace', { name: view.workspaceTitle || view.workspaceId || '' })
+        }
+        if (view.source === 'directory') return t('session.source.directory')
+        return t('session.source.global')
+      })()
+
+      const hasOverride = view.override !== null && view.override !== undefined
+      const activePersona = typeof view.activePersona === 'string' && view.activePersona !== ''
+        ? view.activePersona
+        : t('session.noPersona')
+
+      return e('div', { className: 'soul-session-persona' },
+        e('div', { className: 'soul-session-head' },
+          e('h4', { className: 'soul-session-title' }, t('session.title')),
+          hasOverride && e('span', { className: 'soul-session-badge' }, t('session.badge'))
+        ),
+
+        // 当前生效：先回答「现在是谁」，再给操作
+        e('div', { className: 'soul-session-current' },
+          e('div', { className: 'soul-session-current-name' }, activePersona),
+          e('div', { className: 'soul-session-current-source' }, sourceText)
+        ),
+
+        (notice || error) && (error
+          ? e('p', { className: 'soul-error-notice', role: 'alert' }, t('session.applyFailed', { reason: error }))
+          : e('p', { className: 'soul-saved-notice', role: 'status', 'aria-live': 'polite' }, notice)),
+
+        // 临时覆盖：一排人设胶囊 + 一个「恢复上层设置」
+        e('div', { className: 'soul-field' },
+          e('div', { className: 'soul-field-label' }, t('session.overrideTitle')),
+          e('div', { className: 'soul-session-chips' },
+            ...personaNames.map((name) => e('button', {
+              key: name,
+              type: 'button',
+              className: hasOverride && activePersona === name
+                ? 'soul-session-chip soul-session-chip-active'
+                : 'soul-session-chip',
+              disabled: busy,
+              onClick: () => { void apply(name) }
+            }, name)),
+            hasOverride && e('button', {
+              type: 'button',
+              className: 'soul-session-chip soul-session-chip-clear',
+              disabled: busy,
+              onClick: () => { void clear() }
+            }, t('session.clear'))
+          ),
+          e('div', { className: 'soul-status' }, t('session.overrideHint'))
+        ),
+
+        // 覆盖里的自定义字段（不是预设带来的）：让用户知道"现在生效的不是某个预设"
+        hasOverride && (() => {
+          const keys = Object.keys(view.override || {})
+          if (keys.length === 0) return null
+          return e('div', { className: 'soul-field' },
+            e('div', { className: 'soul-field-label' }, t('session.customOverrides')),
+            e('div', { className: 'soul-session-fields' }, ...keys.map((key) => e('code', {
+              key,
+              className: 'soul-session-field'
+            }, key)))
+          )
+        })()
+      )
+    }
+
+    // 会话覆盖可提交的字段白名单（与服务端 lib/session-scope.mjs 的
+    // SESSION_OVERRIDE_FIELDS 逐项一致）。客户端这份只用于「从预设里挑字段」，
+    // 真正的校验在服务端 —— 客户端过滤只是少发几个必然被丢弃的键。
+    const SESSION_OVERRIDE_KEYS = ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions']
 
     // 输入框工具栏快捷开关：复用全局 soulController，和设置页保持同一份状态。
     function SoulQuickToggle(props) {
@@ -4239,6 +4517,32 @@ window.__ModuleLoader__.load({
           controller
         })
       }, SoulHistorySection))
+
+      // —— 会话「人设」tab（0.9.0-d）——
+      //
+      // 槽位 `conversation.view` 是**列表**槽位：宿主用 `slots.entries(...)` 动态枚举
+      // 生成 tab 栏（与轨迹 / 上下文 / 编队同机制），所以注册后会自动出现，不需要改宿主。
+      //
+      // 唯一的入口价值在于它的 inject 签名是 `(sessionId) => props` —— 这是插件
+      // 能拿到**当前会话 id** 的唯一正规途径（设置页的 slotInject 是空串，拿不到）。
+      // 因此 sessionId 必须原样传给组件，不能只传 controller。
+      //
+      // order 排在宿主内置视图之后（对话 0 / 轨迹 10 / 上下文 20 / 编队 30 级），
+      // 用 90 确保「人设」在最右，不打乱用户已经熟悉的顺序。
+      ctx.slots.inject('conversation.view', () => ctx.slots.register({
+        name: 'conversation.view',
+        id: 'soul-persona',
+        order: 90,
+        label: () => navT('session.tabLabel'),
+        locale: NS,
+        inject: (sessionId) => ({
+          hooks: {
+            soulController: controller.store
+          },
+          controller,
+          sessionId: typeof sessionId === 'string' ? sessionId : null
+        })
+      }, SoulSessionPersona))
 
       // 初始配置的拉取已并入上面的全局轮询 —— 它的 refresh() 在注册时立即执行一次
       // （含 loadConfig + loadPersonas），这里再调一次就是同一次装配发两个相同请求。
