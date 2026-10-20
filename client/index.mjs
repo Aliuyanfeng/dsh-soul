@@ -1238,7 +1238,7 @@ window.__ModuleLoader__.load({
       '.soul-session-chip:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.soul-session-chip:disabled{opacity:.5;cursor:default}',
       '.soul-session-chip-active{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}',
-      // 「恢复上层设置」用次要色：它可逆，不是破坏性动作
+      // 「取消本会话的临时人设」用次要色：它可逆，不是破坏性动作
       '.soul-session-chip-clear{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
       '.soul-session-clear-row{display:flex;margin-top:10px}',
       // —— 会话「人设」：左卡牌网格 + 右详情（0.9.0-d 改版）——
@@ -1609,8 +1609,8 @@ window.__ModuleLoader__.load({
       'session.overrideHint': '只影响这个会话；新会话仍按工作区或全局设置。',
       'session.pickPersona': '换成预设…',
       'session.customOverrides': '自定义字段',
-      'session.clear': '恢复上层设置',
-      'session.cleared': '已恢复上层设置。',
+      'session.clear': '取消本会话的临时人设',
+      'session.cleared': '已取消本会话的临时人设，现在跟随上层配置。',
       'session.applied': '本会话已改用「{name}」。',
       'session.loading': '加载中...',
       'session.loadFailed': '无法读取本会话的人设：{reason}',
@@ -1936,8 +1936,8 @@ window.__ModuleLoader__.load({
       'session.overrideHint': 'Affects this session only; new sessions follow the workspace or global setting.',
       'session.pickPersona': 'Switch to a preset…',
       'session.customOverrides': 'Custom fields',
-      'session.clear': 'Restore inherited setting',
-      'session.cleared': 'Restored the inherited setting.',
+      'session.clear': 'Remove this session\'s temporary persona',
+      'session.cleared': "Removed this session's temporary persona; it now follows the upper scopes.",
       'session.applied': 'This session now uses "{name}".',
       'session.loading': 'Loading...',
       'session.loadFailed': 'Could not read this session\'s persona: {reason}',
@@ -2980,7 +2980,7 @@ window.__ModuleLoader__.load({
       })()
 
       // 右栏详情：与设置页卡背**逐字相同**的六个维度 + 自定义指令全文，
-      // 外加这一栏独有的操作按钮（用这个 / 恢复上层设置）。
+      // 外加这一栏独有的操作按钮（用这个 / 取消本会话的临时人设）。
       const detailOf = (name) => {
         if (name === null) {
           return e('div', { className: 'soul-session-detail-empty' }, t('session.pickHint'))

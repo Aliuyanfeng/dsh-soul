@@ -3642,7 +3642,7 @@ check('0.9.0-m 会话卡牌：卡不可点，切换靠轮播导航（左右按�
   // 导航按钮不该有 disabled（循环 ⇒ 永远可点）。
   //
   // 判据要**只圈导航按钮** —— 会话 tab 组件体内别处也有 disabled
-  // （「恢复上层设置」按钮在忙时禁用），那是正常的。
+  // （「取消本会话的临时人设」按钮在忙时禁用），那是正常的。
   const navButtons = [...sessionTab.matchAll(/'data-dir': '(prev|next)'[\s\S]{0,300}?onClick/g)]
   assert.equal(navButtons.length, 2, `应有两个方向按钮（prev/next），实际 ${navButtons.length}`)
   for (const b of navButtons) {

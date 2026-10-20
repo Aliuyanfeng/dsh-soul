@@ -2470,7 +2470,7 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     assert.equal(
       findAllByClass(tree, 'soul-session-chip').filter((c) => textOf(c) === zh['session.clear']).length,
       1,
-      '有覆盖时必须给出「恢复上层设置」'
+      '有覆盖时必须给出「取消本会话的临时人设」'
     )
   })
 
@@ -2597,9 +2597,9 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
       assert.ok(String(activeBtn.props.className).includes('soul-persona-active'), '生效中时按钮应带 active 样式')
     }
 
-    // ② 点「恢复上层设置」→ clear:true，且覆盖消失
+    // ② 点「取消本会话的临时人设」→ clear:true，且覆盖消失
     const clearChip = findAllByClass(tree, 'soul-session-chip').find((c) => textOf(c) === zh['session.clear'])
-    assert.ok(clearChip, '应有「恢复上层设置」')
+    assert.ok(clearChip, '应有「取消本会话的临时人设」按钮')
     await clearChip.props.onClick()
     tree = await renderTab()
     assert.equal(posts.length, 2, '清除应再发一次请求')
