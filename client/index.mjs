@@ -984,6 +984,8 @@ window.__ModuleLoader__.load({
       '.soul-persona-art-title{position:absolute;left:12px;right:12px;bottom:10px;display:flex;flex-direction:column;gap:2px;min-width:0}',
       '.soul-persona-name{display:flex;align-items:center;gap:6px;min-width:0;color:var(--dsw-static-neutral-bluish-00,#fff);font-size:14px;font-weight:600;line-height:20px}',
       '.soul-persona-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 1px 6px rgba(0,0,0,.5)}',
+      // 作用域标注（全局）：小一号、半透明，跟在预设名后面 —— 注解而非主信息。
+      '.soul-persona-scope-tag{flex:none;padding:0 5px;border-radius:999px;background:rgba(255,255,255,.18);color:inherit;font-size:9px;font-weight:600;line-height:14px;letter-spacing:.2px;opacity:.75}',
       '.soul-persona-meta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-static-neutral-bluish-100,#d3dbf5);font-size:11px;line-height:16px;text-shadow:0 1px 6px rgba(0,0,0,.5)}',
       // 内置徽标：图上用半透明玻璃底（白底徽标在深色图上会太跳）
       '.soul-persona-badge{position:absolute;top:10px;left:10px;flex:none;padding:2px 7px;border-radius:999px;border:1px solid rgba(255,255,255,.34);background:rgba(255,255,255,.2);color:var(--dsw-static-neutral-bluish-00,#fff);font-size:10px;font-weight:600;line-height:14px;letter-spacing:.3px;backdrop-filter:blur(8px)}',
@@ -4456,7 +4458,12 @@ window.__ModuleLoader__.load({
                             // 名称与摘要压在图上
                             e('div', { className: 'soul-persona-art-title' },
                               e('span', { className: 'soul-persona-name' },
-                                e('span', { className: 'soul-persona-label' }, name === activePersona ? `★ ${name}` : name)
+                                e('span', { className: 'soul-persona-label' }, name === activePersona ? `★ ${name}` : name),
+                                // 作用域标注：设置页的「使用」写的是**全局**（settings.section
+                                // 拿不到 sessionId，这是宿主槽位契约决定的）。标出来是为了
+                                // 避免用户以为「在这里点了使用 = 只影响这个项目」——
+                                // 三级隔离下那是会话/工作区层的事。
+                                e('span', { className: 'soul-persona-scope-tag' }, t('personas.scopeGlobal'))
                               ),
                               e('div', { className: 'soul-persona-meta' }, personaRowMeta(entry))
                             )

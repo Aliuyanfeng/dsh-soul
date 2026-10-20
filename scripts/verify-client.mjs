@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 35
+const EXPECTED_ASSERTIONS = 36
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -713,6 +713,25 @@ try {
     // ② 带来源层级标注
     assert.ok(text.includes(world.dicts.zh['quick.scopeSession']), '应标注来源是「本会话覆盖」')
     assert.equal(findAllByClass(tree, 'soul-quick-toggle-scope').length, 1, '应有且仅有一个来源层级标注')
+  })
+
+  await check('C41 设置页人设预设行标注「全局」（它的「使用」写的是全局配置）', async () => {
+    // 设置页的 settings.section 槽位拿不到 sessionId（宿主槽位契约决定的），
+    // 所以这里的「使用」必然写**全局**配置。三级隔离下用户可能以为「在这里点了使用
+    // = 只影响这个项目」—— 那是会话/工作区层的事。标出来避免误解。
+    const world = await boot()
+    const zh = world.dicts.zh
+    // 人设分组默认折叠，body 不渲染 ⇒ 必须像用户一样展开才能看到卡
+    const closed = await renderSettings(world)
+    const trigger = findAll(closed, (n) => n.type === 'button' && textOf(n).includes(zh['group.personas']))[0]
+    assert.ok(trigger, '前置条件：应存在「人设预设」分组')
+    await trigger.props.onClick()
+    const tree = await renderSettingsSettled(world)
+    const tags = findAllByClass(tree, 'soul-persona-scope-tag')
+    assert.ok(tags.length > 0, '设置页人设卡上应有作用域标注')
+    for (const tag of tags) {
+      assert.equal(textOf(tag), zh['personas.scopeGlobal'], `作用域标注应为「${zh['personas.scopeGlobal']}」，实际「${textOf(tag)}」`)
+    }
   })
 
   await check('C14 预设列表拉取失败时显示失败原因，不得永远停在「加载中...」', async () => {
