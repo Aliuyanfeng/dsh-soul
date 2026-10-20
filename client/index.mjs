@@ -5290,12 +5290,23 @@ window.__ModuleLoader__.load({
         id: 'soul-quick-toggle',
         order: 50,
         locale: NS,
-        inject: (props) => ({
+        // ⚠️ inject 回调收到的是**位置参数** `[sessionId]`，不是 props 对象！
+        //
+        // 宿主契约（FactoryInjectParams）：
+        //   scope 'session'      → [sessionId: SessionId]
+        //   scope 'session-maybe'→ [sessionId: SessionId | undefined]
+        //   scope 'root'         → []
+        //
+        // 这里曾写成 `inject: (props) => ({ sessionId: props?.sessionId })` ——
+        // props 实际是 sessionId **字符串**，props.sessionId 是 undefined，
+        // 于是 sessionId 恒为 null，标签永远拿不到当前会话，
+        // 层级标注（本会话覆盖 / 全局配置 / 工作区）**整块不显示**。
+        inject: (sessionId) => ({
           hooks: {
             soulController: controller.store
           },
           controller,
-          sessionId: props && typeof props.sessionId === 'string' ? props.sessionId : null
+          sessionId: typeof sessionId === 'string' && sessionId !== '' ? sessionId : null
         })
       }, SoulQuickToggle))
 

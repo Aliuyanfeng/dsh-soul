@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 40
+const EXPECTED_ASSERTIONS = 41
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -803,7 +803,7 @@ try {
     assert.ok(slot, '前置条件：conversation.input.left 已注册')
     // scope:'session' 槽位的标准 props 带 sessionId —— 宿主 ui-session 的
     // BUILTIN_SOURCE 声明了 props: ["sessionId"]。没有它就查不到会话作用域。
-    const injected = slot.options.inject({ sessionId: 'sess-1' })
+    const injected = slot.options.inject('sess-1')
     assert.equal(injected.sessionId, 'sess-1', 'inject 必须把 sessionId 传给组件')
 
     const props = injected
@@ -825,6 +825,33 @@ try {
     assert.equal(findAllByClass(tree, 'soul-quick-toggle-scope').length, 1, '应有且仅有一个来源层级标注')
   })
 
+  await check('C46 input.left 的 inject 按**位置参数**收 sessionId（不是 props 对象）', async () => {
+    // 宿主契约 FactoryInjectParams：
+    //   scope 'session'      → [sessionId: SessionId]
+    //   scope 'session-maybe'→ [sessionId: SessionId | undefined]
+    //   scope 'root'         → []
+    //
+    // 这里曾写成 `inject: (props) => ({ sessionId: props?.sessionId })` ——
+    // props 实际是 sessionId **字符串**，props.sessionId 是 undefined，
+    // 于是 sessionId 恒为 null，标签拿不到当前会话、层级标注整块不显示。
+    //
+    // 判据：inject 传字符串能拿到 sessionId；传对象拿不到（对象不是契约里的形态）。
+    const world = await boot()
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.input.left')
+    assert.ok(slot, '前置条件：conversation.input.left 已注册')
+
+    const injected = slot.options.inject('sess-real')
+    assert.equal(injected.sessionId, 'sess-real', 'inject 传 sessionId 字符串时必须原样透传')
+
+    // 反向：传对象不得被误当成 props
+    const wrong = slot.options.inject({ sessionId: 'sess-object' })
+    assert.equal(
+      wrong.sessionId,
+      null,
+      'inject 传对象时不得从中取 sessionId —— 契约里那是位置参数，不是 props'
+    )
+  })
+
   await check('C45 输入框标签：每种作用域来源都要有层级标注（含「全局配置」）', async () => {
     // ⚠️ global 分支曾**缺失**：source 为 'global' 时 scopeTag 返回 null，
     // 标签整块不渲染 ⇒ 用户看到「· 人设名」却**没有任何层级标注**。
@@ -840,7 +867,7 @@ try {
 
     const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.input.left')
     assert.ok(slot, '前置条件：conversation.input.left 已注册')
-    const props = slot.options.inject({ sessionId: 'sess-1' })
+    const props = slot.options.inject('sess-1')
     const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
     const t2 = (k, p2) => {
       const raw = zh[k] ?? k
@@ -907,7 +934,7 @@ try {
     world.routes['/api/soul/session-scope/current'] = () => false
     const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.input.left')
     assert.ok(slot, '前置条件：conversation.input.left 已注册')
-    const props = slot.options.inject({ sessionId: 'sess-1' })
+    const props = slot.options.inject('sess-1')
     const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
     const t = (k) => zh[k] ?? k
     await world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t } })
