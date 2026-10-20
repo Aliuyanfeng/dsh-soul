@@ -1173,10 +1173,18 @@ window.__ModuleLoader__.load({
       // 若 CSS 也给 transform，两者会互相覆盖。
       '.soul-session-card{position:absolute;top:0;bottom:0;left:0;right:0;width:210px;margin:0 auto;display:flex;flex-direction:column;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;cursor:pointer}',
       '.soul-session-card:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
-      // 生效中的那张：主色描边 + 外发光（配置事实）
+      // 生效中的那张：**主色描边 + 外发光**（配置事实）。
+      // 主色在浅色主题下解析为近黑（#0f1115），在深色下是近白 —— 与宿主卡片体系一致。
       '.soul-session-card[data-effective="true"]{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08))}',
-      // 选中的那张：抬高一档 + 细描边（浏览状态，与「生效」是两件事）
-      '.soul-session-card[data-selected="true"]{transform:translateY(-1px);box-shadow:0 2px 12px rgba(0,0,0,.14),0 0 0 1px var(--dsw-alias-brand-primary)}',
+      // 选中的那张：**只抬高一档 + 投影加深**，不再加描边。
+      //
+      // 为什么去掉那圈 1px 光晕：它与上面「生效」的描边是同一个主色，浅色主题下两者都是
+      // 近黑 ⇒ 生效卡与选中卡叠在一起时是「双层黑框」，完全分不出哪个是「正在生效」、
+      // 哪个是「正在浏览」。把描边独占给「生效」，选中只留位移与投影，两个状态就分开了。
+      '.soul-session-card[data-selected="true"]{transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,.18),var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08))}',
+      // 生效 **且** 选中（最常见：中心卡正是生效的那张）⇒ 描边保留，投影取两者中更重的一档。
+      // 顺序要紧：这条必须排在上面两条之后，否则会把生效的描边覆盖掉。
+      '.soul-session-card[data-selected="true"][data-effective="true"]{transform:translateY(-1px);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),0 4px 14px rgba(0,0,0,.18)}',
       // 卡面里的插画区高度：网格卡比设置页小，1:1 会过高，压到 3:2
       '.soul-session-card .soul-persona-art{aspect-ratio:1/1}',
       '.soul-session-card .soul-persona-body{padding:8px 10px 10px;gap:6px}',
