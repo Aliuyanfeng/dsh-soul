@@ -846,7 +846,15 @@ window.__ModuleLoader__.load({
       '.soul-toggle{display:flex;align-items:center;gap:8px;margin-bottom:14px}',
       '.soul-toggle label{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}',
       '.soul-buttons{display:flex;gap:8px;margin-top:2px}',
-      '.soul-quick-toggle{position:relative;isolation:isolate;display:inline-flex;align-items:center;gap:6px;min-height:28px;overflow:hidden;padding:4px 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
+      // 允许换行、不裁切。
+      //
+      // 为什么必须改容器（而不只是放宽 max-width）：
+      // · white-space:nowrap 让整串强制一行 —— 输入框左侧空间有限，必然溢出；
+      // · overflow:hidden 把溢出部分**直接裁掉** —— 这就是「展示不全」的直接原因；
+      // · inline-flex + align-items:center 在多行时也对不齐。
+      //
+      // max-width:min(100%, 22em) 给个上限：太长的自定义预设名不至于把整条输入框撑开。
+      '.soul-quick-toggle{position:relative;isolation:isolate;display:inline-flex;align-items:center;flex-wrap:wrap;gap:2px 6px;min-height:28px;max-width:min(100%,22em);padding:4px 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:normal}',
       '.soul-quick-toggle:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
       '.soul-quick-toggle[data-enabled="true"]{color:var(--dsw-alias-brand-primary)}',
       '.soul-quick-toggle[data-enabled="true"]:hover{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-state-error-primary) 18%,transparent)}',
@@ -868,10 +876,10 @@ window.__ModuleLoader__.load({
       '@keyframes soul-status-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--dsw-alias-state-success-primary) 35%,transparent);opacity:.75}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--dsw-alias-state-success-primary) 0%,transparent);opacity:1}}',
       '@media (prefers-reduced-motion:reduce){.soul-quick-toggle[data-enabled="true"] .soul-quick-toggle-dot{animation:none}.soul-quick-toggle[data-enabled="true"]:hover::before,.soul-quick-toggle[data-enabled="false"]:hover::before{animation:none;transform:none}}',
       // 快捷开关里追加的人设名（B）：同样单行省略，避免把底栏撑宽
-      '.soul-quick-toggle-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:9em;opacity:.85}',
+      '.soul-quick-toggle-name{min-width:0;opacity:.85;overflow-wrap:anywhere}',
       // 来源层级标签（全局 / 工作区 / 本会话覆盖）：次要色小字，与人设名分开 ——
       // 它是注解不是主信息。max-width 限制它别把人设名挤掉。
-      '.soul-quick-toggle-scope{flex:none;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:14px;white-space:nowrap}',
+      '.soul-quick-toggle-scope{flex:none;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:14px;overflow-wrap:anywhere}',
       // 错误提示：颜色改用宿主真实存在的 state-error-primary（原先引用不存在的 token ⇒ 渲染成黑色）
       '.soul-error{margin-top:8px;padding:10px 12px;background:var(--dsw-alias-interactive-bg-hover-danger,rgba(236,19,19,.05));border:.5px solid var(--dsw-alias-state-error-primary);border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;width:100%;box-sizing:border-box}',
       '.soul-hint{position:relative;display:inline-flex;align-items:center;margin-left:6px;color:var(--dsw-alias-label-secondary);cursor:help;vertical-align:middle}',
@@ -3480,7 +3488,10 @@ window.__ModuleLoader__.load({
           // 来源层级：让用户知道「现在这个人设是哪一层定的、该去哪儿改」。
           // 没有它就会出现「界面说游戏开发与策划专家、模型实际用资深架构师」的割裂
           // —— 因为全局值与会话实际值可以不同（实测踩过）。
-          scopeTag && e('span', { className: 'soul-quick-toggle-scope' }, `（${scopeTag}）`))
+          //
+          // 用「·」而不是括号：括号是全角字符，在窄空间里换行后会孤零零留在行尾
+          // （「（」在上一行、「全局配置）」在下一行很难看）。圆点更轻、也更省宽度。
+          scopeTag && e('span', { className: 'soul-quick-toggle-scope' }, ` · ${scopeTag}`))
       )
     }
 

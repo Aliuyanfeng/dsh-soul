@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 145
+const EXPECTED_ASSERTIONS = 146
 
 let passed = 0
 const failures = []
@@ -2955,11 +2955,29 @@ check('底栏开关始终展示当前人设（未匹配时显示「自定义」�
   // 关闭个性化时不显示（人设此刻不生效，挂名字会误导）
   assert.match(clientSource, /enabled && e\('span', \{ className: 'soul-quick-toggle-name' \}/, '关闭个性化时不得显示人设名')
   // 名字限宽（自建预设上限 30 字，不限宽会撑开底栏）
+  //
+  // ⚠️ 2026-10-20 调整：原契约是 max-width:9em（约 108px），实测**展示不全** ——
+  // 「游戏策划与开发专家」7 个字就超了，连带后面的层级标注一起被裁掉。
+  // 改为：名字**不再单独限死宽度**，改由外层容器统一给上限
+  // （max-width:min(100%,22em)）并允许换行 —— 既能完整显示，
+  // 又不会因为自建预设名过长（上限 30 字）把底栏撑破。
   const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  const toggleCss = cssBlock.match(/\.soul-quick-toggle\{([^}]*)\}/)?.[1] ?? ''
+  const nameCss = cssBlock.match(/\.soul-quick-toggle-name\{([^}]*)\}/)?.[1] ?? ''
   assert.match(
-    cssBlock.match(/\.soul-quick-toggle-name\{([^}]*)\}/)?.[1] ?? '',
-    /max-width:9em/,
-    '底栏人设名必须限宽（否则长名会撑开底栏）'
+    toggleCss,
+    /max-width:min\(100%,\s*22em\)/,
+    '底栏开关容器必须给上限（否则 30 字的自建预设名会撑开底栏）'
+  )
+  assert.equal(
+    /max-width:9em/.test(nameCss),
+    false,
+    '底栏人设名不得再用 max-width:9em —— 7 个字的中文预设名就超了，会展示不全'
+  )
+  assert.match(
+    nameCss,
+    /overflow-wrap:anywhere|word-break/,
+    '底栏人设名应允许断行（配合换行显示，长名不撑破容器）'
   )
   // 文案键双语齐备
   assert.ok(clientSource.includes("'quick.custom': '自定义'"), '缺中文「自定义」文案')
@@ -3530,6 +3548,55 @@ check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', (
     assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
   }
 })
+check('0.9.0-g 快捷开关标签：不得裁切、不得限死宽度', () => {
+  // 症状：输入框下方的标签「展示不全」——
+  // 「个性化已启用 · 游戏策划与开发专家（全局配置）」这类内容被截断。
+  //
+  // 根因是三处叠加：
+  //   ① .soul-quick-toggle 的 overflow:hidden —— 溢出的部分**直接裁掉**；
+  //   ② 同一规则的 white-space:nowrap —— 强制一行，窄空间里必然溢出；
+  //   ③ .soul-quick-toggle-name 的 max-width:9em —— 人设名被限死在 ~108px。
+  //
+  // 契约：不得再裁切（overflow 不得 hidden）、不得强制单行（nowrap 不得有）、
+  // 不得给名字限死固定宽度（max-width:9em 这种）。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  assert.ok(cssBlock !== '', '找不到客户端 CSS 块')
+
+  const rule = (sel) => {
+    const escaped = sel.replace(/[[\]]/g, (c) => '\\' + c)
+    const m = cssBlock.match(new RegExp(escaped + '\\{([^}]*)\\}'))
+    return m ? m[1] : ''
+  }
+
+  const toggle = rule('.soul-quick-toggle')
+  const name = rule('.soul-quick-toggle-name')
+  const scope = rule('.soul-quick-toggle-scope')
+
+  assert.ok(toggle !== '', '缺少 .soul-quick-toggle 规则')
+  // ① 不得裁切
+  assert.equal(
+    /overflow:hidden/.test(toggle),
+    false,
+    '快捷开关不得 overflow:hidden —— 溢出的内容会被直接裁掉（这正是「展示不全」的根因）'
+  )
+  // ② 不得强制单行
+  assert.equal(
+    /white-space:nowrap/.test(toggle),
+    false,
+    '快捷开关不得 white-space:nowrap —— 窄空间里必须允许换行'
+  )
+  // ③ 名字不得限死固定宽度
+  assert.equal(
+    /max-width:\s*9em/.test(name),
+    false,
+    '人设名不得用 max-width:9em 限死 —— 7 个字的中文预设名就超了'
+  )
+  // ④ 换行时至少要能断字（长自定义预设名不该撑爆输入框）
+  assert.match(name, /overflow-wrap:anywhere|word-break/, '人设名应允许断行，避免撑破输入框')
+  // ⑤ 层级标注同样要能断
+  assert.match(scope, /overflow-wrap:anywhere|word-break/, '层级标注应允许断行')
+})
+
 check('0.9.0-f 会话生效人设名：服务端优先用 sidecar 记的 personaName', () => {
   // 背景：「当前生效的是哪个预设」原先是**按字段反查**出来的
   // （findActivePersonaName：拿当前配置比每个预设，谁匹配上就是它，
