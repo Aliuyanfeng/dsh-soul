@@ -1530,6 +1530,7 @@ window.__ModuleLoader__.load({
       'quick.scopeSession': '本会话覆盖',
       'quick.scopeWorkspace': '工作区「{name}」',
       'quick.scopeDirectory': '目录绑定',
+      'quick.scopeGlobal': '全局配置',
       'quick.scopeUnknown': '会话状态未知',
       // 设置页预设行的作用域标注：设置页没有会话上下文，写的是**全局**
       'personas.scopeGlobal': '全局',
@@ -1855,6 +1856,7 @@ window.__ModuleLoader__.load({
       'quick.scopeSession': 'this session',
       'quick.scopeWorkspace': 'workspace "{name}"',
       'quick.scopeDirectory': 'directory binding',
+      'quick.scopeGlobal': 'global config',
       'quick.scopeUnknown': 'session state unknown',
       'personas.scopeGlobal': 'Global',
       'session.useCard': 'Use this',
@@ -3431,7 +3433,12 @@ window.__ModuleLoader__.load({
           return t('quick.scopeWorkspace', { name: scopeView.workspaceTitle || scopeView.workspaceId || '' })
         }
         if (scopeView.source === 'directory') return t('quick.scopeDirectory')
-        return null
+        // ⚠️ global 分支曾**缺失** —— source 为 'global' 时返回 null，
+        // 标签整块不渲染 ⇒ 用户看到「· 人设名」却**没有任何层级标注**。
+        // 而全局恰恰是最该标出来的一层：它意味着「改这里会影响所有会话」。
+        if (scopeView.source === 'global') return t('quick.scopeGlobal')
+        // 未知 source（服务端新增了层级而客户端还没跟上）：明说而不是静默不标
+        return t('quick.scopeUnknown')
       })()
 
       // 保存失败的本地标记：失败时 store.error 会带上原因，但按钮本身此前毫无反馈

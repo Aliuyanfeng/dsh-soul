@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 39
+const EXPECTED_ASSERTIONS = 40
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -823,6 +823,80 @@ try {
     // ② 带来源层级标注
     assert.ok(text.includes(world.dicts.zh['quick.scopeSession']), '应标注来源是「本会话覆盖」')
     assert.equal(findAllByClass(tree, 'soul-quick-toggle-scope').length, 1, '应有且仅有一个来源层级标注')
+  })
+
+  await check('C45 输入框标签：每种作用域来源都要有层级标注（含「全局配置」）', async () => {
+    // ⚠️ global 分支曾**缺失**：source 为 'global' 时 scopeTag 返回 null，
+    // 标签整块不渲染 ⇒ 用户看到「· 人设名」却**没有任何层级标注**。
+    // 而全局恰恰是最该标出来的一层：它意味着「改这里会影响所有会话」。
+    const world = await boot()
+    const zh = world.dicts.zh
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: { 幽默风趣: { style: 'humorous', builtin: true } },
+      activeName: '幽默风趣'
+    })
+    await world.controller.loadPersonas()
+
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.input.left')
+    assert.ok(slot, '前置条件：conversation.input.left 已注册')
+    const props = slot.options.inject({ sessionId: 'sess-1' })
+    const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
+    const t2 = (k, p2) => {
+      const raw = zh[k] ?? k
+      return p2 ? raw.replace(/\{(\w+)\}/g, (m, n) => (p2[n] === undefined ? m : String(p2[n]))) : raw
+    }
+
+    // 逐个 source 验一遍：每一种都必须有对应的层级标注
+    const cases = [
+      ['session', zh['quick.scopeSession']],
+      ['workspace', zh['quick.scopeWorkspace']],
+      ['directory', zh['quick.scopeDirectory']],
+      ['global', zh['quick.scopeGlobal']]
+    ]
+    for (const [source, expected] of cases) {
+      // ⚠️ 必须换 sessionId 而不是复用同一棵树：scopeView 是 useState，
+      // 改路由桩不会让已有实例自动重取数 —— 复用就会读到上一次的 source。
+      // 换 sessionId 会触发 effect 的依赖变化（effect 依赖 [sessionId]），
+      // 重新取数 —— 这也更接近真实场景（用户在两个会话间切换）。
+      const sid = 'sess-' + source
+      world.routes['/api/soul/session-scope/current'] = () => ({
+        ok: true,
+        sessionId: sid,
+        workspaceId: source === 'workspace' ? 'ws_1' : null,
+        override: source === 'session' ? { style: 'humorous' } : null,
+        source,
+        activePersona: '幽默风趣',
+        globalPersona: '幽默风趣',
+        workspaceTitle: source === 'workspace' ? 'dsh-plugin' : null
+      })
+      const p2 = { ...props, useSoulController, t: t2, sessionId: sid }
+      await world.runtime.settle({ type: slot.component, props: p2 })
+      for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+      const tree = await world.runtime.settle({ type: slot.component, props: p2 })
+      const tags = findAllByClass(tree, 'soul-quick-toggle-scope')
+      assert.equal(tags.length, 1, `source=${source} 应有且仅有一个层级标注，实际 ${tags.length}`)
+      // 期望值里的 {name} 要按本 case 的 workspaceTitle 填上 —— 词典键里是模板，
+      // 直接拿原始字符串去比会永远不相等。
+      const expectedText = expected.replace(/\{name\}/g, source === 'workspace' ? 'dsh-plugin' : '')
+      assert.ok(
+        textOf(tags[0]).includes(expectedText),
+        `source=${source} 的标注应为「${expectedText}」，实际「${textOf(tags[0])}」`
+      )
+    }
+
+    // 未知 source：明说「未知」而不是静默不标（服务端新增层级时客户端要跟得上）
+    world.routes['/api/soul/session-scope/current'] = () => ({
+      ok: true, sessionId: 'sess-brand-new', override: null,
+      source: 'brand-new-layer', activePersona: '幽默风趣', globalPersona: '幽默风趣'
+    })
+    const p3 = { ...props, useSoulController, t: t2, sessionId: 'sess-brand-new' }
+    await world.runtime.settle({ type: slot.component, props: p3 })
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    const tree = await world.runtime.settle({ type: slot.component, props: p3 })
+    const tags = findAllByClass(tree, 'soul-quick-toggle-scope')
+    assert.equal(tags.length, 1, '未知 source 也必须有标注（明说「未知」，不能静默不标）')
+    assert.ok(textOf(tags[0]).includes(zh['quick.scopeUnknown']), '未知 source 应标为「会话状态未知」')
   })
 
   await check('C42 输入框标签：会话状态读取失败时显示「未知」，不得退回全局值', async () => {
