@@ -1247,12 +1247,17 @@ window.__ModuleLoader__.load({
       '.soul-session-split{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:2px}',
       // 叠层容器：卡片绝对定位到同一格，靠内联 transform 偏移（与设置页同构）。
       // overflow:hidden 让两侧露边卡在容器边缘被自然裁掉，观感与设置页一致。
-      '.soul-session-grid{position:relative;width:100%;min-width:160px;height:380px;flex:0 1 280px;overflow:hidden}',
+      // 叠层容器：**1:1**（高度 = 卡宽 210px）。
+      //
+      // 为什么是 1:1：插画资源全是 512×512 正方形，而容器若是竖长的（比如 210×380），
+      // 配合 object-fit:cover 就会**上下裁掉约 44%**，只剩中间一条 —— 看起来像「插画不够大」。
+      // 1:1 容器让插画完整显示，且比原来看到的那条中间带大得多。
+      '.soul-session-grid{position:relative;width:100%;min-width:160px;height:200px;flex:0 1 240px;overflow:hidden}',
       // 单张卡：结构抄 .soul-persona-card 的正面（去掉 3D 翻面 —— 翻面由右栏详情承担）。
       // ⚠️ 这里**不得**写任何 transform：叠层偏移由内联 style 持有（translateX/scale）；
       // 若 CSS 也给 transform，两者会互相覆盖。
       // 插画铺满整张卡：art 绝对定位 inset:0，卡本身只提供定位上下文与圆角裁切。
-      '.soul-session-card{position:absolute;top:0;bottom:0;left:0;right:0;width:210px;margin:0 auto;display:block;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;cursor:pointer}',
+      '.soul-session-card{position:absolute;top:0;bottom:0;left:0;right:0;width:200px;margin:0 auto;display:block;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;cursor:pointer}',
       '.soul-session-card:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       // 生效中的那张：**主色描边 + 外发光**（配置事实）。
       // 主色在浅色主题下解析为近黑（#0f1115），在深色下是近白 —— 与宿主卡片体系一致。

@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 149
+const EXPECTED_ASSERTIONS = 150
 
 let passed = 0
 const failures = []
@@ -3559,6 +3559,44 @@ check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', (
     assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
   }
 })
+check('0.9.0-k 会话卡牌：容器必须是 1:1（插画是正方形，竖长容器会裁掉 44%）', () => {
+  // 插画资源全是 512×512 的**正方形**（assets/personas/*.webp）。
+  // 若卡牌容器是竖长的（曾用 210×380），配合 object-fit:cover 就会
+  // **上下裁掉约 44%**，只剩中间一条 —— 用户看到的就是「插画不够大 / 好像被裁了」。
+  //
+  // 契约：容器高度 = 卡宽（1:1），且 object-fit 保持 cover（1:1 下 cover 与 contain 等价，
+  // 但换 contain 会在未来改成非正方形时留出空隙）。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  const rule = (sel) => {
+    const escaped = sel.replace(/[[\]]/g, (c) => '\\' + c)
+    const m = cssBlock.match(new RegExp(escaped + '\\{([^}]*)\\}'))
+    return m ? m[1] : ''
+  }
+  const grid = rule('.soul-session-grid')
+  const card = rule('.soul-session-card')
+  assert.ok(grid !== '', '缺少 .soul-session-grid 规则')
+  assert.ok(card !== '', '缺少 .soul-session-card 规则')
+
+  // 从 CSS 里取出两个数值（px）
+  const px = (s, re) => {
+    const m = s.match(re)
+    return m ? Number(m[1]) : null
+  }
+  const gridH = px(grid, /height:(\d+)px/)
+  const cardW = px(card, /width:(\d+)px/)
+  assert.ok(gridH !== null, '叠层容器必须有固定高度（px）')
+  assert.ok(cardW !== null, '卡牌必须有固定宽度（px）')
+  // 容器高度 = 卡宽 ⇒ 1:1
+  assert.equal(
+    gridH,
+    cardW,
+    `容器高（${gridH}px）必须等于卡宽（${cardW}px）—— 插画是正方形，容器不是 1:1 就会被裁掉约 44%`
+  )
+  // object-fit 保持 cover
+  const img = rule('.soul-persona-art-img')
+  assert.match(img, /object-fit:cover/, '插画应保持 object-fit:cover（1:1 下不裁；换成 contain 会在非正方形时留空）')
+})
+
 check('0.9.0-j 会话卡牌：插画铺满整张卡，卡上无下方文字', () => {
   // 用户诉求：卡牌主题插画不够大 ⇒ 移除下方文字区，让插画铺满整张卡。
   //
