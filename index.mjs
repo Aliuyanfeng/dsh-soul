@@ -2401,6 +2401,9 @@ function registerSessionScopeRoutes(ctx) {
         override: override || null,
         source: resolved.source,
         activePersona: findActivePersonaName(resolved.config),
+        // 全局层的人设名：客户端要显示「当前是谁」与「全局是谁」两者的关系
+        // （会话覆盖生效时，全局值仍在，但当前值不是它）。
+        globalPersona: findActivePersonaName(config),
         workspaceTitle: (() => {
           if (workspaceId === null) return null
           const registry = ctx.get('workspaceRegistry')
@@ -2500,6 +2503,36 @@ function registerSessionScopeRoutes(ctx) {
           refreshPromptAndInject(ctx, await loadConfig())
 
           send(res, 200, { ok: true, dropped, ...(await sessionScopeView(sessionId)) })
+        } catch (err) {
+          send(res, 500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
+
+    // —— 当前会话的作用域（供输入框下方的标签显示）——
+    //
+    // 为什么需要它：全局 store 里的 activePersona 是**全局**匹配结果，
+    // 而三级隔离下会话可能有自己的覆盖或工作区绑定 —— 两者可以不同。
+    // 标签若显示全局值，就会出现「界面说 A、模型用 B」的割裂（实测踩过）。
+    //
+    // 这个端点**按 query 传 sessionId**：输入框左侧组件（conversation.input.left）
+    // 拿得到当前会话 id（它挂在会话里），而 settings.section 拿不到。
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/session-scope/current',
+      handler: async (req, res) => {
+        if (req.method !== 'GET') {
+          send(res, 405, { ok: false, error: 'Method not allowed' })
+          return
+        }
+        try {
+          const url = new URL(req.url, 'http://localhost')
+          const sessionId = url.searchParams.get('sessionId') || ''
+          if (!isSessionId(sessionId)) {
+            send(res, 400, { ok: false, error: '缺少或非法的 sessionId' })
+            return
+          }
+          send(res, 200, { ok: true, ...(await sessionScopeView(sessionId)) })
         } catch (err) {
           send(res, 500, { ok: false, error: String(err.message || err) })
         }

@@ -707,6 +707,14 @@ window.__ModuleLoader__.load({
         return await this.postJSON(`/api/soul/session-scope${query}`, null, { method: 'GET' })
       }
 
+      // 当前会话的作用域（生效人设 + 来源层级）。与 fetchSessionScope 同源，
+      // 但走固定路径：这个端点给「输入框下方的标签」用 —— 它在会话外，
+      // 拿不到 sessionId，只能由宿主通过 scope:'session' 槽位的标准 props 传进来。
+      async fetchCurrentSessionScope(sessionId) {
+        const query = `?sessionId=${encodeURIComponent(sessionId)}`
+        return await this.postJSON(`/api/soul/session-scope/current${query}`, null, { method: 'GET' })
+      }
+
       async saveSessionScope(sessionId, overrides) {
         return await this.postJSON('/api/soul/session-scope', { sessionId, overrides })
       }
@@ -857,6 +865,9 @@ window.__ModuleLoader__.load({
       '@media (prefers-reduced-motion:reduce){.soul-quick-toggle[data-enabled="true"] .soul-quick-toggle-dot{animation:none}.soul-quick-toggle[data-enabled="true"]:hover::before,.soul-quick-toggle[data-enabled="false"]:hover::before{animation:none;transform:none}}',
       // 快捷开关里追加的人设名（B）：同样单行省略，避免把底栏撑宽
       '.soul-quick-toggle-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:9em;opacity:.85}',
+      // 来源层级标签（全局 / 工作区 / 本会话覆盖）：次要色小字，与人设名分开 ——
+      // 它是注解不是主信息。max-width 限制它别把人设名挤掉。
+      '.soul-quick-toggle-scope{flex:none;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:14px;white-space:nowrap}',
       // 错误提示：颜色改用宿主真实存在的 state-error-primary（原先引用不存在的 token ⇒ 渲染成黑色）
       '.soul-error{margin-top:8px;padding:10px 12px;background:var(--dsw-alias-interactive-bg-hover-danger,rgba(236,19,19,.05));border:.5px solid var(--dsw-alias-state-error-primary);border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;width:100%;box-sizing:border-box}',
       '.soul-hint{position:relative;display:inline-flex;align-items:center;margin-left:6px;color:var(--dsw-alias-label-secondary);cursor:help;vertical-align:middle}',
@@ -1501,6 +1512,12 @@ window.__ModuleLoader__.load({
       'session.applyFailed': '设置失败：{reason}',
       'session.noOverrides': '没有临时覆盖。',
       'session.badge': '有覆盖',
+      // 输入框标签的来源层级：告诉用户「现在这个人设是哪一层定的」
+      'quick.scopeSession': '本会话覆盖',
+      'quick.scopeWorkspace': '工作区「{name}」',
+      'quick.scopeDirectory': '目录绑定',
+      // 设置页预设行的作用域标注：设置页没有会话上下文，写的是**全局**
+      'personas.scopeGlobal': '全局',
       // 卡面按钮：与设置页「使用 / 使用中」同一套语义，只是措辞更贴会话语境
       'session.useCard': '用这个',
       'session.pickHint': '点左侧任意一张卡，在这里查看它的完整人设。',
@@ -1820,6 +1837,10 @@ window.__ModuleLoader__.load({
       'session.applyFailed': 'Could not apply: {reason}',
       'session.noOverrides': 'No temporary override.',
       'session.badge': 'overridden',
+      'quick.scopeSession': 'this session',
+      'quick.scopeWorkspace': 'workspace "{name}"',
+      'quick.scopeDirectory': 'directory binding',
+      'personas.scopeGlobal': 'Global',
       'session.useCard': 'Use this',
       'session.pickHint': 'Pick a card on the left to see its full persona here.',
       'session.chipInUse': 'In use',
@@ -2755,7 +2776,7 @@ window.__ModuleLoader__.load({
             // .soul-persona-badge / .soul-persona-card-pos 的 top/left/right 定位
             builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
             // 位置指示只出现在中心卡：两侧露边卡也标「i / n」会三个同时显示同一个数
-            offset === 0 && e('span', { className: 'soul-persona-card-pos' }, `${stackOrder.indexOf(name) + 1} / ${personaNames.length}`),
+            offset === 0 && e('span', { className: 'soul-persona-card-pos' }, `${personaIndexOf(name) + 1} / ${personaNames.length}`),
             // 生效标记走名字前的 ★（与设置页一致），不再另开绝对定位元素
             e('div', { className: 'soul-persona-art-title' },
               e('span', { className: 'soul-persona-name' },
@@ -2770,10 +2791,30 @@ window.__ModuleLoader__.load({
         )
       }
 
-      // 叠层偏移量：中心 = 0，两侧各一张露边（与设置页同构）。
-      // 顺序由 stackOrder 决定：中心永远是 selectedPersona，其余按 personaNames 顺排。
-      const visibleOffsets = personaNames.length <= 1 ? [0] : (personaNames.length === 2 ? [-1, 0] : [-1, 0, 1])
-      const stackOrder = [selectedPersona, ...personaNames.filter((n) => n !== selectedPersona)]
+      // ── 叠层顺序：完整循环 ──
+      //
+      // 中心永远是 selectedPersona；左露边 = 它的**前一个**（列表头则接尾），
+      // 右露边 = 它的**后一个**（列表尾则接头）。首尾相接 ⇒ 点右侧卡它滑到中心、
+      // 原中心滑到左侧；点左侧卡反之 —— 整个列表是一个环。
+      //
+      // ⚠️ 这里**不能**用「selectedPersona 排头 + 其余顺排」那种线性序：
+      // 那样点侧边卡时，露出的仍是同一批邻居，视觉上像「只有两张在动」；
+      // 而真正该变的是「谁在中心、谁在旁边」。
+      const personaIndexOf = (name) => personaNames.indexOf(name)
+      const currentAt = personaIndexOf(selectedPersona)
+      const stackOrder = (() => {
+        if (currentAt === -1) return personaNames
+        const n = personaNames.length
+        if (n === 1) return [personaNames[0]]
+        // [前一个, 当前, 后一个]（循环取模）
+        return [
+          personaNames[(currentAt - 1 + n) % n],
+          personaNames[currentAt],
+          personaNames[(currentAt + 1) % n]
+        ]
+      })()
+      // 偏移：stackOrder[1] 是中心（offset 0），[0]/[2] 是两侧（∓1）
+      const visibleOffsets = [-1, 0, 1]
 
       // 右栏详情：与设置页卡背**逐字相同**的六个维度 + 自定义指令全文，
       // 外加这一栏独有的操作按钮（用这个 / 恢复上层设置）。
@@ -2841,13 +2882,11 @@ window.__ModuleLoader__.load({
             : e('div', { className: 'soul-session-split' },
               // 叠层：中心卡 = selectedPersona（offset 0），左/右各露出前一个/后一个。
               // 顺序用 stackOrder（selectedPersona 永远排头），槽位取模避免越界。
-              // ⚠️ 偏移映射直接用 offset 作 stackOrder 索引：offset=0 → stackOrder[0]
-              // （即 selectedPersona，中心卡）；offset=-1 → stackOrder[-1+0]=前一个；offset=1 → 后一个。
-              // 初版错写成 offset+1，把选中卡渲染到左侧、中心卡显示下一个 —— 点哪个都
-              // 一直显示「苏格拉底式提问者」（首个预设）。
+              // 偏移 → stackOrder 索引：中心是 stackOrder[1]（offset 0），
+              // 两侧是 stackOrder[0]（offset -1）与 stackOrder[2]（offset +1）。
               e('div', { className: 'soul-session-grid' },
                 ...visibleOffsets.map((offset) => {
-                  const at = (offset + stackOrder.length) % stackOrder.length
+                  const at = offset === 0 ? 1 : (offset === -1 ? 0 : 2)
                   return cardFor(stackOrder[at], offset)
                 })
               ),
@@ -3281,8 +3320,51 @@ window.__ModuleLoader__.load({
       const state = useSoulController((state) => state)
       const enabled = state.enabled === true
       const busy = state.saving === true
+      // 会话作用域（0.9.0）：这个标签挂在输入框左侧 —— conversation.input.left 是
+      // scope:'session' 槽位，标准 props 里带 sessionId（宿主 BUILTIN_SOURCE 的
+      // props: ["sessionId"]），所以这里能直接知道"当前是哪个会话"。
+      //
+      // 为什么要知道：全局 store 的 activePersona 是**全局**匹配结果，而三级隔离下
+      // 会话可能有自己的覆盖 —— 两者可以不同。标签若显示全局值，就会出现
+      // 「界面说游戏开发与策划专家、模型实际用资深架构师」的割裂。
+      const sessionId = typeof props.sessionId === 'string' && props.sessionId !== '' ? props.sessionId : null
+      const [scopeView, setScopeView] = React.useState(null)
+      React.useEffect(() => {
+        if (sessionId === null) {
+          setScopeView(null)
+          return undefined
+        }
+        let cancelled = false
+        void controller.fetchCurrentSessionScope(sessionId).then((payload) => {
+          if (!cancelled) setScopeView(payload)
+        }).catch(() => {
+          // 读不到就退回全局值：标签不能因为一次请求失败就消失
+        })
+        return () => { cancelled = true }
+      }, [sessionId])
       // B：底栏开关上缀当前人设名，与输入框上方的标签互相印证
+      // 全局匹配结果（无会话上下文时的兜底）
       const activePersona = state.activePersona
+      // 显示哪个名字：**会话实际生效的**优先，回落全局。
+      //
+      // source 决定追加哪一层标注：
+      //   session   → 本会话覆盖
+      //   workspace → 工作区人设
+      //   directory → 目录绑定
+      //   global    → 全局配置
+      const scopeActive = scopeView && typeof scopeView.activePersona === 'string' && scopeView.activePersona !== ''
+        ? scopeView.activePersona
+        : null
+      const displayPersona = scopeActive || activePersona || t('quick.custom')
+      const scopeTag = (() => {
+        if (!scopeView) return null
+        if (scopeView.source === 'session') return t('quick.scopeSession')
+        if (scopeView.source === 'workspace') {
+          return t('quick.scopeWorkspace', { name: scopeView.workspaceTitle || scopeView.workspaceId || '' })
+        }
+        if (scopeView.source === 'directory') return t('quick.scopeDirectory')
+        return null
+      })()
 
       // 保存失败的本地标记：失败时 store.error 会带上原因，但按钮本身此前毫无反馈
       // （enabled 没变 ⇒ 外观与文案都不变），用户视角是「点了没反应」。
@@ -3319,7 +3401,11 @@ window.__ModuleLoader__.load({
         // 必须给确定的落点 —— 有名字就是那个预设，没名字就是自定义。
         // 关闭个性化时不显示（人设此时不生效，挂名字会误导）。
         enabled && e('span', { className: 'soul-quick-toggle-name' },
-          `· ${activePersona || t('quick.custom')}`)
+          `· ${displayPersona}`,
+          // 来源层级：让用户知道「现在这个人设是哪一层定的、该去哪儿改」。
+          // 没有它就会出现「界面说游戏开发与策划专家、模型实际用资深架构师」的割裂
+          // —— 因为全局值与会话实际值可以不同（实测踩过）。
+          scopeTag && e('span', { className: 'soul-quick-toggle-scope' }, `（${scopeTag}）`))
       )
     }
 
@@ -5114,16 +5200,22 @@ window.__ModuleLoader__.load({
       ctx.effect(() => registerSettingsNavIcon(), 'dsh-soul: settings navigation icon')
 
       // 注册到输入框工具栏：宿主会把 input.left 放在「操作权限」控件之后。
+      // conversation.input.left 是 scope:'session' 槽位 —— 宿主为它准备的标准 props
+      // 里带 sessionId（ui-session 的 BUILTIN_SOURCE: props: ["sessionId"]）。
+      //
+      // 有了它，输入框下方的标签才能显示**当前会话**实际生效的人设与来源；
+      // 否则只能读全局 store 的 activePersona，而那与模型真正拿到的人设可能不同。
       ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
         name: 'conversation.input.left',
         id: 'soul-quick-toggle',
         order: 50,
         locale: NS,
-        inject: () => ({
+        inject: (props) => ({
           hooks: {
             soulController: controller.store
           },
-          controller
+          controller,
+          sessionId: props && typeof props.sessionId === 'string' ? props.sessionId : null
         })
       }, SoulQuickToggle))
 

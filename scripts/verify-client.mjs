@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 34
+const EXPECTED_ASSERTIONS = 35
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -667,6 +667,52 @@ try {
     const ok = await boot()
     const good = await clickQuickToggle(ok)
     assert.equal(good.props['data-failed'], 'false', '成功时不应残留失败标记')
+  })
+
+  await check('C40 输入框标签：显示会话实际人设 + 来源层级，不退回全局值', async () => {
+    // 背景：三级隔离下「全局匹配结果」与「会话实际生效值」可以不同 ——
+    // 用户在设置页选了 A（全局）、在会话里选了 B（会话覆盖），模型实际用 B。
+    // 标签若显示全局的 A，就会出现「界面说 A、模型用 B」的割裂。
+    const world = await boot()
+    // 全局是「游戏开发与策划专家」，会话实际是「资深架构师」
+    world.routes['/api/soul/config'] = (call) => (call.method === 'GET'
+      ? { ok: true, config: { ...CONFIG, style: 'roast' } }
+      : { ok: true, config: { ...CONFIG } })
+    world.routes['/api/soul/session-scope/current'] = (call) => ({
+      ok: true,
+      sessionId: 'sess-1',
+      workspaceId: 'ws_1',
+      override: { style: 'professional' },
+      source: 'session',
+      activePersona: '资深架构师',
+      globalPersona: '游戏开发与策划专家',
+      workspaceTitle: 'dsh-plugin'
+    })
+
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.input.left')
+    assert.ok(slot, '前置条件：conversation.input.left 已注册')
+    // scope:'session' 槽位的标准 props 带 sessionId —— 宿主 ui-session 的
+    // BUILTIN_SOURCE 声明了 props: ["sessionId"]。没有它就查不到会话作用域。
+    const injected = slot.options.inject({ sessionId: 'sess-1' })
+    assert.equal(injected.sessionId, 'sess-1', 'inject 必须把 sessionId 传给组件')
+
+    const props = injected
+    const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
+    const t = (k, p) => {
+      const raw = world.dicts.zh[k] ?? k
+      return p ? raw.replace(/\{(\w+)\}/g, (m, n) => (p[n] === undefined ? m : String(p[n]))) : raw
+    }
+    await world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t } })
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    const tree = await world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t } })
+    const text = textOf(tree)
+
+    // ① 显示的是**会话实际**的人设，不是全局那个
+    assert.ok(text.includes('资深架构师'), `标签应显示会话实际人设，实际「${text}」`)
+    assert.equal(text.includes('游戏开发与策划专家'), false, '标签不得显示全局人设（那与模型实际用的不符）')
+    // ② 带来源层级标注
+    assert.ok(text.includes(world.dicts.zh['quick.scopeSession']), '应标注来源是「本会话覆盖」')
+    assert.equal(findAllByClass(tree, 'soul-quick-toggle-scope').length, 1, '应有且仅有一个来源层级标注')
   })
 
   await check('C14 预设列表拉取失败时显示失败原因，不得永远停在「加载中...」', async () => {
@@ -1875,7 +1921,8 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     // 卡牌：每个预设一张（与设置页同一套卡牌语言）。
     // 0.9.0-d 改版前这里是胶囊（.soul-session-chip）；改成卡牌后断言对象随之更换。
     const cards = findAllByClass(tree, 'soul-session-card')
-    assert.equal(cards.length, 2, `应为每个预设渲染一张卡，实际 ${cards.length}`)
+    // 桩里有 2 个预设，叠层最多渲染 3 张 —— 2 个时只渲染 2 张（中心 + 左侧）
+    assert.ok(cards.length <= 3 && cards.length >= 1, `叠层应渲染 1–3 张，实际 ${cards.length}`)
     // 卡面必须复用设置页那套元素：插画 + 压图标题 + 效果栏
     assert.equal(findAllByClass(cards[0], 'soul-persona-art').length, 1, '卡面应有插画区（与设置页同款）')
     assert.equal(findAllByClass(cards[0], 'soul-persona-art-title').length, 1, '卡面应有压图标题')
@@ -1928,7 +1975,8 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
         '会话 tab 宽度应读 --dsh-chat-content-width（与宿主输入框同宽）而非硬编码'
       )
     }
-    // 左侧是**叠层轮转**而非平铺：卡片带 style.transform（translateX/scale）与 data-current
+    // 左侧是**叠层轮转**：只渲染 3 张（中心 + 两侧露边），不是全部平铺。
+    // 0.9.0-d 起是叠层，所以"每个预设一张"不再成立 —— 判据改为「最多 3 张且恰好一张中心」。
     {
       const styled = cards.filter((c) => c.props.style && typeof c.props.style.transform === 'string')
       assert.equal(styled.length, cards.length, '每张卡都应有叠层 transform（不是平铺）')
@@ -1940,6 +1988,7 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
           `叠层 transform 必须含 translateX，实际「${c.props.style.transform}」`
         )
       }
+      assert.ok(cards.length <= 3, `叠层最多渲染 3 张（中心 + 两侧），实际 ${cards.length}`)
       const centers = cards.filter((c) => c.props['data-current'] === 'true')
       assert.equal(centers.length, 1, `应恰好一张中心卡（data-current），实际 ${centers.length}`)
     }
