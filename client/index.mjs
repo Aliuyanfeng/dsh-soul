@@ -1275,6 +1275,9 @@ window.__ModuleLoader__.load({
       // 原来它在文档流里（1:1 的画面 + 下方文字区），现在没有文字区了 ⇒ 直接铺满，
       // 画面大得多。aspect-ratio 不再需要（高度由容器决定）。
       '.soul-session-card .soul-persona-art{position:absolute;inset:0;width:100%;height:100%;aspect-ratio:auto}',
+      // 生效标记 ★：放左下角（右上角被「i / n」占了，左上角被内置徽标占了）。
+      // 半透明深底 + 白字 —— 不依赖遮罩，在任何底图上都读得清。
+      '.soul-session-card-star{position:absolute;left:10px;bottom:10px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:rgba(10,14,35,.55);color:var(--dsw-static-neutral-bluish-00,#fff);font-size:13px;line-height:1;backdrop-filter:blur(6px)}',
       // 右栏详情：复用设置页卡背的元素（.soul-persona-dims / .soul-persona-fulltext），
       // 这里只补容器与滚动。高度上限避免长文把整个面板撑得比卡牌栏高太多。
       '.soul-session-detail{flex:1 1 220px;min-width:200px;display:flex;flex-direction:column;gap:8px;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);max-height:340px;overflow:auto}',
@@ -2888,7 +2891,12 @@ window.__ModuleLoader__.load({
           },
           // 中心卡与侧边卡都可点：中心 = 选中自己（右栏已显示，无副作用）；
           // 侧边 = 翻页。统一给 onClick 避免「中心卡不可点」这种反直觉。
-          onClick: () => setSelectedPersona(name)
+          onClick: () => setSelectedPersona(name),
+          // 无障碍名：卡面已无可见文字（0.9.0-l 移除了遮罩与压图标题），
+          // 纯图形元素**必须**有可访问名，读屏用户才知道这是哪张卡。
+          // 顺带让断言能靠 aria-label 识别卡，不依赖可见文字。
+          'aria-label': name,
+          title: isEffective ? `${name}（${t('session.chipInUse')}）` : name
         },
           e('div', { className: 'soul-persona-art' },
             e('img', {
@@ -2900,19 +2908,18 @@ window.__ModuleLoader__.load({
               draggable: 'false',
               onError: (ev) => { ev.target.style.display = 'none' }
             }),
-            e('div', { className: 'soul-persona-art-veil', 'aria-hidden': true }),
-            // 内置徽标 + 位置指示都压在插画上；两者都是 absolute，靠
-            // .soul-persona-badge / .soul-persona-card-pos 的 top/left/right 定位
+            // 遮罩与压图文字**已移除**（0.9.0-l）：右侧详情已完整展示人设名、
+            // 六个维度与自定义指令全文，卡上再叠一层渐变遮罩 + 文字只是重复，
+            // 而且遮罩会让插画本身失掉大半饱和度 —— 既然是「完全展示卡牌」，
+            // 就让插画原样呈现。
+            //
+            // 保留的是**功能性角标**（不是文字信息，右栏没有的）：
+            //   · 内置徽标 —— 这张卡是内置的还是自建的
+            //   · 位置指示 i / n —— 排第几张（只标中心卡，否则三张都显示同一个数）
+            //   · ★ —— 这张正在生效（原本在名字前，名字没了就挪到右上角）
             builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
-            // 位置指示只出现在中心卡：两侧露边卡也标「i / n」会三个同时显示同一个数
             offset === 0 && e('span', { className: 'soul-persona-card-pos' }, `${personaIndexOf(name) + 1} / ${personaNames.length}`),
-            // 生效标记走名字前的 ★（与设置页一致），不再另开绝对定位元素
-            e('div', { className: 'soul-persona-art-title' },
-              e('span', { className: 'soul-persona-name' },
-                e('span', { className: 'soul-persona-label' }, isEffective ? `★ ${name}` : name)
-              ),
-              e('div', { className: 'soul-persona-meta' }, personaRowMetaOf(entry, t))
-            )
+            isEffective && e('span', { className: 'soul-session-card-star' }, '★')
           )
           // 下方不再有文字区（0.9.0-j）：右栏详情已完整展示人设名、六个维度、
           // 自定义指令全文与效果说明，卡上重复一遍是冗余，还会把插画挤成半张。

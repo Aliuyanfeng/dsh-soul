@@ -797,7 +797,9 @@ try {
     const cards = findAllByClass(tree, 'soul-session-card')
     const center = cards.find((c) => c.props['data-current'] === 'true')
     assert.ok(center, '应有一张中心卡')
-    const centerName = textOf(findAllByClass(center, 'soul-persona-label')[0] || center)
+    // 卡面已无可见文字（0.9.0-l）⇒ 用 aria-label 识别预设名。
+    // 同时这条断言顺带守住了「纯图形元素必须有可访问名」这条无障碍要求。
+    const centerName = String(center.props['aria-label'] || '')
     assert.ok(
       centerName.includes('幽默风趣'),
       `中心卡应是生效的「幽默风趣」，实际「${centerName}」（兜底抢先选中了第一张）`
@@ -1064,8 +1066,10 @@ try {
     let viewTree = await world.runtime.settle({ type: viewSlot.component, props: { ...viewProps, useSoulController, t: t2 } })
     // 先点**侧边卡**选中「幽默风趣」（这才是"切换"的第一步）——
     // 直接点中心卡的「用这个」测不到切换：中心卡本来就是当前选中项。
+    // 用 aria-label 识别（卡面已无可见文字，0.9.0-l）
     const sideCard = findAllByClass(viewTree, 'soul-session-card')
-      .find((c) => c.props['data-current'] !== 'true' && textOf(c).includes('幽默风趣'))
+      .find((c) => c.props['data-current'] !== 'true'
+        && String(c.props['aria-label'] || '').includes('幽默风趣'))
     assert.ok(sideCard, '应有「幽默风趣」的侧边卡可点')
     await sideCard.props.onClick()
     for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
@@ -2367,9 +2371,15 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     const cards = findAllByClass(tree, 'soul-session-card')
     // 桩里有 2 个预设，叠层最多渲染 3 张 —— 2 个时只渲染 2 张（中心 + 左侧）
     assert.ok(cards.length <= 3 && cards.length >= 1, `叠层应渲染 1–3 张，实际 ${cards.length}`)
-    // 卡面必须复用设置页那套元素：插画 + 压图标题 + 效果栏
+    // 卡面：插画 + 角标（0.9.0-l 起移除了遮罩与压图标题）
     assert.equal(findAllByClass(cards[0], 'soul-persona-art').length, 1, '卡面应有插画区（与设置页同款）')
-    assert.equal(findAllByClass(cards[0], 'soul-persona-art-title').length, 1, '卡面应有压图标题')
+    assert.equal(findAllByClass(cards[0], 'soul-persona-art-title').length, 0, '卡面不应有压图标题（0.9.0-l 已移除）')
+    assert.equal(findAllByClass(cards[0], 'soul-persona-art-veil').length, 0, '卡面不应有渐变遮罩（0.9.0-l 已移除）')
+    // 纯图形元素必须有可访问名
+    assert.ok(
+      String(cards[0].props['aria-label'] || '').length > 0,
+      '纯图形的卡必须有 aria-label（读屏用户与断言都靠它识别是哪张卡）'
+    )
     // 0.9.0-j：卡面**不再**有下方效果栏 —— 右栏详情已完整展示，
     // 卡上重复是冗余，还会把插画挤成半张。「完全展示卡牌」= 插画铺满。
     assert.equal(
@@ -2377,8 +2387,15 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
       0,
       '卡面不应有效果栏（右栏详情已展示）'
     )
-    // 压图标题保留 —— 插画是抽象主题图，没有名字认不出是哪张卡
-    assert.equal(findAllByClass(cards[0], 'soul-persona-name').length, 1, '卡面应保留压图标题（认出是哪张卡）')
+    // 0.9.0-l：遮罩与压图标题**都移除了** —— 右侧详情已完整展示，
+    // 卡上再叠一层渐变遮罩 + 文字只是重复，还会让插画失掉饱和度。
+    assert.equal(findAllByClass(cards[0], 'soul-persona-art-title').length, 0, '卡面不应有压图标题')
+    assert.equal(findAllByClass(cards[0], 'soul-persona-art-veil').length, 0, '卡面不应有渐变遮罩')
+    // 但必须有**可访问名**（纯图形元素的可访问名是必需品，不是可选项）
+    assert.ok(
+      String(cards[0].props['aria-label'] || '').length > 0,
+      '纯图形的卡必须有 aria-label（读屏用户与断言都靠它识别是哪张卡）'
+    )
     // 左卡牌 + 右详情：两块都必须存在
     assert.equal(findAllByClass(tree, 'soul-session-split').length, 1, '应是左右分栏布局')
     assert.equal(findAllByClass(tree, 'soul-session-detail').length, 1, '应有右栏详情面板')
@@ -2401,9 +2418,10 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
       assert.ok(detail, '应有右栏详情面板')
       const detailName = findAllByClass(detail, 'soul-session-detail-name')[0]
       assert.ok(detailName, '详情栏应有名称')
+      // 用 aria-label 交叉验证（卡面已无可见文字，0.9.0-l）
       assert.ok(
-        textOf(centers[0]).includes(textOf(detailName)),
-        `中心卡应是详情栏展示的那张（中心=「${textOf(centers[0]).slice(0, 40)}」，详情=「${textOf(detailName)}」）`
+        String(centers[0].props['aria-label'] || '').includes(textOf(detailName)),
+        `中心卡应是详情栏展示的那张（中心=「${String(centers[0].props['aria-label'] || '')}」，详情=「${textOf(detailName)}」）`
       )
     }
     // 自定义字段必须用中英文标签，不是裸键名
@@ -2447,7 +2465,10 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     // 生效中的那张卡要标出来，否则用户看不出哪个在用
     const effectiveCards = cards.filter((c) => c.props['data-effective'] === 'true')
     assert.equal(effectiveCards.length, 1, `应恰好一张卡标为生效中，实际 ${effectiveCards.length}`)
-    assert.ok(textOf(effectiveCards[0]).includes('幽默风趣'), '生效中的应是当前覆盖的那个预设')
+    assert.ok(
+      String(effectiveCards[0].props['aria-label'] || '').includes('幽默风趣'),
+      '生效中的应是当前覆盖的那个预设'
+    )
     assert.equal(
       findAllByClass(tree, 'soul-session-chip').filter((c) => textOf(c) === zh['session.clear']).length,
       1,
@@ -2517,7 +2538,9 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     //    0.9.0-d 改成左右分栏后，卡面**不再**放操作按钮：点卡 = 换右栏详情（纯浏览），
     //    改配置的动作收敛到右栏。这两步必须分开验证 —— 否则「点卡直接改配置」这种
     //    退化（浏览即生效）测不出来。
-    const cardFor = (n) => findAllByClass(tree, 'soul-session-card').find((c) => textOf(c).includes(n))
+    // 用 aria-label 识别卡（卡面已无可见文字，0.9.0-l）
+    const cardFor = (n) => findAllByClass(tree, 'soul-session-card')
+      .find((c) => String(c.props['aria-label'] || '').includes(n))
     const humorousCard = cardFor('幽默风趣')
     assert.ok(humorousCard, '应有「幽默风趣」的卡牌')
     // 卡面上不应有操作按钮（改配置只在右栏）

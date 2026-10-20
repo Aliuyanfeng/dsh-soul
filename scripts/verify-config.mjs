@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 150
+const EXPECTED_ASSERTIONS = 151
 
 let passed = 0
 const failures = []
@@ -1063,8 +1063,13 @@ check('客户端卡牌把「内置」徽标放在插画区，不进操作区', (
   // 徽标属于「这个预设从哪来」的信息，应随名称在插画区；放操作区会占掉按钮列位。
   // 定界必须用括号配平（extractCall），不能用缩进/固定窗口：曾用 `\s{22}` 猜终点，
   // 而真实闭合是 24 空格 ⇒ 捕获吞掉后续内容，断言退化成「徽标在这一块里」（H4）。
-  const artCell = extractCall(clientSource, "e('div', { className: 'soul-persona-art' }")
-  assert.ok(artCell !== '', '找不到插画区渲染块')
+  // ⚠️ 必须取**设置页**那处：会话 tab 的卡（0.9.0-l 起）也用 .soul-persona-art，
+  // 且在文件更靠前 —— extractCall 取第一个匹配，断言会落到会话卡上（判据落错对象）。
+  // 设置页的构图要求本身没变：徽标随名称在插画区。
+  const artCells = [...clientSource.matchAll(/e\('div', \{ className: 'soul-persona-art' \}/g)]
+  assert.ok(artCells.length >= 1, '找不到插画区渲染块')
+  const artCell = extractCall(clientSource.slice(artCells[artCells.length - 1].index), "e('div', { className: 'soul-persona-art' }")
+  assert.ok(artCell !== '', '找不到设置页插画区渲染块')
   assert.ok(/soul-persona-badge/.test(artCell), '内置标记未渲染在插画区（应随名称展示）')
   assert.ok(
     /soul-persona-name/.test(artCell) && /soul-persona-meta/.test(artCell),
@@ -3559,6 +3564,42 @@ check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', (
     assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
   }
 })
+check('0.9.0-l 会话卡牌：只留插画，无渐变遮罩、无压图文字', () => {
+  // 用户诉求：插画上的渐变遮罩和字都不用展示了（右侧详情已有）。
+  //
+  // 契约：
+  //   ① 卡上不渲染遮罩（.soul-persona-art-veil）；
+  //   ② 卡上不渲染压图标题（.soul-persona-art-title）；
+  //   ③ 保留功能性角标：内置徽标、位置指示 i/n、生效标记 ★；
+  //   ④ 纯图形的卡必须有 aria-label（可访问名是必需品）。
+  const client = clientCode
+  assert.equal(
+    /className: 'soul-persona-art-veil'/.test(client.match(/function SoulSessionPersona\([\s\S]*?\n    \}/)?.[0] ?? ''),
+    false,
+    '会话卡不应渲染渐变遮罩（0.9.0-l 已移除）'
+  )
+  assert.equal(
+    /className: 'soul-persona-art-title'/.test(client.match(/function SoulSessionPersona\([\s\S]*?\n    \}/)?.[0] ?? ''),
+    false,
+    '会话卡不应渲染压图标题（0.9.0-l 已移除）'
+  )
+  // 功能性角标保留
+  const cardFor = client.match(/const cardFor = \(name, offset\) => \{([\s\S]*?)\n      \}/)?.[1] ?? ''
+  assert.ok(cardFor !== '', '找不到会话卡的 cardFor')
+  assert.match(cardFor, /soul-persona-badge/, '内置徽标应保留（这是状态信号，不是重复文字）')
+  assert.match(cardFor, /soul-persona-card-pos/, '位置指示 i/n 应保留')
+  assert.match(cardFor, /soul-session-card-star/, '生效标记 ★ 应保留')
+  // 可访问名
+  assert.match(cardFor, /'aria-label': name/, '纯图形的卡必须有 aria-label（可访问名）')
+  // ★ 的位置：左下（右上被 i/n 占、左上被内置徽标占）
+  const cssBlock = client.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  const star = cssBlock.match(/\.soul-session-card-star\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(star !== '', '缺少 .soul-session-card-star 规则')
+  assert.match(star, /position:absolute/, '★ 标记必须绝对定位')
+  assert.match(star, /left:10px/, '★ 标记应在左侧（右上被位置指示占了）')
+  assert.match(star, /bottom:10px/, '★ 标记应在底部')
+})
+
 check('0.9.0-k 会话卡牌：容器必须是 1:1（插画是正方形，竖长容器会裁掉 44%）', () => {
   // 插画资源全是 512×512 的**正方形**（assets/personas/*.webp）。
   // 若卡牌容器是竖长的（曾用 210×380），配合 object-fit:cover 就会
