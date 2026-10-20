@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 41
+const EXPECTED_ASSERTIONS = 43
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -966,6 +966,135 @@ try {
     const tags = findAllByClass(tree, 'soul-session-persona-label-scope')
     assert.equal(tags.length, 1, '未知 source 也必须有标注（明说「未知」，不能静默不标）')
     assert.ok(textOf(tags[0]).includes(zh['quick.scopeUnknown']), '未知 source 应标为「会话状态未知」')
+  })
+
+  await check('C48 会话作用域写 store 必须换引用（原地改不会触发重渲染）', async () => {
+    // store 的 update 做的是**浅比较**：只有被改字段的引用变了才会通知订阅者。
+    // 原地改 s.sessionScopes[x] = scope 时，sessionScopes 引用没变 ⇒ 不通知 ⇒
+    // 真实浏览器里标签不会重渲染（但 getSnapshot() 仍能读到新值 —— 所以
+    // 「重新读快照」型断言会漏网）。
+    const world = await boot()
+    world.routes['/api/soul/session-scope'] = (call) => (call.method === 'GET'
+      ? { ok: true, sessionId: 's1', override: null, source: 'global', activePersona: null }
+      : { ok: true, sessionId: 's1', override: { style: 'humorous' }, source: 'session', activePersona: 'X' })
+    const before = world.controller.store.getSnapshot().sessionScopes
+    await world.controller.saveSessionScope('s1', { style: 'humorous' }, 'X')
+    const after = world.controller.store.getSnapshot().sessionScopes
+    assert.notEqual(
+      after,
+      before,
+      '写会话作用域必须**换新对象** —— 原地改不会触发 store 的浅比较，订阅者不会重渲染'
+    )
+    assert.equal(after.s1.activePersona, 'X', '新对象里应带上解析结果')
+  })
+
+  await check('C47 切换人设后，header 标签必须跟着更新（单一数据源）', async () => {
+    // 症状：人设 tab 里切换了人设，**会话标题旁的标签仍显示旧人设**。
+    //
+    // 根因：header 标签自己 fetch，且 effect 依赖只有 [sessionId] ——
+    // 切换人设不改变 sessionId ⇒ effect 不重跑 ⇒ 标签永远停在初始值。
+    //
+    // 修法：会话作用域进**全局 store**（sessionScopes[sessionId]），
+    // saveSessionScope 成功后写入 ⇒ 标签与 tab 读同一份，一起刷新。
+    const world = await boot()
+    const zh = world.dicts.zh
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: {
+        苏格拉底式提问者: { style: 'professional', builtin: true },
+        幽默风趣: { style: 'humorous', builtin: true }
+      },
+      activeName: null
+    })
+    await world.controller.loadPersonas()
+
+    let current = { style: 'professional' }
+    // header 标签的兜底 fetch 走的是 /api/soul/session-scope/current
+    // （输入框左侧那个开关才走 /api/soul/session-scope）。
+    world.routes['/api/soul/session-scope/current'] = () => ({
+      ok: true, sessionId: 'session-abc', workspaceId: null,
+      override: null, source: 'global', activePersona: '苏格拉底式提问者'
+    })
+    world.routes['/api/soul/session-scope'] = (call) => {
+      if (call.method === 'GET') {
+        return {
+          ok: true, sessionId: 'session-abc', workspaceId: null,
+          override: null, source: 'global', activePersona: '苏格拉底式提问者'
+        }
+      }
+      // POST：应用预设 ⇒ 返回新的解析结果
+      const name = call.body.personaName || '苏格拉底式提问者'
+      current = { style: name === '幽默风趣' ? 'humorous' : 'professional' }
+      return {
+        ok: true, sessionId: 'session-abc', workspaceId: null,
+        override: current, source: 'session', activePersona: name
+      }
+    }
+
+    const labelSlot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.session.header.actions')
+    const viewSlot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.view')
+    assert.ok(labelSlot, '前置条件：header 标签槽位已注册')
+    assert.ok(viewSlot, '前置条件：会话人设 tab 槽位已注册')
+
+    const store = world.controller.store
+    // 必须**订阅** store（真实浏览器里 useSoulController 是订阅式 hook）：
+    // 用快照读取的话，store 变了也不会重渲染，测不到「切换后标签更新」。
+    const useSoulController = (selector) => {
+      const [, force] = world.runtime.React.useState(0)
+      world.runtime.React.useEffect(() => store.subscribe(() => force((n) => n + 1)), [])
+      return selector(store.getSnapshot())
+    }
+    const t2 = (k, p2) => {
+      const raw = zh[k] ?? k
+      return p2 ? raw.replace(/\{(\w+)\}/g, (m, n) => (p2[n] === undefined ? m : String(p2[n]))) : raw
+    }
+
+    // 渲染 header 标签
+    const labelProps = labelSlot.options.inject('session-abc')
+    await world.runtime.settle({ type: labelSlot.component, props: { ...labelProps, useSoulController, t: t2 } })
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    let labelTree = await world.runtime.settle({ type: labelSlot.component, props: { ...labelProps, useSoulController, t: t2 } })
+    const labelText = () => textOf(findAllByClass(labelTree, 'soul-session-persona-label')[0] || {})
+    assert.ok(labelText().includes('苏格拉底式提问者'), `初始应显示「苏格拉底式提问者」，实际「${labelText()}」`)
+
+    // 在会话 tab 里点「用这个」切到「幽默风趣」
+    const viewProps = viewSlot.options.inject('session-abc')
+    await world.runtime.settle({ type: viewSlot.component, props: { ...viewProps, useSoulController, t: t2 } })
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    let viewTree = await world.runtime.settle({ type: viewSlot.component, props: { ...viewProps, useSoulController, t: t2 } })
+    // 先点**侧边卡**选中「幽默风趣」（这才是"切换"的第一步）——
+    // 直接点中心卡的「用这个」测不到切换：中心卡本来就是当前选中项。
+    const sideCard = findAllByClass(viewTree, 'soul-session-card')
+      .find((c) => c.props['data-current'] !== 'true' && textOf(c).includes('幽默风趣'))
+    assert.ok(sideCard, '应有「幽默风趣」的侧边卡可点')
+    await sideCard.props.onClick()
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    viewTree = await world.runtime.settle({ type: viewSlot.component, props: { ...viewProps, useSoulController, t: t2 } })
+    const detail = findAllByClass(viewTree, 'soul-session-detail')[0]
+    assert.ok(detail, '会话 tab 应有右栏详情')
+    assert.ok(
+      textOf(findAllByClass(detail, 'soul-session-detail-name')[0] || {}).includes('幽默风趣'),
+      '选中侧边卡后，右栏应切换到「幽默风趣」'
+    )
+    const btn = findAllByClass(detail, 'soul-persona-action')[0]
+    assert.ok(btn, '右栏应有操作按钮')
+    await btn.props.onClick()
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+
+    // 重新渲染 header 标签 —— 它必须已经是新的人设
+    await world.runtime.settle({ type: labelSlot.component, props: { ...labelProps, useSoulController, t: t2 } })
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    labelTree = await world.runtime.settle({ type: labelSlot.component, props: { ...labelProps, useSoulController, t: t2 } })
+    const after = labelText()
+    assert.ok(
+      after.includes('幽默风趣'),
+      `切换后 header 标签应显示「幽默风趣」，实际「${after}」`
+    )
+    assert.equal(
+      after.includes('苏格拉底式提问者'),
+      false,
+      '切换后 header 标签不得还显示旧人设'
+    )
   })
 
   await check('C42 header 人设标签：会话状态读取失败时显示「未知」，不得退回全局值', async () => {

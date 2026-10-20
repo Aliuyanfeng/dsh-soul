@@ -73,6 +73,17 @@ window.__ModuleLoader__.load({
       activePersona: null,
       // 预设列表请求失败的原因（成功时清空）。用于把「加载中」与「加载失败」区分开
       personasError: null,
+      // 会话作用域解析结果：sessionId → { activePersona, source, workspaceTitle, ... }。
+      //
+      // 为什么放进**全局 store**而不是组件自己的 useState：
+      // · 会话「人设」tab 与 header 的人设标签是**两个组件**，都要看同一份数据；
+      // · 之前 header 标签只在 sessionId 变化时取一次 ⇒ 会话里切换人设后，
+      //   标签仍显示旧值（用户报的 bug）；
+      // · 放 store 后，saveSessionScope 成功即写入，所有订阅者一起刷新 ——
+      //   不必再各自去轮询或监听。
+      //
+      // 值是普通对象（不是 Map）：store 的更新走浅比较，Map 原地改不会触发。
+      sessionScopes: {},
       // 变更记录（0.8.0）：null = 还没拉过，[] = 拉过且确实没有记录。
       // 两者必须分得开 —— 否则「没有记录」与「还没加载」在界面上是同一种空白。
       history: null,
@@ -717,14 +728,50 @@ window.__ModuleLoader__.load({
 
       // personaName：用户实际点的预设名。一并提交，服务端把它记进 sidecar ——
       // 否则「当前生效的是哪个预设」只能靠字段反查，而反查在多个预设字段相同时不确定。
+      // 写 store：会话作用域变了 → 所有看它的人（header 标签、会话 tab）一起刷新。
+      //
+      // 不可变更新（新建对象）—— store 是浅比较，原地改同一个对象不会触发订阅者。
+      setSessionScope(sessionId, scope) {
+        if (this.disposed) return
+        this.store.update((s) => {
+          s.sessionScopes = { ...s.sessionScopes, [String(sessionId)]: scope }
+        })
+      }
+
       async saveSessionScope(sessionId, overrides, personaName = null) {
         const body = { sessionId, overrides }
         if (typeof personaName === 'string' && personaName !== '') body.personaName = personaName
-        return await this.postJSON('/api/soul/session-scope', body)
+        const payload = await this.postJSON('/api/soul/session-scope', body)
+        // 服务端已经回了解析结果（activePersona / source / workspaceTitle）——
+        // 直接落进 store，header 标签立刻就是新值，不必再发一次请求。
+        if (payload && typeof payload === 'object') {
+          this.setSessionScope(sessionId, {
+            activePersona: typeof payload.activePersona === 'string' ? payload.activePersona : null,
+            recordedPersona: typeof payload.recordedPersona === 'string' ? payload.recordedPersona : null,
+            globalPersona: typeof payload.globalPersona === 'string' ? payload.globalPersona : null,
+            source: typeof payload.source === 'string' ? payload.source : null,
+            workspaceId: payload.workspaceId || null,
+            workspaceTitle: typeof payload.workspaceTitle === 'string' ? payload.workspaceTitle : null,
+            override: payload.override || null
+          })
+        }
+        return payload
       }
 
       async clearSessionScope(sessionId) {
-        return await this.postJSON('/api/soul/session-scope', { sessionId, clear: true })
+        const payload = await this.postJSON('/api/soul/session-scope', { sessionId, clear: true })
+        if (payload && typeof payload === 'object') {
+          this.setSessionScope(sessionId, {
+            activePersona: typeof payload.activePersona === 'string' ? payload.activePersona : null,
+            recordedPersona: null,
+            globalPersona: typeof payload.globalPersona === 'string' ? payload.globalPersona : null,
+            source: typeof payload.source === 'string' ? payload.source : null,
+            workspaceId: payload.workspaceId || null,
+            workspaceTitle: typeof payload.workspaceTitle === 'string' ? payload.workspaceTitle : null,
+            override: null
+          })
+        }
+        return payload
       }
 
       // —— 工作区人设（0.9.0-e）——
@@ -2632,7 +2679,15 @@ window.__ModuleLoader__.load({
 
       // 本会话的解析结果**独立于全局 store**：一份覆盖只对它所属的会话有意义，
       // 塞进全局 store 会让两个会话的 tab 互相串味。
-      const [view, setView] = React.useState(null)
+      const [localView, setView] = React.useState(null)
+      // 会话作用域解析结果 —— **优先读全局 store**，回落本地 state。
+      //
+      // 为什么：header 的人设标签与这个 tab 是两个组件，都要显示「当前生效的人设 + 来源」。
+      // 两边各存一份必然漂移（实测：tab 里切换了人设，header 标签仍显示旧的 ——
+      // 因为标签只在 sessionId 变化时取数，而切换人设不改变 sessionId）。
+      // store 是单一数据源：saveSessionScope 成功后写入，两边一起刷新。
+      const storedScope = state.sessionScopes && state.sessionScopes[String(sessionId)]
+      const view = storedScope || localView
       const [error, setError] = React.useState(null)
       const [notice, setNotice] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
@@ -3420,26 +3475,42 @@ window.__ModuleLoader__.load({
       // scope:'session' 槽位的 inject 收到的是**位置参数** [sessionId]（见宿主契约
       // FactoryInjectParams：scope 'session' → [sessionId: SessionId]）。
       const sessionId = typeof props.sessionId === 'string' && props.sessionId !== '' ? props.sessionId : null
-      const [scopeView, setScopeView] = React.useState(null)
+      // 数据来自**全局 store**（sessionScopes[sessionId]），不是组件自己取。
+      //
+      // 为什么改：原实现自己在 useEffect 里 fetch，依赖只有 [sessionId] ——
+      // 会话里切换人设时 sessionId 没变 ⇒ effect 不重跑 ⇒ header 标签仍显示旧人设
+      // （用户报的 bug：人设 tab 里切换了，标题栏不变）。
+      //
+      // 现在 store 是单一数据源：saveSessionScope / clearSessionScope 成功后把服务端
+      // 返回的解析结果写进 store ⇒ 所有看它的地方一起刷新，不必各自轮询。
+      const scopeView = (state.sessionScopes && state.sessionScopes[String(sessionId)]) || null
       // 请求是否失败过：失败时不得静默退回全局值（那会重现"界面说 A、模型用 B"的割裂）
       const [scopeFailed, setScopeFailed] = React.useState(false)
 
+      // 兜底：store 里还没有这个会话的记录时（首次打开、别的组件写入的），
+      // 去取一次。取到后写回 store，后续都走 store。
       React.useEffect(() => {
-        if (sessionId === null) {
-          setScopeView(null)
-          return undefined
-        }
+        if (sessionId === null) return undefined
+        if (scopeView !== null) return undefined
         let cancelled = false
         void controller.fetchCurrentSessionScope(sessionId).then((payload) => {
           if (cancelled) return
-          setScopeView(payload)
+          controller.setSessionScope(sessionId, {
+            activePersona: typeof payload.activePersona === 'string' ? payload.activePersona : null,
+            recordedPersona: typeof payload.recordedPersona === 'string' ? payload.recordedPersona : null,
+            globalPersona: typeof payload.globalPersona === 'string' ? payload.globalPersona : null,
+            source: typeof payload.source === 'string' ? payload.source : null,
+            workspaceId: payload.workspaceId || null,
+            workspaceTitle: typeof payload.workspaceTitle === 'string' ? payload.workspaceTitle : null,
+            override: payload.override || null
+          })
           setScopeFailed(false)
         }).catch(() => {
           if (cancelled) return
           setScopeFailed(true)
         })
         return () => { cancelled = true }
-      }, [sessionId])
+      }, [sessionId, scopeView])
 
       // 关闭个性化时不显示（人设此刻不生效，挂名字会误导）
       if (!enabled) return null
