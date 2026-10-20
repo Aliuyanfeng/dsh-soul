@@ -2251,8 +2251,13 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     assert.equal(posts.length, 1, `点一次应只发一次请求，实际 ${posts.length}`)
     assert.deepEqual(posts[0], {
       sessionId: 'session-abc',
-      overrides: { style: 'humorous', replyLength: 'concise' }
-    }, `应只带预设声明过的字段，实际 ${JSON.stringify(posts[0])}`)
+      overrides: { style: 'humorous', replyLength: 'concise' },
+      // 必须带上用户实际点的预设名：服务端靠它显示「当前生效的是哪个预设」。
+      // 只传字段的话，服务端只能反查，而反查在两个预设字段相同时不确定
+      // （实测：自建「游戏策划与开发专家」与内置「自驱型协作者」字段一致时，
+      //  名称排序让自建的那个抢先命中，用户点了后者却显示前者）。
+      personaName: '幽默风趣'
+    }, `应只带预设声明过的字段与预设名，实际 ${JSON.stringify(posts[0])}`)
     // ⚠️ 反向断言：预设条目的元数据与非人设字段**绝不能**被提交。
     // 只断言"带了正确的两个字段"会漏掉「整份预设照发」的形态 —— 判断力对照实测：
     // 把筛选循环换成 `Object.assign(overrides, entry)` 时，原版本全部放行。

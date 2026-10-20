@@ -1135,6 +1135,12 @@ const sessionOverrides = new Map()   // sessionId → override（已校验）
 const sessionOverridesInFlight = new Set()
 // 读过的 sessionId（含"读过但确实没有覆盖"）：避免每轮都重新排一次读盘
 const sessionOverridesKnown = new Set()
+// sessionId → 用户实际点选的预设名（sidecar 里的 personaName）。
+//
+// 与 override 分开存：override 是**模型用的字段**，personaName 是**给人看的注解**。
+// 两者分开的好处是 —— 字段被手工改过、或多个预设字段相同时，
+// 界面仍能显示"你点的确实是这个"，而不是靠字段反查猜一个。
+const sessionPersonaNames = new Map()
 
 // 读出某个会话的覆盖（同步，只查缓存）。
 //
@@ -1160,6 +1166,9 @@ async function loadSessionOverride(sessionId) {
     sessionOverridesKnown.add(sessionId)
     if (result.override) sessionOverrides.set(sessionId, result.override)
     else sessionOverrides.delete(sessionId)
+    // personaName 与 override 同一次读盘拿到 —— 不额外读一次磁盘。
+    if (result.personaName) sessionPersonaNames.set(sessionId, result.personaName)
+    else sessionPersonaNames.delete(sessionId)
     return result.override
   } catch {
     // 读失败不记为"已知"：下次装配会重试（可能是临时权限问题）
@@ -1167,10 +1176,23 @@ async function loadSessionOverride(sessionId) {
   }
 }
 
+// 取某个会话"用户实际点选的预设名"（sidecar 里的 personaName）。
+//
+// 返回 null 有三种情况：没有 sidecar / 老版本 sidecar（没有这个字段）/
+// 读失败。调用方据此退回「按字段反查」—— 那条路不确定但可用。
+async function recordedSessionPersonaName(sessionId) {
+  const key = String(sessionId)
+  if (sessionPersonaNames.has(key)) return sessionPersonaNames.get(key)
+  // 缓存未命中：确保 sidecar 已被读过（loadSessionOverride 会填缓存）
+  await loadSessionOverride(sessionId)
+  return sessionPersonaNames.get(key) || null
+}
+
 // 清掉某个会话的缓存（写入后调用，或 GC 删文件后调用）。
 function forgetSessionOverride(sessionId) {
   sessionOverrides.delete(sessionId)
   sessionOverridesKnown.delete(sessionId)
+  sessionPersonaNames.delete(sessionId)
 }
 
 // 会话覆盖的合并：部分覆盖 + 白名单 + 包封字段保护。
@@ -2395,12 +2417,23 @@ function registerSessionScopeRoutes(ctx) {
       const resolved = configForScope(config, null, workspaceId, override)
 
       // 生效人设名：走与真实装配**同一条路径**，否则 tab 上显示的与模型拿到的不一致。
+      //
+      // ⚠️ 但「按字段反查」是不确定的：多个预设声明相同字段时，名称排序决定谁命中
+      // （实测：自建「游戏策划与开发专家」与内置「自驱型协作者」字段一致时，
+      // 用户点了后者却显示前者）。所以**先看 sidecar 里记的 personaName** ——
+      // 那是用户实际点过的名字，确定无疑；没有它（老 sidecar / 手改字段）才退回反查。
+      const recordedName = await recordedSessionPersonaName(sessionId)
+      const activePersona = recordedName
+        || findActivePersonaName(resolved.config)
       return {
         sessionId,
         workspaceId,
         override: override || null,
         source: resolved.source,
-        activePersona: findActivePersonaName(resolved.config),
+        activePersona,
+        // 用户实际点的那个名字（可能与「按字段反查」的结论不同）。
+        // 客户端据此显示「你点的是 A，但字段与 B 相同」这类提示。
+        recordedPersona: recordedName,
         // 全局层的人设名：客户端要显示「当前是谁」与「全局是谁」两者的关系
         // （会话覆盖生效时，全局值仍在，但当前值不是它）。
         globalPersona: findActivePersonaName(config),
@@ -2489,8 +2522,21 @@ function registerSessionScopeRoutes(ctx) {
           // 保留原有的 createdAt 与孤儿标记：重写覆盖不等于"这个会话是新出现的"。
           const previous = await readSessionScope(filePath, sessionId)
           const now = Date.now()
+          // personaName：客户端告诉服务端"用户实际点了哪个预设"。
+          // 覆盖项只存字段，而「当前生效的是哪个预设」若靠字段反查，在两个预设字段
+          // 相同时会不确定（实测：自建「游戏策划与开发专家」与内置「自驱型协作者」
+          // 字段一致时，名称排序让自建的那个抢先命中，用户点了 A 却显示 B）。
+          // 记下名字就把"猜"变成"知道"。
+          const requestedName = parsed.body && typeof parsed.body.personaName === 'string'
+            ? parsed.body.personaName.trim()
+            : ''
           const doc = {
-            ...createSessionScopeDoc(sessionId, override, now),
+            ...createSessionScopeDoc(
+              sessionId,
+              override,
+              now,
+              requestedName || (previous.personaName ?? null)
+            ),
             createdAt: (previous.doc && previous.doc.createdAt) || new Date(now).toISOString(),
             ...(previous.orphan ? { orphan: previous.orphan } : {})
           }
@@ -2500,6 +2546,10 @@ function registerSessionScopeRoutes(ctx) {
           // 一定能看到新值。若等磁盘异步完成再刷，装配可能先跑、读到旧缓存。
           sessionOverrides.set(sessionId, override)
           sessionOverridesKnown.add(sessionId)
+          // personaName 也同步进缓存：紧接着的 sessionScopeView 立刻能读到，
+          // 不必等下一次读盘。
+          if (requestedName) sessionPersonaNames.set(sessionId, requestedName)
+          else sessionPersonaNames.delete(sessionId)
           refreshPromptAndInject(ctx, await loadConfig())
 
           send(res, 200, { ok: true, dropped, ...(await sessionScopeView(sessionId)) })

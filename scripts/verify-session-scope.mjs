@@ -37,7 +37,7 @@ import {
   writeSessionScope
 } from '../lib/session-scope.mjs'
 
-const EXPECTED_ASSERTIONS = 22
+const EXPECTED_ASSERTIONS = 23
 
 let passed = 0
 function check(name, fn) {
@@ -390,6 +390,45 @@ check('纯函数层不依赖宿主；且不把 agents.list 当删除证据', asy
     false,
     '不得引用 agents —— 会话是否删除只能由调用方用 sessionPersistence 判定'
   )
+
+})
+
+check('sidecar 记下用户实际点选的预设名（不靠字段反查）', () => {
+  // 背景：覆盖项只存字段，而「当前生效的是哪个预设」若靠字段反查，
+  // 两个预设声明相同字段时结果取决于**名称排序** —— 实测用户自建
+  // 「游戏策划与开发专家」与内置「自驱型协作者」字段一致时，
+  // 点了后者却显示前者。记下名字把"猜"变成"知道"。
+  const doc = createSessionScopeDoc('s1', { style: 'professional' }, 1700000000000, '自驱型协作者')
+  assert.equal(doc.personaName, '自驱型协作者', 'sidecar 必须记下预设名')
+  assert.equal(doc.overrides.style, 'professional', '字段照旧存（模型只认字段）')
+  assert.equal('personaName' in createSessionScopeDoc('s1', { style: 'professional' }, 1700000000000, ''), false,
+    '空名字不该写入（老 sidecar 保持形状一致）')
+  assert.equal('personaName' in createSessionScopeDoc('s1', { style: 'professional' }, 1700000000000, null), false,
+    'null 不该写入')
+
+  // 读侧：解析出来
+  const parsed = parseSessionScopeDoc({
+    schemaVersion: SESSION_SCOPE_VERSION,
+    sessionId: 's1',
+    overrides: { style: 'professional' },
+    personaName: '自驱型协作者',
+    createdAt: '2023-11-14T22:13:20.000Z',
+    updatedAt: '2023-11-14T22:13:20.000Z'
+  }, 's1')
+  assert.equal(parsed.personaName, '自驱型协作者', '读侧必须取回预设名')
+  assert.equal(parsed.failure, null, '带 personaName 的 sidecar 应能正常解析')
+
+  // 老 sidecar（没有该字段）⇒ personaName 为 null，调用方退回反查
+  const legacy = parseSessionScopeDoc({
+    schemaVersion: SESSION_SCOPE_VERSION,
+    sessionId: 's1',
+    overrides: { style: 'professional' },
+    createdAt: '2023-11-14T22:13:20.000Z',
+    updatedAt: '2023-11-14T22:13:20.000Z'
+  }, 's1')
+  assert.equal(legacy.personaName, null, '老 sidecar 没有该字段时应为 null（调用方退回反查）')
+  assert.equal(legacy.failure, null, '老 sidecar 仍应能正常解析')
+  assert.ok(legacy.override, '老 sidecar 的覆盖项不该丢')
 })
 
 if (!assertCount('verify-session-scope', passed, EXPECTED_ASSERTIONS)) process.exit(1)

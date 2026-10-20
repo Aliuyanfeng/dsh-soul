@@ -715,8 +715,12 @@ window.__ModuleLoader__.load({
         return await this.postJSON(`/api/soul/session-scope/current${query}`, null, { method: 'GET' })
       }
 
-      async saveSessionScope(sessionId, overrides) {
-        return await this.postJSON('/api/soul/session-scope', { sessionId, overrides })
+      // personaName：用户实际点的预设名。一并提交，服务端把它记进 sidecar ——
+      // 否则「当前生效的是哪个预设」只能靠字段反查，而反查在多个预设字段相同时不确定。
+      async saveSessionScope(sessionId, overrides, personaName = null) {
+        const body = { sessionId, overrides }
+        if (typeof personaName === 'string' && personaName !== '') body.personaName = personaName
+        return await this.postJSON('/api/soul/session-scope', body)
       }
 
       async clearSessionScope(sessionId) {
@@ -2658,7 +2662,13 @@ window.__ModuleLoader__.load({
           for (const key of SESSION_OVERRIDE_KEYS) {
             if (key in entry) overrides[key] = entry[key]
           }
-          const payload = await controller.saveSessionScope(sessionId, overrides)
+          // 带上**用户实际点的预设名**：服务端要靠它显示"当前生效的是哪个预设"。
+          //
+          // 只传字段是不够的 —— 覆盖项里没有名字，服务端只能拿当前配置去反查哪个预设
+          // 匹配得上。两个预设声明了相同字段时，反查结果取决于**名称排序**：
+          // 实测用户自建「游戏策划与开发专家」与内置「自驱型协作者」字段一致时，
+          // 点了后者却显示前者。把名字一起传过去，反查就退化成兜底而不是唯一依据。
+          const payload = await controller.saveSessionScope(sessionId, overrides, personaName)
           setView(payload)
           setNotice(t('session.applied', { name: personaName }))
         } catch (err) {

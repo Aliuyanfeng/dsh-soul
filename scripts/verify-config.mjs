@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 144
+const EXPECTED_ASSERTIONS = 145
 
 let passed = 0
 const failures = []
@@ -3530,6 +3530,43 @@ check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', (
     assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
   }
 })
+check('0.9.0-f 会话生效人设名：服务端优先用 sidecar 记的 personaName', () => {
+  // 背景：「当前生效的是哪个预设」原先是**按字段反查**出来的
+  // （findActivePersonaName：拿当前配置比每个预设，谁匹配上就是它，
+  //  多个匹配时按名称排序取首个）。
+  //
+  // 这个反查在两个预设声明相同字段时不确定：实测用户自建「游戏策划与开发专家」
+  // 与内置「自驱型协作者」字段一致时，「游」排在「自」前 —— 自建的那个抢先命中，
+  // 用户明明点了「自驱型协作者」，界面却显示「游戏策划与开发专家」。
+  //
+  // 契约：sidecar 记下用户实际点选的名字，服务端**优先**用它，反查只作兜底。
+  const server = indexCode
+  // ① 必须先读 sidecar 里记的名字
+  assert.match(
+    server,
+    /const recordedName = await recordedSessionPersonaName\(sessionId\)/,
+    '服务端必须读取 sidecar 记下的 personaName'
+  )
+  // ② 且优先于反查
+  assert.match(
+    server,
+    /const activePersona = recordedName\s*\n?\s*\|\| findActivePersonaName\(resolved\.config\)/,
+    'activePersona 必须优先用 recordedName，反查只作兜底'
+  )
+  // ③ 客户端必须把用户点的名字提交上来
+  const client = clientCode
+  assert.match(
+    client,
+    /body\.personaName = personaName/,
+    '客户端必须把用户实际点的预设名提交给服务端'
+  )
+  assert.match(
+    client,
+    /saveSessionScope\(sessionId, overrides, personaName\)/,
+    '会话覆盖的提交必须带上预设名'
+  )
+})
+
 check('0.9.0-e 会话卡牌：描边独占「生效」，选中只用投影与位移', () => {
   // 背景：--dsw-alias-brand-primary 在浅色主题下解析为近黑（#0f1115）。
   // 「生效」与「选中」两个状态若都用主色描边，叠在一起就是「双层黑框」，
