@@ -1251,7 +1251,8 @@ window.__ModuleLoader__.load({
       // 单张卡：结构抄 .soul-persona-card 的正面（去掉 3D 翻面 —— 翻面由右栏详情承担）。
       // ⚠️ 这里**不得**写任何 transform：叠层偏移由内联 style 持有（translateX/scale）；
       // 若 CSS 也给 transform，两者会互相覆盖。
-      '.soul-session-card{position:absolute;top:0;bottom:0;left:0;right:0;width:210px;margin:0 auto;display:flex;flex-direction:column;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;cursor:pointer}',
+      // 插画铺满整张卡：art 绝对定位 inset:0，卡本身只提供定位上下文与圆角裁切。
+      '.soul-session-card{position:absolute;top:0;bottom:0;left:0;right:0;width:210px;margin:0 auto;display:block;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;cursor:pointer}',
       '.soul-session-card:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       // 生效中的那张：**主色描边 + 外发光**（配置事实）。
       // 主色在浅色主题下解析为近黑（#0f1115），在深色下是近白 —— 与宿主卡片体系一致。
@@ -1265,9 +1266,10 @@ window.__ModuleLoader__.load({
       // 生效 **且** 选中（最常见：中心卡正是生效的那张）⇒ 描边保留，投影取两者中更重的一档。
       // 顺序要紧：这条必须排在上面两条之后，否则会把生效的描边覆盖掉。
       '.soul-session-card[data-selected="true"][data-effective="true"]{transform:translateY(-1px);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),0 4px 14px rgba(0,0,0,.18)}',
-      // 卡面里的插画区高度：网格卡比设置页小，1:1 会过高，压到 3:2
-      '.soul-session-card .soul-persona-art{aspect-ratio:1/1}',
-      '.soul-session-card .soul-persona-body{padding:8px 10px 10px;gap:6px}',
+      // 插画区：**绝对定位铺满整张卡**。
+      // 原来它在文档流里（1:1 的画面 + 下方文字区），现在没有文字区了 ⇒ 直接铺满，
+      // 画面大得多。aspect-ratio 不再需要（高度由容器决定）。
+      '.soul-session-card .soul-persona-art{position:absolute;inset:0;width:100%;height:100%;aspect-ratio:auto}',
       // 右栏详情：复用设置页卡背的元素（.soul-persona-dims / .soul-persona-fulltext），
       // 这里只补容器与滚动。高度上限避免长文把整个面板撑得比卡牌栏高太多。
       '.soul-session-detail{flex:1 1 220px;min-width:200px;display:flex;flex-direction:column;gap:8px;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);max-height:340px;overflow:auto}',
@@ -2906,10 +2908,13 @@ window.__ModuleLoader__.load({
               ),
               e('div', { className: 'soul-persona-meta' }, personaRowMetaOf(entry, t))
             )
-          ),
-          e('div', { className: 'soul-persona-body' },
-            e('div', { className: 'soul-persona-eff' }, personaEffectTextOf(entry, t))
           )
+          // 下方不再有文字区（0.9.0-j）：右栏详情已完整展示人设名、六个维度、
+          // 自定义指令全文与效果说明，卡上重复一遍是冗余，还会把插画挤成半张。
+          // 「完全展示卡牌」= 插画铺满整张卡。
+          //
+          // 压图标题（名字 + 摘要）**保留** —— 插画是抽象主题图，没有名字
+          // 认不出是哪张卡。
         )
       }
 

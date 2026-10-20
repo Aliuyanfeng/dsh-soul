@@ -2370,7 +2370,15 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     // 卡面必须复用设置页那套元素：插画 + 压图标题 + 效果栏
     assert.equal(findAllByClass(cards[0], 'soul-persona-art').length, 1, '卡面应有插画区（与设置页同款）')
     assert.equal(findAllByClass(cards[0], 'soul-persona-art-title').length, 1, '卡面应有压图标题')
-    assert.equal(findAllByClass(cards[0], 'soul-persona-eff').length, 1, '卡面应有「这个预设会怎么回答」的效果栏')
+    // 0.9.0-j：卡面**不再**有下方效果栏 —— 右栏详情已完整展示，
+    // 卡上重复是冗余，还会把插画挤成半张。「完全展示卡牌」= 插画铺满。
+    assert.equal(
+      findAllByClass(cards[0], 'soul-persona-eff').length,
+      0,
+      '卡面不应有效果栏（右栏详情已展示）'
+    )
+    // 压图标题保留 —— 插画是抽象主题图，没有名字认不出是哪张卡
+    assert.equal(findAllByClass(cards[0], 'soul-persona-name').length, 1, '卡面应保留压图标题（认出是哪张卡）')
     // 左卡牌 + 右详情：两块都必须存在
     assert.equal(findAllByClass(tree, 'soul-session-split').length, 1, '应是左右分栏布局')
     assert.equal(findAllByClass(tree, 'soul-session-detail').length, 1, '应有右栏详情面板')

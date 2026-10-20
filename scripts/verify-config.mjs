@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 148
+const EXPECTED_ASSERTIONS = 149
 
 let passed = 0
 const failures = []
@@ -3559,6 +3559,34 @@ check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', (
     assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
   }
 })
+check('0.9.0-j 会话卡牌：插画铺满整张卡，卡上无下方文字', () => {
+  // 用户诉求：卡牌主题插画不够大 ⇒ 移除下方文字区，让插画铺满整张卡。
+  //
+  // 契约：
+  //   ① 插画区绝对定位 inset:0（铺满，不再是文档流里的 1:1 区块）；
+  //   ② 卡面不再有效果栏（.soul-persona-eff）；
+  //   ③ 压图标题保留（插画是抽象主题图，没名字认不出是哪张卡）。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  const rule = (sel) => {
+    const escaped = sel.replace(/[[\]]/g, (c) => '\\' + c)
+    const m = cssBlock.match(new RegExp(escaped + '\\{([^}]*)\\}'))
+    return m ? m[1] : ''
+  }
+  const art = rule('.soul-session-card .soul-persona-art')
+  assert.ok(art !== '', '缺少会话卡的插画区规则')
+  assert.match(art, /position:absolute/, '插画区必须绝对定位（才能铺满整张卡）')
+  assert.match(art, /inset:0/, '插画区必须 inset:0（铺满）')
+  assert.match(
+    art,
+    /aspect-ratio:auto/,
+    '插画区不应再有 aspect-ratio（高度由容器决定，否则插画被压扁）'
+  )
+  // 压图标题：插画铺满后它压在图上，遮罩必须够强否则文字看不清
+  const veil = rule('.soul-persona-art-veil')
+  assert.ok(veil !== '', '缺少插画遮罩规则')
+  assert.match(veil, /background/, '插画遮罩必须有背景（插画铺满后压图文字要靠它保证对比度）')
+})
+
 check('0.9.0-i 快捷开关：扫光特效必须被裁在按钮内', () => {
   // 扫光（::before）从 translateX(100%) 扫到 translateX(-100%) —— 两端都超出按钮。
   // 靠按钮的 overflow:hidden 裁住。
