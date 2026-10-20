@@ -200,7 +200,7 @@ curl.exe -s "http://127.0.0.1:3080/plugins/soul/client.js" | Select-String "soul
 | 持久化行为 | `verify-store` | 18 | 仅 1 项（平台不提供 inode 时） |
 | 持久化行为 | `verify-history` | 43 | 否 |
 | 纯函数（工作区绑定） | `verify-bindings` | 47 | 否 |
-| 纯函数（三级作用域） | `verify-scope` | 22 | 否 |
+| 纯函数（三级作用域） | `verify-scope` | 21 | 否 |
 | 纯函数 + 文件系统（会话覆盖与回收状态机） | `verify-session-scope` | 22 | 否 |
 | 客户端行为 | `verify-client` | 34 | 否 |
 | 端到端（保存 → 两条通道；变更记录四条路由；工作区绑定路由；**三级作用域真挂载**） | `verify-e2e-prompt` | 100 | 否 |

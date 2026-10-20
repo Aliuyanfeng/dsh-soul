@@ -48,7 +48,7 @@ window.__ModuleLoader__.load({
     // -------------------------------------------------------------------------
 
     const NS = 'soul'
-    const VERSION = '0.8.0'
+    const VERSION = '0.9.0'
     const INITIAL = {
       enabled: true,
       nickname: '',
