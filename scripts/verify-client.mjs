@@ -1892,6 +1892,42 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
       `详情栏应列出六个维度（与设置页卡背同款），实际 ${findAllByClass(tree, 'soul-persona-dim').length}`
     )
     assert.ok(findAllByClass(tree, 'soul-persona-fulltext').length >= 1, '详情栏应有自定义指令全文块')
+    // ⚠️ 叠层映射：选中卡必须落在**中心**（data-current）而非左侧。
+    // 初版错写成 `stackOrder[offset + 1]`，把选中卡渲染到左侧、中心显示下一个 ——
+    // 表现是「无论点哪个都显示同一张」。这里用中心卡 vs 详情栏名称交叉验证。
+    {
+      const centers = cards.filter((c) => c.props['data-current'] === 'true')
+      assert.equal(centers.length, 1, `应恰好一张中心卡（data-current），实际 ${centers.length}`)
+      const detail = findAllByClass(tree, 'soul-session-detail')[0]
+      assert.ok(detail, '应有右栏详情面板')
+      const detailName = findAllByClass(detail, 'soul-session-detail-name')[0]
+      assert.ok(detailName, '详情栏应有名称')
+      assert.ok(
+        textOf(centers[0]).includes(textOf(detailName)),
+        `中心卡应是详情栏展示的那张（中心=「${textOf(centers[0]).slice(0, 40)}」，详情=「${textOf(detailName)}」）`
+      )
+    }
+    // 自定义字段必须用中英文标签，不是裸键名
+    {
+      const fieldEls = findAllByClass(tree, 'soul-session-field')
+      if (fieldEls.length > 0) {
+        const bare = fieldEls.filter((f) => /^[a-z][A-Za-z]*$/.test(textOf(f)))
+        assert.equal(
+          bare.length, 0,
+          `自定义字段应显示中英文标签，不应露出裸键名：${bare.map(textOf).join(', ')}`
+        )
+      }
+    }
+    // 宽度必须与宿主输入框同宽（读 --dsh-chat-content-width），不是硬编码
+    {
+      const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+      const cssBlock = source.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+      assert.match(
+        cssBlock,
+        /max-width:var\(--dsh-chat-content-width/,
+        '会话 tab 宽度应读 --dsh-chat-content-width（与宿主输入框同宽）而非硬编码'
+      )
+    }
     // 左侧是**叠层轮转**而非平铺：卡片带 style.transform（translateX/scale）与 data-current
     {
       const styled = cards.filter((c) => c.props.style && typeof c.props.style.transform === 'string')

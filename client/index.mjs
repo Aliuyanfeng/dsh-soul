@@ -1123,7 +1123,10 @@ window.__ModuleLoader__.load({
       // 它是 conversation.view 的一种，宿主把它画在对话区里，所以要自带内边距与
       // 最大宽度（不像设置页有外层容器）。参数抄宿主的 viewArea 排版：
       // 内容左对齐、与对话区同宽的上限，宽屏下不铺满整行。
-      '.soul-session-persona{display:flex;flex-direction:column;gap:16px;max-width:720px;margin:0 auto;padding:20px 4px;color:var(--dsw-alias-label-primary)}',
+      // 与宿主 conversation 输入框同宽：直接读 --dsh-chat-content-width
+      // （宿主 body 规则里定义为 clamp(680px, 64%, 920px)）。宿主调宽窄、tab 跟着变，
+      // 比硬编码 720px 更稳；变量缺失时回退 720px（与上一版一致）。
+      '.soul-session-persona{display:flex;flex-direction:column;gap:16px;max-width:var(--dsh-chat-content-width,720px);width:100%;margin:0 auto;padding:20px 4px;box-sizing:border-box;color:var(--dsw-alias-label-primary)}',
       '.soul-session-head{display:flex;align-items:baseline;gap:8px}',
       '.soul-session-title{margin:0;font-size:14px;font-weight:500;line-height:20px}',
       // 「有覆盖」标记：一眼看出这个会话与外面的设置不同，避免用户以为改的是全局
@@ -1148,21 +1151,21 @@ window.__ModuleLoader__.load({
       // 但布局从「叠层轮播 + 3D 翻面」改成「左侧网格选中 + 右侧详情面板」：
       // 会话面板横向空间窄，左侧是**叠层轮转**而非平铺：中心大卡 + 两侧各露边一张。
       // 比例：左栏 260px（正好容下 260px 的叠层）+ 右栏自适应；放不下时整体换行。
-      '.soul-session-split{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;margin-top:2px}',
+      '.soul-session-split{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:2px}',
       // 叠层容器：卡片绝对定位到同一格，靠内联 transform 偏移（与设置页同构）。
       // overflow:hidden 让两侧露边卡在容器边缘被自然裁掉，观感与设置页一致。
-      '.soul-session-grid{position:relative;width:100%;min-width:160px;height:340px;flex:0 1 260px;overflow:hidden}',
+      '.soul-session-grid{position:relative;width:100%;min-width:160px;height:380px;flex:0 1 280px;overflow:hidden}',
       // 单张卡：结构抄 .soul-persona-card 的正面（去掉 3D 翻面 —— 翻面由右栏详情承担）。
       // ⚠️ 这里**不得**写任何 transform：叠层偏移由内联 style 持有（translateX/scale）；
       // 若 CSS 也给 transform，两者会互相覆盖。
-      '.soul-session-card{position:absolute;top:0;bottom:0;left:0;right:0;width:180px;margin:0 auto;display:flex;flex-direction:column;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;cursor:pointer}',
+      '.soul-session-card{position:absolute;top:0;bottom:0;left:0;right:0;width:210px;margin:0 auto;display:flex;flex-direction:column;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;cursor:pointer}',
       '.soul-session-card:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       // 生效中的那张：主色描边 + 外发光（配置事实）
       '.soul-session-card[data-effective="true"]{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08))}',
       // 选中的那张：抬高一档 + 细描边（浏览状态，与「生效」是两件事）
       '.soul-session-card[data-selected="true"]{transform:translateY(-1px);box-shadow:0 2px 12px rgba(0,0,0,.14),0 0 0 1px var(--dsw-alias-brand-primary)}',
       // 卡面里的插画区高度：网格卡比设置页小，1:1 会过高，压到 3:2
-      '.soul-session-card .soul-persona-art{aspect-ratio:3/2}',
+      '.soul-session-card .soul-persona-art{aspect-ratio:1/1}',
       '.soul-session-card .soul-persona-body{padding:8px 10px 10px;gap:6px}',
       // 右栏详情：复用设置页卡背的元素（.soul-persona-dims / .soul-persona-fulltext），
       // 这里只补容器与滚动。高度上限避免长文把整个面板撑得比卡牌栏高太多。
@@ -2729,7 +2732,7 @@ window.__ModuleLoader__.load({
           // 偏移归**叠层**所有（内联 transform）；与 CSS 里 hover/焦点态的
           // translateY 微抬无关 —— 两者若合成一个 transform 会互相打架。
           style: {
-            transform: `translateX(${offset * 68}px) scale(${1 - Math.abs(offset) * 0.06})`,
+            transform: `translateX(${offset * 78}px) scale(${1 - Math.abs(offset) * 0.06})`,
             zIndex: String(10 - Math.abs(offset)),
             opacity: offset === 0 ? '1' : '0.55'
           },
@@ -2838,9 +2841,13 @@ window.__ModuleLoader__.load({
             : e('div', { className: 'soul-session-split' },
               // 叠层：中心卡 = selectedPersona（offset 0），左/右各露出前一个/后一个。
               // 顺序用 stackOrder（selectedPersona 永远排头），槽位取模避免越界。
+              // ⚠️ 偏移映射直接用 offset 作 stackOrder 索引：offset=0 → stackOrder[0]
+              // （即 selectedPersona，中心卡）；offset=-1 → stackOrder[-1+0]=前一个；offset=1 → 后一个。
+              // 初版错写成 offset+1，把选中卡渲染到左侧、中心卡显示下一个 —— 点哪个都
+              // 一直显示「苏格拉底式提问者」（首个预设）。
               e('div', { className: 'soul-session-grid' },
                 ...visibleOffsets.map((offset) => {
-                  const at = Math.min(Math.max(0, offset + 1), stackOrder.length - 1)
+                  const at = (offset + stackOrder.length) % stackOrder.length
                   return cardFor(stackOrder[at], offset)
                 })
               ),
@@ -2855,10 +2862,13 @@ window.__ModuleLoader__.load({
           if (keys.length === 0) return null
           return e('div', { className: 'soul-field' },
             e('div', { className: 'soul-field-label' }, t('session.customOverrides')),
+            // 用字段**标签**（中英双语）而不是裸键名：HISTORY_FIELD_LABELS 是变更记录
+            // 同款表，保证「改字段叫什么」在 tab、变更记录、设置页三处一致。
+            // 缺失的键回退到原样（万一有人改了字段名又漏了标签）。
             e('div', { className: 'soul-session-fields' }, ...keys.map((key) => e('code', {
               key,
               className: 'soul-session-field'
-            }, key)))
+            }, t(HISTORY_FIELD_LABELS[key] || key))))
           )
         })()
       )
