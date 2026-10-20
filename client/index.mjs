@@ -854,7 +854,13 @@ window.__ModuleLoader__.load({
       // · inline-flex + align-items:center 在多行时也对不齐。
       //
       // max-width:min(100%, 22em) 给个上限：太长的自定义预设名不至于把整条输入框撑开。
-      '.soul-quick-toggle{position:relative;isolation:isolate;display:inline-flex;align-items:center;flex-wrap:wrap;gap:2px 6px;min-height:28px;max-width:min(100%,22em);padding:4px 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:normal}',
+      // overflow:hidden 是**扫光特效的裁切边界**，不能去掉：
+      // 扫光（::before）从 translateX(100%) 扫到 translateX(-100%)，两端都会超出按钮。
+      //
+      // ⚠️ 0.9.0-g 为了让文字完整显示曾把它去掉 —— 结果特效溢出到按钮外面。
+      // 两者并不真正冲突：文字现在允许换行且有 max-width 上限，**不会溢出**内容盒；
+      // 真正溢出的只有扫光伪元素。所以 overflow:hidden 裁的是扫光，不裁文字。
+      '.soul-quick-toggle{position:relative;isolation:isolate;display:inline-flex;align-items:center;flex-wrap:wrap;gap:2px 6px;min-height:28px;max-width:min(100%,22em);overflow:hidden;padding:4px 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:normal}',
       '.soul-quick-toggle:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
       '.soul-quick-toggle[data-enabled="true"]{color:var(--dsw-alias-brand-primary)}',
       '.soul-quick-toggle[data-enabled="true"]:hover{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-state-error-primary) 18%,transparent)}',

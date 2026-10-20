@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 147
+const EXPECTED_ASSERTIONS = 148
 
 let passed = 0
 const failures = []
@@ -3559,6 +3559,40 @@ check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', (
     assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
   }
 })
+check('0.9.0-i 快捷开关：扫光特效必须被裁在按钮内', () => {
+  // 扫光（::before）从 translateX(100%) 扫到 translateX(-100%) —— 两端都超出按钮。
+  // 靠按钮的 overflow:hidden 裁住。
+  //
+  // ⚠️ 0.9.0-g 为让文字完整显示把 overflow:hidden 去掉了（副作用：特效溢出到按钮外）。
+  // 两者并不真冲突：文字现在允许换行且有 max-width 上限，**不溢出**内容盒；
+  // 真正溢出的只有扫光伪元素。所以 overflow:hidden 裁的是扫光，不是文字。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  const toggle = cssBlock.match(/\.soul-quick-toggle\{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(toggle !== '', '找不到 .soul-quick-toggle 规则')
+  assert.match(
+    toggle,
+    /overflow:hidden/,
+    '快捷开关必须有 overflow:hidden —— 扫光（translateX ±100%）靠它裁在按钮内'
+  )
+  // 但**不能**因此回到「强制单行 + 限死宽度」：文字仍要能换行显示
+  assert.equal(
+    /white-space:nowrap/.test(toggle),
+    false,
+    '快捷开关不得 white-space:nowrap —— 窄空间里必须允许换行'
+  )
+  assert.match(
+    toggle,
+    /max-width:min\(100%,\s*22em\)/,
+    '快捷开关必须有宽度上限（否则长预设名撑破输入框）'
+  )
+  // 扫光必须存在且是位移动画（若换成别的实现，overflow 的必要性就要重新评估）
+  assert.match(
+    cssBlock,
+    /@keyframes soul-toggle-red-sweep\{from\{transform:translateX\(100%\)\}to\{transform:translateX\(-100%\)\}\}/,
+    '扫光动画应保持位移实现（两端溢出，靠 overflow 裁）'
+  )
+})
+
 check('0.9.0-h 人设标签挂在会话 header，不在输入框左侧', () => {
   // 用户诉求：输入框左侧横向空间不够，人设名与层级标注被裁掉 ⇒ 挪到会话 header
   // （标题旁，「创造模式」「费用明细」那一行）。
@@ -3626,12 +3660,15 @@ check('0.9.0-g 快捷开关标签：不得裁切、不得限死宽度', () => {
   const scope = rule('.soul-quick-toggle-scope')
 
   assert.ok(toggle !== '', '缺少 .soul-quick-toggle 规则')
-  // ① 不得裁切
-  assert.equal(
-    /overflow:hidden/.test(toggle),
-    false,
-    '快捷开关不得 overflow:hidden —— 溢出的内容会被直接裁掉（这正是「展示不全」的根因）'
-  )
+  // ① 不得裁切**文字**
+  //
+  // ⚠️ 这里原先断言「按钮不得 overflow:hidden」—— 但扫光特效（::before 位移 ±100%）
+  // **依赖**它来把扫光裁在按钮内（0.9.0-i）。两者不是同一件事：
+  //   · 文字被裁 ⇒ 「展示不全」（0.9.0-g 的诉求）
+  //   · 扫光被裁 ⇒ 特效溢出到按钮外（0.9.0-i 的诉求）
+  // 按钮的 overflow:hidden 裁的是**扫光**（文字换行后不溢出内容盒），
+  // 所以「文字不得被裁」要落在文字自己的规则上 —— 见下面的名字/标注判据。
+  //
   // ② 不得强制单行
   assert.equal(
     /white-space:nowrap/.test(toggle),
@@ -3643,6 +3680,23 @@ check('0.9.0-g 快捷开关标签：不得裁切、不得限死宽度', () => {
     /max-width:\s*9em/.test(name),
     false,
     '人设名不得用 max-width:9em 限死 —— 7 个字的中文预设名就超了'
+  )
+  // ③' 文字侧：名字与标注**不得**有自己的裁切
+  //    （按钮的 overflow:hidden 是给扫光用的，不是给文字用的）
+  assert.equal(
+    /overflow:hidden/.test(name),
+    false,
+    '人设名不得 overflow:hidden —— 文字被裁就是「展示不全」'
+  )
+  assert.equal(
+    /text-overflow:ellipsis/.test(name),
+    false,
+    '人设名不得用 text-overflow:ellipsis —— 省略号同样是「没显示全」'
+  )
+  assert.equal(
+    /overflow:hidden/.test(scope),
+    false,
+    '层级标注不得 overflow:hidden'
   )
   // ④ 换行时至少要能断字（长自定义预设名不该撑爆输入框）
   assert.match(name, /overflow-wrap:anywhere|word-break/, '人设名应允许断行，避免撑破输入框')
