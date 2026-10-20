@@ -943,6 +943,9 @@ window.__ModuleLoader__.load({
       // 宿主在窄容器时会把 header 标签隐藏（@container (width<=540px)），
       // 我们跟着做 —— 空间不够时宁可不显示，也不要挤坏标题行。
       '.soul-session-persona-label{display:inline-flex;align-items:center;gap:6px;max-width:220px;height:22px;padding:0 8px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:22px;white-space:nowrap;overflow:hidden}',
+      // hero 区（新会话行）的落点：与邻居（工作区 chip / 创造模式）同一行右对齐。
+      // flex:none 防止被 chip 的 flex 收缩挤扁。
+      '.soul-session-persona-label[data-in-hero="true"]{flex:none}',
       '.soul-session-persona-label-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       // 图标：与文字同色但略淡（图标是标识，文字是主信息）
       '.soul-session-persona-label-icon{flex:none;opacity:.75}',
@@ -5482,6 +5485,31 @@ window.__ModuleLoader__.load({
         })
       }, SoulQuickToggle))
 
+
+      // 会话人设标签（第二处）：**新会话**那一行（输入框上方）。
+      //
+      // conversation.hero.options —— 宿主文档："Compact options right-aligned in the
+      // New Session row after the workspace and preset controls; rendered only with a
+      // Session." 正是用户画的红框位置：工作区 chip 与「创造模式」之后、右对齐。
+      //
+      // 与 header 那个（见下）是**同一个组件**（SoulSessionPersonaLabel）、读同一份
+      // store 数据 —— 新会话时 hero 区显示这个，首轮对话后 hero 消失、header 出现，
+      // 宿主本来就做了这个交接。
+      ctx.slots.inject('conversation.hero.options', () => ctx.slots.register({
+        name: 'conversation.hero.options',
+        id: 'soul-persona-label-hero',
+        order: 10,
+        locale: NS,
+        // scope:'session' 槽位 ⇒ inject 收**位置参数** [sessionId]（宿主契约
+        // FactoryInjectParams），不是 props 对象。
+        inject: (sessionId) => ({
+          hooks: {
+            soulController: controller.store
+          },
+          controller,
+          sessionId: typeof sessionId === 'string' && sessionId !== '' ? sessionId : null
+        })
+      }, SoulSessionPersonaLabel))
 
       // 会话人设标签：挂到会话 header（标题旁，「创造模式」「费用明细」那一行）。
       //

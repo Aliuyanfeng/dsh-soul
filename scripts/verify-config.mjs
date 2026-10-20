@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 152
+const EXPECTED_ASSERTIONS = 153
 
 let passed = 0
 const failures = []
@@ -3564,6 +3564,40 @@ check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', (
     assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
   }
 })
+check('0.9.0-n 新会话行（hero）也挂人设标签', () => {
+  // 用户诉求：新会话（还没有对话轮次）时，输入框上方那一行
+  // （工作区 chip + 「创造模式」那一行）也应显示当前人设。
+  //
+  // 槽位：conversation.hero.options —— kind:'list' / scope:'session'，
+  // 宿主文档："Compact options right-aligned in the New Session row after the
+  // workspace and preset controls; rendered only with a Session."
+  //
+  // 契约：与 header 那个标签（conversation.session.header.actions）是**同一个组件**
+  // （SoulSessionPersonaLabel）、读同一份 store 数据 —— 两处挂载点，一个数据源。
+  const client = clientCode
+  assert.match(
+    client,
+    /ctx\.slots\.inject\('conversation\.hero\.options', \(\) => ctx\.slots\.register\(\{[\s\S]{0,200}?id: 'soul-persona-label-hero'/,
+    '新会话行必须挂人设标签（conversation.hero.options）'
+  )
+  // hero 注册块的**组件名**必须就是 SoulSessionPersonaLabel ——
+  // 判据只查"出现 ≥ 2 次"的话，换成一个空实现的 HeroLabel() 也能命中（判断力对照实测）。
+  const heroReg = client.match(/ctx\.slots\.inject\('conversation\.hero\.options', \(\) => ctx\.slots\.register\(\{[\s\S]*?\}, (\w+)\)\)/)
+  assert.ok(heroReg, '找不到 hero 的注册块')
+  assert.equal(
+    heroReg[1],
+    'SoulSessionPersonaLabel',
+    `hero 必须复用 SoulSessionPersonaLabel 组件（不是第二份实现），实际 ${heroReg[1]}`
+  )
+  // hero 的 inject 必须按位置参数收 sessionId —— 判据必须在 hero 注册块**内部**查，
+  // 查全文的话 header 那处（正确的）也会命中（判断力对照实测）。
+  assert.match(
+    heroReg[0],
+    /inject: \(sessionId\) => \(\{[\s\S]{0,220}?sessionId: typeof sessionId === 'string'/,
+    'hero 槽位的 inject 必须按位置参数收 sessionId（不是 props 对象）'
+  )
+})
+
 check('0.9.0-m 会话卡牌：卡不可点，切换靠轮播导航（左右按钮 + 圆点）', () => {
   // 用户诉求：不用点卡牌切换了，卡牌下方加类似轮播图的左右切换按钮，
   // 样式参考设置-个性化-人设预设。
