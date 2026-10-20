@@ -328,7 +328,14 @@ function loadClient(routes, options = {}) {
       // ui.Button / ui.Toast 单独换成宿主元素标记：这样它们连同 onClick / text /
       // tone / holdMs / onDone 原样留在渲染树里，断言就能像用户一样
       // 「找到那个按钮并点它」、「读出提示条的文案与色调」，而不是去猜某个闭包。
-      return { Button: 'ui-button', Toast: 'ui-toast' }
+      // IconAgentPresetOutlineRegular：宿主 primitives 里的「智能体预设」图标，
+      // header 人设标签用它（与邻居「创造模式」标签同一套图标语言）。
+      // 桩里给一个可识别的元素标记，断言就能验证「图标确实渲染了」。
+      return {
+        Button: 'ui-button',
+        Toast: 'ui-toast',
+        IconAgentPresetOutlineRegular: 'ui-icon-persona'
+      }
     }
     throw new Error(`未预料的 require：${spec}`)
   }
@@ -840,6 +847,18 @@ try {
 
     // ① 显示的是**会话实际**的人设，不是全局那个
     assert.ok(text.includes('资深架构师'), `标签应显示会话实际人设，实际「${text}」`)
+    // ③ 必须有图标（人设概念的视觉标识）
+    //    断言的是「渲染出了图标元素」，不是「用了哪个图标」——
+    //    图标来源换实现时这条不该失配。
+    const icons = findAllByClass(tree, 'soul-session-persona-label-icon')
+    assert.equal(icons.length, 1, '人设标签应渲染一个图标')
+    // 尺寸必须与邻居（header 上的「创造模式」标签）一致，否则同一行里两个图标大小不齐。
+    // 判断力对照实测：不写 size 时这条必须拦住。
+    assert.equal(
+      icons[0].props.size,
+      14,
+      `图标尺寸应为 14（与邻居 AgentPresetLabel 一致），实际 ${String(icons[0].props.size)}`
+    )
     // header 标签只显示人设与层级，不重复「个性化已启用」（那是输入框左侧开关的事）
     assert.equal(text.includes('个性化已启用'), false, 'header 标签不应重复开关文案')
     assert.equal(text.includes('游戏开发与策划专家'), false, '标签不得显示全局人设（那与模型实际用的不符）')

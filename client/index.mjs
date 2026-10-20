@@ -897,6 +897,8 @@ window.__ModuleLoader__.load({
       // 我们跟着做 —— 空间不够时宁可不显示，也不要挤坏标题行。
       '.soul-session-persona-label{display:inline-flex;align-items:center;gap:6px;max-width:220px;height:22px;padding:0 8px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:22px;white-space:nowrap;overflow:hidden}',
       '.soul-session-persona-label-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      // 图标：与文字同色但略淡（图标是标识，文字是主信息）
+      '.soul-session-persona-label-icon{flex:none;opacity:.75}',
       '.soul-session-persona-label-scope{flex:none;font-size:11px;opacity:.8}',
       '@container (width<=540px){.soul-session-persona-label{display:none}}',
       // 错误提示：颜色改用宿主真实存在的 state-error-primary（原先引用不存在的 token ⇒ 渲染成黑色）
@@ -3460,6 +3462,23 @@ window.__ModuleLoader__.load({
       })()
 
       return e('span', { className: 'soul-session-persona-label' },
+        // 图标：宿主的 IconAgentPresetOutlineRegular（智能体预设）。
+        //
+        // 为什么用宿主现成图标而不是自绘：
+        // · 语义正好 —— 「Agent 预设」就是「人设」；
+        // · 与**同一位置**的邻居（header 上的「创造模式」标签）用同一套图标语言，
+        //   视觉统一，用户的识别成本最低；
+        // · 随主题变色（currentColor），不用管深浅色；
+        // · 免去自绘 SVG 的描边/尺寸对齐问题。
+        //
+        // 宿主客户端包（ui-agent-preset / ui-chat / ui-tool）都是
+        // require('@deepseek-ai/dsh-client-ui-primitives') 拿它的，
+        // 与本插件的 require 机制完全相同。
+        //
+        // 尺寸 14：与邻居 AgentPresetLabel 的图标一致（size: 14）。
+        ui.IconAgentPresetOutlineRegular
+          ? e(ui.IconAgentPresetOutlineRegular, { size: 14, className: 'soul-session-persona-label-icon' })
+          : null,
         e('span', { className: 'soul-session-persona-label-name' }, displayPersona),
         scopeTag && e('span', { className: 'soul-session-persona-label-scope' }, scopeTag)
       )
