@@ -1233,7 +1233,11 @@ window.__ModuleLoader__.load({
       '.soul-session-current-source{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       // 人设胶囊：可点即选，选中的用主色实心（与设置页的「使用中」同一套色彩语义）
       '.soul-session-chips{display:flex;flex-wrap:wrap;gap:8px}',
-      '.soul-session-chip{box-sizing:border-box;display:inline-flex;align-items:center;height:28px;padding:0 12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      // 与「使用中」按钮（.soul-persona-action，36px / radius-md）并排，
+      // 高度与圆角必须一致 —— 否则同一行里一高一低。
+      // .soul-session-chip 现在只剩「取消本会话的临时人设」这一个使用点
+      // （0.9.0-d 移除了旧胶囊选择器），直接对齐规格；配色保持描边式（次要动作）。
+      '.soul-session-chip{box-sizing:border-box;display:inline-flex;align-items:center;height:36px;padding:0 14px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-md,12px);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
       '.soul-session-chip:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
       '.soul-session-chip:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.soul-session-chip:disabled{opacity:.5;cursor:default}',
