@@ -1500,12 +1500,33 @@ function hasOwn(obj, key) {
 
 // 计算与当前活动配置匹配的预设名（多个命中时取名称排序最前）。
 // 匹配语义是「部分覆盖」而非全字段相等，理由见 lib/personas.mjs 的 personaMatches。
+//
+// ⚠️ 反查是**不确定**的：两个预设声明相同字段时（自建预设是内置预设的子集很常见），
+// 都会命中，然后按名称排序取首个 —— 实测 ★ 标在了没点的卡上。
+// 所以调用方应**优先用 config.activePersonaName**（用户实际点的名字，0.9.0-p），
+// 本函数只在没有记录（从没用过「使用预设」）或记录的预设已不存在时作兜底。
 function findActivePersonaName(config) {
   const view = mergePersonas(config.personas)
   for (const personaName of Object.keys(view).sort()) {
     if (personaMatches(view[personaName], config)) return personaName
   }
   return null
+}
+
+// ★ 当前生效的预设名：优先用**记住的名字**，反查只作兜底。
+//
+// 三种情况退回反查：从没用过「使用预设」（activePersonaName 为 null）/
+// 记住的预设已被删除 / 记住的预设现在不再匹配（用户手改了特质 —— 此时按
+// 「改任何特质 ⇒ 不再属于该预设」的语义，★ 本来就该消失）。
+function resolveActivePersonaName(config) {
+  const recorded = typeof config.activePersonaName === 'string' && config.activePersonaName !== ''
+    ? config.activePersonaName
+    : null
+  if (recorded) {
+    const view = mergePersonas(config.personas)
+    if (view[recorded] && personaMatches(view[recorded], config)) return recorded
+  }
+  return findActivePersonaName(config)
 }
 
 // 应用一个预设条目：过白名单 → 写队列合并。
@@ -1527,9 +1548,16 @@ async function applyPersonaEntry(ctx, entry) {
   const invalid = Object.keys(errors)
   // label 带上预设名：审计里「应用预设」这条记录光有字段差，缺「应用的是什么」——
   // 用户问「昨晚我切到了哪个人设」时，字段差答不上来。
+  //
+  // 同时把**用户实际点的名字**写进配置（activePersonaName，0.9.0-p）：
+  // ★ 标记原先靠字段反查，两个预设声明相同字段时（自建预设是内置的子集很常见）
+  // 反查结果取决于名称排序 —— 实测 ★ 标在了没点的卡上。记名字把"猜"变成"知道"。
+  // 名字是注解不是人设字段（不进提示词），所以放在 patch 之外单独合并。
+  const personaName = entry && typeof entry.name === 'string' ? entry.name.trim() : ''
+  const namePatch = personaName ? { activePersonaName: personaName } : {}
   const { config: updated, changed, promptChanged } = await commitConfig(
-    c => ({ ...c, ...patch }),
-    { source: 'persona', action: 'use', label: entry && typeof entry.name === 'string' ? entry.name : undefined }
+    c => ({ ...c, ...patch, ...namePatch }),
+    { source: 'persona', action: 'use', label: personaName || undefined }
   )
   if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
   // applied 是「通过校验的字段数」——与 changed（实际产生差异的字段）不同：
@@ -1539,7 +1567,7 @@ async function applyPersonaEntry(ctx, entry) {
 
 // 预设库的对外视图（内置 + 用户）与当前命中项，供三个路由的响应复用。
 function personaLibrary(config) {
-  return { personas: mergePersonas(config.personas), activeName: findActivePersonaName(config) }
+  return { personas: mergePersonas(config.personas), activeName: resolveActivePersonaName(config) }
 }
 
 // 人设预设 HTTP 路由：列表 / 保存 / 使用 / 删除。
@@ -1989,7 +2017,7 @@ function describeActiveSessions(ctx, config) {
     if (!cwd) {
       // cwd 缺席是宿主允许的情况（会话没有工作目录）。必须如实说出来 ——
       // 让用户对着空白猜「为什么绑了没生效」，不如直接告诉他这个会话没有目录。
-      out.push({ id, cwd: null, persona: findActivePersonaName(config), binding: null, shadowed: [] })
+      out.push({ id, cwd: null, persona: resolveActivePersonaName(config), binding: null, shadowed: [] })
       continue
     }
 
@@ -2010,7 +2038,7 @@ function describeActiveSessions(ctx, config) {
     out.push({
       id,
       cwd,
-      persona: findActivePersonaName(effective),
+      persona: resolveActivePersonaName(effective),
       binding,
       shadowed: resolved ? resolved.shadowed : []
     })
@@ -2424,7 +2452,7 @@ function registerSessionScopeRoutes(ctx) {
       // 那是用户实际点过的名字，确定无疑；没有它（老 sidecar / 手改字段）才退回反查。
       const recordedName = await recordedSessionPersonaName(sessionId)
       const activePersona = recordedName
-        || findActivePersonaName(resolved.config)
+        || resolveActivePersonaName(resolved.config)
       return {
         sessionId,
         workspaceId,
@@ -2436,7 +2464,7 @@ function registerSessionScopeRoutes(ctx) {
         recordedPersona: recordedName,
         // 全局层的人设名：客户端要显示「当前是谁」与「全局是谁」两者的关系
         // （会话覆盖生效时，全局值仍在，但当前值不是它）。
-        globalPersona: findActivePersonaName(config),
+        globalPersona: resolveActivePersonaName(config),
         workspaceTitle: (() => {
           if (workspaceId === null) return null
           const registry = ctx.get('workspaceRegistry')
@@ -3174,7 +3202,7 @@ function registerCommands(ctx) {
             if (names.length === 0) {
               return { kind: 'success', text: `${t.listTitle}\n${t.listEmpty}` }
             }
-            const activeName = findActivePersonaName(config)
+            const activeName = resolveActivePersonaName(config)
             const lines = names.map((personaName) => {
               const entry = view[personaName]
               const styleText = STYLE_VALUES.includes(entry.style) ? (t.styleNames[entry.style] || entry.style) : (entry.style || '-')

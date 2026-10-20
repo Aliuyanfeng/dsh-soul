@@ -2330,7 +2330,9 @@ check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', (
     ["{ source: 'web', action: 'reset' }", 'HTTP 重置'],
     ["{ source: 'web', action: 'savePreset' }", 'HTTP 保存预设'],
     ["{ source: 'web', action: 'deletePreset' }", 'HTTP 删除预设'],
-    ["{ source: 'persona', action: 'use', label: entry && typeof entry.name === 'string' ? entry.name : undefined }", '应用预设（两条入口共用，label 带预设名）'],
+    // 0.9.0-p：applyPersonaEntry 重构了 label 的取值（先算 personaName 再用），
+    // 同时多合并一个 namePatch（activePersonaName）—— 来源标注不变，判据随形状更新。
+    ["{ source: 'persona', action: 'use', label: personaName || undefined }", '应用预设（两条入口共用，label 带预设名）'],
     ["{ source: 'command', action: 'nickname' }", '/soul <昵称>'],
     ["{ source: 'command', action: 'reset' }", '/soul reset'],
     ["{ source: 'command', action: 'enable' }", '/soul enable'],
@@ -2384,7 +2386,10 @@ check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', (
   // 关联性（光有标注不够，还要落在对的地方）：抽几个有稳定锚点的切片来钉，
   // 防止「标注都在，但张冠李戴」——例如把 confirm 的标注挪到 set 上。
   const personaApply = indexCode.match(/async function applyPersonaEntry\(ctx, entry\)[\s\S]*?\n\}/)?.[0] ?? ''
-  assert.match(personaApply, /\{ source: 'persona', action: 'use', label: entry && typeof entry\.name === 'string' \? entry\.name : undefined \}/, 'applyPersonaEntry 的来源应是 persona/use 且 label 带预设名')
+  // 0.9.0-p：label 取值重构为 personaName 变量；同时多写 activePersonaName
+  // （记住用户实际点的预设名，★ 标记的依据不再靠字段反查）。
+  assert.match(personaApply, /\{ source: 'persona', action: 'use', label: personaName \|\| undefined \}/, 'applyPersonaEntry 的来源应是 persona/use 且 label 带预设名')
+  assert.match(personaApply, /activePersonaName: personaName \}/, '应用预设必须把用户点的名字写进配置（activePersonaName）')
   const toolSlice = indexSource.match(/defineTool\([\s\S]*?\n    \}\)/)?.[0] ?? ''
   assert.match(toolSlice, /\{ source: 'tool', action: 'setPersona' \}/, 'set_persona 工具的来源应是 tool/setPersona')
   assert.match(indexCode, /updateConfig[\s\S]*?\{ source: 'service', action: 'update' \}/, 'updateConfig 的来源应是 service/update')
@@ -3919,10 +3924,14 @@ check('0.9.0-f 会话生效人设名：服务端优先用 sidecar 记的 persona
     '服务端必须读取 sidecar 记下的 personaName'
   )
   // ② 且优先于反查
+  //
+  // 0.9.0-p 起反查兜底升级为 resolveActivePersonaName（全局层记住用户点的名字后，
+  // 反查本身也变成了「先查记住的名字、再纯反查」—— 会话层与全局层共用一个兜底）。
+  // 语义不变：会话层 recordedName 最优先，其次才是配置层的解析。
   assert.match(
     server,
-    /const activePersona = recordedName\s*\n?\s*\|\| findActivePersonaName\(resolved\.config\)/,
-    'activePersona 必须优先用 recordedName，反查只作兜底'
+    /const activePersona = recordedName\s*\n?\s*\|\| resolveActivePersonaName\(resolved\.config\)/,
+    'activePersona 必须优先用 recordedName，兜底走 resolveActivePersonaName'
   )
   // ③ 客户端必须把用户点的名字提交上来
   const client = clientCode
@@ -4296,13 +4305,15 @@ check('工作区绑定只读视图：失效条目标注、sessions 走与会话�
   // 因为断言只看 binding 名，没看生效人设。
   assert.match(
     sessions,
-    /persona: findActivePersonaName\(effective\)/,
+    /persona: resolveActivePersonaName\(effective\)/,
     'sessions 必须回报生效人设（不是 null、也不是全局那一个）：界面要答得出「这个会话现在是谁」'
   )
   // 只有**没有 cwd** 的分支才可以用全局配置算生效人设（那时确实没有绑定可解析）。
   // 有 cwd 的分支若也这么算，带绑定的会话会显示成全局那个名字，而注入的是绑定的人设。
+  // 0.9.0-p：函数名从 findActivePersonaName 换成 resolveActivePersonaName（内部
+  // 多了「优先用记住的名字」），红线判据的字面量随之更新。
   assert.equal(
-    (sessions.match(/persona: findActivePersonaName\(config\)/g) || []).length,
+    (sessions.match(/persona: resolveActivePersonaName\(config\)/g) || []).length,
     1,
     '用全局配置算生效人设只允许出现在「没有 cwd」那一个分支里'
   )

@@ -1488,6 +1488,7 @@ window.__ModuleLoader__.load({
       'field.tables': '表格',
       'hint.tables': '在回复风格和语调的基础上选择额外的自定义特质项。控制回答中表格的使用程度。',
       'field.replyLength': '回复长度',
+      'field.activePersonaName': '最近使用的预设',
       'hint.replyLength': '控制回答的篇幅。选「适中」时不额外约束，由 Agent 自行判断。',
       'field.language': '输出语言',
       'hint.language': '设置 Agent 回复你使用的语言，同时影响 /soul 命令的输出语言。',
@@ -1827,6 +1828,7 @@ window.__ModuleLoader__.load({
       'field.tables': 'Tables',
       'hint.tables': 'An extra trait layered on top of style & tone. Controls how much answers rely on tables.',
       'field.replyLength': 'Reply length',
+      'field.activePersonaName': 'Last used persona',
       'hint.replyLength': 'Controls how long answers are. "Balanced" adds no constraint and lets the agent decide.',
       'field.language': 'Output language',
       'hint.language': 'Sets the language the agent replies in; also affects the /soul command output.',
@@ -2168,7 +2170,9 @@ window.__ModuleLoader__.load({
     //   · `workspaces` —— 插件详情页的「工作区人设」区块（同上，0.9.0）。
     // 两者都是复合/非表单语义：设置页的「保存设置」不该顺手提交它们，否则用户在详情页
     // 改完的值会被设置页那份**不知道它改过**的旧表单覆盖回去。
-    const EXTERNALLY_MANAGED_FIELDS = ['historyMaxEntries', 'workspaces']
+    // activePersonaName（0.9.0-p）同属外部管理：由「使用预设」动作写入，
+    // 设置页表单不直接编辑它 —— 但 FIELD_KEYS 必须覆盖（dirty 对账不漏字段）。
+    const EXTERNALLY_MANAGED_FIELDS = ['historyMaxEntries', 'workspaces', 'activePersonaName']
 
     // 配置字段全集（宿主 DEFAULT_CONFIG 的对账基准）。
     // 顺序与 DEFAULT_CONFIG 一致，便于人眼对账；重复字段会让 dirty 判定重复计算。
@@ -2212,7 +2216,10 @@ window.__ModuleLoader__.load({
       trailWidth: 'trail.width',
       // 保留条数本身也是被审计的字段：改它同样会留一条记录（否则用户改了容量，
       // 记录里查不到是谁改的），所以它必须有自己的标签。
-      historyMaxEntries: 'history.maxEntries'
+      historyMaxEntries: 'history.maxEntries',
+      // 最近一次「使用预设」实际点的名字（0.9.0-p）：切预设同样要留痕，
+      // 否则变更记录里它显示成裸键名。
+      activePersonaName: 'field.activePersonaName'
     }
 
     // 与 lib/history.mjs 的 HISTORY_SOURCES 对齐；认不出的来源原样显示。
