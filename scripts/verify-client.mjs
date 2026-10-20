@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 36
+const EXPECTED_ASSERTIONS = 37
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -713,6 +713,27 @@ try {
     // ② 带来源层级标注
     assert.ok(text.includes(world.dicts.zh['quick.scopeSession']), '应标注来源是「本会话覆盖」')
     assert.equal(findAllByClass(tree, 'soul-quick-toggle-scope').length, 1, '应有且仅有一个来源层级标注')
+  })
+
+  await check('C42 输入框标签：会话状态读取失败时显示「未知」，不得退回全局值', async () => {
+    // 失败路径同样不能骗人：若失败时静默退回全局值，用户看到的仍是
+    // 「界面说 A、模型用 B」—— 正是这个标签最初要修的问题，失败路径不能把它带回来。
+    const world = await boot()
+    const zh = world.dicts.zh
+    world.routes['/api/soul/session-scope/current'] = () => false
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.input.left')
+    assert.ok(slot, '前置条件：conversation.input.left 已注册')
+    const props = slot.options.inject({ sessionId: 'sess-1' })
+    const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
+    const t = (k) => zh[k] ?? k
+    await world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t } })
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    const tree = await world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t } })
+    const text = textOf(tree)
+    assert.ok(
+      text.includes(zh['quick.scopeUnknown']),
+      `读取失败时应显示「${zh['quick.scopeUnknown']}」，实际「${text}」`
+    )
   })
 
   await check('C41 设置页人设预设行标注「全局」（它的「使用」写的是全局配置）', async () => {

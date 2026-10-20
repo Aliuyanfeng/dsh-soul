@@ -1518,6 +1518,7 @@ window.__ModuleLoader__.load({
       'quick.scopeSession': '本会话覆盖',
       'quick.scopeWorkspace': '工作区「{name}」',
       'quick.scopeDirectory': '目录绑定',
+      'quick.scopeUnknown': '会话状态未知',
       // 设置页预设行的作用域标注：设置页没有会话上下文，写的是**全局**
       'personas.scopeGlobal': '全局',
       // 卡面按钮：与设置页「使用 / 使用中」同一套语义，只是措辞更贴会话语境
@@ -1842,6 +1843,7 @@ window.__ModuleLoader__.load({
       'quick.scopeSession': 'this session',
       'quick.scopeWorkspace': 'workspace "{name}"',
       'quick.scopeDirectory': 'directory binding',
+      'quick.scopeUnknown': 'session state unknown',
       'personas.scopeGlobal': 'Global',
       'session.useCard': 'Use this',
       'session.pickHint': 'Pick a card on the left to see its full persona here.',
@@ -3331,6 +3333,8 @@ window.__ModuleLoader__.load({
       // 「界面说游戏开发与策划专家、模型实际用资深架构师」的割裂。
       const sessionId = typeof props.sessionId === 'string' && props.sessionId !== '' ? props.sessionId : null
       const [scopeView, setScopeView] = React.useState(null)
+      // 请求是否失败过：失败时不得静默退回全局值（那会重现我们要修的割裂）
+      const [scopeFailed, setScopeFailed] = React.useState(false)
       React.useEffect(() => {
         if (sessionId === null) {
           setScopeView(null)
@@ -3338,9 +3342,13 @@ window.__ModuleLoader__.load({
         }
         let cancelled = false
         void controller.fetchCurrentSessionScope(sessionId).then((payload) => {
-          if (!cancelled) setScopeView(payload)
+          if (cancelled) return
+          setScopeView(payload)
+          setScopeFailed(false)
         }).catch(() => {
-          // 读不到就退回全局值：标签不能因为一次请求失败就消失
+          if (cancelled) return
+          // 读不到就标成「未知」：标签不能消失，但也不能假装全局值就是模型在用的
+          setScopeFailed(true)
         })
         return () => { cancelled = true }
       }, [sessionId])
@@ -3357,7 +3365,16 @@ window.__ModuleLoader__.load({
       const scopeActive = scopeView && typeof scopeView.activePersona === 'string' && scopeView.activePersona !== ''
         ? scopeView.activePersona
         : null
-      const displayPersona = scopeActive || activePersona || t('quick.custom')
+      // 三态，而不是「有会话值就用、没有就用全局」：
+      //   scopeView 有值 → 会话实际生效值
+      //   scopeView 为 null 且**已请求过** → 请求失败，全局值可能与模型实际用的不符 ⇒ 明说未知
+      //   从未请求（无 sessionId）→ 用全局值（本来就没有会话上下文）
+      //
+      // 之前失败时静默退回全局值，用户看到的是「界面说 A、模型用 B」且完全无从察觉 ——
+      // 那正是这个标签最初要修的问题，失败路径不能把它带回来。
+      const scopeKnown = scopeView !== null || scopeFailed
+      const displayPersona = scopeActive
+        || (scopeFailed ? t('quick.scopeUnknown') : (activePersona || t('quick.custom')))
       const scopeTag = (() => {
         if (!scopeView) return null
         if (scopeView.source === 'session') return t('quick.scopeSession')
