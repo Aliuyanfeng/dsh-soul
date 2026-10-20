@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 151
+const EXPECTED_ASSERTIONS = 152
 
 let passed = 0
 const failures = []
@@ -3564,6 +3564,62 @@ check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', (
     assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
   }
 })
+check('0.9.0-m 会话卡牌：卡不可点，切换靠轮播导航（左右按钮 + 圆点）', () => {
+  // 用户诉求：不用点卡牌切换了，卡牌下方加类似轮播图的左右切换按钮，
+  // 样式参考设置-个性化-人设预设。
+  //
+  // 契约：
+  //   ① 卡牌**不可点**（没有 onClick）—— 切换是导航的职责；
+  //   ② 卡牌下方有轮播导航：左右按钮（data-dir prev/next）+ 圆点（role=tablist）；
+  //   ③ 复用设置页那套 class（.soul-persona-nav / .soul-persona-navbtn /
+  //     .soul-persona-dots / .soul-persona-dot）—— 用户不需要学两遍；
+  //   ④ 导航是**循环**的（到边界继续翻），与设置页的线性（到头 disabled）不同。
+  const client = clientCode
+  const cardFor = client.match(/const cardFor = \(name, offset\) => \{([\s\S]*?)\n      \}/)?.[1] ?? ''
+  assert.ok(cardFor !== '', '找不到会话卡的 cardFor')
+  // ① 卡不可点
+  assert.equal(
+    /onClick/.test(cardFor),
+    false,
+    '会话卡不应有 onClick —— 切换改由轮播导航负责（0.9.0-m）'
+  )
+  // ②③ 轮播导航：结构与设置页一致
+  const nav = client.match(/className: 'soul-persona-nav'/, 'gi') || []
+  assert.ok(nav.length >= 1, '会话 tab 应有轮播导航（.soul-persona-nav）')
+  assert.match(client, /'data-dir': 'prev'/, '轮播应有「上一个」按钮')
+  assert.match(client, /'data-dir': 'next'/, '轮播应有「下一个」按钮')
+  // ⚠️ 判据必须落在**会话 tab 组件体内** —— 只查全文出现的话，
+  // 把 class 改成别的名字也能命中（设置页那处照样在）。
+  const sessionTab = client.match(/function SoulSessionPersona\(props\) \{([\s\S]*?)\n    \}/)?.[1] ?? ''
+  assert.ok(sessionTab !== '', '找不到会话 tab 组件')
+  assert.match(sessionTab, /className: 'soul-persona-dots', role: 'tablist'/, '会话 tab 的轮播应有圆点指示器')
+  assert.match(sessionTab, /className: 'soul-persona-dot'/, '会话 tab 的轮播应有圆点')
+  // ④ 循环：翻页用取模，不做边界判定
+  assert.match(
+    client,
+    /personaIndexOf\(selectedPersona\) - 1 \+ personaNames\.length\) % personaNames\.length/,
+    '「上一个」必须**循环**（取模），不是到头就停'
+  )
+  assert.match(
+    client,
+    /personaIndexOf\(selectedPersona\) \+ 1\) % personaNames\.length/,
+    '「下一个」必须**循环**（取模）'
+  )
+  // 导航按钮不该有 disabled（循环 ⇒ 永远可点）。
+  //
+  // 判据要**只圈导航按钮** —— 会话 tab 组件体内别处也有 disabled
+  // （「恢复上层设置」按钮在忙时禁用），那是正常的。
+  const navButtons = [...sessionTab.matchAll(/'data-dir': '(prev|next)'[\s\S]{0,300}?onClick/g)]
+  assert.equal(navButtons.length, 2, `应有两个方向按钮（prev/next），实际 ${navButtons.length}`)
+  for (const b of navButtons) {
+    assert.equal(
+      /disabled/.test(b[0]),
+      false,
+      '循环轮播的按钮不应 disabled（永远可点）'
+    )
+  }
+})
+
 check('0.9.0-l 会话卡牌：只留插画，无渐变遮罩、无压图文字', () => {
   // 用户诉求：插画上的渐变遮罩和字都不用展示了（右侧详情已有）。
   //

@@ -1252,6 +1252,8 @@ window.__ModuleLoader__.load({
       // 为什么是 1:1：插画资源全是 512×512 正方形，而容器若是竖长的（比如 210×380），
       // 配合 object-fit:cover 就会**上下裁掉约 44%**，只剩中间一条 —— 看起来像「插画不够大」。
       // 1:1 容器让插画完整显示，且比原来看到的那条中间带大得多。
+      // 轮播容器：叠层卡 + 下方导航（同一列，纵向）
+      '.soul-session-carousel{flex:0 1 240px;min-width:160px;display:flex;flex-direction:column;align-items:center;gap:10px}',
       '.soul-session-grid{position:relative;width:100%;min-width:160px;height:200px;flex:0 1 240px;overflow:hidden}',
       // 单张卡：结构抄 .soul-persona-card 的正面（去掉 3D 翻面 —— 翻面由右栏详情承担）。
       // ⚠️ 这里**不得**写任何 transform：叠层偏移由内联 style 持有（translateX/scale）；
@@ -2889,12 +2891,11 @@ window.__ModuleLoader__.load({
             zIndex: String(10 - Math.abs(offset)),
             opacity: offset === 0 ? '1' : '0.55'
           },
-          // 中心卡与侧边卡都可点：中心 = 选中自己（右栏已显示，无副作用）；
-          // 侧边 = 翻页。统一给 onClick 避免「中心卡不可点」这种反直觉。
-          onClick: () => setSelectedPersona(name),
-          // 无障碍名：卡面已无可见文字（0.9.0-l 移除了遮罩与压图标题），
-          // 纯图形元素**必须**有可访问名，读屏用户才知道这是哪张卡。
-          // 顺带让断言能靠 aria-label 识别卡，不依赖可见文字。
+          // 0.9.0-m：卡牌**不再可点** —— 切换改由下方轮播导航（左右按钮 + 圆点）负责，
+          // 与设置页的「人设预设」轮播同一套交互。卡上只保留信息与状态角标。
+          //
+          // 无障碍名仍然要：卡面已无可见文字（0.9.0-l 移除了遮罩与压图标题），
+          // 纯图形元素必须有可访问名，读屏用户才知道这是哪张卡。
           'aria-label': name,
           title: isEffective ? `${name}（${t('session.chipInUse')}）` : name
         },
@@ -3039,12 +3040,48 @@ window.__ModuleLoader__.load({
           personaNames.length === 0
             ? e('div', { className: 'soul-status' }, t('session.loading'))
             : e('div', { className: 'soul-session-split' },
-              // 叠层：中心卡 = selectedPersona（offset 0），左/右各露出前一个/后一个。
-              // 顺序用 stackOrder（selectedPersona 永远排头），槽位取模避免越界。
-              // 偏移 → stackOrder 索引：中心是 stackOrder[1]（offset 0），
-              // 两侧是 stackOrder[0]（offset -1）与 stackOrder[2]（offset +1）。
-              e('div', { className: 'soul-session-grid' },
-                ...stackSlots.map((slot) => cardFor(slot.name, slot.offset))
+              // 左侧：轮播区 = 叠层卡 + 下方导航
+              e('div', { className: 'soul-session-carousel' },
+                // 叠层：中心卡 = selectedPersona（offset 0），左/右各露出前一个/后一个。
+                e('div', { className: 'soul-session-grid' },
+                  ...stackSlots.map((slot) => cardFor(slot.name, slot.offset))
+                ),
+                // 轮播导航：左右按钮 + 圆点（与设置页「人设预设」同一套）
+                //
+                // 为什么**循环**而不是到边界就 disabled：设置页是线性浏览（到头就停），
+                // 这里刻意做成环形 —— 预设只有几张，用户想看「下一张」时不该先翻回第一张。
+                e('div', { className: 'soul-persona-nav' },
+                  e('button', {
+                    type: 'button',
+                    className: 'soul-persona-navbtn',
+                    'data-dir': 'prev',
+                    'aria-label': t('personas.prev'),
+                    onClick: () => setSelectedPersona(
+                      personaNames[(personaIndexOf(selectedPersona) - 1 + personaNames.length) % personaNames.length]
+                    )
+                  }, '‹'),
+                  e('div', { className: 'soul-persona-dots', role: 'tablist' },
+                    ...personaNames.map((n, i) => e('button', {
+                      key: n,
+                      type: 'button',
+                      role: 'tab',
+                      className: 'soul-persona-dot',
+                      'data-active': i === personaIndexOf(selectedPersona) ? 'true' : 'false',
+                      'aria-selected': i === personaIndexOf(selectedPersona) ? 'true' : 'false',
+                      'aria-label': `${n}（${i + 1}/${personaNames.length}）`,
+                      onClick: () => setSelectedPersona(n)
+                    }))
+                  ),
+                  e('button', {
+                    type: 'button',
+                    className: 'soul-persona-navbtn',
+                    'data-dir': 'next',
+                    'aria-label': t('personas.next'),
+                    onClick: () => setSelectedPersona(
+                      personaNames[(personaIndexOf(selectedPersona) + 1) % personaNames.length]
+                    )
+                  }, '›')
+                )
               ),
               e('div', { className: 'soul-session-detail' }, detailOf(selectedPersona))
             ),

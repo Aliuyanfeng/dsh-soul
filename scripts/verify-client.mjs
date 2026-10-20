@@ -1064,21 +1064,19 @@ try {
     await world.runtime.settle({ type: viewSlot.component, props: { ...viewProps, useSoulController, t: t2 } })
     for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
     let viewTree = await world.runtime.settle({ type: viewSlot.component, props: { ...viewProps, useSoulController, t: t2 } })
-    // 先点**侧边卡**选中「幽默风趣」（这才是"切换"的第一步）——
-    // 直接点中心卡的「用这个」测不到切换：中心卡本来就是当前选中项。
-    // 用 aria-label 识别（卡面已无可见文字，0.9.0-l）
-    const sideCard = findAllByClass(viewTree, 'soul-session-card')
-      .find((c) => c.props['data-current'] !== 'true'
-        && String(c.props['aria-label'] || '').includes('幽默风趣'))
-    assert.ok(sideCard, '应有「幽默风趣」的侧边卡可点')
-    await sideCard.props.onClick()
+    // 切换靠**轮播导航**（0.9.0-m 起卡不可点）：点「下一个」按钮。
+    // 桩里的预设顺序是 [苏格拉底式提问者, 幽默风趣] ⇒ 下一个就是「幽默风趣」。
+    const nextBtn = findAllByClass(viewTree, 'soul-persona-navbtn')
+      .find((b) => b.props['data-dir'] === 'next')
+    assert.ok(nextBtn, '应有轮播的「下一个」按钮')
+    await nextBtn.props.onClick()
     for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
     viewTree = await world.runtime.settle({ type: viewSlot.component, props: { ...viewProps, useSoulController, t: t2 } })
     const detail = findAllByClass(viewTree, 'soul-session-detail')[0]
     assert.ok(detail, '会话 tab 应有右栏详情')
     assert.ok(
       textOf(findAllByClass(detail, 'soul-session-detail-name')[0] || {}).includes('幽默风趣'),
-      '选中侧边卡后，右栏应切换到「幽默风趣」'
+      '点「下一个」后，右栏应切换到「幽默风趣」'
     )
     const btn = findAllByClass(detail, 'soul-persona-action')[0]
     assert.ok(btn, '右栏应有操作按钮')
@@ -2476,7 +2474,7 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     )
   })
 
-  await check('C37 会话「人设」tab：点卡看详情（不改配置）、右栏「用这个」才改、清除即恢复', async () => {
+  await check('C37 会话「人设」tab：轮播切卡看详情（不改配置）、右栏「用这个」才改、清除即恢复', async () => {
     const world = await boot()
     const zh = world.dicts.zh
     const posts = []
@@ -2549,7 +2547,11 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
       0,
       '卡面上不应有操作按钮 —— 点卡只换详情，不该顺带改配置'
     )
-    await humorousCard.props.onClick()
+    // 选中靠轮播的**圆点**（0.9.0-m 起卡不可点，只作信息展示）
+    const dot = findAllByClass(tree, 'soul-persona-dot')
+      .find((d) => String(d.props['aria-label'] || '').includes('幽默风趣'))
+    assert.ok(dot, '轮播圆点里应有「幽默风趣」')
+    await dot.props.onClick()
     tree = await renderTab()
     // 选中后右栏显示这张卡的详情，且「用这个」在右栏
     const detail = findAllByClass(tree, 'soul-session-detail')[0]
