@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 37
+const EXPECTED_ASSERTIONS = 39
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -667,6 +667,116 @@ try {
     const ok = await boot()
     const good = await clickQuickToggle(ok)
     assert.equal(good.props['data-failed'], 'false', '成功时不应残留失败标记')
+  })
+
+  await check('C44 会话人设 tab：没有生效人设时右栏仍须有「用这个」按钮（兜底不得缺席）', async () => {
+    // 症状：全局配置不匹配任何预设（手改过特质）⇒ 服务端 activePersona 为 null
+    // ⇒ 若选中态没有兜底，右栏渲染成「点左侧任意一张卡」的空提示，
+    // **一个按钮都没有** —— 用户看到的是「点了没反应」（其实按钮都没画出来）。
+    const world = await boot()
+    const zh = world.dicts.zh
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: {
+        苏格拉底式提问者: { style: 'professional', builtin: true },
+        幽默风趣: { style: 'humorous', builtin: true }
+      },
+      activeName: null
+    })
+    await world.controller.loadPersonas()
+    world.routes['/api/soul/session-scope'] = (call) => {
+      if (call.method === 'GET') {
+        return {
+          ok: true,
+          sessionId: 'session-abc',
+          workspaceId: null,
+          override: null,
+          source: 'global',
+          activePersona: null          // ← 不匹配任何预设
+        }
+      }
+      return { ok: true, sessionId: 'session-abc', override: null, source: 'global', activePersona: null }
+    }
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.view')
+    const props = slot.options.inject('session-abc')
+    const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
+    const t2 = (k, p2) => {
+      const raw = zh[k] ?? k
+      return p2 ? raw.replace(/\{(\w+)\}/g, (m, n) => (p2[n] === undefined ? m : String(p2[n]))) : raw
+    }
+    await world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t: t2 } })
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    const tree = await world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t: t2 } })
+
+    // ① 右栏必须有详情（不能是空提示）
+    const detail = findAllByClass(tree, 'soul-session-detail')[0]
+    assert.ok(detail, '应有右栏详情面板')
+    assert.equal(
+      textOf(detail).includes(zh['session.pickHint']),
+      false,
+      '右栏不得停在「点左侧任意一张卡」的空提示 —— 那样一个按钮都没有，用户看到的是「点了没反应」'
+    )
+    // ② 必须有可点的「用这个」
+    const btns = findAllByClass(detail, 'soul-persona-action')
+    assert.equal(btns.length, 1, `右栏应恰好一个操作按钮，实际 ${btns.length}`)
+    assert.equal(textOf(btns[0]), zh['session.useCard'], '应显示「用这个」')
+    // ③ 预设数少于 3 时不得重复渲染同一张（重复 React key + 中心卡判据失真）
+    const cards = findAllByClass(tree, 'soul-session-card')
+    const names = cards.map((c) => textOf(findAllByClass(c, 'soul-persona-label')[0] || c))
+    assert.equal(new Set(names).size, names.length, `卡片不得重复渲染同一张：${JSON.stringify(names)}`)
+  })
+
+  await check('C43 会话人设 tab：view 到达后中心卡 = 生效的那张（兜底不得抢先）', async () => {
+    // 这个 bug 的形态：选中态的兜底在 view 加载完成前就跑了，抢先选中第一个预设；
+    // 等 view 到达，「selectedPersona !== null」的守卫又把正确选择挡回去 ——
+    // 结果是「生效的那张被甩到侧边、中心卡是别的预设」。
+    // 判据：中心卡的名字必须等于服务端回的 activePersona。
+    const world = await boot()
+    const zh = world.dicts.zh
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: {
+        苏格拉底式提问者: { style: 'professional', builtin: true },
+        幽默风趣: { style: 'humorous', builtin: true }
+      },
+      activeName: null
+    })
+    await world.controller.loadPersonas()
+    world.routes['/api/soul/session-scope'] = (call) => {
+      if (call.method === 'GET') {
+        return {
+          ok: true,
+          sessionId: 'session-abc',
+          workspaceId: null,
+          override: { style: 'humorous' },
+          source: 'session',
+          activePersona: '幽默风趣'
+        }
+      }
+      return { ok: true, sessionId: 'session-abc', override: null, source: 'global', activePersona: '苏格拉底式提问者' }
+    }
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.view')
+    const props = slot.options.inject('session-abc')
+    const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
+    const t2 = (k, p2) => {
+      const raw = zh[k] ?? k
+      return p2 ? raw.replace(/\{(\w+)\}/g, (m, n) => (p2[n] === undefined ? m : String(p2[n]))) : raw
+    }
+    await world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t: t2 } })
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    const tree = await world.runtime.settle({ type: slot.component, props: { ...props, useSoulController, t: t2 } })
+
+    const cards = findAllByClass(tree, 'soul-session-card')
+    const center = cards.find((c) => c.props['data-current'] === 'true')
+    assert.ok(center, '应有一张中心卡')
+    const centerName = textOf(findAllByClass(center, 'soul-persona-label')[0] || center)
+    assert.ok(
+      centerName.includes('幽默风趣'),
+      `中心卡应是生效的「幽默风趣」，实际「${centerName}」（兜底抢先选中了第一张）`
+    )
+    // 右栏详情也必须与中心卡一致
+    const detailName = textOf(findAllByClass(findAllByClass(tree, 'soul-session-detail')[0], 'soul-session-detail-name')[0] || {})
+    assert.ok(detailName.includes('幽默风趣'), `右栏详情应是「幽默风趣」，实际「${detailName}」`)
   })
 
   await check('C40 输入框标签：显示会话实际人设 + 来源层级，不退回全局值', async () => {
@@ -1903,6 +2013,18 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     assert.equal(slot.options.inject(undefined).sessionId, null)
 
     // ② 渲染：有覆盖时显示「有覆盖」标记、当前人设与来源
+    // 预设库必须真的提供 activePersona 指向的那一项 ——
+    // 否则选中态找不到对应项，兜底也无处可去（personaNames 为空 ⇒ 右栏空 ⇒ 无按钮）。
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: {
+        苏格拉底式提问者: { style: 'professional', headingLists: 'less', emoji: 'default', tables: 'default', replyLength: 'normal', builtin: true },
+        幽默风趣: { style: 'humorous', headingLists: 'default', emoji: 'default', tables: 'default', replyLength: 'normal', builtin: true },
+        极简主义者: { style: 'efficient', headingLists: 'less', emoji: 'less', tables: 'less', replyLength: 'concise', builtin: true }
+      },
+      activeName: null
+    })
+    await world.controller.loadPersonas()
     world.routes['/api/soul/session-scope'] = (call) => {
       if (call.method === 'GET') {
         return {

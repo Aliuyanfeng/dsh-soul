@@ -2688,12 +2688,26 @@ window.__ModuleLoader__.load({
       // 正确性的证据** —— 教训：hook 顺序在垫片里测不出来，只能靠代码纪律。
       React.useEffect(() => {
         if (selectedPersona !== null) return
+        // 优先跟随「当前生效」的预设。
         if (view && typeof view.activePersona === 'string' && view.activePersona !== '') {
           setSelectedPersona(view.activePersona)
+          return
         }
-        // selectedPersona 是「要不要跟随」的判据，必须进依赖；view 变化时重新评估。
+        // ⚠️ view 还没加载完时**必须等**：此刻 view 为 null、activePersona 也读不到，
+        // 若在这里兜底就会抢先选中第一个预设；等 view 到达后，
+        // 「selectedPersona !== null」的守卫又会把正确的选择挡回去 ——
+        // 结果是「生效的那张被甩到侧边、中心卡是别的预设」。
+        if (!view) return
+        // 兜底：全局配置**不匹配任何预设**时（手改过特质、纯自定义配置），
+        // 服务端回的 activePersona 是 null。此时若不兜底，选中态永远为 null ⇒
+        // 右栏渲染成「点左侧任意一张卡」的空提示 ⇒ **一个按钮都没有**，
+        // 用户看到的是「点了没反应」（其实连按钮都没画出来）。
+        // 兜底到第一个可用预设，右栏立刻有内容与「用这个」按钮。
+        if (personaNames.length > 0) setSelectedPersona(personaNames[0])
+        // selectedPersona 是「要不要跟随」的判据，必须进依赖；view / personaNames
+        // 变化时重新评估。
         // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [view, selectedPersona])
+      }, [view, selectedPersona, personaNames])
 
       // 会话 id 缺席（宿主在诊断 / 空白会话时可能不传）：如实说明，不假装能改。
       if (sessionId === null) {
@@ -2804,21 +2818,41 @@ window.__ModuleLoader__.load({
       // ⚠️ 这里**不能**用「selectedPersona 排头 + 其余顺排」那种线性序：
       // 那样点侧边卡时，露出的仍是同一批邻居，视觉上像「只有两张在动」；
       // 而真正该变的是「谁在中心、谁在旁边」。
+      // ── 叠层：中心 + 两侧露边，首尾相接 ──
+      //
+      // 结构直接用「槽位」表达，不再用「stackOrder 下标 + 偏移」两层映射 ——
+      // 那两层映射正是本轮三个 bug 的来源：下标与偏移各错一次就渲染出别的卡。
+      //
+      // slots 的每一项是 { name, offset }：
+      //   offset 0  = 中心（= selectedPersona）
+      //   offset -1 = 左侧露边（= 它的前一个，列表头则接尾）
+      //   offset +1 = 右侧露边（= 它的后一个，列表尾则接头）
+      //
+      // 预设数不足 3 时**不重复渲染同一张**：[A, B, A] 会产生重复 React key，
+      // 且让"恰一张中心卡"的判据失真。
       const personaIndexOf = (name) => personaNames.indexOf(name)
-      const currentAt = personaIndexOf(selectedPersona)
-      const stackOrder = (() => {
-        if (currentAt === -1) return personaNames
+      const stackSlots = (() => {
         const n = personaNames.length
-        if (n === 1) return [personaNames[0]]
-        // [前一个, 当前, 后一个]（循环取模）
+        if (n === 0) return []
+        const at = personaIndexOf(selectedPersona)
+        if (at === -1) {
+          // 选中项不在列表里（预设刚被删）：退回线性序，中心取第一个
+          return personaNames.map((name, i) => ({ name, offset: i === 0 ? 0 : 1 }))
+        }
+        if (n === 1) return [{ name: personaNames[0], offset: 0 }]
+        if (n === 2) {
+          const other = personaNames[1 - at]
+          return [
+            { name: other, offset: -1 },
+            { name: personaNames[at], offset: 0 }
+          ]
+        }
         return [
-          personaNames[(currentAt - 1 + n) % n],
-          personaNames[currentAt],
-          personaNames[(currentAt + 1) % n]
+          { name: personaNames[(at - 1 + n) % n], offset: -1 },
+          { name: personaNames[at], offset: 0 },
+          { name: personaNames[(at + 1) % n], offset: 1 }
         ]
       })()
-      // 偏移：stackOrder[1] 是中心（offset 0），[0]/[2] 是两侧（∓1）
-      const visibleOffsets = [-1, 0, 1]
 
       // 右栏详情：与设置页卡背**逐字相同**的六个维度 + 自定义指令全文，
       // 外加这一栏独有的操作按钮（用这个 / 恢复上层设置）。
@@ -2889,10 +2923,7 @@ window.__ModuleLoader__.load({
               // 偏移 → stackOrder 索引：中心是 stackOrder[1]（offset 0），
               // 两侧是 stackOrder[0]（offset -1）与 stackOrder[2]（offset +1）。
               e('div', { className: 'soul-session-grid' },
-                ...visibleOffsets.map((offset) => {
-                  const at = offset === 0 ? 1 : (offset === -1 ? 0 : 2)
-                  return cardFor(stackOrder[at], offset)
-                })
+                ...stackSlots.map((slot) => cardFor(slot.name, slot.offset))
               ),
               e('div', { className: 'soul-session-detail' }, detailOf(selectedPersona))
             ),
