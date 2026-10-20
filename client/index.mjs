@@ -880,6 +880,19 @@ window.__ModuleLoader__.load({
       // 来源层级标签（全局 / 工作区 / 本会话覆盖）：次要色小字，与人设名分开 ——
       // 它是注解不是主信息。max-width 限制它别把人设名挤掉。
       '.soul-quick-toggle-scope{flex:none;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:14px;overflow-wrap:anywhere}',
+      // —— 会话 header 的人设标签（0.9.0-h）——
+      //
+      // 规格抄宿主的 AgentPresetLabel（同一位置的「创造模式」标签）——
+      // 但**底色 token 换掉了**：它用的 --dsw-alias-fill-tsp-secondary 在宿主主题里
+      // **没有定义**（只被那个包自己引用，var() 会静默回退），抄过来就是抄一个失效值。
+      // 这里用真实存在的 --dsw-alias-bg-module-platform。
+      // 22px 高、次要底色、圆角、小字、inline-flex。
+      // 宿主在窄容器时会把 header 标签隐藏（@container (width<=540px)），
+      // 我们跟着做 —— 空间不够时宁可不显示，也不要挤坏标题行。
+      '.soul-session-persona-label{display:inline-flex;align-items:center;gap:6px;max-width:220px;height:22px;padding:0 8px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:22px;white-space:nowrap;overflow:hidden}',
+      '.soul-session-persona-label-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.soul-session-persona-label-scope{flex:none;font-size:11px;opacity:.8}',
+      '@container (width<=540px){.soul-session-persona-label{display:none}}',
       // 错误提示：颜色改用宿主真实存在的 state-error-primary（原先引用不存在的 token ⇒ 渲染成黑色）
       '.soul-error{margin-top:8px;padding:10px 12px;background:var(--dsw-alias-interactive-bg-hover-danger,rgba(236,19,19,.05));border:.5px solid var(--dsw-alias-state-error-primary);border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;width:100%;box-sizing:border-box}',
       '.soul-hint{position:relative;display:inline-flex;align-items:center;margin-left:6px;color:var(--dsw-alias-label-secondary);cursor:help;vertical-align:middle}',
@@ -3376,24 +3389,33 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // 输入框工具栏快捷开关：复用全局 soulController，和设置页保持同一份状态。
-    function SoulQuickToggle(props) {
+    // -------------------------------------------------------------------------
+    // 会话人设标签（只读）—— 挂在会话 header
+    // -------------------------------------------------------------------------
+    //
+    // 为什么从输入框左侧挪到 header：
+    // · 输入框左侧横向空间极窄，「个性化已启用 · 人设名 · 层级」根本放不下
+    //   （实测被 overflow:hidden 裁掉）；
+    // · 会话 header 那一行（标题旁）本来就有横向空间，宿主的「创造模式」标签就挂在那；
+    // · 宿主自己在窄容器时会把 header 标签**隐藏**（AgentPresetLabel 的
+    //   @container (width<=540px){ display:none }）—— 说明这个位置的设计就是
+    //   「有空间才显示」，与我们的诉求一致。
+    //
+    // 只读：会话的 composition 一旦开始就固定了，header 里放可切换控件会承诺
+    //   宿主拒绝兑现的事（这是宿主 AgentPresetLabel 的原话，理由同样成立）。
+    //   要改人设去「人设」tab 或设置页。
+    function SoulSessionPersonaLabel(props) {
       const { useSoulController, controller } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
       const enabled = state.enabled === true
-      const busy = state.saving === true
-      // 会话作用域（0.9.0）：这个标签挂在输入框左侧 —— conversation.input.left 是
-      // scope:'session' 槽位，标准 props 里带 sessionId（宿主 BUILTIN_SOURCE 的
-      // props: ["sessionId"]），所以这里能直接知道"当前是哪个会话"。
-      //
-      // 为什么要知道：全局 store 的 activePersona 是**全局**匹配结果，而三级隔离下
-      // 会话可能有自己的覆盖 —— 两者可以不同。标签若显示全局值，就会出现
-      // 「界面说游戏开发与策划专家、模型实际用资深架构师」的割裂。
+      // scope:'session' 槽位的 inject 收到的是**位置参数** [sessionId]（见宿主契约
+      // FactoryInjectParams：scope 'session' → [sessionId: SessionId]）。
       const sessionId = typeof props.sessionId === 'string' && props.sessionId !== '' ? props.sessionId : null
       const [scopeView, setScopeView] = React.useState(null)
-      // 请求是否失败过：失败时不得静默退回全局值（那会重现我们要修的割裂）
+      // 请求是否失败过：失败时不得静默退回全局值（那会重现"界面说 A、模型用 B"的割裂）
       const [scopeFailed, setScopeFailed] = React.useState(false)
+
       React.useEffect(() => {
         if (sessionId === null) {
           setScopeView(null)
@@ -3406,32 +3428,18 @@ window.__ModuleLoader__.load({
           setScopeFailed(false)
         }).catch(() => {
           if (cancelled) return
-          // 读不到就标成「未知」：标签不能消失，但也不能假装全局值就是模型在用的
           setScopeFailed(true)
         })
         return () => { cancelled = true }
       }, [sessionId])
-      // B：底栏开关上缀当前人设名，与输入框上方的标签互相印证
-      // 全局匹配结果（无会话上下文时的兜底）
+
+      // 关闭个性化时不显示（人设此刻不生效，挂名字会误导）
+      if (!enabled) return null
+
       const activePersona = state.activePersona
-      // 显示哪个名字：**会话实际生效的**优先，回落全局。
-      //
-      // source 决定追加哪一层标注：
-      //   session   → 本会话覆盖
-      //   workspace → 工作区人设
-      //   directory → 目录绑定
-      //   global    → 全局配置
       const scopeActive = scopeView && typeof scopeView.activePersona === 'string' && scopeView.activePersona !== ''
         ? scopeView.activePersona
         : null
-      // 三态，而不是「有会话值就用、没有就用全局」：
-      //   scopeView 有值 → 会话实际生效值
-      //   scopeView 为 null 且**已请求过** → 请求失败，全局值可能与模型实际用的不符 ⇒ 明说未知
-      //   从未请求（无 sessionId）→ 用全局值（本来就没有会话上下文）
-      //
-      // 之前失败时静默退回全局值，用户看到的是「界面说 A、模型用 B」且完全无从察觉 ——
-      // 那正是这个标签最初要修的问题，失败路径不能把它带回来。
-      const scopeKnown = scopeView !== null || scopeFailed
       const displayPersona = scopeActive
         || (scopeFailed ? t('quick.scopeUnknown') : (activePersona || t('quick.custom')))
       const scopeTag = (() => {
@@ -3441,14 +3449,23 @@ window.__ModuleLoader__.load({
           return t('quick.scopeWorkspace', { name: scopeView.workspaceTitle || scopeView.workspaceId || '' })
         }
         if (scopeView.source === 'directory') return t('quick.scopeDirectory')
-        // ⚠️ global 分支曾**缺失** —— source 为 'global' 时返回 null，
-        // 标签整块不渲染 ⇒ 用户看到「· 人设名」却**没有任何层级标注**。
-        // 而全局恰恰是最该标出来的一层：它意味着「改这里会影响所有会话」。
         if (scopeView.source === 'global') return t('quick.scopeGlobal')
-        // 未知 source（服务端新增了层级而客户端还没跟上）：明说而不是静默不标
         return t('quick.scopeUnknown')
       })()
 
+      return e('span', { className: 'soul-session-persona-label' },
+        e('span', { className: 'soul-session-persona-label-name' }, displayPersona),
+        scopeTag && e('span', { className: 'soul-session-persona-label-scope' }, scopeTag)
+      )
+    }
+
+    // 输入框工具栏快捷开关：复用全局 soulController，和设置页保持同一份状态。
+    function SoulQuickToggle(props) {
+      const { useSoulController, controller } = props
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const state = useSoulController((state) => state)
+      const enabled = state.enabled === true
+      const busy = state.saving === true
       // 保存失败的本地标记：失败时 store.error 会带上原因，但按钮本身此前毫无反馈
       // （enabled 没变 ⇒ 外观与文案都不变），用户视角是「点了没反应」。
       const [failed, setFailed] = React.useState(false)
@@ -3483,15 +3500,9 @@ window.__ModuleLoader__.load({
         // 「未匹配预设」这种说法听着像报错。底栏这里是输入框旁唯一的常驻状态，
         // 必须给确定的落点 —— 有名字就是那个预设，没名字就是自定义。
         // 关闭个性化时不显示（人设此时不生效，挂名字会误导）。
-        enabled && e('span', { className: 'soul-quick-toggle-name' },
-          `· ${displayPersona}`,
-          // 来源层级：让用户知道「现在这个人设是哪一层定的、该去哪儿改」。
-          // 没有它就会出现「界面说游戏开发与策划专家、模型实际用资深架构师」的割裂
-          // —— 因为全局值与会话实际值可以不同（实测踩过）。
-          //
-          // 用「·」而不是括号：括号是全角字符，在窄空间里换行后会孤零零留在行尾
-          // （「（」在上一行、「全局配置）」在下一行很难看）。圆点更轻、也更省宽度。
-          scopeTag && e('span', { className: 'soul-quick-toggle-scope' }, ` · ${scopeTag}`))
+        // 人设名与层级标注**不在这里**（0.9.0-h 挪到会话 header）：
+        // 输入框左侧横向空间有限，那串文字会被裁掉；header 那一行才有空间。
+        // 这里只留「开/关」这个动作。
       )
     }
 
@@ -5301,14 +5312,14 @@ window.__ModuleLoader__.load({
         id: 'soul-quick-toggle',
         order: 50,
         locale: NS,
-        // ⚠️ inject 回调收到的是**位置参数** `[sessionId]`，不是 props 对象！
+        // ⚠️ inject 回调收到的是**位置参数** [sessionId]，不是 props 对象！
         //
         // 宿主契约（FactoryInjectParams）：
         //   scope 'session'      → [sessionId: SessionId]
         //   scope 'session-maybe'→ [sessionId: SessionId | undefined]
         //   scope 'root'         → []
         //
-        // 这里曾写成 `inject: (props) => ({ sessionId: props?.sessionId })` ——
+        // 这里曾写成 inject: (props) => ({ sessionId: props?.sessionId }) ——
         // props 实际是 sessionId **字符串**，props.sessionId 是 undefined，
         // 于是 sessionId 恒为 null，标签永远拿不到当前会话，
         // 层级标注（本会话覆盖 / 全局配置 / 工作区）**整块不显示**。
@@ -5321,6 +5332,29 @@ window.__ModuleLoader__.load({
         })
       }, SoulQuickToggle))
 
+
+      // 会话人设标签：挂到会话 header（标题旁，「创造模式」「费用明细」那一行）。
+      //
+      // 槽位是 kind:'list' / scope:'session'，可安全追加（宿主的 occupants：
+      // agent-team(-20) / agent-preset(-10) / subagent-catalog(10) / job-list(20)）。
+      // order: 30 排在它们之后 —— 标签在视觉上属于「补充信息」，
+      // 不该插到「创造模式」和「费用明细」这些主动作之间。
+      //
+      // inject 收到的是**位置参数** [sessionId]（宿主契约 FactoryInjectParams：
+      // scope 'session' → [sessionId: SessionId]），不是 props 对象。
+      ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+        name: 'conversation.session.header.actions',
+        id: 'soul-persona-label',
+        order: 30,
+        locale: NS,
+        inject: (sessionId) => ({
+          hooks: {
+            soulController: controller.store
+          },
+          controller,
+          sessionId: typeof sessionId === 'string' && sessionId !== '' ? sessionId : null
+        })
+      }, SoulSessionPersonaLabel))
 
       // 输入框光轨：注册到输入框卡片内部的 overlay 槽位。
       // 组件不渲染可见内容——它按会话运行态在最近的输入框卡片上挂载/隐藏 SVG 环；

@@ -457,9 +457,30 @@ async function renderSettingsSettled(world) {
 
 /** 输入框左侧的快捷开关（conversation.input.left 槽位），渲染方式与设置页同源。 */
 function quickToggleElement(world) {
+  // 快捷开关留在 **conversation.input.left**（输入框左侧只留「开/关」这个动作）。
+  // 人设名与层级标注在 0.9.0-h 挪到了 conversation.session.header.actions。
   const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.input.left')
   assert.ok(slot, '未注册 conversation.input.left 槽位')
   const props = slot.options.inject()
+  const store = props.hooks.soulController
+  const useSoulController = (selector) => {
+    const [, force] = world.runtime.React.useState(0)
+    world.runtime.React.useEffect(() => store.subscribe(() => force((n) => n + 1)), [])
+    return selector(store.getSnapshot())
+  }
+  return { type: slot.component, props: { ...props, useSoulController } }
+}
+
+/**
+ * 渲染会话 header 的人设标签（0.9.0-h 起从输入框左侧挪到这里）。
+ *
+ * 槽位是 conversation.session.header.actions（kind:'list' / scope:'session'），
+ * inject 收到**位置参数** [sessionId]。
+ */
+function personaLabelElement(world, sessionId = 'session-abc') {
+  const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.session.header.actions')
+  assert.ok(slot, '未注册 conversation.session.header.actions 槽位')
+  const props = slot.options.inject(sessionId)
   const store = props.hooks.soulController
   const useSoulController = (selector) => {
     const [, force] = world.runtime.React.useState(0)
@@ -779,7 +800,7 @@ try {
     assert.ok(detailName.includes('幽默风趣'), `右栏详情应是「幽默风趣」，实际「${detailName}」`)
   })
 
-  await check('C40 输入框标签：显示会话实际人设 + 来源层级，不退回全局值', async () => {
+  await check('C40 header 人设标签：显示会话实际人设 + 来源层级，不退回全局值', async () => {
     // 背景：三级隔离下「全局匹配结果」与「会话实际生效值」可以不同 ——
     // 用户在设置页选了 A（全局）、在会话里选了 B（会话覆盖），模型实际用 B。
     // 标签若显示全局的 A，就会出现「界面说 A、模型用 B」的割裂。
@@ -799,7 +820,7 @@ try {
       workspaceTitle: 'dsh-plugin'
     })
 
-    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.input.left')
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.session.header.actions')
     assert.ok(slot, '前置条件：conversation.input.left 已注册')
     // scope:'session' 槽位的标准 props 带 sessionId —— 宿主 ui-session 的
     // BUILTIN_SOURCE 声明了 props: ["sessionId"]。没有它就查不到会话作用域。
@@ -819,13 +840,15 @@ try {
 
     // ① 显示的是**会话实际**的人设，不是全局那个
     assert.ok(text.includes('资深架构师'), `标签应显示会话实际人设，实际「${text}」`)
+    // header 标签只显示人设与层级，不重复「个性化已启用」（那是输入框左侧开关的事）
+    assert.equal(text.includes('个性化已启用'), false, 'header 标签不应重复开关文案')
     assert.equal(text.includes('游戏开发与策划专家'), false, '标签不得显示全局人设（那与模型实际用的不符）')
     // ② 带来源层级标注
     assert.ok(text.includes(world.dicts.zh['quick.scopeSession']), '应标注来源是「本会话覆盖」')
-    assert.equal(findAllByClass(tree, 'soul-quick-toggle-scope').length, 1, '应有且仅有一个来源层级标注')
+    assert.equal(findAllByClass(tree, 'soul-session-persona-label-scope').length, 1, '应有且仅有一个来源层级标注')
   })
 
-  await check('C46 input.left 的 inject 按**位置参数**收 sessionId（不是 props 对象）', async () => {
+  await check('C46 header/input.left 的 inject 按**位置参数**收 sessionId（不是 props 对象）', async () => {
     // 宿主契约 FactoryInjectParams：
     //   scope 'session'      → [sessionId: SessionId]
     //   scope 'session-maybe'→ [sessionId: SessionId | undefined]
@@ -837,7 +860,7 @@ try {
     //
     // 判据：inject 传字符串能拿到 sessionId；传对象拿不到（对象不是契约里的形态）。
     const world = await boot()
-    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.input.left')
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.session.header.actions')
     assert.ok(slot, '前置条件：conversation.input.left 已注册')
 
     const injected = slot.options.inject('sess-real')
@@ -852,7 +875,7 @@ try {
     )
   })
 
-  await check('C45 输入框标签：每种作用域来源都要有层级标注（含「全局配置」）', async () => {
+  await check('C45 header 人设标签：每种作用域来源都要有层级标注（含「全局配置」）', async () => {
     // ⚠️ global 分支曾**缺失**：source 为 'global' 时 scopeTag 返回 null，
     // 标签整块不渲染 ⇒ 用户看到「· 人设名」却**没有任何层级标注**。
     // 而全局恰恰是最该标出来的一层：它意味着「改这里会影响所有会话」。
@@ -865,7 +888,7 @@ try {
     })
     await world.controller.loadPersonas()
 
-    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.input.left')
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.session.header.actions')
     assert.ok(slot, '前置条件：conversation.input.left 已注册')
     const props = slot.options.inject('sess-1')
     const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
@@ -901,7 +924,7 @@ try {
       await world.runtime.settle({ type: slot.component, props: p2 })
       for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
       const tree = await world.runtime.settle({ type: slot.component, props: p2 })
-      const tags = findAllByClass(tree, 'soul-quick-toggle-scope')
+      const tags = findAllByClass(tree, 'soul-session-persona-label-scope')
       assert.equal(tags.length, 1, `source=${source} 应有且仅有一个层级标注，实际 ${tags.length}`)
       // 期望值里的 {name} 要按本 case 的 workspaceTitle 填上 —— 词典键里是模板，
       // 直接拿原始字符串去比会永远不相等。
@@ -921,18 +944,18 @@ try {
     await world.runtime.settle({ type: slot.component, props: p3 })
     for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
     const tree = await world.runtime.settle({ type: slot.component, props: p3 })
-    const tags = findAllByClass(tree, 'soul-quick-toggle-scope')
+    const tags = findAllByClass(tree, 'soul-session-persona-label-scope')
     assert.equal(tags.length, 1, '未知 source 也必须有标注（明说「未知」，不能静默不标）')
     assert.ok(textOf(tags[0]).includes(zh['quick.scopeUnknown']), '未知 source 应标为「会话状态未知」')
   })
 
-  await check('C42 输入框标签：会话状态读取失败时显示「未知」，不得退回全局值', async () => {
+  await check('C42 header 人设标签：会话状态读取失败时显示「未知」，不得退回全局值', async () => {
     // 失败路径同样不能骗人：若失败时静默退回全局值，用户看到的仍是
     // 「界面说 A、模型用 B」—— 正是这个标签最初要修的问题，失败路径不能把它带回来。
     const world = await boot()
     const zh = world.dicts.zh
     world.routes['/api/soul/session-scope/current'] = () => false
-    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.input.left')
+    const slot = world.captured.sections.find((s) => s.options && s.options.name === 'conversation.session.header.actions')
     assert.ok(slot, '前置条件：conversation.input.left 已注册')
     const props = slot.options.inject('sess-1')
     const useSoulController = (selector) => selector(world.controller.store.getSnapshot())
@@ -1385,8 +1408,8 @@ await check('C23 全局轮询注册在装配层（底栏不依赖设置页是否
   )
 })
 
-await check('C21 底栏展示当前人设，未匹配时显示「自定义」', async () => {
-  // 需求：底栏「个性化已启用」后必须回答「现在用的是哪套人设」。
+await check('C21 header 人设标签展示当前人设，未匹配时显示「自定义」', async () => {
+  // 需求：会话 header 必须回答「现在用的是哪套人设」（0.9.0-h 起该标签在 header）。
   // 此前只有匹配到预设才缀名字，手改过特质后留空 —— 等于没回答。
   // 现在：匹配到预设显示预设名，否则显示「自定义」。
   const personaLib = (activeName) => ({
@@ -1403,12 +1426,18 @@ await check('C21 底栏展示当前人设，未匹配时显示「自定义」', 
 
   // ① 匹配到预设 ⇒ 缀预设名
   const w1 = await boot({}, personaLib('苏格拉底式提问者'))
+  // 会话作用域端点：没有会话覆盖 ⇒ source 'global'，人设名取全局匹配结果。
+  // 不 mock 的话请求失败 ⇒ 标签显示「会话状态未知」，把断言冲掉。
+  w1.routes['/api/soul/session-scope/current'] = () => ({
+    ok: true, sessionId: 'session-abc', workspaceId: null, override: null,
+    source: 'global', activePersona: '苏格拉底式提问者', globalPersona: '苏格拉底式提问者'
+  })
   // 人设列表由**设置页组件挂载后的 refresh** 拉取（apply 阶段只拉 config）。
   // 快捷开关单独渲染不会触发它 —— 先渲染一次设置页把人设灌进 store，
   // 否则下面读到的 activePersona 恒为 null（此前踩过：断言读到「自定义」）。
   await renderSettings(w1)
-  const btn1 = await w1.runtime.settle(quickToggleElement(w1))
-  const name1 = findAll(btn1, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-quick-toggle-name'))
+  const btn1 = await w1.runtime.settle(personaLabelElement(w1))
+  const name1 = findAll(btn1, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-session-persona-label-name'))
   assert.equal(name1.length, 1, `启用时应有一个人设名节点，实际 ${name1.length}`)
   assert.ok(
     textOf(name1[0]).includes('苏格拉底式提问者'),
@@ -1417,9 +1446,13 @@ await check('C21 底栏展示当前人设，未匹配时显示「自定义」', 
 
   // ② 未匹配（手改过特质）⇒ 显示「自定义」，不能留空
   const w2 = await boot({}, personaLib(null))
+  w2.routes['/api/soul/session-scope/current'] = () => ({
+    ok: true, sessionId: 'session-abc', workspaceId: null, override: null,
+    source: 'global', activePersona: null, globalPersona: null
+  })
   await renderSettings(w2)
-  const btn2 = await w2.runtime.settle(quickToggleElement(w2))
-  const name2 = findAll(btn2, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-quick-toggle-name'))
+  const btn2 = await w2.runtime.settle(personaLabelElement(w2))
+  const name2 = findAll(btn2, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-session-persona-label-name'))
   assert.equal(name2.length, 1, '未匹配时也应有人设名节点（回退为「自定义」）')
   assert.ok(
     textOf(name2[0]).includes(w2.dicts.zh['quick.custom']),

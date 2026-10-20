@@ -50,7 +50,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 146
+const EXPECTED_ASSERTIONS = 147
 
 let passed = 0
 const failures = []
@@ -2946,14 +2946,25 @@ check('底栏开关始终展示当前人设（未匹配时显示「自定义」�
   // 需求：底栏「个性化已启用」后面必须给出「现在用的是哪套人设」。
   // 此前只有匹配到预设才缀名字，未匹配（手改过特质）就留空 —— 等于没回答；
   // 而「未匹配预设」这种说法听着像报错。现在：有匹配显示预设名，否则「自定义」。
-  assert.match(clientSource, /enabled && e\('span', \{ className: 'soul-quick-toggle-name' \}/, '底栏应始终（启用时）渲染人设名')
+  // 0.9.0-h：人设名从输入框左侧挪到**会话 header**（输入框横向空间不够，
+  // 那串文字会被裁掉）。输入框左侧只留「开/关」这个动作。
+  assert.match(
+    clientSource,
+    /function SoulSessionPersonaLabel\(props\)/,
+    '应有人设标签组件（0.9.0-h 起挂在会话 header）'
+  )
+  assert.match(
+    clientSource,
+    /soul-session-persona-label-name/,
+    'header 人设标签必须渲染人设名'
+  )
   assert.match(
     clientSource,
     /activePersona \|\| t\('quick\.custom'\)/,
     '未匹配到预设时应回退显示「自定义」（不能留空）'
   )
   // 关闭个性化时不显示（人设此刻不生效，挂名字会误导）
-  assert.match(clientSource, /enabled && e\('span', \{ className: 'soul-quick-toggle-name' \}/, '关闭个性化时不得显示人设名')
+  assert.match(clientSource, /if \(!enabled\) return null/, '关闭个性化时不得显示人设名（header 标签）')
   // 名字限宽（自建预设上限 30 字，不限宽会撑开底栏）
   //
   // ⚠️ 2026-10-20 调整：原契约是 max-width:9em（约 108px），实测**展示不全** ——
@@ -3548,6 +3559,48 @@ check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', (
     assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
   }
 })
+check('0.9.0-h 人设标签挂在会话 header，不在输入框左侧', () => {
+  // 用户诉求：输入框左侧横向空间不够，人设名与层级标注被裁掉 ⇒ 挪到会话 header
+  // （标题旁，「创造模式」「费用明细」那一行）。
+  //
+  // 契约：
+  //   ① 人设标签组件注册在 conversation.session.header.actions（kind:'list' / scope:'session'）；
+  //   ② 输入框左侧（conversation.input.left）只留「开/关」这个动作，不带人设名；
+  //   ③ 两处都要按**位置参数**收 sessionId（宿主契约 FactoryInjectParams）。
+  const client = clientCode
+  assert.match(
+    client,
+    /ctx\.slots\.inject\('conversation\.session\.header\.actions',[\s\S]{0,40}[\s\S]*?SoulSessionPersonaLabel\)/,
+    '人设标签必须注册到 conversation.session.header.actions'
+  )
+  assert.match(
+    client,
+    // 用「最多 40 行」而不是「最多 N 个字符」定界：字符数会被注释长度带着走
+    // （实测 900 差 49 字符、2000 够 —— 这种阈值改一次就失配一次）。
+    /ctx\.slots\.inject\('conversation\.input\.left',[\s\S]{0,40}[\s\S]*?SoulQuickToggle\)/,
+    '输入框左侧仍应注册快捷开关（开/关）'
+  )
+  // 输入框左侧的组件**不得**再渲染人设名
+  const quickToggle = client.match(/function SoulQuickToggle\(props\) \{([\s\S]*?)\n    \}/)?.[1] ?? ''
+  assert.ok(quickToggle !== '', '找不到 SoulQuickToggle')
+  assert.equal(
+    /soul-quick-toggle-name/.test(quickToggle),
+    false,
+    '输入框左侧不得再渲染人设名（它已挪到 header）'
+  )
+  // header 组件必须渲染人设名
+  const label = client.match(/function SoulSessionPersonaLabel\(props\) \{([\s\S]*?)\n    \}/)?.[1] ?? ''
+  assert.ok(label !== '', '找不到 SoulSessionPersonaLabel')
+  assert.match(label, /soul-session-persona-label-name/, 'header 标签必须渲染人设名')
+  // 窄容器时隐藏（跟宿主 AgentPresetLabel 同一策略）
+  const cssBlock = client.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  assert.match(
+    cssBlock,
+    /@container \(width<=540px\)\{\.soul-session-persona-label\{display:none\}\}/,
+    '窄容器时应隐藏 header 人设标签（与宿主 AgentPresetLabel 同一策略）'
+  )
+})
+
 check('0.9.0-g 快捷开关标签：不得裁切、不得限死宽度', () => {
   // 症状：输入框下方的标签「展示不全」——
   // 「个性化已启用 · 游戏策划与开发专家（全局配置）」这类内容被截断。
