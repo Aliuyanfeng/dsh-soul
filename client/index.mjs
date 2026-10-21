@@ -1275,13 +1275,13 @@ window.__ModuleLoader__.load({
       // 配合 object-fit:cover 就会**上下裁掉约 44%**，只剩中间一条 —— 看起来像「插画不够大」。
       // 1:1 容器让插画完整显示，且比原来看到的那条中间带大得多。
       // 轮播容器：叠层卡 + 下方导航（同一列，纵向）
-      '.soul-session-carousel{flex:0 1 240px;min-width:160px;display:flex;flex-direction:column;align-items:center;gap:10px}',
-      '.soul-session-grid{position:relative;width:100%;min-width:160px;height:200px;flex:0 1 240px;overflow:hidden}',
+      '.soul-session-carousel{flex:0 0 300px;min-width:300px;display:flex;flex-direction:column;align-items:center;gap:10px}',
+      '.soul-session-grid{position:relative;width:100%;height:300px;overflow:hidden}',
       // 单张卡：结构抄 .soul-persona-card 的正面（去掉 3D 翻面 —— 翻面由右栏详情承担）。
       // ⚠️ 这里**不得**写任何 transform：叠层偏移由内联 style 持有（translateX/scale）；
       // 若 CSS 也给 transform，两者会互相覆盖。
       // 插画铺满整张卡：art 绝对定位 inset:0，卡本身只提供定位上下文与圆角裁切。
-      '.soul-session-card{position:absolute;top:0;bottom:0;left:0;right:0;width:200px;margin:0 auto;display:block;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;cursor:pointer}',
+      '.soul-session-card{position:absolute;top:0;bottom:0;left:0;right:0;width:300px;margin:0 auto;display:block;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;cursor:pointer}',
       '.soul-session-card:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       // 生效中的那张：**不加描边**（0.9.0-u）。
       //
@@ -1315,7 +1315,7 @@ window.__ModuleLoader__.load({
       // 固定 height 后切换任何预设面板都不变，只有内容区滚动。
       //
       // 340px = 原上限值，实测能容纳六维度 + 约 12 行指令；更长的指令在内部滚动。
-      '.soul-session-detail{flex:1 1 220px;min-width:200px;display:flex;flex-direction:column;gap:8px;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);height:340px;box-sizing:border-box;overflow:hidden}',
+      '.soul-session-detail{flex:1 1 220px;min-width:200px;display:flex;flex-direction:column;gap:8px;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);height:338px;box-sizing:border-box;overflow:hidden}',
       '.soul-session-detail-empty{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       '.soul-session-detail-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
       '.soul-session-detail-name{font-size:14px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary)}',
