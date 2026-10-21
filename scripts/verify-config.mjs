@@ -4130,51 +4130,47 @@ check('0.9.0-f 会话生效人设名：服务端优先用 sidecar 记的 persona
   )
 })
 
-check('0.9.0-e 会话卡牌：描边独占「生效」，选中只用投影与位移', () => {
-  // 背景：--dsw-alias-brand-primary 在浅色主题下解析为近黑（#0f1115）。
-  // 「生效」与「选中」两个状态若都用主色描边，叠在一起就是「双层黑框」，
-  // 分不出哪个是「正在生效」、哪个是「正在浏览」——
-  // 而这两件事在语义上完全不同（一个是配置事实，一个是浏览位置）。
+check('0.9.0-e 会话卡牌：无描边 —— 生效靠 ★ 角标，选中靠投影与位移', () => {
+  // 用户反馈：主色描边在浅色主题下解析为近黑（#0f1115），压在插画上是一圈很重的
+  // 黑框，太丑。生效标识已有**左下角的 ★ 角标**（半透明深底圆 + 白字），描边是
+  // 重复信号 ⇒ 彻底移除。
   //
-  // 契约：描边只给生效；选中只给位移 + 投影。
+  // 契约：
+  //   ① 任何状态（普通 / 生效 / 选中 / 生效且选中）都**不得**有主色描边或光晕；
+  //   ② 生效标识只剩 ★ 角标（.soul-session-card-star 必须存在）；
+  //   ③ 选中仍有位移 + 投影反馈（不能因为去描边而完全失去反馈）。
   const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
-  assert.ok(cssBlock !== '', '找不到客户端 CSS 块')
-
-  // 取出某条选择器的规则体。转义 [ ] 因为它们在正则里是字符类。
   const rule = (sel) => {
     const escaped = sel.replace(/[[\]]/g, (c) => '\\' + c)
     const m = cssBlock.match(new RegExp(escaped + '\\{([^}]*)\\}'))
     return m ? m[1] : ''
   }
 
-  const effective = rule('.soul-session-card[data-effective="true"]')
+  // ① 四种状态全部无描边 / 无光晕
+  const states = [
+    '.soul-session-card',
+    '.soul-session-card[data-effective="true"]',
+    '.soul-session-card[data-selected="true"]',
+    '.soul-session-card[data-selected="true"][data-effective="true"]'
+  ]
+  for (const sel of states) {
+    const body = rule(sel)
+    assert.ok(body !== '', `缺少规则 ${sel}`)
+    assert.equal(
+      /border-color:var\(--dsw-alias-brand-primary\)|0 0 0 1px var\(--dsw-alias-brand-primary\)/.test(body),
+      false,
+      `${sel} 不得有主色描边或光晕（黑框太重，生效已由 ★ 角标标识）`
+    )
+  }
+
+  // ② ★ 角标必须存在（生效的唯一视觉依据）
+  const star = rule('.soul-session-card-star')
+  assert.ok(star !== '', '缺少 ★ 角标规则 —— 去掉描边后它是生效的唯一标识')
+  assert.match(star, /position:absolute/, '★ 角标必须绝对定位')
+
+  // ③ 选中仍有反馈
   const selected = rule('.soul-session-card[data-selected="true"]')
-  const both = rule('.soul-session-card[data-selected="true"][data-effective="true"]')
-
-  assert.ok(effective !== '', '缺少「生效」状态的规则')
-  assert.ok(selected !== '', '缺少「选中」状态的规则')
-
-  // ① 描边只属于「生效」
-  assert.match(effective, /border-color:var\(--dsw-alias-brand-primary\)/, '生效卡应有主色描边')
-  assert.equal(
-    /0 0 0 1px var\(--dsw-alias-brand-primary\)/.test(selected),
-    false,
-    '选中卡不得有主色光晕描边 —— 它与「生效」的描边同色，叠起来是双层黑框'
-  )
-  assert.equal(
-    /border-color/.test(selected),
-    false,
-    '选中卡不得改 border-color —— 描边是「生效」的专属信号'
-  )
-
-  // ② 选中仍须有可感知的反馈（位移或投影）
-  assert.match(selected, /translateY|box-shadow/, '选中卡必须有位移或投影反馈，否则用户不知道换卡了')
-
-  // ③ 两者同时成立时：描边保留、投影取更重的一档。
-  //    这条规则必须排在上面两条之后（CSS 同优先级靠后者覆盖），
-  //    所以断言它存在且含描边。
-  assert.ok(both !== '', '缺少「生效且选中」的组合规则（否则中心的生效卡会丢掉描边）')
-  assert.match(both, /0 0 0 1px var\(--dsw-alias-brand-primary\)/, '生效且选中时仍应保留主色描边')
+  assert.match(selected, /translateY|box-shadow/, '选中卡必须有位移或投影反馈')
 })
 
 check('0.9.0-d hook 顺序：所有 hook 都在组件顶层提前 return 之前', () => {

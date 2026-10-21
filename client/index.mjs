@@ -1283,18 +1283,22 @@ window.__ModuleLoader__.load({
       // 插画铺满整张卡：art 绝对定位 inset:0，卡本身只提供定位上下文与圆角裁切。
       '.soul-session-card{position:absolute;top:0;bottom:0;left:0;right:0;width:200px;margin:0 auto;display:block;overflow:hidden;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08));box-sizing:border-box;font-size:12px;line-height:18px;transition:transform .3s cubic-bezier(.22,.61,.36,1),opacity .3s ease;cursor:pointer}',
       '.soul-session-card:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
-      // 生效中的那张：**主色描边 + 外发光**（配置事实）。
-      // 主色在浅色主题下解析为近黑（#0f1115），在深色下是近白 —— 与宿主卡片体系一致。
-      '.soul-session-card[data-effective="true"]{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08))}',
+      // 生效中的那张：**不加描边**（0.9.0-u）。
+      //
+      // 历史：曾用主色描边 + 1px 光晕表达「生效」，但主色在浅色主题下解析为近黑
+      // （#0f1115），压在插画上是一圈很重的黑框 —— 用户反馈太丑。
+      // 生效标识已有**左下角的 ★ 角标**（半透明深底圆 + 白字，不依赖遮罩），
+      // 描边是重复信号，去掉后 ★ 成为唯一依据，观感干净得多。
+      // 若将来要恢复描边，注意别与 hover 的 translateY 合成同一个 transform。
+      '.soul-session-card[data-effective="true"]{box-shadow:var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08))}',
       // 选中的那张：**只抬高一档 + 投影加深**，不再加描边。
       //
       // 为什么去掉那圈 1px 光晕：它与上面「生效」的描边是同一个主色，浅色主题下两者都是
       // 近黑 ⇒ 生效卡与选中卡叠在一起时是「双层黑框」，完全分不出哪个是「正在生效」、
       // 哪个是「正在浏览」。把描边独占给「生效」，选中只留位移与投影，两个状态就分开了。
       '.soul-session-card[data-selected="true"]{transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,.18),var(--dsw-shadow-lv2,0 2px 8px rgba(0,0,0,.08))}',
-      // 生效 **且** 选中（最常见：中心卡正是生效的那张）⇒ 描边保留，投影取两者中更重的一档。
-      // 顺序要紧：这条必须排在上面两条之后，否则会把生效的描边覆盖掉。
-      '.soul-session-card[data-selected="true"][data-effective="true"]{transform:translateY(-1px);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary),0 4px 14px rgba(0,0,0,.18)}',
+      // 生效 **且** 选中（最常见：中心卡正是生效的那张）⇒ 投影取两者中更重的一档。
+      '.soul-session-card[data-selected="true"][data-effective="true"]{transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,.18)}',
       // 插画区：**绝对定位铺满整张卡**。
       // 原来它在文档流里（1:1 的画面 + 下方文字区），现在没有文字区了 ⇒ 直接铺满，
       // 画面大得多。aspect-ratio 不再需要（高度由容器决定）。
