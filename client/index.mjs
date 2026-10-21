@@ -5891,22 +5891,24 @@ window.__ModuleLoader__.load({
       // guarded(entry, key, owner = ownerProps) 直接并入组件 props。
       // ⇒ inject 只负责注入 hooks；sessionId 由组件从 props.sessionId 读。
 
-      // 侧栏面板图标「Soul 人设」（0.9.0-ac）。
+      // 侧栏面板图标（0.9.0-ac，0.9.0-ad 回滚重做）。
       //
-      // 槽位：sidebar.panellist —— kind:'list' / scope:'root'，"Global panel icons"。
-      // 宿主 occupants：插件管理器（id 'plugins'，order 0）、自动化任务（'schedules'，
-      // order 10）等。Each list id addresses the matching main panel —— 宿主
-      // PanelRow 拿我们的 id 渲染按钮、点击自动 selectPanel(该 id)。
+      // ❌ 第一版教训：注册 id 'plugins'（复用宿主插件管理器的 cell id）——
+      // 文档里 "reusing a shipped id puts you in THAT cell" 的真正含义是
+      // **替换该单元**，不是"并存"。实测把插件管理器的图标顶没了（用户报：
+      // "你把插件整没了"）。
       //
-      // ⚠️ id 复用宿主的 'plugins'（文档："reusing a shipped id puts you in THAT
-      // cell"）：我们的图标进入插件管理器的单元、排在其后（order 5 > 0），
-      // 点击同样切到 plugins 面板 —— dsh-soul 详情就在那里。
-      // 若注册新 id 而无对应 main 面板，点击会切到不存在的面板。
-      // 长期方案：把「预设库管理」从会话语境拆出来注册独立 main 面板（后续活）。
+      // ✅ 现在：注册**自己的 id**（'soul-persona-panel'）。点击后宿主
+      // selectPanel('soul-persona-panel') 会切到一个未注册的面板 ——
+      // 宿主文档说这种情况 "preserves the current selection"（保持当前选择，
+      // 不会白屏）。图标本身仍显示：它是 Soul 的入口标识，hover 有名字。
+      //
+      // 长期方案（未做）：注册独立 main 面板承载「预设库管理」，那时这个图标
+      // 才有真正的落地页。需要把人设管理从会话语境拆出来 —— 独立的活。
       ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
         name: 'sidebar.panellist',
-        id: 'plugins',
-        order: 5,
+        id: 'soul-persona-panel',
+        order: 20,
         locale: NS,
         label: () => navT('nav.label'),
         inject: () => ({})
