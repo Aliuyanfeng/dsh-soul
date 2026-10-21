@@ -4414,6 +4414,28 @@ window.__ModuleLoader__.load({
             if (key in localMap) draft[key] = localMap[key]
           }
           await controller.savePersona(name, draft)
+
+          // 表单回退到**当前配置**：更新的是某个预设，不是当前配置，
+          // 所以那套编辑不该继续挂在表单上（否则「已更新预设」+「有未保存的更改」
+          // 并存，仍然是矛盾提示）。
+          lastSyncRef.current = null
+          setLocalEnabled(enabled)
+          setLocalNickname(nickname || '')
+          setLocalOccupation(occupation || '')
+          setLocalBio(bio || '')
+          setLocalStyle(style)
+          setLocalHeadingLists(headingLists || 'default')
+          setLocalEmoji(emoji || 'default')
+          setLocalTables(tables || 'default')
+          setLocalReplyLength(replyLength || 'normal')
+          setLocalLanguage(language || 'zh')
+          setLocalInstructions(customInstructions || '')
+          setLocalToolConfirm(requireToolConfirmation === true)
+          setLocalTrailEnabled(trailEnabled)
+          setLocalTrailColor(trailColor)
+          setLocalTrailSpeed(trailSpeed)
+          setLocalTrailWidth(trailWidth)
+
           setShowUpdatePersona(false)
           await loadPersonas()
           showSavedNotice(t('notice.personaUpdated', { name }))

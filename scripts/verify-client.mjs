@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 45
+const EXPECTED_ASSERTIONS = 46
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -988,6 +988,69 @@ try {
       '写会话作用域必须**换新对象** —— 原地改不会触发 store 的浅比较，订阅者不会重渲染'
     )
     assert.equal(after.s1.activePersona, 'X', '新对象里应带上解析结果')
+  })
+
+  await check('C51 更新到预设：保存后表单也回退到当前配置（dirty 消失）', async () => {
+    // 用户要求：更新到预设之后，表单内容也要回到**当前人设**（当前配置）的内容。
+    //
+    // 理由与「存为预设（不勾选立即应用）」一致：更新的是**另一个对象**（某个已有预设），
+    // 当前配置没有变。若不回退，底部会同时显示「已更新预设「X」」与
+    // 「有未保存的更改」—— 同一类矛盾提示。
+    const world = await boot()
+    const zh = world.dicts.zh
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: {
+        苏格拉底式提问者: { style: 'professional', builtin: true },
+        我的预设: { style: 'casual', builtin: false }
+      },
+      activeName: '苏格拉底式提问者'
+    })
+    await world.controller.loadPersonas()
+    world.routes['/api/soul/personas/save'] = (call) => ({
+      ok: true,
+      personas: { 苏格拉底式提问者: { style: 'professional', builtin: true }, 我的预设: { style: 'casual', builtin: false } },
+      activeName: '苏格拉底式提问者'
+    })
+
+    // ① 先改表单制造 dirty
+    const tree0 = await renderSettings(world)
+    const nickInput = findAll(tree0, (n) => n.type === 'input' && n.props && n.props.id === 'soul-nickname')[0]
+    assert.ok(nickInput, '应能看到昵称输入框')
+    await nickInput.props.onChange({ target: { value: '临时昵称' } })
+    const dirtyTree = await renderSettings(world)
+    assert.equal(
+      findAllByClass(dirtyTree, 'soul-dirty').length,
+      1,
+      '前置条件：改了表单后应显示「有未保存的更改」'
+    )
+
+    // ② 打开「更新到预设」弹层，选「我的预设」
+    const openBtn = findAll(dirtyTree, (n) => textOf(n) === zh['personas.updateTo'])[0]
+    assert.ok(openBtn, '应有「更新到预设」按钮')
+    await openBtn.props.onClick()
+    const withModal = await renderSettings(world)
+    const item = findAllByClass(withModal, 'soul-update-item')
+      .find((n) => textOf(n).includes('我的预设'))
+    assert.ok(item, '弹层里应能选到「我的预设」')
+    await item.props.onClick()
+    await new Promise((r) => drainTick(r))
+
+    // ③ 更新后 dirty 必须消失，且表单回到**当前配置**的值
+    const finalTree = await renderSettings(world)
+    assert.equal(
+      findAllByClass(finalTree, 'soul-dirty').length,
+      0,
+      '更新预设后不应再有「有未保存的更改」（表单应回退到当前配置）'
+    )
+    // 昵称回到 CONFIG 里的值（不是临时昵称）
+    const nickAfter = findAll(finalTree, (n) => n.type === 'input' && n.props && n.props.id === 'soul-nickname')[0]
+    assert.ok(nickAfter, '应仍能看到昵称输入框')
+    assert.equal(
+      nickAfter.props.value,
+      CONFIG.nickname || '',
+      `昵称应回退到当前配置的值，实际「${String(nickAfter.props.value)}」`
+    )
   })
 
   await check('C49 存为预设：勾选「立即应用」则切换；不勾选则表单回退、dirty 消失', async () => {
