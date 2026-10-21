@@ -3100,7 +3100,9 @@ window.__ModuleLoader__.load({
 
         // 临时覆盖：左侧叠层轮转（中心大卡 + 两侧露边）+ 右侧详情面板
         e('div', { className: 'soul-field' },
-          e('div', { className: 'soul-field-label' }, t('session.overrideTitle')),
+          // 标题与上方 tab 标题（.soul-session-title，14px/500）统一 ——
+          // 两者是同层级区块标题，原先用 .soul-field-label（12px）视觉不齐（用户反馈）。
+          e('h4', { className: 'soul-session-title' }, t('session.overrideTitle')),
           personaNames.length === 0
             ? e('div', { className: 'soul-status' }, t('session.loading'))
             : e('div', { className: 'soul-session-split' },
