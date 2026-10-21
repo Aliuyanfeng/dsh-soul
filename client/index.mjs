@@ -1243,6 +1243,9 @@ window.__ModuleLoader__.load({
       '.soul-session-persona{display:flex;flex-direction:column;gap:16px;max-width:var(--dsh-chat-content-width,720px);width:100%;margin:0 auto;padding:20px 4px;box-sizing:border-box;color:var(--dsw-alias-label-primary)}',
       '.soul-session-head{display:flex;align-items:baseline;gap:8px}',
       '.soul-session-title{margin:0;font-size:14px;font-weight:500;line-height:20px}',
+      // 容器内间距全部交给 gap:16px 统一 —— .soul-field 自带的 margin-bottom:14px
+      // 会让「临时改用」与下方卡牌的间距比上方标题的 16px 小，视觉不齐（用户反馈）。
+      '.soul-session-persona .soul-field{margin-bottom:0}',
       // 「有覆盖」标记：一眼看出这个会话与外面的设置不同，避免用户以为改的是全局
       '.soul-session-badge{padding:0 6px;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent);color:var(--dsw-alias-brand-primary);font-size:11px;line-height:18px}',
       // 当前生效卡：与设置页 .soul-bindings-current 同款观感（描边 + 浅底）
