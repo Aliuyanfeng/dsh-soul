@@ -3651,10 +3651,10 @@ window.__ModuleLoader__.load({
         // 与本插件的 require 机制完全相同。
         //
         // 尺寸 14：与邻居 AgentPresetLabel 的图标一致（size: 14）。
-        // 面具图标（0.9.0-w 自绘，0.9.0-x 换成威尼斯假面）：威尼斯狂欢节的面具 =
-        // 「戴上面具扮演另一个角色」，比 agent-preset 图标更准确地表达「人设」，
-        // 也避免与「创造模式」标签撞图标。stroke 用 currentColor 随主题变色。
-        // 渲染验证：Chrome headless 截 96/28/14px 三档，14px 下面具轮廓仍清晰。
+        // 面具图标（0.9.0-w 自绘，0.9.0-x 定稿为「喜剧+悲剧」双面）：戏剧面具 =
+        // 「戴上面具扮演另一个角色」+ 一张脸半笑半哭，比 agent-preset 图标更准确
+        // 地表达「人设」，也避免与「创造模式」标签撞图标。stroke 用 currentColor。
+        // 渲染验证：Chrome headless 截 96/28/14px 三档，14px 下三笔都清晰。
         e('svg', {
           className: 'soul-session-persona-label-icon',
           width: 14,
@@ -3667,13 +3667,14 @@ window.__ModuleLoader__.load({
           strokeLinejoin: 'round',
           'aria-hidden': true
         },
-          // 主体：宽额 + 收窄尖下巴（威尼斯 Volto 轮廓）
-          e('path', { d: 'M1.6 5.4 C1.6 3.2 4.2 2.0 8 2.0 C11.8 2.0 14.4 3.2 14.4 5.4 C14.4 8.8 12.0 11.8 8 14.0 C4.0 11.8 1.6 8.8 1.6 5.4 Z' }),
-          // 猫眼：杏仁形、外角上挑（威尼斯假面的标志性眼孔）
-          e('path', { d: 'M3.2 6.4 C4.0 5.0 6.2 5.0 6.8 6.3 C6.0 7.2 4.0 7.2 3.2 6.4 Z' }),
-          e('path', { d: 'M9.2 6.3 C9.8 5.0 12.0 5.0 12.8 6.4 C12.0 7.2 10.0 7.2 9.2 6.3 Z' }),
-          // 额头装饰弧
-          e('path', { d: 'M5.8 3.8 C6.8 3.1 9.2 3.1 10.2 3.8' })
+          // 主体：微倾斜的盾形（倾斜 = 戏剧感）
+          e('path', { d: 'M2.2 3.0 C4.2 1.8 11.8 1.8 13.8 3.0 C14.4 6.6 12.4 11.6 8.0 13.8 C3.6 11.6 1.6 6.6 2.2 3.0 Z' }),
+          // 左眼：笑（上弯弧）；右眼：哭（下弯弧）—— 一张脸两种情绪，
+          // 即戏剧「喜剧 + 悲剧」双面。两弧相交于中间，14px 下仍清晰。
+          e('path', { d: 'M4.0 6.0 C4.7 5.2 6.1 5.2 6.8 6.0' }),
+          e('path', { d: 'M9.2 5.6 C9.9 6.4 11.3 6.4 12.0 5.6' }),
+          // 嘴：左高右低的斜线（半笑半哭的暧昧感）
+          e('path', { d: 'M4.6 9.6 C6.0 10.2 9.0 9.6 11.2 8.6' })
         ),
         e('span', { className: 'soul-session-persona-label-name' }, displayPersona),
         scopeTag && e('span', { className: 'soul-session-persona-label-scope' }, scopeTag)
