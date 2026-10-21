@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 155
+const EXPECTED_ASSERTIONS = 156
 
 let passed = 0
 const failures = []
@@ -3572,6 +3572,69 @@ check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', (
     assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
   }
 })
+check('0.9.0-s 「更新到预设」入口：只列自建预设 + 复用草稿 + 不动活动配置', () => {
+  // 用户诉求：希望能编辑已存在的人设。
+  //
+  // 实现选择：不做「预设编辑态」（那会让表单同时是"活动配置编辑器"和"预设编辑器"，
+  // 两份语义混淆 —— 本项目已因状态双写踩过三次）。改为在「存为预设」旁加一个
+  // 「更新到预设」：把**当前草稿**覆盖写回某个已有自建预设。
+  //
+  // 契约：
+  //   ① 只列**自建**预设 —— 内置预设不可改（五条写路径都拒绝内置名），
+  //      列出来只会让用户点了吃一个 400；
+  //   ② 复用同一个 controller.savePersona(name, draft)：重复门禁会排除同名条目，
+  //      所以"覆盖自己"天然允许，不需要 force 参数；
+  //   ③ 成功后**不动活动配置** —— 这是"把当前这套存回某个预设"，
+  //      不是"应用某个预设"。
+  const client = clientCode
+  assert.match(
+    client,
+    /const editablePersonaNames = \(personaNames \|\| \[\]\)\.filter\(/,
+    '必须从预设列表筛出可编辑的（自建）预设'
+  )
+  // 注意：正则里的 ! 要转义成 \! —— 裸 `!(` 在正则里是「否定前瞻」的起始，
+  // 会被解析成未闭合分组（实测：写成 /!(...)/ 直接 SyntaxError）。
+  assert.match(
+    client,
+    /\!\(personas && personas\[name\] && personas\[name\]\.builtin\)/,
+    '必须排除内置预设（它们不可修改）'
+  )
+  assert.match(
+    client,
+    /'personas\.updateTo'/,
+    '必须有「更新到预设」入口的文案键'
+  )
+  // 更新走的是同一个 savePersona(name, draft) —— 不新造一条写路径。
+  // 用括号配平取**完整**函数体：正则 `([\s\S]*?)\n      \}` 会在第一个缩进闭合处截断，
+  // 加在函数末尾的多余调用会落在切片外（判断力对照实测漏网两次）。
+  const updateStart = client.indexOf('const handleUpdatePersona = async (name) => {')
+  assert.ok(updateStart > 0, '找不到 handleUpdatePersona 起点')
+  let depth = 0
+  let updateEnd = updateStart
+  for (let k = updateStart; k < client.length; k += 1) {
+    if (client[k] === '{') depth += 1
+    else if (client[k] === '}') {
+      depth -= 1
+      if (depth === 0) { updateEnd = k; break }
+    }
+  }
+  const updateFn = client.slice(updateStart, updateEnd + 1)
+  assert.ok(updateFn.length > 50, 'handleUpdatePersona 切片为空')
+  // 必须精确匹配「带 draft 的调用」—— 只写 savePersona(name) 会存旧值
+  assert.match(
+    updateFn,
+    /controller\.savePersona\(name,\s*draft\)/,
+    '更新必须把草稿传给 savePersona（否则存的是旧值）'
+  )
+  assert.match(updateFn, /draft\[key\] = localMap\[key\]/, '更新必须带上本地草稿（与「存为预设」同源）')
+  // ③ 不动活动配置：不得出现 saveConfig / applyConfig / usePersona
+  assert.equal(
+    /saveConfig|applyConfig|usePersona/.test(updateFn),
+    false,
+    '更新预设不得顺带改活动配置（那是「应用预设」的职责）'
+  )
+})
+
 check('0.9.0-r 存为预设必须带上未保存的草稿（否则存的是旧配置）', () => {
   // 用户实测 bug：选了「自驱型协作者」→ 改了回复风格与自定义指令（**没点保存**）
   // → 直接点「存为预设」→ 存出来的预设仍是自驱型协作者的字段。

@@ -1140,6 +1140,13 @@ window.__ModuleLoader__.load({
       // 「将保存 / 不含」两行说明：这是消除「不知道存了哪些值」的关键，用弱化样式但仍可读
       '.soul-modal-note{display:flex;flex-direction:column;gap:4px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       '.soul-modal-note-excl{color:var(--dsw-alias-label-tertiary)}',
+      // 「更新到预设」列表（0.9.0-s）：每行一个可选预设名。
+      '.soul-update-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow:auto}',
+      '.soul-update-item{box-sizing:border-box;display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px;text-align:left;cursor:pointer}',
+      '.soul-update-item:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-brand-primary)}',
+      '.soul-update-item:disabled{cursor:wait;opacity:.6}',
+      '.soul-update-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}',
+      '.soul-update-badge{flex:none;color:var(--dsw-alias-brand-primary);font-size:11px;line-height:16px}',
       '.soul-modal-actions{display:flex;justify-content:flex-end;gap:8px}',
       // 二次确认态：描边 → 实心危险色，**并放宽按钮**。
       // 放宽是必须的：普通态按「删除」两字定宽 43px，而「确认删除？」是五个字，
@@ -1503,6 +1510,12 @@ window.__ModuleLoader__.load({
       'personas.save': '保存当前为预设',
       // 方案 A：入口移出预设列表，与「保存设置」并列（文案用「存为预设…」表示会再问一步）
       'personas.saveAs': '存为预设…',
+      // 更新到预设（0.9.0-s）：与「存为预设」并列 —— 前者覆盖已有，后者新建。
+      'personas.updateTo': '更新到预设',
+      'personas.updateNone': '还没有可更新的自建预设。内置预设不可修改。',
+      'personas.updateCovers': '会把「关于你」之外的人格字段（风格、特质、长度、指令）写入所选预设。',
+      'personas.updateExcludes': '不会包含昵称、职业、介绍 —— 它们不属于预设。',
+      'notice.personaUpdated': '已更新预设「{name}」。',
       'personas.saveNameLabel': '新预设名称',
       'personas.saveConfirm': '保存',
       'personas.saveCovers': '将保存：回复风格和语调、特质、回复长度、输出语言、自定义指令',
@@ -1842,6 +1855,11 @@ window.__ModuleLoader__.load({
       'group.personas': 'Personas',
       'personas.save': 'Save current as persona',
       'personas.saveAs': 'Save as persona…',
+      'personas.updateTo': 'Update preset',
+      'personas.updateNone': 'No editable custom presets yet. Built-in presets cannot be modified.',
+      'personas.updateCovers': 'Writes the persona fields (style, traits, length, instructions) into the selected preset.',
+      'personas.updateExcludes': 'Nickname, occupation and bio are not included — they are not part of a persona.',
+      'notice.personaUpdated': 'Updated preset "{name}".',
       'personas.saveNameLabel': 'New persona name',
       'personas.saveConfirm': 'Save',
       'personas.saveCovers': 'Saves: reply style & tone, traits, reply length, reply language, custom instructions',
@@ -4023,6 +4041,15 @@ window.__ModuleLoader__.load({
       //   ③ 「保存设置」与「保存当前为预设」两个保存并列，语义没区分；
       //      且名字要先想好才能点（disabled 依赖非空），交互顺序也别扭。
       const [showSavePersona, setShowSavePersona] = React.useState(false)
+      // 「更新到预设」弹层（0.9.0-s）：null = 关闭；字符串 = 正在选择目标预设名。
+      //
+      // 为什么单独一个入口而不复用「存为预设」：后者是**新建**（要名字），
+      // 前者是**覆盖已有**（选名字）。两个动作的用户意图不同，
+      // 混在一个入口里会让人分不清「我到底建了新的还是改了旧的」。
+      //
+      // 底层能力已经就位：savePersona(name, draft) 会存草稿，
+      // 且重复门禁会**排除同名条目**（即"覆盖同名"= 更新，天然允许）。
+      const [showUpdatePersona, setShowUpdatePersona] = React.useState(false)
       // 待删除的预设名（null = 没有待确认的删除）。
       //
       // 替代原生 window.confirm：原生模态框在 webview 里可能把文档焦点留在异常状态
@@ -4314,6 +4341,30 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // 更新到已有预设：把**当前草稿**覆盖写进某个已有预设（0.9.0-s）。
+      //
+      // 与 handleSavePersona 的唯一差别是「名字已存在」—— 底层是同一个
+      // controller.savePersona(name, draft)：重复门禁会排除同名条目，
+      // 所以「覆盖自己」天然被允许，不需要额外的 force 参数。
+      //
+      // 成功后**不动活动配置**：这是「把当前这套存回某个预设」，
+      // 不是「应用某个预设」。用户改的配置仍然是当前配置。
+      const handleUpdatePersona = async (name) => {
+        if (!name) return
+        try {
+          const draft = {}
+          for (const key of SESSION_OVERRIDE_KEYS) {
+            if (key in localMap) draft[key] = localMap[key]
+          }
+          await controller.savePersona(name, draft)
+          setShowUpdatePersona(false)
+          await loadPersonas()
+          showSavedNotice(t('notice.personaUpdated', { name }))
+        } catch (err) {
+          showError(messageOf(err))
+        }
+      }
+
       const handleUsePersona = async (name) => {
         try {
           const payload = await controller.usePersona(name)
@@ -4388,6 +4439,12 @@ window.__ModuleLoader__.load({
           return aBuiltin - bBuiltin
         })
         : null
+
+      // 可被「更新到预设」覆盖的预设 = **自建**的那些（0.9.0-s）。
+      // 内置预设不可改：五条写路径都拒绝内置名，列出来只会让用户点了吃一个 400。
+      const editablePersonaNames = (personaNames || []).filter(
+        (name) => !(personas && personas[name] && personas[name].builtin)
+      )
 
       // 展开「人设预设」分组时，轮播自动定位到**当前生效**的那张，而不是永远停在第 1 张。
       //
@@ -5081,6 +5138,14 @@ window.__ModuleLoader__.load({
             onClick: () => { setPersonaName(''); setShowSavePersona(true) },
             disabled: saving
           }, t('personas.saveAs')),
+          // 「更新到预设」（0.9.0-s）：把当前草稿覆盖写回某个已有自建预设。
+          //
+          // 只列**自建**预设：内置预设不可改（写入路径一律拒绝内置名），
+          // 列出来只会让用户点了吃一个 400。
+          e(ui.Button, {
+            onClick: () => setShowUpdatePersona(true),
+            disabled: saving || editablePersonaNames.length === 0
+          }, t('personas.updateTo')),
           e(ui.Button, {
             onClick: handleReset,
             disabled: saving
@@ -5132,6 +5197,49 @@ window.__ModuleLoader__.load({
                 onClick: handleSavePersona,
                 disabled: saving || !personaName.trim()
               }, saving ? t('button.saving') : t('personas.saveConfirm'))
+            )
+          )
+        ),
+
+        // ——「更新到预设」弹层（0.9.0-s）——
+        // 列出可覆盖的自建预设，点一个即写入。不询问名字（名字已经定了）。
+        showUpdatePersona && e('div', {
+          className: 'soul-modal-mask',
+          role: 'presentation',
+          onClick: () => setShowUpdatePersona(false)
+        },
+          e('div', {
+            className: 'soul-modal',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': t('personas.updateTo'),
+            onClick: (ev) => ev.stopPropagation()
+          },
+            e('div', { className: 'soul-modal-title' }, t('personas.updateTo')),
+            editablePersonaNames.length === 0
+              ? e('div', { className: 'soul-modal-note' }, t('personas.updateNone'))
+              : e('div', { className: 'soul-update-list' },
+                ...editablePersonaNames.map((name) => e('button', {
+                  key: name,
+                  type: 'button',
+                  className: 'soul-update-item',
+                  disabled: saving,
+                  onClick: () => { void handleUpdatePersona(name) }
+                },
+                  e('span', { className: 'soul-update-name' }, name),
+                  // 标出「当前生效」的那个：覆盖它之后 ★ 不会变（字段本来就一样），
+                  // 覆盖别的预设会改变那个预设的内容 —— 用户该知道这一点。
+                  name === activePersona && e('span', { className: 'soul-update-badge' }, t('personas.active'))
+                ))
+              ),
+            e('div', { className: 'soul-modal-note' },
+              e('div', null, t('personas.updateCovers')),
+              e('div', { className: 'soul-modal-note-excl' }, t('personas.updateExcludes'))
+            ),
+            e('div', { className: 'soul-modal-actions' },
+              e(ui.Button, {
+                onClick: () => setShowUpdatePersona(false)
+              }, t('button.cancel'))
             )
           )
         ),

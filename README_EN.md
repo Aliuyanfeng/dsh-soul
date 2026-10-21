@@ -4,6 +4,11 @@
 
 [![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/aliuyanfeng/dsh-soul)
 [![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/Aliuyanfeng/badge.svg)](https://hub.xerj.org/contributors/Aliuyanfeng)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/Aliuyanfeng/dsh-soul?style=social)](https://github.com/Aliuyanfeng/dsh-soul/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/Aliuyanfeng/dsh-soul)](https://github.com/Aliuyanfeng/dsh-soul/issues)
+[![GitHub last commit](https://img.shields.io/github/last-commit/Aliuyanfeng/dsh-soul)](https://github.com/Aliuyanfeng/dsh-soul/commits)
+[![GitHub repo size](https://img.shields.io/github/repo-size/Aliuyanfeng/dsh-soul)](https://github.com/Aliuyanfeng/dsh-soul)
 
 A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nickname, reply style, tone, and custom instructions.
 
