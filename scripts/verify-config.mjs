@@ -41,7 +41,8 @@ import {
   isBuiltinPersona,
   mergePersonas,
   personaMatches,
-  resolvePersona
+  resolvePersona,
+  samePersonaContent
 } from '../lib/personas.mjs'
 import { assertCount, skipNote } from './lib/skip-report.mjs'
 
@@ -50,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 153
+const EXPECTED_ASSERTIONS = 154
 
 let passed = 0
 const failures = []
@@ -3568,6 +3569,59 @@ check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', (
   for (const r of backRules) {
     assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
   }
+})
+check('0.9.0-q 保存预设的重复门禁：投影比较 + 两条入口共用 + 允许覆盖同名', () => {
+  // 用户诉求：存的预设和已存在的相同，禁止创建。
+  //
+  // 判据（lib/personas.mjs 的 samePersonaContent）：**投影比较** ——
+  // 候选在对方声明的每个字段上都与它相同 ⇒ 重复（两个方向都试）。
+  //
+  // 为什么不是「声明集合完全一致」：用户应用内置预设后点「存为预设」，存下的是
+  // **全字段快照**（7 个），而内置只声明 6 个（无 language）—— 按集合相等判会
+  // 漏掉这种最常见的重复，而它正是 ★ 歧义的来源。
+  //
+  // 为什么不是 personaMatches：那是「配置是否满足预设」的宽松判定，
+  // 拿来判两个预设是否重复会误杀声明子集的情况。
+
+  // ① 行为层：直接用真实的内置预设验证判据（比源码正则可靠得多）
+  const zq = BUILTIN_PERSONAS['自驱型协作者']
+  assert.ok(zq, '前置条件：内置「自驱型协作者」存在')
+  // 全字段快照（模拟「存为预设」存下的内容：遍历全部 PERSONA_FIELDS）
+  const snapshot = {}
+  for (const key of ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions']) {
+    snapshot[key] = zq[key] !== undefined ? zq[key] : 'default'
+  }
+  assert.equal(
+    samePersonaContent(snapshot, zq),
+    true,
+    '全字段快照与内置预设内容相同 ⇒ 必须判重复（这正是用户遇到的场景）'
+  )
+  assert.equal(
+    samePersonaContent({ ...snapshot, customInstructions: zq.customInstructions + '（微调）' }, zq),
+    false,
+    '改了内置声明过的字段 ⇒ 不是重复（用户确实做了不同的预设）'
+  )
+  assert.equal(samePersonaContent({}, zq), false, '空声明与任何条目都不判重复')
+  assert.equal(
+    samePersonaContent({ style: 'casual' }, zq),
+    false,
+    '只声明一个不同字段的预设不是重复'
+  )
+
+  // ② 接线层：两条保存入口都必须调用同一个判定函数（不许各写一套）
+  const hits = (indexCode.match(/duplicatePersonaConflict\(/g) || []).length
+  assert.ok(
+    hits >= 3,
+    `duplicatePersonaConflict 至少 3 处（定义 + HTTP 保存 + /soul save），实际 ${hits}`
+  )
+  assert.match(indexCode, /已存在内容完全相同的预设/, 'HTTP 保存必须给出明确的重复提示')
+  assert.match(indexCode, /duplicateSaveBlocked/, '/soul save 也必须拦重复（与 HTTP 同一条判据）')
+  // 覆盖同名时把同名条目排除 —— 否则用户永远无法更新自己的预设
+  assert.match(
+    indexCode,
+    /duplicatePersonaConflict\(candidate, mergePersonas\(current\.personas\), personaName\)/,
+    '覆盖同名时必须排除同名条目（否则更新自己的预设会被旧版本判成重复）'
+  )
 })
 check('0.9.0-n 新会话行（hero）也挂人设标签', () => {
   // 用户诉求：新会话（还没有对话轮次）时，输入框上方那一行

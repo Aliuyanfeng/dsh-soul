@@ -75,7 +75,8 @@ import {
   validateWorkspaceBinding
 } from './lib/workspace-scope.mjs'
 import { createInjectionSource } from './lib/injection.mjs'
-import { isBuiltinPersona, builtinPersonaNames, mergePersonas, personaMatches, resolvePersona, declaredPersonaKeys } from './lib/personas.mjs'
+import {
+  findDuplicatePersonas, isBuiltinPersona, builtinPersonaNames, mergePersonas, personaMatches, resolvePersona, declaredPersonaKeys } from './lib/personas.mjs'
 import { configWriteRefusal, describeConfigFailure, moveAsideConfigFile, readConfigFile, writeConfigFile } from './lib/store.mjs'
 import {
   buildHistoryEntry,
@@ -1475,6 +1476,22 @@ function personaSnapshotOf(config) {
   return values
 }
 
+// 保存预设前的**重复门禁**（0.9.0-q）。
+//
+// 为什么需要：预设是「部分覆盖」语义，两个内容相同的预设会让 ★ 归属产生歧义
+// （实测：自建预设与内置预设声明字段相同，点内置的「使用」后 ★ 标在自建的那个上
+// —— 配置本身没错，错的只是名字标注）。上轮的 activePersonaName 记忆机制已经能
+// 正确处理这种歧义，本门禁是**从源头减少重复条目**，不是修 ★ 的唯一手段。
+//
+// 判据见 lib/personas.mjs 的 samePersonaContent：声明集合必须一致 + 共同声明字段值相同。
+// 声明子集的预设**不算重复**（应用效果不同：它不动未声明字段）。
+//
+// 返回冲突的预设名（顿号连接）或 null。
+function duplicatePersonaConflict(candidateEntry, library, ignoreName = null) {
+  const dupes = findDuplicatePersonas(candidateEntry, library, ignoreName)
+  return dupes.length === 0 ? null : dupes.join('、')
+}
+
 // 从预设条目中挑出人设字段（忽略 updatedAt 等元数据与「关于你」）。
 // `if (key in persona)` 即「部分覆盖」语义：只应用条目**实际声明**的键，
 // 未声明的保持用户当前值；而遍历白名单本身则是第二道防线——即便磁盘上残留了
@@ -1623,6 +1640,22 @@ function registerPersonaRoutes(ctx) {
           if (isBuiltinPersona(personaName)) {
             send(res, 400, { ok: false, error: `「${personaName}」是内置预设，请换一个名称` })
             return
+          }
+          // 重复门禁（0.9.0-q）：内容与已有预设完全相同则拒绝创建。
+          // 判据在 lib/personas.mjs 的 samePersonaContent —— 声明集合一致 + 值相同。
+          // 「覆盖同名」时把同名条目排除在比对之外（那是更新，不是新增重复）。
+          {
+            const current = await loadConfig()
+            const candidate = personaSnapshotOf(current)
+            const dupes = duplicatePersonaConflict(candidate, mergePersonas(current.personas), personaName)
+            if (dupes) {
+              send(res, 400, {
+                ok: false,
+                error: `已存在内容完全相同的预设「${dupes}」，请直接使用它，或先修改人设再保存`,
+                duplicates: dupes.split('、')
+              })
+              return
+            }
           }
           const { config: updated } = await commitConfig((current) => {
             const personas = clonePersonas(current.personas)
@@ -2882,6 +2915,7 @@ const COMMAND_MESSAGES = {
     // 内置预设（随插件发布、不落盘）：不可用同名保存，也不可删除
     builtinName: '内置',
     builtinSaveBlocked: (name) => `「${name}」是内置预设，请换一个名称`,
+  duplicateSaveBlocked: (names) => `已存在内容完全相同的预设「${names}」，请直接使用它，或先修改人设再保存`,
     builtinDeleteBlocked: (name) => `「${name}」是内置预设，无法删除`,
     useDone: (name) => `✅ 已应用预设「${name}」`,
     useUnchanged: (name) => `ℹ 预设「${name}」与当前配置一致，无需变更`,
@@ -2998,6 +3032,7 @@ const COMMAND_MESSAGES = {
     saveDone: (name) => `✅ Persona "${name}" saved`,
     builtinName: 'built-in',
     builtinSaveBlocked: (name) => `"${name}" is a built-in persona — pick another name`,
+  duplicateSaveBlocked: (names) => `A persona with identical content already exists: "${names}" — use it directly, or adjust the persona before saving`,
     builtinDeleteBlocked: (name) => `"${name}" is a built-in persona and cannot be deleted`,
     useDone: (name) => `✅ Persona "${name}" applied`,
     useUnchanged: (name) => `ℹ Persona "${name}" matches the current config`,
@@ -3161,6 +3196,14 @@ function registerCommands(ctx) {
             if (!personaName) return { kind: 'error', text: t.saveUsage }
             if (isBuiltinPersona(personaName)) {
               return { kind: 'error', text: t.builtinSaveBlocked(personaName) }
+            }
+            // 重复门禁（0.9.0-q），与 HTTP 路径同一判据
+            {
+              const current = await loadConfig()
+              const dupes = duplicatePersonaConflict(
+                personaSnapshotOf(current), mergePersonas(current.personas), personaName
+              )
+              if (dupes) return { kind: 'error', text: t.duplicateSaveBlocked(dupes) }
             }
             await commitConfig((current) => {
               const personas = clonePersonas(current.personas)

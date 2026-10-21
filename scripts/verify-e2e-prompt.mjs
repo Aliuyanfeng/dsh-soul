@@ -430,6 +430,15 @@ async function scenario(entry) {
 
     // 自建预设：先保存，再把「关于你」与一个已声明维度一起改掉，然后应用 ——
     // 只有后者该被回滚。
+    //
+    // ⚠️ 保存前必须让当前配置**与任何内置预设都不同**（0.9.0-q 的重复门禁）：
+    // 上一步刚应用了「极简主义者」，此刻配置内容 = 那个内置预设 ⇒ 保存会被判成
+    // 重复而拒绝，自建预设根本建不出来，后续 E27/E28 全部失效。
+    // 改几个内置声明过的字段即可 —— 那才是「不同的预设」。
+    await callRoute(ctx, '/api/soul/config', {
+      style: 'efficient', headingLists: 'less', emoji: 'less', tables: 'less',
+      replyLength: 'concise', customInstructions: 'E2E 自定义文案（与任何内置预设都不同）'
+    })
     await callRoute(ctx, '/api/soul/personas/save', { name: 'E2E自建' })
     await callRoute(ctx, '/api/soul/config', { nickname: '改过的昵称', style: 'humorous', language: 'zh' })
     const useMine = await callRoute(ctx, '/api/soul/personas/use', { name: 'E2E自建' })
