@@ -3718,6 +3718,47 @@ window.__ModuleLoader__.load({
     }
 
     // -------------------------------------------------------------------------
+    // 侧栏面板图标「Soul 人设」（0.9.0-ac）
+    // -------------------------------------------------------------------------
+    //
+    // 槽位：sidebar.panellist —— kind:'list' / scope:'root'，"Global panel icons"。
+    // 宿主 occupants：插件管理器（plugins）、自动化任务（schedules）等。
+    //
+    // owner props（SidebarPanelIconOwnerProps）：{ size, active } ——
+    // 宿主把"要多大的方块 / 当前是否选中"传给图标，照做即可与邻居对齐。
+    //
+    // ⚠️ inject 与 session 槽位不同：panellist 是 scope:'root'，runInject 只传
+    // [binding.key, actions]（root 无 binding ⇒ 无参）—— inject 只需注入无状态
+    // 内容，宿主的 PanelRow 自己拥有点击（拿我们的 id 去 selectPanel）。
+    function SoulPanelIcon(props) {
+      // 宿主要求方块尺寸与选中态；未传时给默认（14px）
+      const size = typeof props.size === 'number' ? props.size : 14
+      return e('span', {
+        className: 'soul-panel-icon',
+        style: { width: size, height: size },
+        'aria-hidden': true
+      },
+        // 面具（与 header 标签同一副「喜剧+悲剧」），stroke: currentColor
+        e('svg', {
+          width: '100%',
+          height: '100%',
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.4,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true
+        },
+          e('path', { d: 'M2.2 3.0 C4.2 1.8 11.8 1.8 13.8 3.0 C14.4 6.6 12.4 11.6 8.0 13.8 C3.6 11.6 1.6 6.6 2.2 3.0 Z' }),
+          e('path', { d: 'M4.0 6.0 C4.7 5.2 6.1 5.2 6.8 6.0' }),
+          e('path', { d: 'M9.2 5.6 C9.9 6.4 11.3 6.4 12.0 5.6' }),
+          e('path', { d: 'M4.6 9.6 C6.0 10.2 9.0 9.6 11.2 8.6' })
+        )
+      )
+    }
+
+    // -------------------------------------------------------------------------
     // 侧栏会话行 hover 面具按钮（0.9.0-ab）
     // -------------------------------------------------------------------------
     //
@@ -5849,6 +5890,28 @@ window.__ModuleLoader__.load({
       // （SessionRowOwnerProps: { sessionId, displayTitle }），由 renderer 的
       // guarded(entry, key, owner = ownerProps) 直接并入组件 props。
       // ⇒ inject 只负责注入 hooks；sessionId 由组件从 props.sessionId 读。
+
+      // 侧栏面板图标「Soul 人设」（0.9.0-ac）。
+      //
+      // 槽位：sidebar.panellist —— kind:'list' / scope:'root'，"Global panel icons"。
+      // 宿主 occupants：插件管理器（id 'plugins'，order 0）、自动化任务（'schedules'，
+      // order 10）等。Each list id addresses the matching main panel —— 宿主
+      // PanelRow 拿我们的 id 渲染按钮、点击自动 selectPanel(该 id)。
+      //
+      // ⚠️ id 复用宿主的 'plugins'（文档："reusing a shipped id puts you in THAT
+      // cell"）：我们的图标进入插件管理器的单元、排在其后（order 5 > 0），
+      // 点击同样切到 plugins 面板 —— dsh-soul 详情就在那里。
+      // 若注册新 id 而无对应 main 面板，点击会切到不存在的面板。
+      // 长期方案：把「预设库管理」从会话语境拆出来注册独立 main 面板（后续活）。
+      ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+        name: 'sidebar.panellist',
+        id: 'plugins',
+        order: 5,
+        locale: NS,
+        label: () => navT('nav.label'),
+        inject: () => ({})
+      }, SoulPanelIcon))
+
       ctx.slots.inject('sidebar.workspaces.session.row.action', () => ctx.slots.register({
         name: 'sidebar.workspaces.session.row.action',
         id: 'soul-persona-badge',
