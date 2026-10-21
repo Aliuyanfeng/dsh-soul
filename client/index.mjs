@@ -1244,7 +1244,10 @@ window.__ModuleLoader__.load({
       '.soul-session-badge{padding:0 6px;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent);color:var(--dsw-alias-brand-primary);font-size:11px;line-height:18px}',
       // 当前生效卡：与设置页 .soul-bindings-current 同款观感（描边 + 浅底）
       '.soul-session-current{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1)}',
-      '.soul-session-current-name{font-size:14px;line-height:22px;font-weight:500}',
+      // 名称加粗（0.9.0-aa）：这是 tab 里最重要的信息，500 不够突出
+      '.soul-session-current-name{font-size:14px;line-height:22px;font-weight:700}',
+      // 特质突出点（非默认维度）小字：与名称同行，弱于名称
+      '.soul-session-current-traits{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:22px;font-weight:400}',
       '.soul-session-current-source{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       // 人设胶囊：可点即选，选中的用主色实心（与设置页的「使用中」同一套色彩语义）
       '.soul-session-chips{display:flex;flex-wrap:wrap;gap:8px}',
@@ -3090,7 +3093,14 @@ window.__ModuleLoader__.load({
 
         // 当前生效：先回答「现在是谁」，再给操作
         e('div', { className: 'soul-session-current' },
-          e('div', { className: 'soul-session-current-name' }, activePersona),
+          e('div', { className: 'soul-session-current-name' },
+            activePersona,
+            // 特质突出点（0.9.0-ab）：非默认的维度摘要，跟在名称后的小字。
+            // personaRowMetaOf 的输出正是"风格 + 偏离默认值的维度" —— 与卡面
+            // 摘要同源。无匹配预设（自定义配置）时不显示。
+            activePersona && state.personas && state.personas[activePersona] && e('span', { className: 'soul-session-current-traits' },
+              ` · ${personaRowMetaOf(state.personas[activePersona], t)}`)
+          ),
           e('div', { className: 'soul-session-current-source' }, sourceText)
         ),
 
