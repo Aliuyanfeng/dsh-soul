@@ -3651,9 +3651,10 @@ window.__ModuleLoader__.load({
         // 与本插件的 require 机制完全相同。
         //
         // 尺寸 14：与邻居 AgentPresetLabel 的图标一致（size: 14）。
-        // 面具图标（0.9.0-w 自绘）：戏剧面具 = 「戴上面具扮演另一个角色」，
-        // 比 agent-preset 图标更准确地表达「人设」这个概念，也避免与同位置的
-        // 「创造模式」标签撞图标。stroke 用 currentColor 随主题变色。
+        // 面具图标（0.9.0-w 自绘，0.9.0-x 换成威尼斯假面）：威尼斯狂欢节的面具 =
+        // 「戴上面具扮演另一个角色」，比 agent-preset 图标更准确地表达「人设」，
+        // 也避免与「创造模式」标签撞图标。stroke 用 currentColor 随主题变色。
+        // 渲染验证：Chrome headless 截 96/28/14px 三档，14px 下面具轮廓仍清晰。
         e('svg', {
           className: 'soul-session-persona-label-icon',
           width: 14,
@@ -3666,13 +3667,13 @@ window.__ModuleLoader__.load({
           strokeLinejoin: 'round',
           'aria-hidden': true
         },
-          // 面具外轮廓：顶部圆弧 + 两侧收窄 + 底部圆下巴
-          e('path', { d: 'M2.5 2.5 C2.5 1.8 3.1 1.5 3.8 1.5 L12.2 1.5 C12.9 1.5 13.5 1.8 13.5 2.5 C13.5 7.2 12 12.6 8 14.2 C4 12.6 2.5 7.2 2.5 2.5 Z' }),
-          // 左右眼孔
-          e('ellipse', { cx: 5.8, cy: 6.2, rx: 1.1, ry: 1.4 }),
-          e('ellipse', { cx: 10.2, cy: 6.2, rx: 1.1, ry: 1.4 }),
-          // 微笑弧线
-          e('path', { d: 'M5.5 9.8 C6.2 10.9 9.8 10.9 10.5 9.8' })
+          // 主体：宽额 + 收窄尖下巴（威尼斯 Volto 轮廓）
+          e('path', { d: 'M1.6 5.4 C1.6 3.2 4.2 2.0 8 2.0 C11.8 2.0 14.4 3.2 14.4 5.4 C14.4 8.8 12.0 11.8 8 14.0 C4.0 11.8 1.6 8.8 1.6 5.4 Z' }),
+          // 猫眼：杏仁形、外角上挑（威尼斯假面的标志性眼孔）
+          e('path', { d: 'M3.2 6.4 C4.0 5.0 6.2 5.0 6.8 6.3 C6.0 7.2 4.0 7.2 3.2 6.4 Z' }),
+          e('path', { d: 'M9.2 6.3 C9.8 5.0 12.0 5.0 12.8 6.4 C12.0 7.2 10.0 7.2 9.2 6.3 Z' }),
+          // 额头装饰弧
+          e('path', { d: 'M5.8 3.8 C6.8 3.1 9.2 3.1 10.2 3.8' })
         ),
         e('span', { className: 'soul-session-persona-label-name' }, displayPersona),
         scopeTag && e('span', { className: 'soul-session-persona-label-scope' }, scopeTag)
