@@ -946,7 +946,7 @@ window.__ModuleLoader__.load({
       // 22px 高、次要底色、圆角、小字、inline-flex。
       // 宿主在窄容器时会把 header 标签隐藏（@container (width<=540px)），
       // 我们跟着做 —— 空间不够时宁可不显示，也不要挤坏标题行。
-      '.soul-session-persona-label{display:inline-flex;align-items:center;gap:6px;max-width:220px;height:22px;padding:0 8px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:22px;white-space:nowrap;overflow:hidden}',
+      '.soul-session-persona-label{display:inline-flex;align-items:center;gap:6px;max-width:min(100%,320px);height:22px;padding:0 8px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:22px;white-space:nowrap;overflow:hidden}',
       // hero 区（新会话行）的落点：与邻居（工作区 chip / 创造模式）同一行右对齐。
       // flex:none 防止被 chip 的 flex 收缩挤扁。
       '.soul-session-persona-label[data-in-hero="true"]{flex:none}',
@@ -3651,9 +3651,29 @@ window.__ModuleLoader__.load({
         // 与本插件的 require 机制完全相同。
         //
         // 尺寸 14：与邻居 AgentPresetLabel 的图标一致（size: 14）。
-        ui.IconAgentPresetOutlineRegular
-          ? e(ui.IconAgentPresetOutlineRegular, { size: 14, className: 'soul-session-persona-label-icon' })
-          : null,
+        // 面具图标（0.9.0-w 自绘）：戏剧面具 = 「戴上面具扮演另一个角色」，
+        // 比 agent-preset 图标更准确地表达「人设」这个概念，也避免与同位置的
+        // 「创造模式」标签撞图标。stroke 用 currentColor 随主题变色。
+        e('svg', {
+          className: 'soul-session-persona-label-icon',
+          width: 14,
+          height: 14,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.5,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true
+        },
+          // 面具外轮廓：顶部圆弧 + 两侧收窄 + 底部圆下巴
+          e('path', { d: 'M2.5 2.5 C2.5 1.8 3.1 1.5 3.8 1.5 L12.2 1.5 C12.9 1.5 13.5 1.8 13.5 2.5 C13.5 7.2 12 12.6 8 14.2 C4 12.6 2.5 7.2 2.5 2.5 Z' }),
+          // 左右眼孔
+          e('ellipse', { cx: 5.8, cy: 6.2, rx: 1.1, ry: 1.4 }),
+          e('ellipse', { cx: 10.2, cy: 6.2, rx: 1.1, ry: 1.4 }),
+          // 微笑弧线
+          e('path', { d: 'M5.5 9.8 C6.2 10.9 9.8 10.9 10.5 9.8' })
+        ),
         e('span', { className: 'soul-session-persona-label-name' }, displayPersona),
         scopeTag && e('span', { className: 'soul-session-persona-label-scope' }, scopeTag)
       )

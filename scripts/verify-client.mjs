@@ -855,11 +855,17 @@ try {
     const icons = findAllByClass(tree, 'soul-session-persona-label-icon')
     assert.equal(icons.length, 1, '人设标签应渲染一个图标')
     // 尺寸必须与邻居（header 上的「创造模式」标签）一致，否则同一行里两个图标大小不齐。
-    // 判断力对照实测：不写 size 时这条必须拦住。
+    // 0.9.0-w 起换成自绘面具 SVG：尺寸属性从宿主图标的 size 变成 SVG 的 width/height。
+    // 判断力对照实测：不写尺寸时这条必须拦住。
     assert.equal(
-      icons[0].props.size,
+      icons[0].props.width,
       14,
-      `图标尺寸应为 14（与邻居 AgentPresetLabel 一致），实际 ${String(icons[0].props.size)}`
+      `图标宽度应为 14（与邻居 AgentPresetLabel 视觉一致），实际 ${String(icons[0].props.width)}`
+    )
+    assert.equal(
+      icons[0].props.height,
+      14,
+      `图标高度应为 14，实际 ${String(icons[0].props.height)}`
     )
     // header 标签只显示人设与层级，不重复「个性化已启用」（那是输入框左侧开关的事）
     assert.equal(text.includes('个性化已启用'), false, 'header 标签不应重复开关文案')
