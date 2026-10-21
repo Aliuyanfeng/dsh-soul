@@ -953,6 +953,9 @@ window.__ModuleLoader__.load({
       '.soul-session-persona-label-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       // 图标：与文字同色但略淡（图标是标识，文字是主信息）
       '.soul-session-persona-label-icon{flex:none;opacity:.75}',
+      // 侧栏会话行 hover 面具徽标（0.9.0-ab）：与行内其它 hover 按钮对齐
+      '.soul-sidebar-persona-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary)}',
+      '.soul-sidebar-persona-badge-icon{display:block}',
       '.soul-session-persona-label-scope{flex:none;font-size:11px;opacity:.8}',
       '@container (width<=540px){.soul-session-persona-label{display:none}}',
       // 错误提示：颜色改用宿主真实存在的 state-error-primary（原先引用不存在的 token ⇒ 渲染成黑色）
@@ -1787,6 +1790,7 @@ window.__ModuleLoader__.load({
       'notice.personaSaved': '已保存预设「{name}」。',
       'notice.personaSavedAndApplied': '已保存并应用预设「{name}」。',
       'personas.applyAfterSave': '保存后立即应用',
+      'sidebar.personaTip': '人设：{name}',
       'personas.applyAfterSaveHint': '不勾选则保留当前配置不变（表单恢复到已保存的设置）',
       'notice.personaUsed': '已应用预设「{name}」。',
       'notice.personaUnchanged': '预设与当前配置一致。',
@@ -2113,6 +2117,7 @@ window.__ModuleLoader__.load({
       'notice.personaSaved': 'Saved persona "{name}".',
       'notice.personaSavedAndApplied': 'Saved and applied persona "{name}".',
       'personas.applyAfterSave': 'Apply immediately after saving',
+      'sidebar.personaTip': 'Persona: {name}',
       'personas.applyAfterSaveHint': 'Leave unchecked to keep the current config unchanged (the form reverts to the saved settings)',
       'notice.personaUsed': 'Applied persona "{name}".',
       'notice.personaUnchanged': 'Persona matches current config.',
@@ -3706,6 +3711,65 @@ window.__ModuleLoader__.load({
         ),
         e('span', { className: 'soul-session-persona-label-name' }, displayPersona),
         scopeTag && e('span', { className: 'soul-session-persona-label-scope' }, scopeTag)
+      )
+    }
+
+    // -------------------------------------------------------------------------
+    // 侧栏会话行 hover 面具按钮（0.9.0-ab）
+    // -------------------------------------------------------------------------
+    //
+    // 槽位：sidebar.workspaces.session.row.action —— kind:'list' / scope:'root'，
+    // 宿主文档："The hover buttons at the end of one Session row, in ascending
+    // order, after the '...' menu trigger." ui-workspace 自己注册了
+    // archive(100) / pin(200)，我们 order:300 排在后面。
+    //
+    // owner props（宿主 SessionRowOwnerProps）：{ sessionId, displayTitle } ——
+    // 能知道这一行是哪个会话，配合 store.bindingsSessions（含每会话的
+    // persona / binding）即可显示该会话当前生效的人设。
+    //
+    // 展示形态：面具图标按钮，hover 出 tooltip「人设：X（来源）」。
+    // 只读 —— 点击不做任何事（按钮本身禁用），它只是把"这个会话现在是谁"
+    // 显式摆到侧栏，不用先点开会话再看。
+    function SoulSessionPersonaBadge(props) {
+      const { useSoulController, sessionId } = props
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const state = useSoulController((state) => state)
+      const enabled = state.enabled === true
+
+      // 该会话的生效人设：store.bindingsSessions 里按 id 查
+      const row = (state.bindingsSessions || []).find(
+        (x) => x && x.id === sessionId
+      )
+      const persona = row && typeof row.persona === 'string' ? row.persona : null
+      // 无会话 / 人设未知 / 个性化关闭 ⇒ 不渲染（不占 hover 位）
+      if (!enabled || !persona) return null
+
+      const tooltip = t('sidebar.personaTip', { name: persona })
+
+      return e('span', {
+        className: 'soul-sidebar-persona-badge',
+        // 只读标识：不做动作（点击仍会落在行上，避免误触打开会话）
+        title: tooltip,
+        'aria-label': tooltip
+      },
+        e('svg', {
+          className: 'soul-sidebar-persona-badge-icon',
+          width: 13,
+          height: 13,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.4,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true
+        },
+          // 与 header 标签同一副「喜剧+悲剧」面具
+          e('path', { d: 'M2.2 3.0 C4.2 1.8 11.8 1.8 13.8 3.0 C14.4 6.6 12.4 11.6 8.0 13.8 C3.6 11.6 1.6 6.6 2.2 3.0 Z' }),
+          e('path', { d: 'M4.0 6.0 C4.7 5.2 6.1 5.2 6.8 6.0' }),
+          e('path', { d: 'M9.2 5.6 C9.9 6.4 11.3 6.4 12.0 5.6' }),
+          e('path', { d: 'M4.6 9.6 C6.0 10.2 9.0 9.6 11.2 8.6' })
+        )
       )
     }
 
@@ -5768,6 +5832,32 @@ window.__ModuleLoader__.load({
         })
       }, SoulQuickToggle))
 
+
+      // 侧栏会话行 hover 面具按钮（0.9.0-ab）。
+      //
+      // conversation.session.header.actions 与 conversation.hero.options 都挂了
+      // 同一人设标识 —— 侧栏是第三处：会话列表里不用点开就能看到每行是谁。
+      //
+      // 槽位：sidebar.workspaces.session.row.action（kind:'list' / scope:'root'）。
+      //
+      // ⚠️ sessionId 的来源与 session 槽位**不同**：renderer 的 runInject 对
+      // inject 回调只传 [binding.key, actions] —— root 槽位没有 binding ⇒
+      // inject 无参、拿不到任何东西。而这一槽位的 sessionId 是 **owner props**
+      // （SessionRowOwnerProps: { sessionId, displayTitle }），由 renderer 的
+      // guarded(entry, key, owner = ownerProps) 直接并入组件 props。
+      // ⇒ inject 只负责注入 hooks；sessionId 由组件从 props.sessionId 读。
+      ctx.slots.inject('sidebar.workspaces.session.row.action', () => ctx.slots.register({
+        name: 'sidebar.workspaces.session.row.action',
+        id: 'soul-persona-badge',
+        order: 300,
+        locale: NS,
+        inject: () => ({
+          hooks: {
+            soulController: controller.store
+          },
+          controller
+        })
+      }, SoulSessionPersonaBadge))
 
       // 会话人设标签（第二处）：**新会话**那一行（输入框上方）。
       //
