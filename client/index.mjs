@@ -1245,7 +1245,15 @@ window.__ModuleLoader__.load({
       '.soul-session-title{margin:0;font-size:14px;font-weight:500;line-height:20px}',
       // 容器内间距全部交给 gap:16px 统一 —— .soul-field 自带的 margin-bottom:14px
       // 会让「临时改用」与下方卡牌的间距比上方标题的 16px 小，视觉不齐（用户反馈）。
-      '.soul-session-persona .soul-field{margin-bottom:0}',
+      // ⚠️ 0.9.0-af 补全：光清 .soul-field 不够 —— 前置排查发现容器内还有多处
+      // 自带纵向 margin：.soul-field-label(8px bottom)、.soul-status(top)、
+      // .soul-session-split(top:2px)、.soul-session-clear-row(top)、
+      // .soul-session-detail-actions(top)、.soul-session-scope-hint(top)。
+      // 每漏一处，三段间距就有一段不齐（用户连续报了两次）。
+      // 通配清零容器内所有子元素的纵向 margin —— 间距语义只归 gap 一处管。
+      // 面板内部的 margin（detail-actions/scope-hint 的 margin-top）不受影响：
+      // 它们在 .soul-session-detail 里，不是本容器的直接子元素。
+      '.soul-session-persona > *{margin-top:0;margin-bottom:0}',
       // 「有覆盖」标记：一眼看出这个会话与外面的设置不同，避免用户以为改的是全局
       '.soul-session-badge{padding:0 6px;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent);color:var(--dsw-alias-brand-primary);font-size:11px;line-height:18px}',
       // 当前生效卡：与设置页 .soul-bindings-current 同款观感（描边 + 浅底）
