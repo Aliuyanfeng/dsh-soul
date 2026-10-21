@@ -1140,6 +1140,10 @@ window.__ModuleLoader__.load({
       // 「将保存 / 不含」两行说明：这是消除「不知道存了哪些值」的关键，用弱化样式但仍可读
       '.soul-modal-note{display:flex;flex-direction:column;gap:4px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       '.soul-modal-note-excl{color:var(--dsw-alias-label-tertiary)}',
+      // 「保存后立即应用」复选框（0.9.0-t）
+      '.soul-modal-check{display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);cursor:pointer}',
+      '.soul-modal-check input{flex:none;margin-top:3px;width:14px;height:14px;cursor:pointer}',
+      '.soul-modal-check-hint{flex:none;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
       // 「更新到预设」列表（0.9.0-s）：每行一个可选预设名。
       '.soul-update-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow:auto}',
       '.soul-update-item{box-sizing:border-box;display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px;text-align:left;cursor:pointer}',
@@ -1765,6 +1769,9 @@ window.__ModuleLoader__.load({
       'notice.reset': '已重置为默认值。',
       'notice.resetRecovered': '已重置为默认值（损坏的配置已备份）。',
       'notice.personaSaved': '已保存预设「{name}」。',
+      'notice.personaSavedAndApplied': '已保存并应用预设「{name}」。',
+      'personas.applyAfterSave': '保存后立即应用',
+      'personas.applyAfterSaveHint': '不勾选则保留当前配置不变（表单恢复到已保存的设置）',
       'notice.personaUsed': '已应用预设「{name}」。',
       'notice.personaUnchanged': '预设与当前配置一致。',
       'notice.personaDeleted': '已删除预设「{name}」。',
@@ -2088,6 +2095,9 @@ window.__ModuleLoader__.load({
       'notice.reset': 'Reset to defaults.',
       'notice.resetRecovered': 'Reset to defaults (the damaged config was backed up).',
       'notice.personaSaved': 'Saved persona "{name}".',
+      'notice.personaSavedAndApplied': 'Saved and applied persona "{name}".',
+      'personas.applyAfterSave': 'Apply immediately after saving',
+      'personas.applyAfterSaveHint': 'Leave unchecked to keep the current config unchanged (the form reverts to the saved settings)',
       'notice.personaUsed': 'Applied persona "{name}".',
       'notice.personaUnchanged': 'Persona matches current config.',
       'notice.personaDeleted': 'Deleted persona "{name}".',
@@ -4050,6 +4060,16 @@ window.__ModuleLoader__.load({
       // 底层能力已经就位：savePersona(name, draft) 会存草稿，
       // 且重复门禁会**排除同名条目**（即"覆盖同名"= 更新，天然允许）。
       const [showUpdatePersona, setShowUpdatePersona] = React.useState(false)
+      // 「存为预设」弹层里的「保存后立即应用」复选框（0.9.0-t）。
+      //
+      // 解决的问题：保存预设后表单里仍是那套未保存的编辑 ⇒ 底部同时显示
+      // 「已保存预设「X」」和「有未保存的更改」两条，读起来矛盾（用户实测反馈）。
+      //
+      // 勾选 = 保存后把这套**应用为当前配置**（dirty 消失，★ 跟着这个预设走）；
+      // 不勾选 = 保存后把表单**回退到已保存配置**（例子里是自驱型协作者），
+      //          即「我把这套存起来了，但现在不切过去」。
+      // 默认不勾选：存预设与改当前配置是两件事，默认不该替用户静默改配置。
+      const [applyAfterSave, setApplyAfterSave] = React.useState(false)
       // 待删除的预设名（null = 没有待确认的删除）。
       //
       // 替代原生 window.confirm：原生模态框在 webview 里可能把文档焦点留在异常状态
@@ -4332,10 +4352,47 @@ window.__ModuleLoader__.load({
             if (key in localMap) draft[key] = localMap[key]
           }
           await controller.savePersona(name, draft)
+
+          // 保存之后必须消解「已保存预设 X」与「有未保存更改」并存的矛盾（0.9.0-t）：
+          // 两条提示同时出现，读起来像"我到底存没存"。
+          //
+          // 勾选 ⇒ 把这套**应用为当前配置**（dirty 消失，★ 指向新预设）；
+          // 不勾选 ⇒ 把表单**回退到已保存配置**（丢弃这次编辑的表单值）。
+          if (applyAfterSave) {
+            await controller.usePersona(name)
+            // usePersona 里 applyConfig 会把 store 更新成该预设的值；
+            // 表单由下面的 effect 逐字段跟随（userEdited 判据会让"用户编辑过"的字段保留，
+            // 但这里我们刚把 store 改成与 draft 一致，故不会残留 dirty）。
+            await loadPersonas()
+            showSavedNotice(t('notice.personaSavedAndApplied', { name }))
+          } else {
+            // 回退表单：把 lastSyncRef 清空 ⇒ userEdited 一律视为"未编辑" ⇒
+            // 下一次 effect 用 store（已保存配置）覆盖全部表单字段。
+            lastSyncRef.current = null
+            // 直接把本地状态写回已保存配置，保证本帧就清掉 dirty（不等 effect）。
+            setLocalEnabled(enabled)
+            setLocalNickname(nickname || '')
+            setLocalOccupation(occupation || '')
+            setLocalBio(bio || '')
+            setLocalStyle(style)
+            setLocalHeadingLists(headingLists || 'default')
+            setLocalEmoji(emoji || 'default')
+            setLocalTables(tables || 'default')
+            setLocalReplyLength(replyLength || 'normal')
+            setLocalLanguage(language || 'zh')
+            setLocalInstructions(customInstructions || '')
+            setLocalToolConfirm(requireToolConfirmation === true)
+            setLocalTrailEnabled(trailEnabled)
+            setLocalTrailColor(trailColor)
+            setLocalTrailSpeed(trailSpeed)
+            setLocalTrailWidth(trailWidth)
+            await loadPersonas()
+            showSavedNotice(t('notice.personaSaved', { name }))
+          }
+
           setPersonaName('')
+          setApplyAfterSave(false)
           setShowSavePersona(false)
-          await loadPersonas()
-          showSavedNotice(t('notice.personaSaved', { name }))
         } catch (err) {
           showError(messageOf(err))
         }
@@ -4958,7 +5015,7 @@ window.__ModuleLoader__.load({
               e('button', {
                 type: 'button',
                 className: 'soul-drift-action',
-                onClick: () => { setPersonaName(''); setShowSavePersona(true) }
+                onClick: () => { setPersonaName(''); setApplyAfterSave(false); setShowSavePersona(true) }
               }, t('personas.driftAction'))
             ),
             // —— 说明：一条轻提示 + 一个可点的去向，不再铺两行正文 ——
@@ -5188,9 +5245,23 @@ window.__ModuleLoader__.load({
               e('div', null, t('personas.saveCovers')),
               e('div', { className: 'soul-modal-note-excl' }, t('personas.saveExcludes'))
             ),
+            // 「保存后立即应用」（0.9.0-t）：显式让用户选「存完要不要切过去」。
+            //
+            // 不加这个开关时，保存预设后表单里仍是那套未保存编辑 ⇒ 底部同时显示
+            // 「已保存预设「X」」和「有未保存的更改」，读起来矛盾。
+            // 默认不勾：存预设与改当前配置是两件事，不该替用户静默改配置。
+            e('label', { className: 'soul-modal-check' },
+              e('input', {
+                type: 'checkbox',
+                checked: applyAfterSave,
+                onChange: (ev) => setApplyAfterSave(ev.target.checked)
+              }),
+              e('span', null, t('personas.applyAfterSave')),
+              e('span', { className: 'soul-modal-check-hint' }, t('personas.applyAfterSaveHint'))
+            ),
             e('div', { className: 'soul-modal-actions' },
               e(ui.Button, {
-                onClick: () => { setShowSavePersona(false); setPersonaName('') }
+                onClick: () => { setShowSavePersona(false); setPersonaName(''); setApplyAfterSave(false) }
               }, t('button.cancel')),
               e(ui.Button, {
                 variant: 'primary',

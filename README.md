@@ -9,6 +9,7 @@
 [![GitHub issues](https://img.shields.io/github/issues/Aliuyanfeng/dsh-soul)](https://github.com/Aliuyanfeng/dsh-soul/issues)
 [![GitHub last commit](https://img.shields.io/github/last-commit/Aliuyanfeng/dsh-soul)](https://github.com/Aliuyanfeng/dsh-soul/commits)
 [![GitHub repo size](https://img.shields.io/github/repo-size/Aliuyanfeng/dsh-soul)](https://github.com/Aliuyanfeng/dsh-soul)
+[![Verify](https://github.com/Aliuyanfeng/dsh-soul/actions/workflows/ci.yml/badge.svg)](https://github.com/Aliuyanfeng/dsh-soul/actions/workflows/ci.yml)
 
 DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复风格、语调和自定义指令。
 

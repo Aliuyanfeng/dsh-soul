@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 43
+const EXPECTED_ASSERTIONS = 45
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -988,6 +988,133 @@ try {
       '写会话作用域必须**换新对象** —— 原地改不会触发 store 的浅比较，订阅者不会重渲染'
     )
     assert.equal(after.s1.activePersona, 'X', '新对象里应带上解析结果')
+  })
+
+  await check('C49 存为预设：勾选「立即应用」则切换；不勾选则表单回退、dirty 消失', async () => {
+    // 用户实测的困惑：改完表单直接「存为预设」后，底部同时显示
+    // 「已保存预设「X」」和「有未保存的更改」—— 读起来像"到底存没存"。
+    //
+    // 修法：弹层里给一个「保存后立即应用」复选框。
+    //   勾选   ⇒ savePersona + usePersona（dirty 消失，★ 指向新预设）
+    //   不勾选 ⇒ savePersona + 表单回退到已保存配置（dirty 消失）
+    // 两条分支都必须**消掉 dirty**，否则矛盾提示还在。
+    const world = await boot()
+    const zh = world.dicts.zh
+    const posts = []
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: {
+        苏格拉底式提问者: { style: 'professional', builtin: true },
+        新预设: { style: 'roast', builtin: false }
+      },
+      activeName: null
+    })
+    await world.controller.loadPersonas()
+    world.routes['/api/soul/personas/save'] = (call) => {
+      posts.push({ kind: 'save', body: call.body })
+      return { ok: true, personas: { 苏格拉底式提问者: { style: 'professional', builtin: true }, 新预设: { style: 'roast', builtin: false } }, activeName: null }
+    }
+    world.routes['/api/soul/personas/use'] = (call) => {
+      posts.push({ kind: 'use', body: call.body })
+      return { ok: true, config: { ...CONFIG, style: 'roast' }, invalid: [], changed: ['style'], unchanged: false }
+    }
+
+    // ① 先**真的改一个字段**，让表单 dirty —— 否则「回退后 dirty 消失」是空断言。
+    // （判断力对照实测：不改就存时 dirty 初始为 false，把整段回退逻辑删掉仍然全绿。）
+    const tree0 = await renderSettings(world)
+    // 默认展开的是「关于你」分组 ⇒ 昵称输入框可见。用它制造 dirty ——
+    // 风格控件在「特质」分组里，默认折叠时不渲染。
+    const nickInput = findAll(tree0, (n) => n.type === 'input' && n.props && n.props.id === 'soul-nickname')[0]
+    assert.ok(nickInput, '应能看到昵称输入框（关于你分组默认展开）')
+    await nickInput.props.onChange({ target: { value: '临时昵称' } })
+    const dirtyTree = await renderSettings(world)
+    assert.equal(
+      findAllByClass(dirtyTree, 'soul-dirty').length,
+      1,
+      '前置条件：改了表单后应显示「有未保存的更改」'
+    )
+
+    // ② 不勾选：只 save，不 use
+    const tree = await renderSettings(world)
+    // 找到「存为预设」按钮
+    const openBtn = findAll(tree, (n) => textOf(n) === zh['personas.saveAs'])[0]
+    assert.ok(openBtn, '应有「存为预设」按钮')
+    await openBtn.props.onClick()
+    const withModal = await renderSettings(world)
+    // 输入名字
+    const input = findAll(withModal, (n) => n.type === 'input' && n.props && n.props.id === 'soul-new-persona-name')[0]
+    assert.ok(input, '弹层应有名称输入框')
+    await input.props.onChange({ target: { value: '新预设' } })
+    const withName = await renderSettings(world)
+    // 默认不勾选
+    // ⚠️ 必须限定在**弹层内**找：设置页本身还有一个复选框（soul-enabled 启用开关），
+    // 在整棵树里取第一个 type=checkbox 会抓到它（判断力对照实测踩过）。
+    const modal = findAll(withName, (n) => n.props && n.props.className === 'soul-modal')[0]
+    assert.ok(modal, '应能找到弹层容器')
+    const checkbox = findAll(modal, (n) => n.type === 'input' && n.props && n.props.type === 'checkbox')[0]
+    assert.ok(checkbox, '弹层应有「保存后立即应用」复选框')
+    // 垫片不做受控属性归一化：初始值可能是 undefined 而非 false ⇒ 判「非真」
+    assert.ok(!checkbox.props.checked, '默认不勾选（不该替用户静默改配置）')
+    // 点确认
+    const confirm = findAll(withName, (n) => textOf(n) === zh['personas.saveConfirm'])[0]
+    assert.ok(confirm, '应有确认按钮')
+    await confirm.props.onClick()
+    await new Promise((r) => drainTick(r))
+    const afterUnchecked = posts.map((x) => x.kind)
+    assert.deepEqual(afterUnchecked, ['save'], `不勾选时只能有 save，实际 ${JSON.stringify(afterUnchecked)}`)
+    // 保存必须带草稿
+    assert.ok(posts[0].body.draft, '保存必须带草稿（0.9.0-r）')
+
+    // ⚠️ 关键：不勾选时表单必须**回退到已保存配置**，「有未保存的更改」要消失。
+    // 这是用户报的矛盾的根源（「已保存预设 X」+「有未保存的更改」并存）。
+    // 判断力对照实测：不写这条断言时，把回退逻辑删掉（lastSyncRef.current = null
+    // 改成 void 0）仍然全绿 —— 漏网。
+    const finalTree = await renderSettings(world)
+    const dirtyEls = findAllByClass(finalTree, 'soul-dirty')
+    assert.equal(
+      dirtyEls.length,
+      0,
+      `不勾选保存预设后不应再有「有未保存的更改」（表单应回退到已保存配置），实际 ${dirtyEls.length} 个`
+    )
+  })
+
+  await check('C50 勾选「立即应用」时，保存后必须调用 usePersona 并切换', async () => {
+    const world = await boot()
+    const zh = world.dicts.zh
+    const posts = []
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: { 苏格拉底式提问者: { style: 'professional', builtin: true } },
+      activeName: null
+    })
+    await world.controller.loadPersonas()
+    world.routes['/api/soul/personas/save'] = (call) => {
+      posts.push({ kind: 'save', name: call.body.name })
+      return { ok: true, personas: { 苏格拉底式提问者: { style: 'professional', builtin: true }, 新预设: { style: 'roast', builtin: false } }, activeName: null }
+    }
+    world.routes['/api/soul/personas/use'] = (call) => {
+      posts.push({ kind: 'use', name: call.body.name })
+      return { ok: true, config: { ...CONFIG, style: 'roast' }, invalid: [], changed: ['style'], unchanged: false }
+    }
+
+    const tree = await renderSettings(world)
+    const openBtn = findAll(tree, (n) => textOf(n) === zh['personas.saveAs'])[0]
+    await openBtn.props.onClick()
+    const withModal = await renderSettings(world)
+    const input = findAll(withModal, (n) => n.type === 'input' && n.props && n.props.id === 'soul-new-persona-name')[0]
+    await input.props.onChange({ target: { value: '新预设' } })
+    const withName = await renderSettings(world)
+    const modal = findAll(withName, (n) => n.props && n.props.className === 'soul-modal')[0]
+    assert.ok(modal, '应能找到弹层容器')
+    const checkbox = findAll(modal, (n) => n.type === 'input' && n.props && n.props.type === 'checkbox')[0]
+    await checkbox.props.onChange({ target: { checked: true } })
+    const checkedTree = await renderSettings(world)
+    const confirm = findAll(checkedTree, (n) => textOf(n) === zh['personas.saveConfirm'])[0]
+    await confirm.props.onClick()
+    await new Promise((r) => drainTick(r))
+    const kinds = posts.map((x) => x.kind)
+    assert.deepEqual(kinds, ['save', 'use'], `勾选时应先 save 再 use，实际 ${JSON.stringify(kinds)}`)
+    assert.equal(posts[1].name, '新预设', 'use 的目标应是刚保存的预设名')
   })
 
   await check('C47 切换人设后，header 标签必须跟着更新（单一数据源）', async () => {
