@@ -552,8 +552,12 @@ window.__ModuleLoader__.load({
         }
       }
 
-      async savePersona(name) {
-        return await this.postJSON('/api/soul/personas/save', { name })
+      // draft（可选）：设置页**还没保存**的草稿字段（0.9.0-r）。
+      // 不带它的话，用户改完表单直接点「存为预设」会存下旧配置（实测过的 bug）。
+      async savePersona(name, draft = null) {
+        const body = { name }
+        if (draft && typeof draft === 'object') body.draft = draft
+        return await this.postJSON('/api/soul/personas/save', body)
       }
 
       async usePersona(name) {
@@ -4283,11 +4287,24 @@ window.__ModuleLoader__.load({
 
       // 存为预设：把「关于你/特质」里的**当前设置**存成一个新预设。
       // 名字来自命名弹层；成功后关闭弹层并清空输入。
+      //
+      // ⚠️ 必须把**本地草稿**一起提交（0.9.0-r）：表单是「改完点保存才写回」的结构，
+      // 用户改完风格与自定义指令、没点「保存设置」直接点「存为预设」时，若只传名字，
+      // 服务端只能快照**已保存的旧配置** —— 存出来的预设还是上一个预设的内容
+      // （用户实测确认的 bug）。
+      //
+      // 只传人设字段：预设不含「关于你」（昵称 / 职业 / 介绍），它们不属于预设。
       const handleSavePersona = async () => {
         const name = personaName.trim()
         if (!name) return
         try {
-          await controller.savePersona(name)
+          const draft = {}
+          for (const key of SESSION_OVERRIDE_KEYS) {
+            // SESSION_OVERRIDE_KEYS 与 PERSONA_FIELDS 同集合（都含 language 与
+            // customInstructions，都不含「关于你」）—— 直接复用，不另造一份清单。
+            if (key in localMap) draft[key] = localMap[key]
+          }
+          await controller.savePersona(name, draft)
           setPersonaName('')
           setShowSavePersona(false)
           await loadPersonas()

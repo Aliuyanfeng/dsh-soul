@@ -1470,9 +1470,27 @@ let pendingPersonaProposal = null
 // 只遍历 PERSONA_FIELDS ⇒ **不含「关于你」（昵称 / 职业 / 介绍）**：预设是 Agent 的
 // 人格存档，不是使用者身份存档。切换预设不该把你的昵称职业一起换掉。
 // 输出语言在范围内（它决定 Agent 用什么语言作答）。
-function personaSnapshotOf(config) {
+//
+// draft（可选）：用户在设置页**改了但还没点保存**的草稿字段（0.9.0-r）。
+//
+// 为什么必须有这个参数：设置页表单是「本地草稿 + 保存才写回」的结构，而预设原先
+// 只快照**已保存的配置**。用户改完风格与自定义指令、没点「保存设置」直接点「存为预设」
+// 时，存下的是**旧值** —— 实测确认（存出来的预设还是上一个预设的内容）。
+// 传草稿后语义变成「存你眼前看到的这套」。
+//
+// 只有属于 PERSONA_FIELDS 的键会被采纳；「关于你」即使夹在草稿里也进不来
+// （第二道防线：预设永远不含使用者身份）。
+function personaSnapshotOf(config, draft = null) {
   const values = {}
-  for (const key of PERSONA_FIELDS) values[key] = config[key]
+  for (const key of PERSONA_FIELDS) {
+    values[key] = config[key]
+    // 草稿优先：字段存在且类型与正式配置一致才采纳（防脏数据）；
+    // 明确的空串是合法的草稿值（用户就是想清空自定义指令）。
+    if (draft && typeof draft === 'object' && key in draft && draft[key] !== undefined) {
+      const value = draft[key]
+      if (typeof value === typeof config[key] || config[key] === undefined) values[key] = value
+    }
+  }
   return values
 }
 
@@ -1641,12 +1659,30 @@ function registerPersonaRoutes(ctx) {
             send(res, 400, { ok: false, error: `「${personaName}」是内置预设，请换一个名称` })
             return
           }
+          // 草稿字段（0.9.0-r）：用户在设置页改了但**还没点保存**的内容。
+          //
+          // 为什么要收它：设置页是「本地草稿 + 保存才写回」的结构，若预设只快照
+          // 已保存配置，用户改完风格/自定义指令后直接点「存为预设」，存下的是**旧值**
+          // —— 实测确认（存出来的预设仍是上一个预设的内容）。
+          //
+          // 只取人设字段（PERSONA_FIELDS）；「关于你」即使夹在草稿里也进不来。
+          const draft = (() => {
+            const raw = parsed.body && parsed.body.draft
+            if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+            const picked = {}
+            for (const key of PERSONA_FIELDS) {
+              if (key in raw && raw[key] !== undefined) picked[key] = raw[key]
+            }
+            return Object.keys(picked).length > 0 ? picked : null
+          })()
           // 重复门禁（0.9.0-q）：内容与已有预设完全相同则拒绝创建。
-          // 判据在 lib/personas.mjs 的 samePersonaContent —— 声明集合一致 + 值相同。
+          // 判据在 lib/personas.mjs 的 samePersonaContent —— 投影比较。
+          // ⚠️ 比对对象必须是**草稿构造的快照**（0.9.0-r）：否则用户改了草稿想存
+          // 新预设时，门禁看到的是旧配置 —— 会误判成"与某个内置重复"而拒绝。
           // 「覆盖同名」时把同名条目排除在比对之外（那是更新，不是新增重复）。
           {
             const current = await loadConfig()
-            const candidate = personaSnapshotOf(current)
+            const candidate = personaSnapshotOf(current, draft)
             const dupes = duplicatePersonaConflict(candidate, mergePersonas(current.personas), personaName)
             if (dupes) {
               send(res, 400, {
@@ -1659,7 +1695,7 @@ function registerPersonaRoutes(ctx) {
           }
           const { config: updated } = await commitConfig((current) => {
             const personas = clonePersonas(current.personas)
-            personas[personaName] = { ...personaSnapshotOf(current), updatedAt: new Date().toISOString() }
+            personas[personaName] = { ...personaSnapshotOf(current, draft), updatedAt: new Date().toISOString() }
             return { ...current, personas }
           }, { source: 'web', action: 'savePreset' })
           send(res, 200, { ok: true, ...personaLibrary(updated) })

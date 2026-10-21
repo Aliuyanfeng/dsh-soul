@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 154
+const EXPECTED_ASSERTIONS = 155
 
 let passed = 0
 const failures = []
@@ -816,8 +816,10 @@ check('normalizePersonas 剥离历史预设里的「关于你」，保留人设�
 check('预设的保存与应用都只遍历 PERSONA_FIELDS 这一份白名单', () => {
   // 宿主侧唯一的两处取键：数据源必须是常量而不是各自硬编码一份字段表，
   // 否则「预设范围」的增删会出现两套互相漂移的语义。
-  const snapshot = indexCode.match(/function personaSnapshotOf\(config\) \{([\s\S]*?)\n\}/)
-  assert.ok(snapshot, '缺少 personaSnapshotOf')
+  // 0.9.0-r：签名多了 draft 参数（草稿优先覆盖）。判据跟着更新 ——
+  // 守的语义不变：仍然只遍历 PERSONA_FIELDS 这一份白名单取键。
+  const snapshot = indexCode.match(/function personaSnapshotOf\(config, draft = null\) \{([\s\S]*?)\n\}/)
+  assert.ok(snapshot, '缺少 personaSnapshotOf(config, draft = null)')
   assert.ok(/for \(const key of PERSONA_FIELDS\)/.test(snapshot[1]), '快照必须按 PERSONA_FIELDS 取键')
   const pick = indexCode.match(/function pickPersonaValues\(persona\) \{([\s\S]*?)\n\}/)
   assert.ok(pick, '缺少 pickPersonaValues')
@@ -3570,6 +3572,70 @@ check('0.8.0-d 徽标样式只在各自上下文生效（卡面 vs 卡背）', (
     assert.equal(/position:absolute/.test(r[2]), false, `卡背规则不得再写 position:absolute：${r[1]}`)
   }
 })
+check('0.9.0-r 存为预设必须带上未保存的草稿（否则存的是旧配置）', () => {
+  // 用户实测 bug：选了「自驱型协作者」→ 改了回复风格与自定义指令（**没点保存**）
+  // → 直接点「存为预设」→ 存出来的预设仍是自驱型协作者的字段。
+  //
+  // 根因：设置页是「本地草稿 + 保存才写回」的结构，而 savePreset 只快照
+  // personaSnapshotOf(current)（已保存配置）⇒ 草稿被丢弃。
+  //
+  // 契约：
+  //   ① 客户端 savePersona 必须传 draft；
+  //   ② 服务端 personaSnapshotOf 支持 draft 覆盖（草稿优先、未声明的沿用已保存值）；
+  //   ③ 重复门禁也必须用**草稿构造的快照**比对 —— 否则用户改了草稿想存新预设时，
+  //      门禁看到旧配置会误判「与某个内置重复」而拒绝（实测过的第二个症状）。
+  const client = clientCode
+  assert.match(
+    client,
+    /async savePersona\(name, draft = null\)/,
+    'controller.savePersona 必须接受 draft 参数'
+  )
+  assert.match(
+    client,
+    /if \(draft && typeof draft === 'object'\) body\.draft = draft/,
+    '客户端必须把 draft 提交给服务端'
+  )
+  assert.match(
+    client,
+    /const draft = \{\}[\s\S]{0,300}?draft\[key\] = localMap\[key\]/,
+    'handleSavePersona 必须从本地草稿（localMap）收集人设字段'
+  )
+
+  const server = indexCode
+  assert.match(
+    server,
+    /function personaSnapshotOf\(config, draft = null\)/,
+    'personaSnapshotOf 必须接受 draft'
+  )
+  // 草稿优先：键存在于草稿、类型一致才采纳。
+  //
+  // ⚠️ 判据落在**取值链**上：必须看到 draft[key] 被读取成一个局部变量、该变量再写回
+  // values。只查条件语句、或只查 values[key] = value 都不够 —— `void draft` 加上
+  // 保留循环主体能让两条同时命中（判断力对照实测漏网两次）。
+  assert.match(
+    server,
+    /const value = draft\[key\]/,
+    '必须从草稿读取值（draft[key]）—— 否则 draft 参数形同虚设'
+  )
+  assert.match(
+    server,
+    /if \(typeof value === typeof config\[key\] \|\| config\[key\] === undefined\) values\[key\] = value/,
+    '草稿值必须真正写进快照（类型一致才采纳，防脏数据）'
+  )
+  // 两条使用点都必须传 draft
+  assert.equal(
+    (server.match(/personaSnapshotOf\(current, draft\)/g) || []).length,
+    2,
+    '重复门禁与落盘两处都必须用草稿构造快照（少一处就会误判或存旧值）'
+  )
+  // 草稿只取人设字段，不含「关于你」
+  assert.match(
+    server,
+    /for \(const key of PERSONA_FIELDS\) \{\s*\n\s*if \(key in raw && raw\[key\] !== undefined\) picked\[key\] = raw\[key\]/,
+    '服务端必须只采纳 PERSONA_FIELDS 内的草稿键（预设不含「关于你」）'
+  )
+})
+
 check('0.9.0-q 保存预设的重复门禁：投影比较 + 两条入口共用 + 允许覆盖同名', () => {
   // 用户诉求：存的预设和已存在的相同，禁止创建。
   //
