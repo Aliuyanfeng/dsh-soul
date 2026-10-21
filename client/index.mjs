@@ -1308,7 +1308,14 @@ window.__ModuleLoader__.load({
       '.soul-session-card-star{position:absolute;left:10px;bottom:10px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:rgba(10,14,35,.55);color:var(--dsw-static-neutral-bluish-00,#fff);font-size:13px;line-height:1;backdrop-filter:blur(6px)}',
       // 右栏详情：复用设置页卡背的元素（.soul-persona-dims / .soul-persona-fulltext），
       // 这里只补容器与滚动。高度上限避免长文把整个面板撑得比卡牌栏高太多。
-      '.soul-session-detail{flex:1 1 220px;min-width:200px;display:flex;flex-direction:column;gap:8px;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);max-height:340px;overflow:auto}',
+      // 详情面板：**固定高度**（0.9.0-z）。
+      //
+      // 为什么不用 max-height：那会让面板高度跟着内容走 —— 每个人设的
+      // 自定义指令长度不同，切换时面板一高一低地跳，左侧轮播也跟着晃。
+      // 固定 height 后切换任何预设面板都不变，只有内容区滚动。
+      //
+      // 340px = 原上限值，实测能容纳六维度 + 约 12 行指令；更长的指令在内部滚动。
+      '.soul-session-detail{flex:1 1 220px;min-width:200px;display:flex;flex-direction:column;gap:8px;padding:12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);height:340px;box-sizing:border-box;overflow:hidden}',
       '.soul-session-detail-empty{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       '.soul-session-detail-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
       '.soul-session-detail-name{font-size:14px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary)}',
