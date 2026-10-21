@@ -1283,7 +1283,7 @@ window.__ModuleLoader__.load({
       // 但布局从「叠层轮播 + 3D 翻面」改成「左侧网格选中 + 右侧详情面板」：
       // 会话面板横向空间窄，左侧是**叠层轮转**而非平铺：中心大卡 + 两侧各露边一张。
       // 比例：左栏 260px（正好容下 260px 的叠层）+ 右栏自适应；放不下时整体换行。
-      '.soul-session-split{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:2px}',
+      '.soul-session-split{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}',
       // 叠层容器：卡片绝对定位到同一格，靠内联 transform 偏移（与设置页同构）。
       // overflow:hidden 让两侧露边卡在容器边缘被自然裁掉，观感与设置页一致。
       // 叠层容器：**1:1**（高度 = 卡宽 210px）。
