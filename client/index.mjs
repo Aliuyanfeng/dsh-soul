@@ -1293,6 +1293,10 @@ window.__ModuleLoader__.load({
       // 1:1 容器让插画完整显示，且比原来看到的那条中间带大得多。
       // 轮播容器：叠层卡 + 下方导航（同一列，纵向）
       '.soul-session-carousel{flex:0 0 300px;min-width:300px;display:flex;flex-direction:column;align-items:center;gap:10px}',
+      // 0.9.0-ag：soul-field 是普通块容器 —— split 与 detail 垂直堆叠（detail 被
+      // 挤到卡牌下方），这才是「三段间距不一致」的真身。改 flex 行布局后
+      // detail 回到卡牌右侧，split(338) 与 detail(338) 等高。
+      '.soul-field.soul-persona-field{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}',
       '.soul-session-grid{position:relative;width:100%;height:300px;overflow:hidden}',
       // 单张卡：结构抄 .soul-persona-card 的正面（去掉 3D 翻面 —— 翻面由右栏详情承担）。
       // ⚠️ 这里**不得**写任何 transform：叠层偏移由内联 style 持有（translateX/scale）；
@@ -3125,7 +3129,7 @@ window.__ModuleLoader__.load({
           : e('p', { className: 'soul-saved-notice', role: 'status', 'aria-live': 'polite' }, notice)),
 
         // 临时覆盖：左侧叠层轮转（中心大卡 + 两侧露边）+ 右侧详情面板
-        e('div', { className: 'soul-field' },
+        e('div', { className: 'soul-field soul-persona-field' },
           // 标题与上方 tab 标题（.soul-session-title，14px/500）统一 ——
           // 两者是同层级区块标题，原先用 .soul-field-label（12px）视觉不齐（用户反馈）。
           e('h4', { className: 'soul-session-title' }, t('session.overrideTitle')),
@@ -5913,14 +5917,17 @@ window.__ModuleLoader__.load({
       //
       // 长期方案（未做）：注册独立 main 面板承载「预设库管理」，那时这个图标
       // 才有真正的落地页。需要把人设管理从会话语境拆出来 —— 独立的活。
-      ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-        name: 'sidebar.panellist',
-        id: 'soul-persona-panel',
-        order: 20,
-        locale: NS,
-        label: () => navT('nav.label'),
-        inject: () => ({})
-      }, SoulPanelIcon))
+      // ❌ 暂时隐藏（0.9.0-ag）：点击切到未注册面板会"保持当前选择"（点了没反应），
+      // 体验差。等独立 main 面板（预设库管理主页）做好后再启用。
+      // 组件 SoulPanelIcon 与本注册块保留在源码里（注释态），作为那时的起点。
+      // ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+      //   name: 'sidebar.panellist',
+      //   id: 'soul-persona-panel',
+      //   order: 20,
+      //   locale: NS,
+      //   label: () => navT('nav.label'),
+      //   inject: () => ({})
+      // }, SoulPanelIcon))
 
       ctx.slots.inject('sidebar.workspaces.session.row.action', () => ctx.slots.register({
         name: 'sidebar.workspaces.session.row.action',
