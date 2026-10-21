@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 156
+const EXPECTED_ASSERTIONS = 157
 
 let passed = 0
 const failures = []
@@ -3696,6 +3696,27 @@ check('0.9.0-r 存为预设必须带上未保存的草稿（否则存的是旧�
     server,
     /for \(const key of PERSONA_FIELDS\) \{\s*\n\s*if \(key in raw && raw\[key\] !== undefined\) picked\[key\] = raw\[key\]/,
     '服务端必须只采纳 PERSONA_FIELDS 内的草稿键（预设不含「关于你」）'
+  )
+})
+
+check('0.9.0-v 工作区失效判断用合并后的预设库（内置预设不再误报已不存在）', () => {
+  // 用户实测：工作区绑定指向**内置**预设「自驱型协作者」「头脑风暴伙伴」，
+  // 详情页却标红「人设已不存在」。
+  //
+  // 根因：失效判断用 config.personas（**磁盘上的自建预设**）做存在性检查 ——
+  // 内置预设只存在于代码里的 BUILTIN_PERSONAS，不在磁盘 ⇒ 指向内置的绑定被误报。
+  //
+  // 契约：失效判断必须用 mergePersonas 的合并视图（内置 + 自建）。
+  // ⚠️ 判据只能锚在**代码**上 —— 注释会被 stripComments 清空，不能当锚点。
+  assert.match(
+    indexCode,
+    /const personaNames = mergePersonas\(config\.personas\)/,
+    '工作区视图的失效判断必须用 mergePersonas（内置 + 自建），不能只查磁盘条目'
+  )
+  // 行为验证：samePersonaContent 不相关，这里直接验证 mergePersonas 含内置
+  assert.ok(
+    mergePersonas({})['自驱型协作者'],
+    'mergePersonas({}) 必须包含内置预设（这是修复的依据）'
   )
 })
 

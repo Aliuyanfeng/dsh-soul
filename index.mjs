@@ -2351,7 +2351,10 @@ function registerWorkspaceRoutes(ctx) {
         } catch (err) {
           indexProblem = `列出工作区失败：${String((err && err.message) || err)}`
         }
-        const personaNames = { ...(config.personas || {}) }
+        // 失效判断必须用**合并后的预设库**（0.9.0-v）：内置预设不在 config.personas 里
+        // （它们只存在于代码），若只查磁盘条目，绑定指向内置预设的会被误报
+        // 「人设已不存在」—— 实测「自驱型协作者」「头脑风暴伙伴」都中招。
+        const personaNames = mergePersonas(config.personas)
         for (const workspace of Array.isArray(listed) ? listed : []) {
           const id = workspace && workspace.id !== undefined ? String(workspace.id) : null
           if (id === null) continue
