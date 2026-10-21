@@ -1321,6 +1321,8 @@ window.__ModuleLoader__.load({
       '.soul-session-detail-name{font-size:14px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary)}',
       '.soul-session-detail-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}',
       '.soul-session-detail-actions .soul-persona-action{flex:1 1 auto}',
+      // 作用范围说明（0.9.0-z）：小字次要色，一行即可
+      '.soul-session-scope-hint{margin-top:2px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}',
       // 覆盖里的字段名：等宽，便于与配置键对上
       '.soul-session-fields{display:flex;flex-wrap:wrap;gap:6px}',
       '.soul-session-field{padding:1px 6px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:18px}',
@@ -3071,7 +3073,12 @@ window.__ModuleLoader__.load({
               disabled: busy,
               onClick: () => { void clear() }
             }, t('session.clear'))
-          )
+          ),
+          // 作用范围说明：紧跟操作按钮 —— 它解释的正是上面那个按钮改的东西
+          // （「用这个」/「取消本会话的临时人设」都只作用于本会话）。
+          // 放在分栏最底部离使用场景太远，用户看不到。
+          hasOverride && e('div', { className: 'soul-session-scope-hint' },
+            t('session.overrideHint'))
         )
       }
 
@@ -3142,7 +3149,6 @@ window.__ModuleLoader__.load({
               ),
               e('div', { className: 'soul-session-detail' }, detailOf(selectedPersona))
             ),
-          e('div', { className: 'soul-status' }, t('session.overrideHint'))
         ),
 
         // 覆盖里的自定义字段（不是预设带来的）：让用户知道"现在生效的不是某个预设"
