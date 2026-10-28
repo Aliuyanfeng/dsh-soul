@@ -2352,7 +2352,7 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     assert.equal(savedNoticeOf(tree), zh['history.clearDone'].replace('{count}', '1'))
   })
 
-  await check('C27 变更记录：超过 20 条折叠可展开，warning 不得被当成失败', async () => {
+  await check('C27 变更记录：超过 20 条改为分页，warning 不得被当成失败', async () => {
     const many = Array.from({ length: 22 }, (_, i) => historyEntry({
       id: `m-${String(i).padStart(2, '0')}`,
       at: new Date(Date.now() - (i + 1) * 60 * 1000).toISOString(),
@@ -2369,16 +2369,37 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     const zh = world.dicts.zh
     let tree = await renderDetailSettled(world)
 
-    // ① 一条一条铺开会让这个区块比详情页还长 ⇒ 只渲染 20 条
-    assert.equal(findAllByClass(tree, 'soul-history-item').length, 20, '最多只渲染 20 条')
-    // ② 剩下的必须有出口：「最多保留 200 条」这句承诺得配一个能看到更多的按钮
-    const more = findAllByClass(tree, 'soul-history-more')
-    assert.equal(more.length, 1, '超出 20 条时应给出「还有 N 条」')
-    assert.equal(textOf(more[0]), zh['history.more'].replace('{count}', '2'))
-    await more[0].props.onClick()
+    // ① 一页 20 条：一条一条铺开会让这个区块比详情页还长
+    assert.equal(findAllByClass(tree, 'soul-history-item').length, 20, '第一页只渲染 20 条')
+    // ② 多于一页时必须给出分页器（而不是「还有 N 条 → 全部摊开」）
+    const pagerOf = (root) => {
+      const boxes = findAllByClass(root, 'soul-history-pager')
+      assert.equal(boxes.length, 1, '多于一页时应出现分页器')
+      return findAll(boxes[0], (n) => n.type === 'ui-button')
+    }
+    let pageButtons = pagerOf(tree)
+    assert.equal(pageButtons.length, 2, '分页器应有「上一页」「下一页」两个按钮')
+    assert.equal(pageButtons[0].props.disabled, true, '第一页时「上一页」必须禁用')
+    assert.equal(pageButtons[1].props.disabled, false, '第一页时「下一页」可点')
+    const pageInfo = findAllByClass(tree, 'soul-history-pageinfo')[0]
+    assert.equal(
+      textOf(pageInfo),
+      zh['history.pageInfo'].replace('{page}', '1').replace('{total}', '2').replace('{count}', '22'),
+      '页码文案应写清「第 1 / 2 页 · 共 22 条」'
+    )
+
+    // ③ 翻到第二页：只剩 2 条，「下一页」禁用
+    await pageButtons[1].props.onClick()
     tree = await renderDetail(world)
-    assert.equal(findAllByClass(tree, 'soul-history-item').length, 22, '点开「还有 2 条」后应全部摊开')
-    assert.equal(findAllByClass(tree, 'soul-history-more').length, 0, '全部摊开后不该再留「还有 N 条」')
+    assert.equal(findAllByClass(tree, 'soul-history-item').length, 2, '第二页应只剩 2 条')
+    pageButtons = pagerOf(tree)
+    assert.equal(pageButtons[0].props.disabled, false, '第二页时「上一页」可点')
+    assert.equal(pageButtons[1].props.disabled, true, '最后一页时「下一页」必须禁用')
+
+    // ④ 回到第一页：恢复 20 条
+    await pageButtons[0].props.onClick()
+    tree = await renderDetail(world)
+    assert.equal(findAllByClass(tree, 'soul-history-item').length, 20, '回到第一页应恢复 20 条')
 
     // ③ warning 是「看到的不是全部」，不是失败：留在区块内、且不能染红
     const warn = findAllByClass(tree, 'soul-history-warning')

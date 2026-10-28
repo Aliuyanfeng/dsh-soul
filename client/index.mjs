@@ -1426,9 +1426,9 @@ window.__ModuleLoader__.load({
       '.soul-history-diff-cell:first-of-type .soul-history-diff-value{color:var(--dsw-alias-label-tertiary)}',
       '.soul-history-diff-value{color:var(--dsw-alias-label-primary)}',
       '.soul-history-diff-persona{margin-top:8px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
-      '.soul-history-more{align-self:flex-start;margin-top:8px;padding:0;border:0;background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
-      '.soul-history-more:hover{text-decoration:underline}',
-      '.soul-history-more:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      // 分页器（0.9.0-ai）：左按钮 / 页码 / 右按钮，纵向居中对齐
+      '.soul-history-pager{align-self:flex-start;display:flex;align-items:center;gap:8px;margin-top:8px}',
+      '.soul-history-pageinfo{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       // —— 设置页「工作区绑定」分组（0.8.1-d）——
       // 外层容器只负责块间距：三段是 .soul-field，彼此之间要留出与其它分组一致的空。
       '.soul-bindings{display:flex;flex-direction:column;gap:14px}',
@@ -1730,7 +1730,9 @@ window.__ModuleLoader__.load({
       'history.loading': '加载中...',
       'history.loadFailed': '无法读取变更记录：{reason}',
       'history.summary': '最近 {count} 条 · 最多保留 {max} 条',
-      'history.more': '还有 {count} 条',
+      'history.prev': '上一页',
+      'history.next': '下一页',
+      'history.pageInfo': '第 {page} / {total} 页 · 共 {count} 条',
       'history.clear': '清空记录',
       'history.clearArmed': '确认清空？',
       'history.clearDone': '已清空 {count} 条变更记录。',
@@ -2062,7 +2064,9 @@ window.__ModuleLoader__.load({
       'history.loading': 'Loading...',
       'history.loadFailed': 'Could not read the change history: {reason}',
       'history.summary': 'Last {count} · keeps up to {max}',
-      'history.more': '{count} more',
+      'history.prev': 'Previous',
+      'history.next': 'Next',
+      'history.pageInfo': 'Page {page} of {total} · {count} entries',
       'history.clear': 'Clear history',
       'history.clearArmed': 'Clear it?',
       'history.clearDone': 'Cleared {count} change records.',
@@ -2296,7 +2300,9 @@ window.__ModuleLoader__.load({
 
     // 一次最多铺开多少条。记录上限是 200 条，全渲染会让这一组比整个设置页还长；
     // 超出的折成一行「还有 N 条」，想看完的人再点一次。
-    const HISTORY_RENDER_LIMIT = 20
+    // 变更记录每页条数（0.9.0-ai：原先「先铺 20 条 + 还有 N 条 → 全部摊开」，
+    // 摊开后区块会很长；改为分页，页面高度稳定，也便于回看早期记录。
+    const HISTORY_PAGE_SIZE = 20
 
     // —— 变更记录保留条数（0.8.1 从设置页迁到插件详情页）——
     //
@@ -2426,7 +2432,16 @@ window.__ModuleLoader__.load({
       // 展开的是哪一条（存 id 而不是下标：重拉后顺序可能变，存下标会展开错行）。
       const [expandedEntry, setExpandedEntry] = React.useState(null)
       // 「还有 N 条」被点开后就一直摊开：记录只在写配置时变。
-      const [showAllHistory, setShowAllHistory] = React.useState(false)
+      const [historyPage, setHistoryPage] = React.useState(0)
+    // 分页派生值（0.9.0-ai）：记录被清空、或保留条数调小时，页码自动收敛到最后一页 ——
+    // 否则会停在一个不存在的页上（列表空白，分页器却还写着第 5 页）。
+    const historyEntries = Array.isArray(history) ? history : []
+    const historyPageCount = Math.max(1, Math.ceil(historyEntries.length / HISTORY_PAGE_SIZE))
+    const historyPageIndex = Math.min(Math.max(historyPage, 0), historyPageCount - 1)
+    const pageEntries = historyEntries.slice(
+      historyPageIndex * HISTORY_PAGE_SIZE,
+      (historyPageIndex + 1) * HISTORY_PAGE_SIZE
+    )
 
       React.useEffect(() => {
         if (pendingUndo === null && !pendingClear) return
@@ -2675,7 +2690,7 @@ window.__ModuleLoader__.load({
                   t('history.warning', { reason: historyWarning })),
 
                 e('ul', { className: 'soul-history-list' },
-                  ...(showAllHistory ? history : history.slice(0, HISTORY_RENDER_LIMIT)).map((entry) => {
+                  ...pageEntries.map((entry) => {
                     const isOpen = expandedEntry === entry.id
                     const events = historyPersonaEvents(entry)
                     const rows = historyFieldRows(entry)
@@ -2741,12 +2756,24 @@ window.__ModuleLoader__.load({
                   })
                 ),
 
-                // 「最近 200 条」这句承诺得配一个能看到更多的出口。
-                !showAllHistory && history.length > HISTORY_RENDER_LIMIT && e('button', {
-                  type: 'button',
-                  className: 'soul-history-more',
-                  onClick: () => setShowAllHistory(true)
-                }, t('history.more', { count: String(history.length - HISTORY_RENDER_LIMIT) })),
+                // 分页器（0.9.0-ai）：只在多于一页时出现。
+                // 按钮直接用宿主 ui.Button，与工作区绑定按钮同一套外观（不覆盖底色/文字）。
+                historyPageCount > 1 && e('div', { className: 'soul-history-pager' },
+                  e(ui.Button, {
+                    disabled: historyPageIndex <= 0,
+                    onClick: () => setHistoryPage(historyPageIndex - 1)
+                  }, t('history.prev')),
+                  e('span', { className: 'soul-history-pageinfo' },
+                    t('history.pageInfo', {
+                      page: String(historyPageIndex + 1),
+                      total: String(historyPageCount),
+                      count: String(historyEntries.length)
+                    })),
+                  e(ui.Button, {
+                    disabled: historyPageIndex >= historyPageCount - 1,
+                    onClick: () => setHistoryPage(historyPageIndex + 1)
+                  }, t('history.next'))
+                ),
 
                 e('div', { className: 'soul-status' }, t('history.footer'))
               )))
