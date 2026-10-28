@@ -334,6 +334,9 @@ function loadClient(routes, options = {}) {
       return {
         Button: 'ui-button',
         Toast: 'ui-toast',
+        // 气泡：行尾徽标用宿主 Tooltip（与「置顶/归档」同一套黑色气泡），
+        // 断言要能读到它的 label / side / delayMs。
+        Tooltip: 'ui-tooltip',
         IconAgentPresetOutlineRegular: 'ui-icon-persona'
       }
     }
@@ -3248,6 +3251,19 @@ await check('C53 侧栏会话行面具徽标：自己按需拉绑定视图（不
   )
   // 只读：不得绑点击（避免误触打开会话）
   assert.equal(typeof badges[0].props.onClick, 'undefined', '徽标是只读标识，不应有点击行为')
+
+  // 气泡必须是**宿主 Tooltip**：原生 title 会画浅色系统气泡，与旁边「置顶/归档」
+  // 的黑色气泡并排时两种样式（用户实测指出）。
+  const tips = findAll(tree, (x) => x.type === 'ui-tooltip')
+  assert.equal(tips.length, 1, '徽标应被宿主 Tooltip 包裹，而不是靠原生 title')
+  assert.equal(tips[0].props.label, expectTip, 'Tooltip 文案应为「人设：X」')
+  assert.equal(tips[0].props.delayMs, 500, '延迟应与宿主的行尾按钮一致（500ms）')
+  assert.equal(tips[0].props.portal, true, '应 portal 渲染 —— 与宿主行尾按钮一致')
+  assert.equal(
+    badges[0].props.title,
+    undefined,
+    '不得再用原生 title（会与宿主 Tooltip 抢着弹）'
+  )
 
   // ④ 已拉过就不再重复请求（每次重渲染都发一次请求会打出请求风暴）
   tree = await renderBadge('session-abc')

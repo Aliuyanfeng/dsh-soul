@@ -3867,17 +3867,32 @@ window.__ModuleLoader__.load({
       // 无会话 / 人设未知 / 个性化关闭 ⇒ 不渲染（不占 hover 位）
       if (!enabled || !persona) return null
 
-      // 只留无障碍标签，**不留 title**：人设已经显示在宿主的 hover 信息卡里
-      // （sidebar.session.row.hover），再挂一个 title 气泡会让 hover 时冒出两个弹窗。
       const label = t('sidebar.personaTip', { name: persona })
 
-      return e('span', {
+      // 气泡用**宿主自己的 Tooltip**（0.9.0-ak），参数照抄宿主的行尾按钮
+      // （PinSessionRowButton）：side bottom / align end / delayMs 500 / portal。
+      // 之前用原生 title，浏览器画的是浅色系统气泡，和旁边「置顶/归档」的黑色
+      // 气泡并排时两种样式 —— 用户实测指出不一致。
+      //
+      // 不用 title 还有第二个理由：人设也显示在宿主的 hover 信息卡里
+      // （sidebar.session.row.hover），title 会让两个弹窗先后冒出来。
+      const body = e('span', {
         className: 'soul-sidebar-persona-badge',
         // 只读标识：不做动作（点击仍会落在行上，避免误触打开会话）
         'aria-label': label
       },
-        soulMask({ className: 'soul-sidebar-persona-badge-icon', width: 13, height: 13 })
+        // 尺寸与邻居一致：宿主行尾图标是 14
+        soulMask({ className: 'soul-sidebar-persona-badge-icon', width: 14, height: 14 })
       )
+      // 降级：宿主若没有导出 Tooltip，就只渲染徽标（没有气泡，但绝不能整个塌掉）
+      if (!ui || ui.Tooltip === undefined || ui.Tooltip === null) return body
+      return e(ui.Tooltip, {
+        label,
+        side: 'bottom',
+        align: 'end',
+        delayMs: 500,
+        portal: true
+      }, body)
     }
 
     // -------------------------------------------------------------------------
