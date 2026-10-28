@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 46
+const EXPECTED_ASSERTIONS = 47
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -3105,6 +3105,56 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
 } finally {
   restoreTimers()
 }
+
+await check('C52 工作区绑定按钮用宿主 ui.Button —— 自绘 <button> 会在 hover 变全黑', async () => {
+  // 背景（用户实测）：自定义 <button> 会继承宿主的基础按钮样式（实心主色底 + 白字），
+  // 而插件又用 `.soul-bindings-bind{color:var(--dsw-alias-brand-primary)}` 覆盖了文字色
+  // （深色）。hover 时宿主把底色压深、插件把文字压深 ⇒ 深底深字，整个按钮全黑。
+  //
+  // 契约：这四个按钮必须走宿主组件 ui.Button —— 底色/文字/悬停由宿主成套给出，
+  // 插件不得再覆盖 background / color（.soul-bindings-* 里出现这两条即为回归）。
+  const start = source.indexOf('function SoulBindings')
+  assert.ok(start > 0, '应能定位到 SoulBindings 组件')
+  // 边界 = 下一个顶层函数声明（组件之间的分隔），取不到则退化为 13400 字符
+  const nextFn = source.indexOf('\n    function ', start + 10)
+  const region = source.slice(start, nextFn > start ? nextFn : start + 13400)
+  assert.ok(region.length > 5000, `SoulBindings 区域应完整（实际 ${region.length} 字符）`)
+  const btnCount = (region.match(/e\(ui\.Button,/g) || []).length
+  assert.ok(
+    btnCount >= 4,
+    `SoulBindings 里的按钮应全部改用 ui.Button（选择目录/绑定/解绑/改为），实际只有 ${btnCount} 处`
+  )
+  assert.equal(
+    region.includes('soul-bindings-pick'),
+    false,
+    '不得再自绘「选择目录…」按钮（.soul-bindings-pick 已废弃）'
+  )
+  assert.equal(
+    region.includes('soul-bindings-bind'),
+    false,
+    '不得再自绘「绑定人设」按钮（.soul-bindings-bind 已废弃）'
+  )
+  // 插件 CSS 不得再给这些按钮定底色或文字色 —— 那正是全黑的成因。
+  for (const selector of ['.soul-bindings-pick', '.soul-bindings-bind', '.soul-bindings-action']) {
+    const rulePattern = new RegExp(
+      selector.replace(/\./g, '\\.') + '\\{[^}]*\\}',
+      'g'
+    )
+    const rules = source.match(rulePattern) || []
+    for (const rule of rules) {
+      assert.equal(
+        /background\s*:/.test(rule),
+        false,
+        `${selector} 不得覆盖 background（会让宿主悬停底色与文字撞色）：${rule.slice(0, 80)}`
+      )
+      assert.equal(
+        /[^-]color\s*:/.test(rule),
+        false,
+        `${selector} 不得覆盖 color（全黑的直接成因）：${rule.slice(0, 80)}`
+      )
+    }
+  }
+})
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 

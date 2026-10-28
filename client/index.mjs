@@ -1447,9 +1447,11 @@ window.__ModuleLoader__.load({
       '.soul-bindings-new{display:flex;align-items:center;gap:8px;margin-bottom:8px}',
       '.soul-bindings-new:last-child{margin-bottom:0}',
       '.soul-bindings-new label{margin:0;flex:none}',
-      '.soul-bindings-pick,.soul-bindings-bind{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;height:32px;padding:0 10px;border:.5px solid var(--dsw-alias-brand-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
-      '.soul-bindings-pick:hover,.soul-bindings-bind:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.soul-bindings-pick:focus-visible,.soul-bindings-bind:focus-visible,.soul-bindings-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      // 0.9.0-ah：按钮改用宿主 ui.Button 后，这里**不能再覆盖 background / color**
+      // —— 原先的 color:brand-primary 压住了宿主给的白字，hover 时深底深字变全黑。
+      // 只保留布局：这一行的输入框吃掉剩余宽度，其余控件不缩放。
+      '.soul-bindings-new > *{flex:none}',
+      '.soul-bindings-new input{flex:1 1 auto;min-width:0}',
       // 人设下拉不许被压到看不见：flex:none + 固定最小宽度
       '.soul-bindings-new select{flex:none;width:auto;min-width:120px}',
       // 降级提示：与 .soul-status 同色同字号，贴在选择器原位（说明为什么按钮不见了）
@@ -1465,9 +1467,8 @@ window.__ModuleLoader__.load({
       '.soul-bindings-here{flex:none;padding:0 6px;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent);color:var(--dsw-alias-brand-primary);font-size:11px;line-height:18px}',
       '.soul-bindings-bad{flex:none;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px}',
       '.soul-bindings-select{flex:none;width:auto;min-width:96px;max-width:160px}',
-      '.soul-bindings-action{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;height:24px;padding:0 8px;border:.5px solid var(--dsw-alias-brand-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
-      '.soul-bindings-action:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      '.soul-bindings-action-armed{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}',
+      // 解绑的「待确认」态：只染文字颜色（宿主按钮的底色/悬停不动，避免旧的全黑问题）
+      '.soul-bindings-act-armed{color:var(--dsw-alias-state-error-primary)}',
       // 未绑定回落行：虚线框＝「这是规则、不是一条记录」
       '.soul-bindings-fallback{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border:.5px dashed var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm)}',
       '.soul-bindings-fallback-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
@@ -4071,9 +4072,11 @@ window.__ModuleLoader__.load({
             // 留着它只会让用户反复点一个确定会失败的东西。
             // 服务**压根没注入**时同理（那些连接方式拿不到 uiWorkspace）：按钮不能出现，
             // 否则点下去只会在 handlePick 里对 null 取属性、抛一个用户看不懂的 TypeError。
-            !pickerFailed && directoryPicker !== null && e('button', {
-              type: 'button',
-              className: 'soul-bindings-pick',
+            // 0.9.0-ah：改用宿主 ui.Button —— 原先自绘的 <button> 继承了宿主
+            // 基础按钮样式（实心底 + 白字），我们又用 color:brand-primary 覆盖文字，
+            // hover 时深底 + 深字 ⇒ 整个按钮全黑（用户反馈）。
+            // 换成宿主组件后，底色 / 文字 / 悬停是一套，构造上必然与宿主一致。
+            !pickerFailed && directoryPicker !== null && e(ui.Button, {
               onClick: () => { void handlePick() }
             }, t('bindings.choose'))
           ),
@@ -4085,9 +4088,8 @@ window.__ModuleLoader__.load({
               value: effectiveDraftPersona,
               onChange: (ev) => setDraftPersona(ev.target.value)
             }, names.map((name) => e('option', { key: name, value: name }, name))),
-            e('button', {
-              type: 'button',
-              className: 'soul-bindings-bind',
+            e(ui.Button, {
+              variant: 'primary',
               disabled: names.length === 0,
               onClick: () => { void handleBind() }
             }, t('bindings.bindDir'))
@@ -4147,11 +4149,10 @@ window.__ModuleLoader__.load({
                                 isInvalid && e('option', { value }, invalidName),
                                 names.map((name) => e('option', { key: name, value: name }, name))
                               ),
-                              e('button', {
-                                type: 'button',
-                                className: pendingUnbind === dir
-                                  ? 'soul-bindings-action soul-bindings-action-armed'
-                                  : 'soul-bindings-action',
+                              e(ui.Button, {
+                                // 待确认态靠文案已能区分（「确认解绑…」），
+                                // 红色描边是增强：className 若不透传也不影响可用性。
+                                className: pendingUnbind === dir ? 'soul-bindings-act-armed' : undefined,
                                 onClick: () => { void handleUnbind(dir) }
                               }, pendingUnbind === dir ? t('bindings.unbindArmed') : t('bindings.unbind'))
                             )
@@ -4164,9 +4165,7 @@ window.__ModuleLoader__.load({
         e('div', { className: 'soul-bindings-fallback' },
           e('span', { className: 'soul-bindings-fallback-text' },
             `${t('bindings.fallback')} · ${activePersona || t('quick.custom')}`),
-          e('button', {
-            type: 'button',
-            className: 'soul-bindings-action',
+          e(ui.Button, {
             onClick: onOpenPersonas
           }, t('bindings.change'))
         ),
