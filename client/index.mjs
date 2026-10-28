@@ -4179,6 +4179,7 @@ window.__ModuleLoader__.load({
             // hover 时深底 + 深字 ⇒ 整个按钮全黑（用户反馈）。
             // 换成宿主组件后，底色 / 文字 / 悬停是一套，构造上必然与宿主一致。
             !pickerFailed && directoryPicker !== null && e(ui.Button, {
+              variant: 'outline',
               onClick: () => { void handlePick() }
             }, t('bindings.choose'))
           ),
@@ -4190,8 +4191,12 @@ window.__ModuleLoader__.load({
               value: effectiveDraftPersona,
               onChange: (ev) => setDraftPersona(ev.target.value)
             }, names.map((name) => e('option', { key: name, value: name }, name))),
+            // variant 用 outline，**不用 primary**：primary 是实心主色
+            // （浅色主题下 ≈ 黑底），hover 再压一层就更黑 —— 用户实测「全黑」。
+            // outline 是描边按钮，hover 底色由宿主的 button token 决定，
+            // 与设置页那些次要按钮（重置 / 存为预设）同族。
             e(ui.Button, {
-              variant: 'primary',
+              variant: 'outline',
               disabled: names.length === 0,
               onClick: () => { void handleBind() }
             }, t('bindings.bindDir'))

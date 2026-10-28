@@ -3158,6 +3158,15 @@ await check('C52 工作区绑定按钮用宿主 ui.Button —— 自绘 <button>
     false,
     '不得再自绘「绑定人设」按钮（.soul-bindings-bind 已废弃）'
   )
+  // variant 必须是 outline：primary 是实心主色底（浅色主题下 ≈ 黑），
+  // hover 再压一层就更黑 —— 用户两次反馈「hover 全黑」的根因就是它。
+  const outlineCount = (region.match(/variant: 'outline'/g) || []).length
+  assert.equal(outlineCount, 2, `绑定/选择目录两个按钮都应为 outline，实际 ${outlineCount} 个`)
+  assert.equal(
+    /variant: 'primary'/.test(region),
+    false,
+    '工作区绑定区不得用 primary —— 实心主色底 + 深色文字会让按钮看起来「全黑」'
+  )
   // 插件 CSS 不得再给这些按钮定底色或文字色 —— 那正是全黑的成因。
   for (const selector of ['.soul-bindings-pick', '.soul-bindings-bind', '.soul-bindings-action']) {
     const rulePattern = new RegExp(
