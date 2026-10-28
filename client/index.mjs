@@ -1376,11 +1376,14 @@ window.__ModuleLoader__.load({
       '.soul-ws-persona{color:var(--dsw-alias-brand-primary);font-size:12px;line-height:18px}',
       '.soul-ws-unbound{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
       '.soul-ws-action{box-sizing:border-box;display:inline-flex;align-items:center;height:26px;padding:0 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
-      '.soul-ws-action:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
+      // ⚠️ hover **只改边框，不改文字色**（0.9.0-am）。
+      // 原先这里还有 color:brand-primary —— 主色按钮（深底白字）hover 时文字被压成
+      // 近黑色，黑底黑字＝整块全黑；同时它也压掉了 .soul-ws-action-armed 的红字。
+      '.soul-ws-action:hover{border-color:var(--dsw-alias-brand-primary)}',
       '.soul-ws-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.soul-ws-action:disabled{opacity:.5;cursor:default}',
       // 「绑定人设」是这一页的主操作：实心主色
-      '.soul-ws-action-primary{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}',
+
       // 解绑 armed：危险色（与删除预设同一套）
       '.soul-ws-action-armed{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}',
       // 内联展开的人设胶囊：占满整行，与卡片内容左对齐
@@ -3476,9 +3479,13 @@ window.__ModuleLoader__.load({
                 )
                 : e(Fragment, null,
                   e('span', { className: 'soul-ws-unbound' }, t('workspaces.unbound')),
-                  e('button', {
-                    type: 'button',
-                    className: 'soul-ws-action soul-ws-action-primary',
+                  // 0.9.0-am：改用宿主 ui.Button —— 原先自绘的
+                  // .soul-ws-action-primary 是实心主色底（浅色主题≈黑），
+                  // 而共用的 .soul-ws-action:hover 又把文字染成 brand 近黑色，
+                  // 黑底黑字 ⇒ 整块全黑（用户两次反馈的真实成因）。
+                  e(ui.Button, {
+                    variant: 'outline',
+                    size: 'sm',
                     disabled: busy || personaNames.length === 0,
                     onClick: () => setPicking(isPicking ? null : ws.workspaceId)
                   }, t('workspaces.bind'))

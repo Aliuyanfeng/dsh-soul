@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 50
+const EXPECTED_ASSERTIONS = 51
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -2957,7 +2957,14 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     // ③ 点「绑定人设」→ 内联展开人设胶囊（不弹层）
     tree = await remount()
     const freshCards = findAllByClass(tree, 'soul-ws-card')
-    const bindBtn = findAllByClass(freshCards[0], 'soul-ws-action').find((b) => textOf(b) === zh['workspaces.bind'])
+    // 「绑定人设」已改用宿主 ui.Button（0.9.0-am），不再是 .soul-ws-action ——
+    // 按「可点 + 文案」找，而不是按 class 找，这样组件实现换了断言依然成立。
+    const bindBtn = findAll(
+      freshCards[0],
+      (b) => (b.type === 'button' || b.type === 'ui-button') &&
+        typeof b.props?.onClick === 'function' &&
+        textOf(b) === zh['workspaces.bind']
+    )[0]
     assert.ok(bindBtn, '未绑定的卡片应有「绑定人设」')
     await bindBtn.props.onClick()
     tree = await render()
@@ -3410,6 +3417,33 @@ await check('C55 宿主 hover 信息卡里显示当前会话人设（复用宿�
       '.` + cls + ` 不得使用主题 token —— 宿主卡片恒为深色，token 会随主题变成深字压深底'
     )
   }
+})
+
+await check('C56 工作区人设按钮：hover 不得改文字色（深底白字会被压成黑底黑字）', async () => {
+  // 用户两次反馈「hover 全黑」。真因不在 SoulBindings，而在工作区人设卡片：
+  //   .soul-ws-action-primary{background:brand-primary;color:label-primary-foreground}
+  //   .soul-ws-action:hover{... color:brand-primary}   ← 优先级更高（class+伪类）
+  // 于是深色底 + 被染成近黑色的文字 = 整块全黑；同一条规则也压掉了
+  // .soul-ws-action-armed 的红色「确认解绑」提示。
+  //
+  // 契约：hover 只允许改边框，不得改文字色；「绑定人设」改用宿主 ui.Button。
+  const hover = source.match(/\.soul-ws-action:hover\{([^}]*)\}/)
+  assert.ok(hover, '找不到 .soul-ws-action:hover 规则')
+  assert.equal(
+    /[^-]color\s*:/.test(hover[1]),
+    false,
+    `hover 不得改文字色（会让深底按钮变成黑底黑字）：${hover[1]}`
+  )
+  // 自绘的主色按钮样式必须彻底移除（现在用 ui.Button 的 outline 变体）
+  assert.equal(
+    /'\.soul-ws-action-primary\{/.test(source),
+    false,
+    '不得再自绘主色按钮样式（.soul-ws-action-primary 已废弃）'
+  )
+  assert.ok(
+    /variant: 'outline',\s*size: 'sm',[\s\S]{0,200}?workspaces\.bind/.test(source),
+    '「绑定人设」必须走宿主 ui.Button 的 outline 变体'
+  )
 })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
