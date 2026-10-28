@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 47
+const EXPECTED_ASSERTIONS = 48
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -3175,6 +3175,87 @@ await check('C52 工作区绑定按钮用宿主 ui.Button —— 自绘 <button>
       )
     }
   }
+})
+
+await check('C53 侧栏会话行面具徽标：自己按需拉绑定视图（不再依赖插件详情页）', async () => {
+  // 背景（用户实测「看不到」）：徽标的数据源 store.bindingsSessions 原先**只有**
+  // 插件详情页的 SoulBindings 挂载时才会被填充（那里调 loadBindings）。
+  // 侧栏往往先于详情页挂载 ⇒ bindingsSessions 恒为空 ⇒ 徽标永远渲染 null，
+  // 用户 hover 会话行什么也看不到。
+  //
+  // 契约：徽标首次挂载时自行补一次拉取（bindings === null 才拉），
+  // 拿到「会话 → 生效人设」的解析结果后渲染；已拉过就不再重复请求。
+  const world = await boot()
+  const zh = world.dicts.zh
+  let bindingCalls = 0
+  world.routes['/api/soul/bindings'] = () => {
+    bindingCalls += 1
+    return {
+      ok: true,
+      bindings: {},
+      sessions: [
+        { id: 'session-abc', cwd: 'D:\\proj', persona: '自驱型协作者', binding: null, shadowed: [] },
+        { id: 'session-xyz', cwd: null, persona: '极简主义者', binding: null, shadowed: [] }
+      ],
+      max: 64,
+      maxPathLength: 260
+    }
+  }
+  await world.controller.loadConfig()
+
+  const slot = world.captured.sections.find(
+    (s) => s.options && s.options.name === 'sidebar.workspaces.session.row.action'
+  )
+  assert.ok(slot, '未注册 sidebar.workspaces.session.row.action 槽位')
+  const tFn = (k, q) => {
+    const raw = zh[k] ?? k
+    return q ? raw.replace(/\{(\w+)\}/g, (m, name) => (q[name] === undefined ? m : String(q[name]))) : raw
+  }
+  const renderBadge = async (sessionId) => {
+    const injected = slot.options.inject()
+    const store = injected.hooks.soulController
+    const useSoulController = (selector) => selector(store.getSnapshot())
+    const element = {
+      type: slot.component,
+      props: { ...injected, sessionId, useSoulController, t: tFn }
+    }
+    await world.runtime.settle(element)
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    return world.runtime.settle(element)
+  }
+
+  // ① store 从没拉过绑定视图（bindings === null）——正是侧栏先挂载时的真实状态
+  assert.equal(
+    world.controller.store.getSnapshot().bindings,
+    null,
+    '前置：本用例必须从「没拉过绑定视图」开始，否则测不到按需拉取'
+  )
+
+  // ② 挂载徽标 → 必须自己触发一次拉取
+  let tree = await renderBadge('session-abc')
+  assert.equal(bindingCalls, 1, `徽标挂载应补拉一次绑定视图，实际 ${bindingCalls} 次`)
+
+  // ③ 拉回后按 sessionId 命中对应会话的人设，渲染面具徽标 + tooltip
+  const badges = findAllByClass(tree, 'soul-sidebar-persona-badge')
+  assert.equal(badges.length, 1, '有生效人设的会话行应渲染一个面具徽标')
+  const expectTip = zh['sidebar.personaTip'].replace('{name}', '自驱型协作者')
+  assert.equal(badges[0].props.title, expectTip, 'tooltip 应写明该会话的人设')
+  // 只读：不得绑点击（避免误触打开会话）
+  assert.equal(typeof badges[0].props.onClick, 'undefined', '徽标是只读标识，不应有点击行为')
+
+  // ④ 已拉过就不再重复请求（每次重渲染都发一次请求会打出请求风暴）
+  tree = await renderBadge('session-abc')
+  assert.equal(bindingCalls, 1, '数据已就绪后不得重复拉取')
+  assert.equal(findAllByClass(tree, 'soul-sidebar-persona-badge').length, 1, '重渲染后徽标仍在')
+
+  // ⑤ 不存在的会话 id：渲染 null（不占 hover 位），也不额外请求
+  tree = await renderBadge('session-not-in-list')
+  assert.equal(
+    findAllByClass(tree, 'soul-sidebar-persona-badge').length,
+    0,
+    '解析不到人设的会话行不应出现徽标'
+  )
+  assert.equal(bindingCalls, 1, '不应为未知会话再发请求')
 })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

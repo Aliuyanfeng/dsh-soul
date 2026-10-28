@@ -3814,11 +3814,36 @@ window.__ModuleLoader__.load({
     // 展示形态：面具图标按钮，hover 出 tooltip「人设：X（来源）」。
     // 只读 —— 点击不做任何事（按钮本身禁用），它只是把"这个会话现在是谁"
     // 显式摆到侧栏，不用先点开会话再看。
+    // 侧栏徽标的数据去重句柄（模块级）：侧栏一次会挂很多行，每行各自触发一次
+    // 拉取会打出一串重复请求。同一时刻只允许一个在飞。
+    let sidebarBindingsRequest = null
+
     function SoulSessionPersonaBadge(props) {
-      const { useSoulController, sessionId } = props
+      const { useSoulController, controller } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
       const enabled = state.enabled === true
+
+      // sessionId 的两种注入形态都接住：
+      // ① 宿主把 owner props（SessionRowOwnerProps）并入组件 props —— 文档行为；
+      // ② 若某个宿主版本改把它交给 inject，则由 inject 透传（见注册处）。
+      // 只认非空字符串，避免把 ''/undefined 当成「无会话」以外的含义。
+      const sessionId = typeof props.sessionId === 'string' && props.sessionId !== ''
+        ? props.sessionId
+        : null
+
+      // 侧栏可能先于插件详情页挂载：那时 store.bindings 还是 null（从没拉过），
+      // bindingsSessions 恒为空 ⇒ 徽标永远不渲染（用户实测「看不到」的直接成因）。
+      // 这里补一次拉取：null 才拉，拉过（含「确实没有绑定」）就交给详情页那只。
+      React.useEffect(() => {
+        if (!enabled) return
+        if (state.bindings !== null) return
+        if (sidebarBindingsRequest) return
+        if (!controller || typeof controller.loadBindings !== 'function') return
+        sidebarBindingsRequest = Promise.resolve(controller.loadBindings())
+          .catch(() => {})
+          .finally(() => { sidebarBindingsRequest = null })
+      }, [enabled, state.bindings])
 
       // 该会话的生效人设：store.bindingsSessions 里按 id 查
       const row = (state.bindingsSessions || []).find(
@@ -5960,11 +5985,16 @@ window.__ModuleLoader__.load({
         id: 'soul-persona-badge',
         order: 300,
         locale: NS,
-        inject: () => ({
+        inject: (owner) => ({
           hooks: {
             soulController: controller.store
           },
-          controller
+          controller,
+          // 防御性兼容：宿主文档说 owner props 并入**组件** props；万一某版本把它
+          // 交给 inject，这里也把 sessionId 透传过去（组件侧两路都读）。
+          sessionId: owner && typeof owner === 'object' && typeof owner.sessionId === 'string'
+            ? owner.sessionId
+            : undefined
         })
       }, SoulSessionPersonaBadge))
 
