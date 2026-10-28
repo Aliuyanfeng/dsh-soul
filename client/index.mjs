@@ -956,11 +956,21 @@ window.__ModuleLoader__.load({
       // 侧栏会话行 hover 面具徽标（0.9.0-ab）：与行内其它 hover 按钮对齐
       '.soul-sidebar-persona-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-sidebar-persona-badge-icon{display:block}',
-      // hover 信息卡里的「人设」一行（0.9.0-aj）：与宿主卡片正文同规格
-      '.soul-hover-persona{display:flex;align-items:center;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
-      '.soul-hover-persona-icon{flex:none;opacity:.75}',
-      '.soul-hover-persona-label{flex:none}',
-      '.soul-hover-persona-name{color:var(--dsw-alias-label-primary);font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      // hover 信息卡里的「人设」一行（0.9.0-al）：逐项对齐宿主同槽位住户
+      // （ui-schedule SessionScheduleHover 的 .task / .taskIcon / .taskName / .taskTiming）：
+      //   .task{display:flex;align-items:flex-start;gap:8px;min-width:0}
+      //   .taskIcon{color:#cfd3d6;flex:none;height:16px;display:inline-flex}
+      //   .taskName{color:#fff;font-size:12px;line-height:16px}
+      //   .taskTiming{color:#cfd3d6;font-size:12px;line-height:16px}
+      //
+      // ⚠️ 这里必须用**不随主题翻转的 static 色**，不能用 --dsw-alias-* 主题 token：
+      // 宿主的 hover 卡片永远是深色的（它的 #fff / #cfd3d6 也是写死的），
+      // 而 alias token 会随主题翻转 —— 浅色主题下是深色值，照搬就成了深字压深底。
+      // #fff = bluish-00、#cfd3d6 = bluish-300（静态色板里的同值项，见 ui-theme）。
+      '.soul-hover-persona{display:flex;align-items:flex-start;gap:8px;min-width:0}',
+      '.soul-hover-persona-icon{flex:none;display:inline-flex;align-items:center;height:16px;color:var(--dsw-static-neutral-bluish-300)}',
+      '.soul-hover-persona-label{flex:none;color:var(--dsw-static-neutral-bluish-300);font-size:12px;line-height:16px}',
+      '.soul-hover-persona-name{min-width:0;color:var(--dsw-static-neutral-bluish-00);font-size:12px;line-height:16px;overflow-wrap:break-word}',
       '.soul-session-persona-label-scope{flex:none;font-size:11px;opacity:.8}',
       '@container (width<=540px){.soul-session-persona-label{display:none}}',
       // 错误提示：颜色改用宿主真实存在的 state-error-primary（原先引用不存在的 token ⇒ 渲染成黑色）
@@ -3912,8 +3922,11 @@ window.__ModuleLoader__.load({
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const { enabled, persona } = useSessionRowPersona(props)
       if (!enabled || !persona) return null
+      // 结构照抄宿主同槽位住户（ui-schedule 的 SessionScheduleHover）：
+      // 一行 = 图标容器 + 说明 + 主体值，行高/字号/间距都与宿主卡片一致。
       return e('div', { className: 'soul-hover-persona' },
-        soulMask({ className: 'soul-hover-persona-icon', width: 12, height: 12 }),
+        e('span', { className: 'soul-hover-persona-icon', 'aria-hidden': true },
+          soulMask({ width: 12, height: 12 })),
         e('span', { className: 'soul-hover-persona-label' }, t('sidebar.personaRow')),
         e('span', { className: 'soul-hover-persona-name', title: persona }, persona)
       )

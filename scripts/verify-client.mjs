@@ -3370,6 +3370,37 @@ await check('C55 宿主 hover 信息卡里显示当前会话人设（复用宿�
     region.includes('useSessionRowPersona('),
     'hover 卡必须复用 useSessionRowPersona —— 与行尾徽标同一份数据/降级规则'
   )
+
+  // ④ 文字规格必须与宿主卡片一致（宿主同槽位住户 ui-schedule 的 SessionScheduleHover）：
+  //    .task{gap:8px;align-items:flex-start} / .taskIcon{color:#cfd3d6;height:16px}
+  //    .taskName{color:#fff;font-size:12px;line-height:16px}
+  //    .taskTiming{color:#cfd3d6;font-size:12px;line-height:16px}
+  // 并且**不得用主题 token**：宿主卡片恒为深色，token 在浅色主题下是深色值，
+  // 照搬会变成深字压深底（看不见）。
+  const ruleOf = (cls) => {
+    const m = source.match(new RegExp('\\.' + cls + '\\{[^}]*\\}'))
+    assert.ok(m, '缺少样式规则 .' + cls)
+    return m[0]
+  }
+  const row = ruleOf('soul-hover-persona')
+  assert.ok(row.includes('gap:8px'), '行间距应与宿主 .task 一致（8px）')
+  assert.ok(row.includes('align-items:flex-start'), '对齐方式应与宿主 .task 一致')
+  const icon = ruleOf('soul-hover-persona-icon')
+  assert.ok(icon.includes('height:16px'), '图标容器高度应与宿主 .taskIcon 一致（16px）')
+  assert.ok(icon.includes('--dsw-static-neutral-bluish-300'), '图标色应取宿主同值的静态色（#cfd3d6 = bluish-300）')
+  const label = ruleOf('soul-hover-persona-label')
+  assert.ok(label.includes('--dsw-static-neutral-bluish-300'), '「人设」标签色应与宿主次要文字同值（bluish-300）')
+  assert.ok(label.includes('font-size:12px') && label.includes('line-height:16px'), '标签字号/行高应为 12/16')
+  const name = ruleOf('soul-hover-persona-name')
+  assert.ok(name.includes('--dsw-static-neutral-bluish-00'), '人设名应与宿主主体文字同值（#fff = bluish-00）')
+  assert.ok(name.includes('font-size:12px') && name.includes('line-height:16px'), '人设名字号/行高应为 12/16')
+  for (const cls of ['soul-hover-persona', 'soul-hover-persona-icon', 'soul-hover-persona-label', 'soul-hover-persona-name']) {
+    assert.equal(
+      ruleOf(cls).includes('--dsw-alias'),
+      false,
+      '.` + cls + ` 不得使用主题 token —— 宿主卡片恒为深色，token 会随主题变成深字压深底'
+    )
+  }
 })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
