@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 48
+const EXPECTED_ASSERTIONS = 50
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -3239,7 +3239,13 @@ await check('C53 侧栏会话行面具徽标：自己按需拉绑定视图（不
   const badges = findAllByClass(tree, 'soul-sidebar-persona-badge')
   assert.equal(badges.length, 1, '有生效人设的会话行应渲染一个面具徽标')
   const expectTip = zh['sidebar.personaTip'].replace('{name}', '自驱型协作者')
-  assert.equal(badges[0].props.title, expectTip, 'tooltip 应写明该会话的人设')
+  assert.equal(badges[0].props['aria-label'], expectTip, '无障碍标签应写明该会话的人设')
+  // 不得再挂 title 气泡：人设已进宿主 hover 信息卡，两个气泡会同时冒出来
+  assert.equal(
+    badges[0].props.title,
+    undefined,
+    '徽标不应再挂 title —— 人设显示在宿主那张卡里，避免两个弹窗'
+  )
   // 只读：不得绑点击（避免误触打开会话）
   assert.equal(typeof badges[0].props.onClick, 'undefined', '徽标是只读标识，不应有点击行为')
 
@@ -3256,6 +3262,98 @@ await check('C53 侧栏会话行面具徽标：自己按需拉绑定视图（不
     '解析不到人设的会话行不应出现徽标'
   )
   assert.equal(bindingCalls, 1, '不应为未知会话再发请求')
+})
+
+await check('C54 面具图标只有一份几何 —— 三处不得各抄一套（下巴改圆只改到 header 的旧伤）', async () => {
+  // 背景（用户实测）：这个面具出现在会话 header 标签、侧栏会话行徽标、侧栏面板图标
+  // 三处。此前每处各抄一份 path，「下巴改圆」只改了 header，另两处仍用尖下巴 ——
+  // 同一副面具在界面上长出两种轮廓。
+  //
+  // 契约：轮廓只允许出现一次（SOUL_MASK_PATHS），三处都调用 soulMask()。
+  const outlineCount = (source.match(/M2\.2 3\.0 C4\.2 1\.8/g) || []).length
+  assert.equal(outlineCount, 1, `面具轮廓应只有一份定义，实际 ${outlineCount} 份`)
+  const callCount = (source.match(/soulMask\(\{/g) || []).length
+  assert.ok(callCount >= 3, `三处图标都应调用 soulMask()，实际 ${callCount} 处`)
+  // 旧尖下巴轮廓不得残留（它是「分叉」的具体证据）
+  assert.equal(
+    source.includes('C14.4 6.6 12.4 11.6 8.0 13.8'),
+    false,
+    '不得残留旧版尖下巴轮廓'
+  )
+  // 圆下巴的弧必须是正文里那一份（防止有人把数组里那份改回尖的）
+  assert.ok(
+    source.includes('C14.4 6.4 13.0 11.4 11.4 12.4'),
+    '共用几何应为圆下巴版本'
+  )
+})
+
+await check('C55 宿主 hover 信息卡里显示当前会话人设（复用宿主那张卡，不自绘 tooltip）', async () => {
+  // 用户诉求：hover 会话行时宿主会弹信息卡（标题 / 运行状态 / 几分钟前），
+  // 希望人设也显示在里面，而不是另冒一个自己的 tooltip。
+  //
+  // 槽位：sidebar.session.row.hover —— 宿主文档写明它是
+  // "Section of the Session row's hover card ... Mounted only while that card is open."
+  const world = await boot()
+  const zh = world.dicts.zh
+  world.routes['/api/soul/bindings'] = () => ({
+    ok: true,
+    bindings: {},
+    sessions: [{ id: 'session-abc', cwd: 'D:\\proj', persona: '自驱型协作者', binding: null, shadowed: [] }],
+    max: 64,
+    maxPathLength: 260
+  })
+  await world.controller.loadConfig()
+
+  const slot = world.captured.sections.find(
+    (s) => s.options && s.options.name === 'sidebar.session.row.hover'
+  )
+  assert.ok(slot, '未注册 sidebar.session.row.hover 槽位')
+  assert.equal(slot.options.id, 'soul-persona', '槽位 id 应为 soul-persona')
+
+  const tFn = (k, q) => {
+    const raw = zh[k] ?? k
+    return q ? raw.replace(/\{(\w+)\}/g, (m, name) => (q[name] === undefined ? m : String(q[name]))) : raw
+  }
+  const renderHover = async (sessionId) => {
+    const injected = slot.options.inject()
+    const store = injected.hooks.soulController
+    const useSoulController = (selector) => selector(store.getSnapshot())
+    const element = {
+      type: slot.component,
+      props: { ...injected, sessionId, useSoulController, t: tFn }
+    }
+    await world.runtime.settle(element)
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    return world.runtime.settle(element)
+  }
+
+  // ① 命中该会话 → 卡里出现「人设 · 名字」
+  let tree = await renderHover('session-abc')
+  const rows = findAllByClass(tree, 'soul-hover-persona')
+  assert.equal(rows.length, 1, '有生效人设的会话应在 hover 卡里渲染一行')
+  const text = textOf(rows[0])
+  assert.ok(text.includes(zh['sidebar.personaRow']), `应带「人设」标签，实际「${text}」`)
+  assert.ok(text.includes('自驱型协作者'), `应显示人设名，实际「${text}」`)
+  // 图标与 header 共用同一份几何（同一个 soulMask 产物）
+  assert.equal(findAllByClass(rows[0], 'soul-hover-persona-icon').length, 1, '应带面具图标')
+
+  // ② 解析不到人设 → 渲染 null（宿主卡里不多一行空壳）
+  tree = await renderHover('session-not-in-list')
+  assert.equal(
+    findAllByClass(tree, 'soul-hover-persona').length,
+    0,
+    '解析不到人设时不应占用宿主卡片的一行'
+  )
+
+  // ③ 与行尾徽标共用同一套取数（不得各写一份，否则会出现「徽标有、卡里没有」）
+  const region = source.slice(
+    source.indexOf('function SoulSessionPersonaHover'),
+    source.indexOf('function SoulQuickToggle')
+  )
+  assert.ok(
+    region.includes('useSessionRowPersona('),
+    'hover 卡必须复用 useSessionRowPersona —— 与行尾徽标同一份数据/降级规则'
+  )
 })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

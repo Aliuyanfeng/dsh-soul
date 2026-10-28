@@ -956,6 +956,11 @@ window.__ModuleLoader__.load({
       // 侧栏会话行 hover 面具徽标（0.9.0-ab）：与行内其它 hover 按钮对齐
       '.soul-sidebar-persona-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-sidebar-persona-badge-icon{display:block}',
+      // hover 信息卡里的「人设」一行（0.9.0-aj）：与宿主卡片正文同规格
+      '.soul-hover-persona{display:flex;align-items:center;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
+      '.soul-hover-persona-icon{flex:none;opacity:.75}',
+      '.soul-hover-persona-label{flex:none}',
+      '.soul-hover-persona-name{color:var(--dsw-alias-label-primary);font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.soul-session-persona-label-scope{flex:none;font-size:11px;opacity:.8}',
       '@container (width<=540px){.soul-session-persona-label{display:none}}',
       // 错误提示：颜色改用宿主真实存在的 state-error-primary（原先引用不存在的 token ⇒ 渲染成黑色）
@@ -1809,6 +1814,7 @@ window.__ModuleLoader__.load({
       'notice.personaSavedAndApplied': '已保存并应用预设「{name}」。',
       'personas.applyAfterSave': '保存后立即应用',
       'sidebar.personaTip': '人设：{name}',
+      'sidebar.personaRow': '人设',
       'personas.applyAfterSaveHint': '不勾选则保留当前配置不变（表单恢复到已保存的设置）',
       'notice.personaUsed': '已应用预设「{name}」。',
       'notice.personaUnchanged': '预设与当前配置一致。',
@@ -2138,6 +2144,7 @@ window.__ModuleLoader__.load({
       'notice.personaSavedAndApplied': 'Saved and applied persona "{name}".',
       'personas.applyAfterSave': 'Apply immediately after saving',
       'sidebar.personaTip': 'Persona: {name}',
+      'sidebar.personaRow': 'Persona',
       'personas.applyAfterSaveHint': 'Leave unchecked to keep the current config unchanged (the form reverts to the saved settings)',
       'notice.personaUsed': 'Applied persona "{name}".',
       'notice.personaUnchanged': 'Persona matches current config.',
@@ -3644,6 +3651,34 @@ window.__ModuleLoader__.load({
     // 只读：会话的 composition 一旦开始就固定了，header 里放可切换控件会承诺
     //   宿主拒绝兑现的事（这是宿主 AgentPresetLabel 的原话，理由同样成立）。
     //   要改人设去「人设」tab 或设置页。
+    // -------------------------------------------------------------------------
+    // 面具图标几何（唯一来源）
+    // -------------------------------------------------------------------------
+    //
+    // 这个面具在三个地方出现：会话 header 标签、侧栏会话行徽标、侧栏面板图标。
+    // 之前各处各抄一份 path，结果「下巴改圆」只改了 header，另两处仍用尖下巴 ——
+    // 同一副面具在界面上长出两种轮廓（用户实测发现）。现在只留这一份。
+    //
+    // 造型：戏剧双面 —— 左眼笑（上弯）、右眼哭（下弯）、嘴左高右低；盾形圆下巴。
+    const SOUL_MASK_PATHS = [
+      'M2.2 3.0 C4.2 1.8 11.8 1.8 13.8 3.0 C14.4 6.4 13.0 11.4 11.4 12.4 C10.2 13.1 9.2 13.4 8.0 13.4 C6.8 13.4 5.8 13.1 4.6 12.4 C3.0 11.4 1.6 6.4 2.2 3.0 Z',
+      'M4.0 6.0 C4.7 5.2 6.1 5.2 6.8 6.0',
+      'M9.2 5.6 C9.9 6.4 11.3 6.4 12.0 5.6',
+      'M4.6 9.6 C6.0 10.2 9.0 9.6 11.2 8.6'
+    ]
+
+    /** 渲染面具 SVG。props 里的宽高/类名/内联样式原样透传，描边规格在此统一。 */
+    const soulMask = (props) => e('svg', {
+      viewBox: '0 0 16 16',
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 1.4,
+      strokeLinecap: 'round',
+      strokeLinejoin: 'round',
+      'aria-hidden': true,
+      ...(props || {})
+    }, ...SOUL_MASK_PATHS.map((d, i) => e('path', { key: i, d })))
+
     function SoulSessionPersonaLabel(props) {
       const { useSoulController, controller } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
@@ -3728,30 +3763,12 @@ window.__ModuleLoader__.load({
         // 「戴上面具扮演另一个角色」+ 一张脸半笑半哭，比 agent-preset 图标更准确
         // 地表达「人设」，也避免与「创造模式」标签撞图标。stroke 用 currentColor。
         // 渲染验证：Chrome headless 截 96/28/14px 三档，14px 下三笔都清晰。
-        e('svg', {
+        soulMask({
           className: 'soul-session-persona-label-icon',
           width: 14,
           height: 14,
-          viewBox: '0 0 16 16',
-          fill: 'none',
-          stroke: 'currentColor',
-          strokeWidth: 1.5,
-          strokeLinecap: 'round',
-          strokeLinejoin: 'round',
-          'aria-hidden': true
-        },
-          // 主体：微倾斜的盾形（倾斜 = 戏剧感）。
-          // 0.9.0-y：底部从尖角改圆 —— 原两条曲线汇聚到尖点 (8,13.8)，观感尖锐；
-          // 改为两侧曲线止于 (11.4,12.4) / (4.6,12.4)，中间用一段平缓弧相连，
-          // 下巴呈现圆弧而不是尖。
-          e('path', { d: 'M2.2 3.0 C4.2 1.8 11.8 1.8 13.8 3.0 C14.4 6.4 13.0 11.4 11.4 12.4 C10.2 13.1 9.2 13.4 8.0 13.4 C6.8 13.4 5.8 13.1 4.6 12.4 C3.0 11.4 1.6 6.4 2.2 3.0 Z' }),
-          // 左眼：笑（上弯弧）；右眼：哭（下弯弧）—— 一张脸两种情绪，
-          // 即戏剧「喜剧 + 悲剧」双面。两弧相交于中间，14px 下仍清晰。
-          e('path', { d: 'M4.0 6.0 C4.7 5.2 6.1 5.2 6.8 6.0' }),
-          e('path', { d: 'M9.2 5.6 C9.9 6.4 11.3 6.4 12.0 5.6' }),
-          // 嘴：左高右低的斜线（半笑半哭的暧昧感）
-          e('path', { d: 'M4.6 9.6 C6.0 10.2 9.0 9.6 11.2 8.6' })
-        ),
+          strokeWidth: 1.5
+        }),
         e('span', { className: 'soul-session-persona-label-name' }, displayPersona),
         scopeTag && e('span', { className: 'soul-session-persona-label-scope' }, scopeTag)
       )
@@ -3779,22 +3796,7 @@ window.__ModuleLoader__.load({
         'aria-hidden': true
       },
         // 面具（与 header 标签同一副「喜剧+悲剧」），stroke: currentColor
-        e('svg', {
-          width: '100%',
-          height: '100%',
-          viewBox: '0 0 16 16',
-          fill: 'none',
-          stroke: 'currentColor',
-          strokeWidth: 1.4,
-          strokeLinecap: 'round',
-          strokeLinejoin: 'round',
-          'aria-hidden': true
-        },
-          e('path', { d: 'M2.2 3.0 C4.2 1.8 11.8 1.8 13.8 3.0 C14.4 6.6 12.4 11.6 8.0 13.8 C3.6 11.6 1.6 6.6 2.2 3.0 Z' }),
-          e('path', { d: 'M4.0 6.0 C4.7 5.2 6.1 5.2 6.8 6.0' }),
-          e('path', { d: 'M9.2 5.6 C9.9 6.4 11.3 6.4 12.0 5.6' }),
-          e('path', { d: 'M4.6 9.6 C6.0 10.2 9.0 9.6 11.2 8.6' })
-        )
+        soulMask({ width: '100%', height: '100%' })
       )
     }
 
@@ -3818,22 +3820,27 @@ window.__ModuleLoader__.load({
     // 拉取会打出一串重复请求。同一时刻只允许一个在飞。
     let sidebarBindingsRequest = null
 
-    function SoulSessionPersonaBadge(props) {
+    /**
+     * 会话行相关的共享取数（行尾徽标 + 宿主 hover 信息卡两个槽位共用）。
+     *
+     * 返回该行的会话 id 与生效人设；数据没拉过时顺手补拉一次。
+     * 抽成一处是因为两个槽位读的是同一份数据、同一套降级规则 ——
+     * 各写一份迟早出现「徽标有、hover 卡没有」这类分叉。
+     */
+    function useSessionRowPersona(props) {
       const { useSoulController, controller } = props
-      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
-      const state = useSoulController((state) => state)
+      const state = useSoulController((s) => s)
       const enabled = state.enabled === true
 
       // sessionId 的两种注入形态都接住：
       // ① 宿主把 owner props（SessionRowOwnerProps）并入组件 props —— 文档行为；
       // ② 若某个宿主版本改把它交给 inject，则由 inject 透传（见注册处）。
-      // 只认非空字符串，避免把 ''/undefined 当成「无会话」以外的含义。
       const sessionId = typeof props.sessionId === 'string' && props.sessionId !== ''
         ? props.sessionId
         : null
 
       // 侧栏可能先于插件详情页挂载：那时 store.bindings 还是 null（从没拉过），
-      // bindingsSessions 恒为空 ⇒ 徽标永远不渲染（用户实测「看不到」的直接成因）。
+      // bindingsSessions 恒为空 ⇒ 两个槽位都渲染 null（用户实测「看不到」的成因）。
       // 这里补一次拉取：null 才拉，拉过（含「确实没有绑定」）就交给详情页那只。
       React.useEffect(() => {
         if (!enabled) return
@@ -3845,40 +3852,55 @@ window.__ModuleLoader__.load({
           .finally(() => { sidebarBindingsRequest = null })
       }, [enabled, state.bindings])
 
-      // 该会话的生效人设：store.bindingsSessions 里按 id 查
-      const row = (state.bindingsSessions || []).find(
-        (x) => x && x.id === sessionId
-      )
-      const persona = row && typeof row.persona === 'string' ? row.persona : null
+      const row = sessionId === null
+        ? null
+        : (state.bindingsSessions || []).find((x) => x && x.id === sessionId)
+      const persona = row && typeof row.persona === 'string' && row.persona !== ''
+        ? row.persona
+        : null
+      return { enabled, sessionId, persona }
+    }
+
+    function SoulSessionPersonaBadge(props) {
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const { enabled, persona } = useSessionRowPersona(props)
       // 无会话 / 人设未知 / 个性化关闭 ⇒ 不渲染（不占 hover 位）
       if (!enabled || !persona) return null
 
-      const tooltip = t('sidebar.personaTip', { name: persona })
+      // 只留无障碍标签，**不留 title**：人设已经显示在宿主的 hover 信息卡里
+      // （sidebar.session.row.hover），再挂一个 title 气泡会让 hover 时冒出两个弹窗。
+      const label = t('sidebar.personaTip', { name: persona })
 
       return e('span', {
         className: 'soul-sidebar-persona-badge',
         // 只读标识：不做动作（点击仍会落在行上，避免误触打开会话）
-        title: tooltip,
-        'aria-label': tooltip
+        'aria-label': label
       },
-        e('svg', {
-          className: 'soul-sidebar-persona-badge-icon',
-          width: 13,
-          height: 13,
-          viewBox: '0 0 16 16',
-          fill: 'none',
-          stroke: 'currentColor',
-          strokeWidth: 1.4,
-          strokeLinecap: 'round',
-          strokeLinejoin: 'round',
-          'aria-hidden': true
-        },
-          // 与 header 标签同一副「喜剧+悲剧」面具
-          e('path', { d: 'M2.2 3.0 C4.2 1.8 11.8 1.8 13.8 3.0 C14.4 6.6 12.4 11.6 8.0 13.8 C3.6 11.6 1.6 6.6 2.2 3.0 Z' }),
-          e('path', { d: 'M4.0 6.0 C4.7 5.2 6.1 5.2 6.8 6.0' }),
-          e('path', { d: 'M9.2 5.6 C9.9 6.4 11.3 6.4 12.0 5.6' }),
-          e('path', { d: 'M4.6 9.6 C6.0 10.2 9.0 9.6 11.2 8.6' })
-        )
+        soulMask({ className: 'soul-sidebar-persona-badge-icon', width: 13, height: 13 })
+      )
+    }
+
+    // -------------------------------------------------------------------------
+    // 宿主 hover 信息卡里的「人设」一行（0.9.0-aj）
+    // -------------------------------------------------------------------------
+    //
+    // 槽位：sidebar.session.row.hover —— kind:'list' / scope:'root'，宿主文档：
+    // "Section of the Session row's hover card between its relative time and its
+    // trailing status line. Mounted only while that card is open."
+    // ui-workspace 自己的自动任务摘要（schedule-tasks）也在这里。
+    //
+    // 为什么放这里：宿主 hover 会话行会弹出信息卡（标题 / 运行状态 / 几分钟前）。
+    // 人设属于同一类「这一行现在是什么状态」的信息，塞进宿主的卡里比另起一个
+    // 自绘 tooltip 更一致 —— 用户只看到一张卡，而不是两张轮流冒出来。
+    // 卡片只在打开时挂载 ⇒ 这里的取数是真正的按需，不占常驻开销。
+    function SoulSessionPersonaHover(props) {
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const { enabled, persona } = useSessionRowPersona(props)
+      if (!enabled || !persona) return null
+      return e('div', { className: 'soul-hover-persona' },
+        soulMask({ className: 'soul-hover-persona-icon', width: 12, height: 12 }),
+        e('span', { className: 'soul-hover-persona-label' }, t('sidebar.personaRow')),
+        e('span', { className: 'soul-hover-persona-name', title: persona }, persona)
       )
     }
 
@@ -5979,6 +6001,21 @@ window.__ModuleLoader__.load({
       //   label: () => navT('nav.label'),
       //   inject: () => ({})
       // }, SoulPanelIcon))
+
+      // 宿主 hover 信息卡里的「人设」一行（0.9.0-aj）。
+      // 与行尾徽标共用 useSessionRowPersona：同一份数据、同一套降级规则。
+      ctx.slots.inject('sidebar.session.row.hover', () => ctx.slots.register({
+        name: 'sidebar.session.row.hover',
+        id: 'soul-persona',
+        order: 50,
+        locale: NS,
+        inject: () => ({
+          hooks: {
+            soulController: controller.store
+          },
+          controller
+        })
+      }, SoulSessionPersonaHover))
 
       ctx.slots.inject('sidebar.workspaces.session.row.action', () => ctx.slots.register({
         name: 'sidebar.workspaces.session.row.action',
