@@ -83,7 +83,21 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 - **会话覆盖回收**：三阶段保守状态机（发现候选 → 30 天宽限期 → 可回收），判定依据是 `sessionPersistence.list()`（扫磁盘），**绝不使用 `agents.list()`** —— 那是 live registry，会话切走就消失，用它判定会误删正在使用的覆盖。双条件：时间够**且**本轮扫描完整；扫描不完整时状态机对所有条目返回 keep。双入口：`/soul sessions [--apply]` 与详情页按钮，默认 dry-run，打开详情页不自动扫描
 - **工作区覆盖放 `soul-config.json`、会话覆盖放 sidecar**：前者是配置（低频、有上限、用户在意变更历史），后者是状态（高频、无上限、随会话生灭）。性质不同，存储边界不同
 
-**界面打磨（10/20–10/29 的后续 60+ 次提交）**
+**修复**
+
+- **工作区绑定误报「人设已不存在」**：失效判断只查了 `config.personas`（磁盘上的自建预设），而内置预设只存在于代码里的 `BUILTIN_PERSONAS` ⇒ 绑定指向内置预设（自驱型协作者 / 头脑风暴伙伴）被判成失效、标红。改用 `mergePersonas` 的合并视图
+- **侧栏图标顶掉插件图标**：注册 `sidebar.panellist` 时复用了宿主的 id `'plugins'` —— 文档里 "reusing a shipped id puts you in THAT cell" 的含义是**替换该单元**而非并存，结果插件管理器的图标消失。已回滚为自己的 id，并暂时隐藏该入口（等独立 main 面板做好再启用）
+- **工作区人设区块整块消失（React #130）**：图标名写成 `ui.IconRefreshOutline14` / `ui.IconTrashOutline16`（照抄 npm 包的 `.d.ts`），但宿主 **seed 给插件的模块表**只有 `*Regular` / `*Medium` 后缀 ⇒ `undefined` ⇒ 渲染 undefined 组件 ⇒ 宿主卸载整个 slot entry。**类型声明 ≠ 运行时可用**，判据要以宿主 bundle 的 `TU` 定义为准
+- **测试桩掩盖了上面那个 #130**：`verify-client` 的 `ui` 桩原先是 Proxy 无脑返回函数，拼错的图标名静默通过。已改为白名单 + 校验，访问未声明名字直接抛错
+- **绑定按钮悬停时整块变黑**：自绘 `<button>` 继承了宿主基础按钮样式（实心主色底 + 白字），插件又把文字色压成近黑 ⇒ hover 时深底深字，整块全黑。四处按钮统一改用宿主 `ui.Button`
+- **切换预设后会话 header 的人设名不更新**：组件自己按 `[sessionId]` 依赖去拉，作用域变化时不会重算。改为全局 store 单一数据源（`sessionScopes`），store 必须换引用才触发重渲染
+- **输入框人设标签的层级标注整块不显示**：`inject` 对 `session` 作用域收到的是**位置参数** `[sessionId]`，代码按 props 对象解构 ⇒ 恒 `undefined`
+- **内置徽标在卡面上位置漂移**：`.soul-persona-badge` 有两套外观（卡面 absolute/玻璃底/白字、卡背头 描边式/inline/灰字），卡背那条**不限定上下文**，覆盖了卡面样式而自己不写 `position` —— 徽标变成「absolute 定位 + 描边式字号」的混合体在插画上漂。会话 tab 的卡面徽标因此漂移（它没有 `.soul-persona-back-head` 包裹，`position:static` 的重置不生效）。修法：卡背规则限定到 `.soul-persona-back-head` 内
+- **会话覆盖读取失败时显示过期数据**：reload 失败不清空 view，界面继续渲染上一次成功的列表。现在失败即清空
+- **React error #310（会话「人设」tab 崩溃）**：hook 写在 `if (view === null) return` 之后，首屏与加载后两次渲染的 hook 数不同。已提到所有提前 return 之前
+- **CSS token 引用三个宿主不存在的变量**（`--dsw-font-mono` / `--dsw-alias-label-warning` / `--dsw-alias-state-warning-primary`）：`var()` 静默回退，路径掉字体、警告色变继承色
+
+**变更**
 
 会话「人设」tab 与周边标识做了整体重做，目标是「和宿主同一套视觉语言」：
 
@@ -98,17 +112,10 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 - **变更记录改分页**：原先「先铺 20 条 + 还有 N 条 → 全部摊开」，摊开后比详情页还长且无法收起。现为每页 20 条 + 分页器；记录被清空或保留条数调小时页码自动收敛到最后一页
 - **工作区绑定按钮统一到宿主 `ui.Button`**：自绘 `<button>` 会继承宿主基础按钮样式（实心主色底 + 白字），插件又覆盖文字色 ⇒ hover 时深底深字、整块全黑
 - **工作区人设的改绑/解绑改为宿主同款文字按钮**：照抄设置-模型页的「编辑 / 删除」（`secondaryButton`：描边 + 深色文字 + 浅灰悬停；`dangerButton`：无描边 + 红字 + 浅红悬停，均 28px 高 / 12px 字号）。解绑二次确认态文字变「确认解绑…」并常亮浅红底
-
-**修复**
-
-- **工作区绑定误报「人设已不存在」**：失效判断只查了 `config.personas`（磁盘上的自建预设），而内置预设只存在于代码里的 `BUILTIN_PERSONAS` ⇒ 绑定指向内置预设（自驱型协作者 / 头脑风暴伙伴）被判成失效、标红。改用 `mergePersonas` 的合并视图
-- **侧栏图标顶掉插件图标**：注册 `sidebar.panellist` 时复用了宿主的 id `'plugins'` —— 文档里 "reusing a shipped id puts you in THAT cell" 的含义是**替换该单元**而非并存，结果插件管理器的图标消失。已回滚为自己的 id，并暂时隐藏该入口（等独立 main 面板做好再启用）
-- **工作区人设区块整块消失（React #130）**：图标名写成 `ui.IconRefreshOutline14` / `ui.IconTrashOutline16`（照抄 npm 包的 `.d.ts`），但宿主 **seed 给插件的模块表**只有 `*Regular` / `*Medium` 后缀 ⇒ `undefined` ⇒ 渲染 undefined 组件 ⇒ 宿主卸载整个 slot entry。**类型声明 ≠ 运行时可用**，判据要以宿主 bundle 的 `TU` 定义为准
-- **测试桩掩盖了上面那个 #130**：`verify-client` 的 `ui` 桩原先是 Proxy 无脑返回函数，拼错的图标名静默通过。已改为白名单 + 校验，访问未声明名字直接抛错
-- **内置徽标在卡面上位置漂移**：`.soul-persona-badge` 有两套外观（卡面 absolute/玻璃底/白字、卡背头 描边式/inline/灰字），卡背那条**不限定上下文**，覆盖了卡面样式而自己不写 `position` —— 徽标变成「absolute 定位 + 描边式字号」的混合体在插画上漂。会话 tab 的卡面徽标因此漂移（它没有 `.soul-persona-back-head` 包裹，`position:static` 的重置不生效）。修法：卡背规则限定到 `.soul-persona-back-head` 内
-- **会话覆盖读取失败时显示过期数据**：reload 失败不清空 view，界面继续渲染上一次成功的列表。现在失败即清空
-- **React error #310（会话「人设」tab 崩溃）**：hook 写在 `if (view === null) return` 之后，首屏与加载后两次渲染的 hook 数不同。已提到所有提前 return 之前
-- **CSS token 引用三个宿主不存在的变量**（`--dsw-font-mono` / `--dsw-alias-label-warning` / `--dsw-alias-state-warning-primary`）：`var()` 静默回退，路径掉字体、警告色变继承色
+- **「存为预设」保存的是刚改的内容**：原先快照只取当前已保存配置，改完表单直接点「存为预设」会存成上一个预设的内容。现在客户端把草稿一并提交、服务端校验并合并
+- **新增「更新到预设」**：把当前编辑内容覆盖写回一个已有自建预设（内置预设不可改），保存后表单回退到该预设
+- **「存为预设」增加「保存后立即应用」**：勾选则保存后立刻切换过去，不勾选则表单回退——两种意图各有明确出口，不再互相矛盾
+- **重复预设硬门禁**：要保存的内容与已有预设（含内置）投影相同时拒绝创建，避免预设库堆出多条一模一样的人设
 
 **暂缓**
 

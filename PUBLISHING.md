@@ -10,7 +10,7 @@
 - `dsh.bundle.patch`
 - `files`
 
-发布包至少应包含（当前 41 个文件）：
+发布包至少应包含（当前 40 个文件）：
 
 ```text
 index.mjs
