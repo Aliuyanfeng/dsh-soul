@@ -1375,6 +1375,17 @@ window.__ModuleLoader__.load({
       '.soul-ws-actions{display:flex;align-items:center;gap:8px;flex:none}',
       '.soul-ws-persona{color:var(--dsw-alias-brand-primary);font-size:12px;line-height:18px}',
       '.soul-ws-unbound{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
+      // 工作区卡片上的图标按钮（0.9.0-an）：规格逐项照抄宿主设置-模型页的
+      // .iconButton / .iconButtonDanger（ui-settings-models 的 CSS 模块）：
+      //   平时只有次要灰图标（无边框、无底色）；悬停才出浅底 + 主色图标；
+      //   删除悬停走 danger 浅底 + 红色图标。与宿主行内操作完全同构。
+      '.soul-ws-iconbtn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}',
+      '.soul-ws-iconbtn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.soul-ws-iconbtn:focus-visible{box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline:none}',
+      '.soul-ws-iconbtn:disabled{cursor:default;opacity:.4}',
+      '.soul-ws-iconbtn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}',
+      // 待确认：悬停色已被占用，用「常亮红」表达「再点一次就删」
+      '.soul-ws-iconbtn[data-armed="true"]{color:var(--dsw-alias-state-error-primary)}',
       '.soul-ws-action{box-sizing:border-box;display:inline-flex;align-items:center;height:26px;padding:0 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
       // ⚠️ hover **只改边框，不改文字色**（0.9.0-am）。
       // 原先这里还有 color:brand-primary —— 主色按钮（深底白字）hover 时文字被压成
@@ -3464,18 +3475,29 @@ window.__ModuleLoader__.load({
               ws.bound
                 ? e(Fragment, null,
                   e('span', { className: 'soul-ws-persona' }, ws.persona || t('workspaces.bound')),
+                  // 0.9.0-an：改绑 / 解绑改为**图标按钮**，规格照抄宿主设置-模型页的
+                  // 「编辑 / 删除」（ui-settings-models 的 .iconButton 族）：
+                  //   平时 = 次要灰图标（无边框无底色）；悬停 = 浅底 + 主色图标；
+                  //   删除悬停 = danger 浅底 + 红色图标。
                   e('button', {
                     type: 'button',
-                    className: 'soul-ws-action',
+                    className: 'soul-ws-iconbtn',
+                    title: t('workspaces.rebind'),
+                    'aria-label': t('workspaces.rebind'),
                     disabled: busy,
                     onClick: () => setPicking(isPicking ? null : ws.workspaceId)
-                  }, t('workspaces.rebind')),
+                  }, e(ui.IconRefreshOutline14, { size: 14 })),
                   e('button', {
                     type: 'button',
-                    className: armed ? 'soul-ws-action soul-ws-action-armed' : 'soul-ws-action',
+                    className: armed ? 'soul-ws-iconbtn soul-ws-iconbtn-danger' : 'soul-ws-iconbtn',
+                    // 图标按钮没有文字，待确认的语义只能靠 tooltip 与常亮红表达 ——
+                    // 少了这条，用户看不到「再点一次才真删」。
+                    title: t(armed ? 'workspaces.unbindArmed' : 'workspaces.unbind'),
+                    'aria-label': t(armed ? 'workspaces.unbindArmed' : 'workspaces.unbind'),
+                    'data-armed': armed ? 'true' : 'false',
                     disabled: busy,
                     onClick: () => { void unbind(ws) }
-                  }, t(armed ? 'workspaces.unbindArmed' : 'workspaces.unbind'))
+                  }, e(ui.IconTrashOutline16, { size: 14 }))
                 )
                 : e(Fragment, null,
                   e('span', { className: 'soul-ws-unbound' }, t('workspaces.unbound')),

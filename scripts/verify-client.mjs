@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 51
+const EXPECTED_ASSERTIONS = 52
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -2984,14 +2984,19 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     // ⑤ 解绑：第一次点只 arm，第二次才发请求
     tree = await render()
     const boundCard = findAllByClass(tree, 'soul-ws-card')[2]
-    const unbindBtn = () => findAllByClass(tree, 'soul-ws-action').find((b) => textOf(b) === zh['workspaces.unbind'])
-    assert.ok(unbindBtn(), '已绑定的卡片应有「解除绑定」')
+    // 解绑已改为**图标按钮**（0.9.0-an，照抄宿主设置-模型页的编辑/删除）：
+    // 没有文字，语义在 aria-label / title 上。按 aria-label 找，而不是按文案。
+    const unbindBtn = () => findAllByClass(tree, 'soul-ws-iconbtn')
+      .find((b) => b.props?.['aria-label'] === zh['workspaces.unbind'])
+    assert.ok(unbindBtn(), '已绑定的卡片应有「解除绑定」图标按钮')
     await unbindBtn().props.onClick()
     tree = await render()
     assert.equal(posts.length, 1, '第一次点解绑不得发请求')
-    const armed = findAllByClass(tree, 'soul-ws-action-armed')
+    // armed 态：同一个按钮带上 danger 类与 data-armed 标记，tooltip 换成「再点一次」文案
+    const armed = findAllByClass(tree, 'soul-ws-iconbtn-danger')
     assert.equal(armed.length, 1, '第一次点后应进入 armed 态')
-    assert.equal(textOf(armed[0]), zh['workspaces.unbindArmed'])
+    assert.equal(armed[0].props['data-armed'], 'true', 'armed 态应有 data-armed 标记')
+    assert.equal(armed[0].props['aria-label'], zh['workspaces.unbindArmed'], 'armed 态的无障碍标签应换成确认文案')
     await armed[0].props.onClick()
     tree = await render()
     assert.equal(posts.length, 2, '第二次点才发解绑请求')
@@ -3444,6 +3449,45 @@ await check('C56 工作区人设按钮：hover 不得改文字色（深底白字
     /variant: 'outline',\s*size: 'sm',[\s\S]{0,200}?workspaces\.bind/.test(source),
     '「绑定人设」必须走宿主 ui.Button 的 outline 变体'
   )
+})
+
+await check('C57 改绑/解绑图标按钮：规格照抄宿主设置-模型页的编辑/删除（.iconButton 族）', async () => {
+  // 用户要求：这两个按钮参考「设置-模型」里的「编辑 / 删除」。
+  // 宿主那套（ui-settings-models 的 CSS 模块）是：
+  //   .iconButton{width:28px;height:28px;border:none;background:0 0;
+  //               color:var(--dsw-alias-label-tertiary)}
+  //   .iconButton:hover:not(:disabled){background:interactive-bg-hover;
+  //               color:var(--dsw-alias-label-primary)}
+  //   .iconButton:disabled{opacity:.4;cursor:default}
+  //   .iconButtonDanger:hover:not(:disabled){background:...-hover-danger;
+  //               color:state-error-primary}
+  // 即「平时灰图标、悬停才出浅底与主色」，而不是常驻描边/实心按钮。
+  const rule = (cls) => {
+    const m = source.match(new RegExp('\\.' + cls + '\\{[^}]*\\}'))
+    assert.ok(m, '缺少样式规则 .' + cls)
+    return m[0]
+  }
+  const base = rule('soul-ws-iconbtn')
+  assert.ok(/width:28px/.test(base) && /height:28px/.test(base), '尺寸应为 28×28（与宿主 .iconButton 一致）')
+  assert.ok(/border:none/.test(base), '不得有边框（宿主 .iconButton 是 border:none）')
+  assert.ok(/background:transparent/.test(base), '默认透明底（宿主 .iconButton 是 background:0 0）')
+  assert.ok(
+    /color:var\(--dsw-alias-label-tertiary\)/.test(base),
+    '默认图标色应为次要灰 label-tertiary（宿主同款）'
+  )
+  const hover = rule('soul-ws-iconbtn:hover:not\\(:disabled\\)')
+  assert.ok(/interactive-bg-hover/.test(hover), '悬停底色应为 interactive-bg-hover（宿主同款）')
+  assert.ok(/label-primary/.test(hover), '悬停图标色应变 label-primary（宿主同款）')
+  const danger = rule('soul-ws-iconbtn-danger:hover:not\\(:disabled\\)')
+  assert.ok(/interactive-bg-hover-danger/.test(danger), '删除悬停底色应为 danger 版（宿主同款）')
+  assert.ok(/state-error-primary/.test(danger), '删除悬停图标色应转红（宿主同款）')
+  // 两个按钮都用图标（无文字）：改绑 = 刷新箭头，解绑 = 垃圾桶
+  assert.ok(
+    /IconRefreshOutline14[\s\S]{0,120}workspaces\.rebind/.test(source) ||
+    /workspaces\.rebind[\s\S]{0,200}IconRefreshOutline14/.test(source),
+    '改绑按钮应用 IconRefreshOutline14'
+  )
+  assert.ok(/IconTrashOutline16/.test(source), '解绑按钮应用 IconTrashOutline16（与宿主删除同图标）')
 })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
