@@ -786,6 +786,12 @@ window.__ModuleLoader__.load({
         return await this.postJSON('/api/soul/workspaces', null, { method: 'GET' })
       }
 
+      // 总览面板的一次性数据源（0.9.0-ap）：工作区 + 活动会话 + 预设库
+      // 在同一时刻的快照。分开拉三次的话，用户正在切会话时拼出来的画面会自相矛盾。
+      async fetchOverview() {
+        return await this.postJSON('/api/soul/overview', null, { method: 'GET' })
+      }
+
       async saveWorkspacePersona(workspaceId, persona) {
         return await this.postJSON('/api/soul/workspaces', { workspaceId, persona })
       }
@@ -971,6 +977,73 @@ window.__ModuleLoader__.load({
       '.soul-hover-persona-icon{flex:none;display:inline-flex;align-items:center;height:16px;color:var(--dsw-static-neutral-bluish-300)}',
       '.soul-hover-persona-label{flex:none;color:var(--dsw-static-neutral-bluish-300);font-size:12px;line-height:16px}',
       '.soul-hover-persona-name{min-width:0;color:var(--dsw-static-neutral-bluish-00);font-size:12px;line-height:16px;overflow-wrap:break-word}',
+
+      // ==================== 侧栏「Soul 人设总览」面板（0.9.0-ap）====================
+      // 版式照抄宿主设置页：无外层盒子，分组用卡片（.5px 描边 + radius-lg）。
+      '.soul-ov{display:flex;flex-direction:column;gap:12px;max-width:var(--dsh-chat-content-width,760px);width:100%;margin:0 auto;padding:20px 24px 32px;box-sizing:border-box;color:var(--dsw-alias-label-primary)}',
+      '.soul-ov-head{display:flex;align-items:center;gap:10px;margin-bottom:4px}',
+      '.soul-ov-title{margin:0;font-size:16px;line-height:24px;font-weight:600}',
+      '.soul-ov-sub{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;margin-left:auto}',
+      // 区块卡片
+      '.soul-ov-card{border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);padding:14px 16px}',
+      '.soul-ov-card-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}',
+      '.soul-ov-card-head h3{margin:0;font-size:13px;line-height:20px;font-weight:600}',
+      '.soul-ov-count{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px}',
+      '.soul-ov-spacer{margin-left:auto}',
+      // 当前生效：插画 + 名称 + 特质
+      '.soul-ov-current{display:flex;align-items:flex-start;gap:12px}',
+      // 插画 64px 见方：与设置页人设卡同源（/api/soul/persona-art/<name>）
+      '.soul-ov-art{width:64px;height:64px;flex:none;border-radius:var(--dsw-radius-xl);overflow:hidden;border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-bg-module-platform)}',
+      '.soul-ov-art img{display:block;width:100%;height:100%;object-fit:cover}',
+      // 插画缺失时的兜底：同一个盒子里放面具，不至于塌成空白
+      '.soul-ov-art-fallback{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary)}',
+      '.soul-ov-cur-body{flex:1;min-width:0}',
+      '.soul-ov-cur-name{display:flex;align-items:center;gap:8px;font-size:14px;line-height:22px;font-weight:700}',
+      '.soul-ov-scope{font-size:11px;line-height:18px;padding:0 6px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-weight:400}',
+      '.soul-ov-traits{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px;margin-top:2px}',
+      // 级联：工作区 → 会话
+      '.soul-ov-tree{display:flex;flex-direction:column;gap:2px}',
+      '.soul-ov-ws{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:var(--dsw-radius-sm);cursor:pointer;background:transparent;border:none;font:inherit;color:inherit;text-align:left;width:100%}',
+      '.soul-ov-ws:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      // 失效绑定的工作区：左侧一道红条，扫视时立刻能发现
+      '.soul-ov-ws[data-invalid="true"]{box-shadow:inset 2px 0 0 var(--dsw-alias-state-error-primary)}',
+      '.soul-ov-ws[data-invalid="true"]:hover{background:var(--dsw-alias-interactive-bg-hover-danger)}',
+      '.soul-ov-caret{width:14px;height:14px;flex:none;color:var(--dsw-alias-label-tertiary);transition:transform .12s ease;display:flex;align-items:center;justify-content:center}',
+      '.soul-ov-ws[aria-expanded="true"] .soul-ov-caret{transform:rotate(90deg)}',
+      // 名字与路径竖排一组：路径不与右侧胶囊抢宽度（否则两者都会被挤成 0）
+      '.soul-ov-ws-main{display:flex;flex-direction:column;gap:1px;flex:1 1 0%;min-width:0;width:100%}',
+      '.soul-ov-ws-title{display:block;width:100%;min-width:0;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.soul-ov-ws-path{display:block;width:100%;min-width:0;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:14px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.soul-ov-arrow{color:var(--dsw-alias-label-tertiary);flex:none}',
+      '.soul-ov-pill{display:inline-flex;align-items:center;flex:0 1 auto;min-width:0;max-width:220px;padding:1px 7px;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font-size:11px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      // 跟随全局：虚线胶囊（未绑定，与「绑定了某个预设」区分开）
+      '.soul-ov-pill-inherit{background:transparent;border:.5px dashed var(--dsw-alias-border-l3);color:var(--dsw-alias-label-secondary)}',
+      '.soul-ov-pill-bad{background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}',
+      '.soul-ov-ws-count{color:var(--dsw-alias-label-tertiary);font-size:11px;flex:none;white-space:nowrap}',
+      '.soul-ov-ws-active{color:var(--dsw-alias-label-tertiary);font-size:11px;flex:none;white-space:nowrap;min-width:64px;text-align:right}',
+      // 会话子行
+      '.soul-ov-sessions{display:flex;flex-direction:column;gap:1px;margin:0 0 4px 22px}',
+      '.soul-ov-session{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-secondary)}',
+      '.soul-ov-session:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-ov-dot{width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-border-l3);flex:none}',
+      '.soul-ov-dot-override{background:var(--dsw-alias-brand-primary)}',
+      '.soul-ov-session-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary)}',
+      '.soul-ov-session-src{font-size:11px;color:var(--dsw-alias-label-tertiary);flex:none}',
+      '.soul-ov-session-src-override{color:var(--dsw-alias-brand-primary);font-weight:500}',
+      '.soul-ov-session-persona{font-size:11px;color:var(--dsw-alias-label-secondary);flex:none;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      // 预设库：只读名字胶囊
+      '.soul-ov-lib{margin-top:10px}',
+      '.soul-ov-lib-title{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;margin-bottom:6px}',
+      '.soul-ov-lib-names{display:flex;flex-wrap:wrap;gap:6px}',
+      '.soul-ov-lib-name{padding:1px 8px;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:18px}',
+      // 内置：虚线胶囊（与设置页「内置」标记同一语义）
+      '.soul-ov-lib-name-builtin{background:transparent;border:.5px dashed var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary)}',
+      '.soul-ov-note{margin-top:10px;padding:8px 10px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px}',
+      '.soul-ov-empty{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
+      // 失效行的「修复」按钮：宿主 dangerButton 同族（红字 + 浅红底 + 无描边）
+      '.soul-ov-fix{height:24px;padding:0 8px;border:none;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);cursor:pointer;font:inherit;font-size:11px;line-height:18px;flex:none}',
+      '.soul-ov-fix:hover{background:var(--dsw-alias-interactive-bg-hover-solid)}',
+      '.soul-ov-title-icon{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;color:var(--dsw-alias-label-secondary);flex:none}',
       '.soul-session-persona-label-scope{flex:none;font-size:11px;opacity:.8}',
       '@container (width<=540px){.soul-session-persona-label{display:none}}',
       // 错误提示：颜色改用宿主真实存在的 state-error-primary（原先引用不存在的 token ⇒ 渲染成黑色）
@@ -1541,6 +1614,7 @@ window.__ModuleLoader__.load({
 
     const zh = {
       'nav.label': '个性化',
+      'nav.panelLabel': 'Soul 人设总览',
       'settings.title': '个性化设置',
       'accordion.filled': '项已填写',
       'accordion.empty': '未填写',
@@ -1846,6 +1920,42 @@ window.__ModuleLoader__.load({
       'personas.applyAfterSave': '保存后立即应用',
       'sidebar.personaTip': '人设：{name}',
       'sidebar.personaRow': '人设',
+      // —— 侧栏「Soul 人设总览」面板 ——
+      'ov.title': 'Soul 人设总览',
+      'ov.current': '当前生效',
+      'ov.global': '全局配置',
+      'ov.managePersonas': '管理预设',
+      'ov.workspaces': '工作区绑定',
+      'ov.wsCount': '{count} 个工作区 · 按最近活跃排序',
+      'ov.openDetail': '打开插件详情页',
+      'ov.inheritGlobal': '跟随全局',
+      'ov.invalid': '人设「{name}」已不存在',
+      'ov.fix': '修复 ↗',
+      'ov.fixTitle': '打开插件详情页修复这条绑定',
+      'ov.sessionsCount': '{count} 个会话',
+      'ov.presets': '预设库',
+      'ov.customGroup': '自建（{count}）',
+      'ov.builtinGroup': '内置（{count}）',
+      'ov.saveAs': '存为预设…',
+      'ov.manage': '管理',
+      'ov.loading': '加载中…',
+      'ov.loadFailed': '无法读取总览：{reason}',
+      'ov.emptyWorkspaces': '宿主没有返回任何工作区。',
+      'ov.sessionOverride': '本会话覆盖',
+      'ov.sessionFollowWs': '跟随工作区',
+      'ov.sessionFollowUpper': '跟随上层',
+      'ov.untitledSession': '（未命名会话）',
+      'ov.unassigned': '未归属工作区的会话',
+      'ov.noteActivity': '只列活动会话（宿主 agents.list() 的边界）。工作区行上的会话数来自工作区注册表，可能包含未打开的会话。',
+      'ov.noteActivityUnknown': '读不到会话时间，活跃排序不可用。',
+      'ov.noteInvalid': '失效绑定点「修复」会打开插件详情页 —— 那里能改绑到有效的人设。',
+      'ov.justNow': '刚刚',
+      'ov.minutesAgo': '{n} 分钟前',
+      'ov.hoursAgo': '{n} 小时前',
+      'ov.daysAgo': '{n} 天前',
+      'ov.neverActive': '无会话',
+      'ov.customName': '自定义',
+      'ov.noteActivityHint': '展开可看该工作区下的活动会话。',
       'personas.applyAfterSaveHint': '不勾选则保留当前配置不变（表单恢复到已保存的设置）',
       'notice.personaUsed': '已应用预设「{name}」。',
       'notice.personaUnchanged': '预设与当前配置一致。',
@@ -1894,6 +2004,7 @@ window.__ModuleLoader__.load({
 
     const en = {
       'nav.label': 'Personalization',
+      'nav.panelLabel': 'Soul persona overview',
       'settings.title': 'Personalization Settings',
       'accordion.filled': 'fields filled',
       'accordion.empty': 'No fields set',
@@ -2176,6 +2287,42 @@ window.__ModuleLoader__.load({
       'personas.applyAfterSave': 'Apply immediately after saving',
       'sidebar.personaTip': 'Persona: {name}',
       'sidebar.personaRow': 'Persona',
+      // —— Sidebar "Soul persona overview" panel ——
+      'ov.title': 'Soul persona overview',
+      'ov.current': 'In effect now',
+      'ov.global': 'Global',
+      'ov.managePersonas': 'Manage presets',
+      'ov.workspaces': 'Workspace bindings',
+      'ov.wsCount': '{count} workspaces · by recent activity',
+      'ov.openDetail': 'Open plugin page',
+      'ov.inheritGlobal': 'Follows global',
+      'ov.invalid': 'Persona "{name}" no longer exists',
+      'ov.fix': 'Fix ↗',
+      'ov.fixTitle': 'Open the plugin page to fix this binding',
+      'ov.sessionsCount': '{count} sessions',
+      'ov.presets': 'Presets',
+      'ov.customGroup': 'Custom ({count})',
+      'ov.builtinGroup': 'Built-in ({count})',
+      'ov.saveAs': 'Save as preset…',
+      'ov.manage': 'Manage',
+      'ov.loading': 'Loading…',
+      'ov.loadFailed': 'Cannot read the overview: {reason}',
+      'ov.emptyWorkspaces': 'The host returned no workspaces.',
+      'ov.sessionOverride': 'Session override',
+      'ov.sessionFollowWs': 'Follows workspace',
+      'ov.sessionFollowUpper': 'Follows upper scope',
+      'ov.untitledSession': '(untitled session)',
+      'ov.unassigned': 'Sessions without a workspace',
+      'ov.noteActivity': 'Only live sessions are listed (the host agents.list() boundary). The per-workspace count comes from the workspace registry and may include sessions that are not open.',
+      'ov.noteActivityUnknown': 'Session timestamps are unavailable, so activity ordering is off.',
+      'ov.noteInvalid': 'Fix opens the plugin page, where the binding can be pointed at a valid persona.',
+      'ov.justNow': 'just now',
+      'ov.minutesAgo': '{n} min ago',
+      'ov.hoursAgo': '{n} h ago',
+      'ov.daysAgo': '{n} d ago',
+      'ov.neverActive': 'no sessions',
+      'ov.customName': 'Custom',
+      'ov.noteActivityHint': 'Expand to see the live sessions in this workspace.',
       'personas.applyAfterSaveHint': 'Leave unchecked to keep the current config unchanged (the form reverts to the saved settings)',
       'notice.personaUsed': 'Applied persona "{name}".',
       'notice.personaUnchanged': 'Persona matches current config.',
@@ -2829,6 +2976,23 @@ window.__ModuleLoader__.load({
     //
     // 与设置页的第二个区别：这里的改动**即时生效**，没有"保存"按钮 ——
     // 用户在对话中途想换个风格，不该先跑去设置页。
+    // 预设摘要：风格 + 所有「偏离默认值」的维度。
+    //
+    // 0.9.0-ap：从 SoulSessionPersona 内部提到这一层 —— 侧栏总览面板也要用
+    // 同一份摘要（同一个预设在两处显示必须一致，否则用户会以为哪个是错的）。
+    const personaRowMetaOf = (entry, t) => {
+      const row = entry || {}
+      const parts = []
+      if (STYLE_VALUES.includes(row.style)) parts.push(t(`style.${row.style}`))
+      else if (row.style) parts.push(row.style)
+      for (const [field, allowed] of Object.entries(META_FIELD_VALUES)) {
+        const value = row[field]
+        if (!value || value === META_FIELD_DEFAULTS[field]) continue
+        if (!allowed.includes(value)) continue
+        parts.push(t(`meta.${field}.${value}`))
+      }
+      return parts.join(' · ')
+    }
     function SoulSessionPersona(props) {
       const { controller, useSoulController } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
@@ -3282,20 +3446,6 @@ window.__ModuleLoader__.load({
     //
     // 依赖注入的 `t`：渲染器按槽位 locale 注入翻译函数，模块级函数拿不到闭包里的 t。
 
-    // 预设摘要：风格 + 所有「偏离默认值」的维度。
-    const personaRowMetaOf = (entry, t) => {
-      const row = entry || {}
-      const parts = []
-      if (STYLE_VALUES.includes(row.style)) parts.push(t(`style.${row.style}`))
-      else if (row.style) parts.push(row.style)
-      for (const [field, allowed] of Object.entries(META_FIELD_VALUES)) {
-        const value = row[field]
-        if (!value || value === META_FIELD_DEFAULTS[field]) continue
-        if (!allowed.includes(value)) continue
-        parts.push(t(`meta.${field}.${value}`))
-      }
-      return parts.join(' · ')
-    }
 
     // 卡面效果栏：优先 customInstructions（人格差异的主要载体），没有则退回摘要。
     // 截断到第一句或 60 字：卡面空间有限，CSS 侧还有 3 行 line-clamp 兜底。
@@ -3830,6 +3980,374 @@ window.__ModuleLoader__.load({
     // ⚠️ inject 与 session 槽位不同：panellist 是 scope:'root'，runInject 只传
     // [binding.key, actions]（root 无 binding ⇒ 无参）—— inject 只需注入无状态
     // 内容，宿主的 PanelRow 自己拥有点击（拿我们的 id 去 selectPanel）。
+    // 宿主的 pluginNavigation（dsh 0.2.1+）：跳到本插件的详情页。
+    //
+    // 为什么必须放在这一层：组件（4 空格）是 `apply` 的**兄弟**，看不到 apply 的
+    // 局部变量。放在 apply 里组件就引用不到（TDZ / 未定义）。
+    //
+    // 为什么是盒子而不是一个值：该服务由宿主的插件管理器 provide，可能晚于本包
+    // 装载 —— 取一次的写法在有这个服务的宿主上也会永远拿到 null（dsh-market 同结论）。
+    const hostNavigation = (() => {
+      let value = null
+      const listeners = new Set()
+      return {
+        get: () => value,
+        subscribe: (listener) => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+        attach: (next) => {
+          value = next
+          for (const listener of [...listeners]) listener()
+        }
+      }
+    })()
+    // -------------------------------------------------------------------------
+    // 侧栏「Soul 人设总览」面板（0.9.0-ap）
+    // -------------------------------------------------------------------------
+    //
+    // 槽位：`main` —— kind:'keyed'，key 必须与 `sidebar.panellist` 的 id 相同。
+    // 点侧栏图标 → 宿主 selectPanel(id) → 这个面板出现（dsh-market 同款做法）。
+    //
+    // 定位：回答「**现在谁在生效**」，不是「怎么改预设」。
+    // 三层作用域目前分散在三个地方 —— 全局在设置页、工作区在插件详情页、
+    // 会话只能在那个会话里看 —— 没有任何一处能同时看到「这几个会话分别是谁」。
+    // 这个面板补的就是那块空白。
+    //
+    // 只读：唯一的写动作是「打开插件详情页」的跳转。编辑仍归各自的页面，
+    // 同一份数据不给两个能改的入口。
+    //
+    // ⚠️ 两个必须如实交代的边界：
+    //   1. 只能列**活动会话**（宿主 agents.list() 的边界），已归档/未打开的不在其中；
+    //      工作区行上的会话数来自工作区注册表，可能大于实际列出的条数。
+    //   2. `main` 面板拿不到 sessionId，所以这里**不能**改会话人设 —— 只给位置。
+
+    /** 最近活跃的相对时间文案；30 天以上退回日期。 */
+    function activeAgoText(ms, t) {
+      if (typeof ms !== 'number' || !Number.isFinite(ms)) return t('ov.neverActive')
+      const diff = Date.now() - ms
+      // 负值（本机时钟回拨 / 服务端时钟略快）归入「刚刚」——
+      // 与变更记录里的时间处理一致，不显示「-3 分钟前」。
+      if (diff < 60 * 1000) return t('ov.justNow')
+      const minutes = Math.floor(diff / (60 * 1000))
+      if (minutes < 60) return t('ov.minutesAgo', { n: minutes })
+      const hours = Math.floor(minutes / 60)
+      if (hours < 24) return t('ov.hoursAgo', { n: hours })
+      const days = Math.floor(hours / 24)
+      if (days <= 30) return t('ov.daysAgo', { n: days })
+      const d = new Date(ms)
+      const mm = d.getMonth() + 1
+      const dd = d.getDate()
+      return `${d.getFullYear() !== new Date().getFullYear() ? `${d.getFullYear()}/` : ''}${mm}/${dd}`
+    }
+
+    /** 人设插画的 URL（与设置页人设卡同源）。 */
+    function personaArtUrl(name) {
+      return new URL(`/api/soul/persona-art/${encodeURIComponent(name)}`, hostBase()).href
+    }
+
+    function SoulOverview(props) {
+      const { controller, useSoulController } = props
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const state = useSoulController((s) => s)
+
+      const [view, setView] = React.useState(null)
+      const [error, setError] = React.useState(null)
+      // 用户手动展开/收起过的工作区（workspaceId → 是否展开）。
+      // 与「自动展开」分开存：自动展开每次渲染算得出来，用户的点击必须能压过它。
+      const [toggles, setToggles] = React.useState({})
+      // 插画加载失败的名字（回退到面具）
+      const [artBroken, setArtBroken] = React.useState({})
+
+      // 宿主 pluginNavigation 可能晚于本包装载：订阅它，到了再让按钮出现。
+      const [canJump, setCanJump] = React.useState(() => hostNavigation.get() !== null)
+      React.useEffect(
+        () => hostNavigation.subscribe(() => setCanJump(hostNavigation.get() !== null)),
+        []
+      )
+
+      const reload = async () => {
+        try {
+          const payload = await controller.fetchOverview()
+          setView(payload)
+          setError(null)
+        } catch (err) {
+          // 失败即清空：继续渲染上一次成功的列表会让用户对着过期数据做判断
+          setView(null)
+          setError(messageOf(err))
+        }
+      }
+
+      React.useEffect(() => {
+        void reload()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+
+      // 预设库名称 → 条目（画特质摘要要用 personaRowMetaOf）
+      React.useEffect(() => {
+        if (state.personas === null) void controller.loadPersonas()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+
+      const openPluginPage = () => {
+        const nav = hostNavigation.get()
+        if (nav) nav.openBundle('dsh-soul')
+      }
+
+      const workspaces = Array.isArray(view && view.workspaces) ? view.workspaces : []
+      const sessions = Array.isArray(view && view.sessions) ? view.sessions : []
+
+      // 按最近活跃倒序；没有时间的排最后（不当作 0，那会让它们看似"很久以前"）
+      const sortedWorkspaces = [...workspaces]
+      sortedWorkspaces.sort((a, b) => {
+        const am = typeof a.lastActiveAt === 'number' ? a.lastActiveAt : null
+        const bm = typeof b.lastActiveAt === 'number' ? b.lastActiveAt : null
+        if (am === null && bm === null) return 0
+        if (am === null) return 1
+        if (bm === null) return -1
+        return bm - am
+      })
+
+      // 会话按工作区归组；没有归属的单独一组（不能静默丢）
+      const sessionsByWorkspace = (() => {
+        const map = new Map()
+        const orphan = []
+        for (const s of sessions) {
+          const id = s && s.workspaceId ? String(s.workspaceId) : ''
+          if (id === '') { orphan.push(s); continue }
+          if (!map.has(id)) map.set(id, [])
+          map.get(id).push(s)
+        }
+        return { map, orphan }
+      })()
+
+      // 含「本会话覆盖」的工作区默认展开：那是最需要被看见的偏离
+      const autoOpen = (() => {
+        const set = new Set()
+        for (const s of sessions) {
+          if (s && s.hasOverride && s.workspaceId) set.add(String(s.workspaceId))
+        }
+        return set
+      })()
+
+      const isOpen = (workspaceId) => {
+        const key = String(workspaceId)
+        if (Object.prototype.hasOwnProperty.call(toggles, key)) return toggles[key]
+        return autoOpen.has(key)
+      }
+
+      const toggle = (workspaceId) => {
+        const key = String(workspaceId)
+        setToggles((prev) => ({ ...prev, [key]: !isOpen(key) }))
+      }
+
+      // —— 子块 ——
+
+      const renderSessions = (list) => {
+        if (list.length === 0) return null
+        return e('div', { className: 'soul-ov-sessions' },
+          list.map((s) => {
+            const hasOverride = s.hasOverride === true
+            // 来源如实说明：有覆盖就是「本会话覆盖」；否则只说到「跟随上层」，
+            // 不去断言是工作区还是全局 —— 会话的解析还会受目录绑定影响，
+            // 断言错了比不说更糟。
+            const sourceText = hasOverride ? t('ov.sessionOverride') : t('ov.sessionFollowUpper')
+            const title = typeof s.id === 'string' ? s.id : ''
+            return e('div', { className: 'soul-ov-session', key: `sess-${title}` },
+              e('span', { className: hasOverride ? 'soul-ov-dot soul-ov-dot-override' : 'soul-ov-dot' }),
+              e('span', { className: 'soul-ov-session-name', title },
+                title === '' ? t('ov.untitledSession') : title),
+              s.persona && e('span', { className: 'soul-ov-session-persona' }, s.persona),
+              e('span', {
+                className: hasOverride
+                  ? 'soul-ov-session-src soul-ov-session-src-override'
+                  : 'soul-ov-session-src'
+              }, sourceText)
+            )
+          })
+        )
+      }
+
+      const renderWorkspace = (w) => {
+        const id = String(w.workspaceId)
+        const open = isOpen(id)
+        const invalid = w.invalidPersona === true
+        const mine = sessionsByWorkspace.map.get(id) || []
+        const pill = w.bound
+          ? (invalid
+              ? e('span', { className: 'soul-ov-pill soul-ov-pill-bad' },
+                  t('ov.invalid', { name: w.persona === null ? '' : w.persona }))
+              : e('span', { className: 'soul-ov-pill' }, w.persona === null ? '' : w.persona))
+          : e('span', { className: 'soul-ov-pill soul-ov-pill-inherit' }, t('ov.inheritGlobal'))
+
+        return e('div', { key: `ws-${id}` },
+          e('button', {
+            type: 'button',
+            className: 'soul-ov-ws',
+            'aria-expanded': open ? 'true' : 'false',
+            'data-invalid': invalid ? 'true' : 'false',
+            onClick: () => toggle(id)
+          },
+            e('span', { className: 'soul-ov-caret', 'aria-hidden': 'true' }, e('svg', {
+              viewBox: '0 0 16 16', width: 10, height: 10, fill: 'none',
+              stroke: 'currentColor', strokeWidth: 2,
+              strokeLinecap: 'round', strokeLinejoin: 'round'
+            }, e('path', { d: 'M6 3 L11 8 L6 13' }))),
+            e('span', { className: 'soul-ov-ws-main' },
+              e('span', { className: 'soul-ov-ws-title' },
+                typeof w.title === 'string' && w.title !== '' ? w.title : id),
+              typeof w.path === 'string' && w.path !== '' &&
+                e('span', { className: 'soul-ov-ws-path' }, w.path)),
+            e('span', { className: 'soul-ov-arrow', 'aria-hidden': 'true' }, '→'),
+            pill,
+            invalid && canJump && e('button', {
+              type: 'button',
+              className: 'soul-ov-fix',
+              title: t('ov.fixTitle'),
+              onClick: (ev) => { ev.stopPropagation(); openPluginPage() }
+            }, t('ov.fix')),
+            e('span', { className: 'soul-ov-ws-count' },
+              t('ov.sessionsCount', { count: w.sessionCount })),
+            e('span', { className: 'soul-ov-ws-active' }, activeAgoText(w.lastActiveAt, t))
+          ),
+          // 展开区：该工作区下的活动会话
+          open && renderSessions(mine),
+          // 有会话但一个都不在活动列表里：如实说明，不给一片空白
+          open && mine.length === 0 && w.sessionCount > 0 && e('div', {
+            className: 'soul-ov-sessions'
+          }, e('div', { className: 'soul-ov-empty' }, t('ov.noteActivity')))
+        )
+      }
+
+      const renderCurrent = () => {
+        const name = view && typeof view.globalPersona === 'string' ? view.globalPersona : null
+        const meta = name && state.personas && state.personas[name]
+          ? personaRowMetaOf(state.personas[name], t)
+          : ''
+        const broken = name !== null && artBroken[name] === true
+        return e('div', { className: 'soul-ov-card' },
+          e('div', { className: 'soul-ov-card-head' },
+            e('h3', {}, t('ov.current')),
+            name && e('span', { className: 'soul-ov-count' }, t('ov.global'))
+          ),
+          e('div', { className: 'soul-ov-current' },
+            e('div', { className: 'soul-ov-art' },
+              name !== null && !broken
+                ? e('img', {
+                    src: personaArtUrl(name),
+                    alt: '',
+                    loading: 'lazy',
+                    decoding: 'async',
+                    draggable: 'false',
+                    onError: () => setArtBroken((prev) => ({ ...prev, [name]: true }))
+                  })
+                : e('span', { className: 'soul-ov-art-fallback' },
+                    e('svg', {
+                      viewBox: '0 0 16 16', width: 28, height: 28, fill: 'none',
+                      stroke: 'currentColor', strokeWidth: 1.4,
+                      strokeLinecap: 'round', strokeLinejoin: 'round'
+                    }, SOUL_MASK_PATHS.map((d, i) => e('path', { key: i, d }))))),
+            e('div', { className: 'soul-ov-cur-body' },
+              e('div', { className: 'soul-ov-cur-name' },
+                name === null ? t('ov.customName') : name,
+                name === null && e('span', { className: 'soul-ov-scope' }, t('ov.global'))),
+              meta !== '' && e('div', { className: 'soul-ov-traits' }, meta))
+          )
+        )
+      }
+
+      const renderPresets = () => {
+        const lib = (view && view.personas) || { builtin: [], custom: [] }
+        const custom = Array.isArray(lib.custom) ? lib.custom : []
+        const builtin = Array.isArray(lib.builtin) ? lib.builtin : []
+        return e('div', { className: 'soul-ov-card' },
+          e('div', { className: 'soul-ov-card-head' },
+            e('h3', {}, t('ov.presets')),
+            e('span', { className: 'soul-ov-count' }, String(custom.length + builtin.length)),
+            e('span', { className: 'soul-ov-spacer' }),
+            canJump && e(ui.Button, {
+              variant: 'outline',
+              size: 'sm',
+              onClick: openPluginPage
+            }, t('ov.openDetail'))
+          ),
+          custom.length > 0 && e('div', { className: 'soul-ov-lib' },
+            e('div', { className: 'soul-ov-lib-title' },
+              t('ov.customGroup', { count: custom.length })),
+            e('div', { className: 'soul-ov-lib-names' },
+              custom.map((n) => e('span', { className: 'soul-ov-lib-name', key: `c-${n}` }, n)))),
+          builtin.length > 0 && e('div', { className: 'soul-ov-lib' },
+            e('div', { className: 'soul-ov-lib-title' },
+              t('ov.builtinGroup', { count: builtin.length })),
+            e('div', { className: 'soul-ov-lib-names' },
+              builtin.map((n) => e('span', {
+                className: 'soul-ov-lib-name soul-ov-lib-name-builtin', key: `b-${n}`
+              }, n))))
+        )
+      }
+
+      // —— 骨架 ——
+
+      const body = () => {
+        if (error !== null) {
+          return e('div', { className: 'soul-ov' },
+            e('div', { className: 'soul-ov-card' },
+              e('p', { className: 'soul-error-notice', role: 'alert' },
+                t('ov.loadFailed', { reason: error }))))
+        }
+        if (view === null) {
+          return e('div', { className: 'soul-ov' },
+            e('p', { className: 'soul-status' }, t('ov.loading')))
+        }
+
+        const invalidCount = workspaces.filter((w) => w.invalidPersona === true).length
+        const activityOk = view.activityScanned !== false
+
+        return e('div', { className: 'soul-ov' },
+          e('div', { className: 'soul-ov-head' },
+            e('span', { className: 'soul-ov-title-icon', 'aria-hidden': 'true' },
+              e('svg', {
+                viewBox: '0 0 16 16', width: 18, height: 18, fill: 'none',
+                stroke: 'currentColor', strokeWidth: 1.4,
+                strokeLinecap: 'round', strokeLinejoin: 'round'
+              }, SOUL_MASK_PATHS.map((d, i) => e('path', { key: i, d })))),
+            e('h2', { className: 'soul-ov-title' }, t('ov.title'))),
+
+          renderCurrent(),
+
+          e('div', { className: 'soul-ov-card' },
+            e('div', { className: 'soul-ov-card-head' },
+              e('h3', {}, t('ov.workspaces')),
+              e('span', { className: 'soul-ov-count' },
+                t('ov.wsCount', { count: workspaces.length })),
+              e('span', { className: 'soul-ov-spacer' }),
+              canJump && e(ui.Button, {
+                variant: 'outline',
+                size: 'sm',
+                onClick: openPluginPage
+              }, t('ov.openDetail'))
+            ),
+            workspaces.length === 0
+              ? e('p', { className: 'soul-ov-empty' }, t('ov.emptyWorkspaces'))
+              : e('div', { className: 'soul-ov-tree' }, sortedWorkspaces.map(renderWorkspace)),
+            // 未归属工作区的活动会话：单独列出，不静默丢
+            sessionsByWorkspace.orphan.length > 0 && e('div', { className: 'soul-ov-tree' },
+              e('div', { className: 'soul-ov-lib-title' }, t('ov.unassigned')),
+              renderSessions(sessionsByWorkspace.orphan)),
+            e('div', { className: 'soul-ov-note' },
+              t('ov.noteActivity'),
+              ' ',
+              activityOk ? t('ov.noteActivityHint') : t('ov.noteActivityUnknown'),
+              invalidCount > 0 ? ` ${t('ov.noteInvalid')}` : '')
+          ),
+
+          renderPresets()
+        )
+      }
+
+      return body()
+    }
+
     function SoulPanelIcon(props) {
       // 宿主要求方块尺寸与选中态；未传时给默认（14px）
       const size = typeof props.size === 'number' ? props.size : 14
@@ -6056,17 +6574,43 @@ window.__ModuleLoader__.load({
       //
       // 长期方案（未做）：注册独立 main 面板承载「预设库管理」，那时这个图标
       // 才有真正的落地页。需要把人设管理从会话语境拆出来 —— 独立的活。
-      // ❌ 暂时隐藏（0.9.0-ag）：点击切到未注册面板会"保持当前选择"（点了没反应），
-      // 体验差。等独立 main 面板（预设库管理主页）做好后再启用。
-      // 组件 SoulPanelIcon 与本注册块保留在源码里（注释态），作为那时的起点。
-      // ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-      //   name: 'sidebar.panellist',
-      //   id: 'soul-persona-panel',
-      //   order: 20,
-      //   locale: NS,
-      //   label: () => navT('nav.label'),
-      //   inject: () => ({})
-      // }, SoulPanelIcon))
+      // ✅ 0.9.0-ap：独立 main 面板已就位，入口默认开启（注册在上一段）。
+
+      // —— 侧栏「Soul 人设总览」面板（0.9.0-ap）——
+      //
+      // main 面板：key 必须与下面 sidebar.panellist 的 id 相同（宿主按 key 找面板）。
+      // `main` 是 keyed 槽位、scope root —— 拿不到 sessionId，所以这里只做总览，
+      // 改会话人设仍归会话内的「人设」tab。
+      ctx.slots.register({
+        name: 'main',
+        key: 'soul-persona-panel',
+        locale: NS,
+        inject: () => ({
+          hooks: {
+            soulController: controller.store
+          },
+          controller
+        })
+      }, SoulOverview)
+
+      // 面板图标：点它 → 宿主 selectPanel('soul-persona-panel') → 上面那个 main 面板。
+      // 默认开启（0.9.0-ap）：这个面板回答「我现在是谁」，每次开会话都关心，
+      // 与「装插件」那种偶发行为不同，所以不像 dsh-market 那样默认关闭。
+      ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+        name: 'sidebar.panellist',
+        id: 'soul-persona-panel',
+        order: 20,
+        locale: NS,
+        label: () => navT('nav.panelLabel'),
+        inject: () => ({})
+      }, SoulPanelIcon))
+
+      // 服务到了再让跳转按钮出现（没有这个服务的宿主上不画点不动的按钮）。
+      ctx.inject(['pluginNavigation'], (scoped) => {
+        hostNavigation.attach({
+          openBundle: (packageName) => { scoped.pluginNavigation.openBundle(packageName) }
+        })
+      })
 
       // 宿主 hover 信息卡里的「人设」一行（0.9.0-aj）。
       // 与行尾徽标共用 useSessionRowPersona：同一份数据、同一套降级规则。

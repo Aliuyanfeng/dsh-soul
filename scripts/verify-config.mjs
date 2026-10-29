@@ -4486,7 +4486,13 @@ check('工作区绑定只读视图：失效条目标注、sessions 走与会话�
   assert.equal(/delete cache\.bindings\[/.test(view), false, '不得自动删除失效引用（设计 §4.2）')
   assert.match(view, /warning: bindingsLoadFailure/, '整表读不出来要作为 warning 回传，与「一条都没绑」区分')
   assert.match(view, /max: MAX_BINDINGS/, '要把条数上限回传（界面才能说清还有多少余量）')
-  assert.match(view, /sessions: describeActiveSessions\(ctx, config\)/, '要带回活动会话的解析结果')
+  // 0.9.0-ap：sessions 现在经 enrichSessionsWithOverride 补上「有没有会话覆盖」，
+  // 但它必须在内部**委托** describeActiveSessions —— 否则「与会话相同的解析路径」
+  // 这条保证就断了（总览页显示的人设与实际注入的可能不一致）。
+  assert.match(view, /sessions: (await )?enrichSessionsWithOverride\(ctx, config\)/, '要带回活动会话的解析结果')
+  const enrich = extractObject(indexSource, 'async function enrichSessionsWithOverride')
+  assert.ok(enrich !== '', '找不到 enrichSessionsWithOverride')
+  assert.match(enrich, /describeActiveSessions\(ctx, config\)/, '补覆盖信息必须委托 describeActiveSessions，不得自己再走一条解析路径')
 
   const sessions = extractObject(indexSource, 'function describeActiveSessions')
   assert.ok(sessions !== '', '找不到 describeActiveSessions')

@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 52
+const EXPECTED_ASSERTIONS = 59
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -443,7 +443,20 @@ async function boot(configPayload = {}, personaPayload = null, options = {}) {
       personas: { 苏格拉底式提问者: { style: 'professional', builtin: true }, 极简主义者: { style: 'efficient' } },
       activeName: null
     }),
-    '/api/soul/prompt': () => ({ ok: true, prompt: 'P', enabled: true })
+    '/api/soul/prompt': () => ({ ok: true, prompt: 'P', enabled: true }),
+    // 总览面板（0.9.0-ap）。默认给空列表：每个用例自己改 world.routes 覆写，
+    // 避免「桩喂了一份固定数据、断言只在那一份数据上成立」。
+    '/api/soul/overview': () => ({
+      ok: true,
+      globalPersona: null,
+      enabled: true,
+      personas: { builtin: [], custom: [] },
+      workspaces: [],
+      sessions: [],
+      indexProblem: null,
+      activityScanned: true,
+      activityProblem: null
+    })
   }
   const world = loadClient(routes, options)
   for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
@@ -466,6 +479,26 @@ function rootElement(world) {
 }
 
 const renderSettings = (world) => world.runtime.settle(rootElement(world))
+
+/**
+ * 侧栏「Soul 人设总览」面板的渲染入口。
+ *
+ * 与 rootElement 的区别：那个取的是 `settings.section`，这个取 `main` 面板 ——
+ * 两者的 inject 形状相同（hooks.soulController + controller），所以 useSoulController
+ * 的复刻方式也相同。
+ */
+function overviewElement(world, t) {
+  const panel = world.captured.sections.find((s) => s.options && s.options.name === 'main')
+  if (!panel) throw new Error('main 面板未注册')
+  const props = panel.options.inject()
+  const store = props.hooks.soulController
+  const useSoulController = (selector) => {
+    const [, force] = world.runtime.React.useState(0)
+    world.runtime.React.useEffect(() => store.subscribe(() => force((n) => n + 1)), [])
+    return selector(store.getSnapshot())
+  }
+  return { type: panel.component, props: { ...props, useSoulController, t } }
+}
 
 /**
  * 渲染设置页并**等异步副作用落地**（点击后的请求、effect 里的 setState）。
@@ -3506,6 +3539,145 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
   // 文案必须还在（文字按钮的核心：靠文字表达动作）
   assert.ok(/workspaces\.rebind/.test(source) && /workspaces\.unbindArmed/.test(source), '按钮文案应保留')
 })
+
+  // ==================== 侧栏「Soul 人设总览」面板（0.9.0-ap）====================
+  //
+  // 这一组守的是「总览页能不能真的画出来」：前面几组验的是设置页与会话页，
+  // 而 main 面板是新槽位、新组件、新数据源（/api/soul/overview）——
+  // 源文本里写了注册块，不代表它能渲染。
+
+  /** 覆盖 /api/soul/overview 的桩数据。 */
+  const stubOverview = (world, patch) => {
+    world.routes['/api/soul/overview'] = () => (
+      { ok: true, globalPersona: null, enabled: true, personas: { builtin: [], custom: [] }, workspaces: [], sessions: [], indexProblem: null, activityScanned: true, activityProblem: null, ...patch }
+    )
+  }
+
+  /** 渲染总览并等 effect 收敛（与设置页同款：先 settle 一次触发 effect，再 drain）。 */
+  const mountOverview = async (world, t) => {
+    await world.runtime.settle(overviewElement(world, t))
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    return await world.runtime.settle(overviewElement(world, t))
+  }
+
+  await check('C58 「Soul 人设总览」：main 面板与侧栏图标 key/id 必须一致，且入口默认注册', async () => {
+    const world = await boot()
+    const panel = world.captured.sections.find((s) => s.options && s.options.name === 'main')
+    const row = world.captured.sections.find((s) => s.options && s.options.name === 'sidebar.panellist')
+    assert.ok(panel, 'main 面板未注册：侧栏点了会切到不存在的面板（保持当前选择，看起来像点了没反应）')
+    assert.ok(row, 'sidebar.panellist 图标未注册：入口应默认开启')
+    assert.equal(panel.options.key, row.options.id, 'main 的 key 必须等于 panellist 的 id —— 宿主按 key 找面板，不等就是死链')
+    assert.equal(panel.options.key, 'soul-persona-panel')
+    assert.equal(row.options.order, 20, '入口 order 应为 20（排在宿主导航之后、不与它们抢位）')
+    assert.equal(row.options.label(), world.dicts.zh['nav.panelLabel'], '入口名应为「Soul 人设总览」')
+  })
+
+  await check('C59 总览「当前生效」：显示人设名与插画（插画优先，缺失才回退面具）', async () => {
+    const world = await boot()
+    stubOverview(world, { globalPersona: '资深架构师' })
+    const tree = await mountOverview(world, world.dicts.zh)
+    const names = findAllByClass(tree, 'soul-ov-cur-name')
+    assert.equal(names.length, 1, '「当前生效」应只有一个名称节点')
+    assert.ok(textOf(names[0]).includes('资深架构师'), '应显示当前生效的人设名')
+    const arts = findAllByClass(tree, 'soul-ov-art')
+    assert.equal(arts.length, 1, '应有一个插画容器')
+    const img = findAll(arts[0], (n) => n.type === 'img')[0]
+    assert.ok(img, '有插画时不应直接退化成面具：先在 img 上试')
+    assert.ok(/\/api\/soul\/persona-art\//.test(img.props.src), `插画地址应指向 persona-art，实际 ${img.props.src}`)
+    assert.ok(/资深架构师/.test(decodeURIComponent(img.props.src)), '插画地址应带人设名（决定显示哪张图）')
+  })
+
+  await check('C60 工作区按最近活跃倒序，没有时间的排最后（不当作 0）', async () => {
+    const world = await boot()
+    const now = Date.now()
+    stubOverview(world, {
+      workspaces: [
+        { workspaceId: 'ws-old', title: '旧项目', path: 'D:\\old', sessionCount: 0, bound: false, persona: null, invalidPersona: false, lastActiveAt: now - 5 * 86400000 },
+        { workspaceId: 'ws-new', title: '活跃项目', path: 'D:\\new', sessionCount: 2, bound: true, persona: '资深架构师', invalidPersona: false, lastActiveAt: now - 60000 },
+        { workspaceId: 'ws-none', title: '从未活跃', path: 'D:\\none', sessionCount: 0, bound: false, persona: null, invalidPersona: false, lastActiveAt: null }
+      ]
+    })
+    const tree = await mountOverview(world, world.dicts.zh)
+    const titles = findAllByClass(tree, 'soul-ov-ws-title').map(textOf)
+    assert.deepEqual(titles, ['活跃项目', '旧项目', '从未活跃'], `应按最近活跃倒序且 null 排最后，实际 ${JSON.stringify(titles)}`)
+    const actives = findAllByClass(tree, 'soul-ov-ws-active').map(textOf)
+    assert.equal(actives.length, 3, '每个工作区都应有活跃时间列')
+    assert.ok(actives[0].includes('1') || actives[0].includes('分钟'), `1 分钟前应显示为分钟级，实际「${actives[0]}」`)
+    assert.ok(actives[2].includes('无会话'), `没有会话记录时应说「无会话」，实际「${actives[2]}」`)
+  })
+
+  await check('C61 含「本会话覆盖」的工作区自动展开，其余默认折叠', async () => {
+    const world = await boot()
+    stubOverview(world, {
+      workspaces: [
+        { workspaceId: 'ws-a', title: '有覆盖', path: 'D:\\a', sessionCount: 2, bound: true, persona: '资深架构师', invalidPersona: false, lastActiveAt: Date.now() },
+        { workspaceId: 'ws-b', title: '无覆盖', path: 'D:\\b', sessionCount: 1, bound: false, persona: null, invalidPersona: false, lastActiveAt: Date.now() - 1000 }
+      ],
+      sessions: [
+        { id: 'sess-a1', cwd: 'D:\\a', workspaceId: 'ws-a', persona: '极简主义者', hasOverride: true, overridePersona: '极简主义者' },
+        { id: 'sess-a2', cwd: 'D:\\a', workspaceId: 'ws-a', persona: '资深架构师', hasOverride: false, overridePersona: null },
+        { id: 'sess-b1', cwd: 'D:\\b', workspaceId: 'ws-b', persona: '资深架构师', hasOverride: false, overridePersona: null }
+      ]
+    })
+    const tree = await mountOverview(world, world.dicts.zh)
+    const rows = findAllByClass(tree, 'soul-ov-session')
+    assert.equal(rows.length, 2, `只有含本会话覆盖的工作区应展开（应有 2 条会话行），实际 ${rows.length}`)
+    const overrides = findAllByClass(tree, 'soul-ov-session-src-override')
+    assert.equal(overrides.length, 1, '有覆盖的那条会话应带覆盖标记')
+    assert.ok(textOf(overrides[0]).includes(world.dicts.zh['ov.sessionOverride']), '标记文案应为「本会话覆盖」')
+  })
+
+  await check('C62 失效绑定：显示「修复」并跳到插件详情页（服务缺席时不画死按钮）', async () => {
+    const world = await boot()
+    stubOverview(world, {
+      workspaces: [
+        { workspaceId: 'ws-bad', title: '坏绑定', path: 'D:\\bad', sessionCount: 0, bound: true, persona: '已删除的预设', invalidPersona: true, lastActiveAt: null }
+      ]
+    })
+    // 先在没有 pluginNavigation 的宿主上渲染：不应出现「修复」（点了没反应比不画更糟）
+    let tree = await mountOverview(world, world.dicts.zh)
+    assert.equal(findAllByClass(tree, 'soul-ov-fix').length, 0, '没有 pluginNavigation 时不应出现「修复」按钮')
+    // 宿主给出服务后再渲染：出现「修复」，点它应调用 openBundle(dsh-soul)
+    const navInject = world.captured.injected.find((i) => (Array.isArray(i.deps) ? i.deps : Object.keys(i.deps || {})).includes('pluginNavigation'))
+    assert.ok(navInject, '应声明对 pluginNavigation 的依赖')
+    const opened = []
+    navInject.cb({ pluginNavigation: { openBundle: (name) => { opened.push(name) } } })
+    tree = await mountOverview(world, world.dicts.zh)
+    const fix = findAllByClass(tree, 'soul-ov-fix')
+    assert.equal(fix.length, 1, '有 pluginNavigation 时应出现一个「修复」按钮')
+    assert.ok(textOf(fix[0]).includes('修复'), '按钮文案应为「修复」')
+    fix[0].props.onClick({ stopPropagation: () => {} })
+    assert.deepEqual(opened, ['dsh-soul'], '点「修复」应跳转到本插件的详情页')
+  })
+
+  await check('C63 预设库：内置与自建分组列出，且所有名字都渲染出来', async () => {
+    const world = await boot()
+    stubOverview(world, {
+      personas: { builtin: ['极简主义者', '资深架构师', '头脑风暴伙伴'], custom: ['专业的Li666'] }
+    })
+    const tree = await mountOverview(world, world.dicts.zh)
+    const names = findAllByClass(tree, 'soul-ov-lib-name')
+    assert.equal(names.length, 4, `4 个预设都应列出，实际 ${names.length}`)
+    const builtinTags = findAllByClass(tree, 'soul-ov-lib-name-builtin')
+    assert.equal(builtinTags.length, 3, '内置预设应带内置标记（虚线胶囊）')
+    const all = names.map(textOf).join('|')
+    for (const p of ['极简主义者', '资深架构师', '头脑风暴伙伴', '专业的Li666']) {
+      assert.ok(all.includes(p), `预设「${p}」应在列表里`)
+    }
+  })
+
+  await check('C64 相对时间：负的时差归入「刚刚」，不显示「-N 分钟前」', async () => {
+    const world = await boot()
+    stubOverview(world, {
+      workspaces: [
+        { workspaceId: 'ws-future', title: '时钟偏快', path: 'D:\\f', sessionCount: 0, bound: false, persona: null, invalidPersona: false, lastActiveAt: Date.now() + 120000 }
+      ]
+    })
+    const tree = await mountOverview(world, world.dicts.zh)
+    const active = findAllByClass(tree, 'soul-ov-ws-active')[0]
+    assert.ok(active, '应有活跃时间节点')
+    assert.equal(textOf(active), world.dicts.zh['ov.justNow'], `时差为负应显示「刚刚」，实际「${textOf(active)}」`)
+  })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 

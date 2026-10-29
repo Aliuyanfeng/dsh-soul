@@ -16,10 +16,10 @@
 //   - 注入系统提示词到 Agent
 //   - 配置写入统一走写队列，返回 changed（有无实际变更）与 promptChanged（是否需要刷新提示词并注入会话）
 
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
   DEFAULT_CONFIG,
@@ -75,6 +75,7 @@ import {
   validateWorkspaceBinding
 } from './lib/workspace-scope.mjs'
 import { createInjectionSource } from './lib/injection.mjs'
+import { matchSessionDirsToWorkspaces, pathCompareKey } from './lib/session-dir.mjs'
 import {
   findDuplicatePersonas, isBuiltinPersona, builtinPersonaNames, mergePersonas, personaMatches, resolvePersona, declaredPersonaKeys } from './lib/personas.mjs'
 import { configWriteRefusal, describeConfigFailure, moveAsideConfigFile, readConfigFile, writeConfigFile } from './lib/store.mjs'
@@ -2059,6 +2060,137 @@ function enqueueBindingsWrite(task) {
   return run
 }
 
+/**
+ * 扫描宿主的会话目录，得出**每个工作区的最近活跃时间**。
+ *
+ * 为什么必须这么做：宿主的 workspaceRegistry.list() 只给 id/title/path/sessionIds，
+ * **没有任何时间字段**（实测确认）。而总览页要按「最近活跃」排序工作区，
+ * 唯一的可靠来源是会话文件的 mtime —— 会话按工作区目录分文件夹存放：
+ *
+ *   $DSH_HOME/sessions/--D-AliuProject-dsh-plugin--/<sessionId>/session.v4.jsonl.zstd
+ *
+ * 匹配方式：把工作区 path **正向编码**成目录名再精确比较（见 lib/session-dir.mjs
+ * 的说明 —— 反向解码有损，dsh-plugin 会被解成 dsh\plugin）。
+ *
+ * 任何一步失败都不抛错：排序是锦上添花，不能因为读不到目录就让整页打不开。
+ *
+ * @returns {{ byWorkspace: Map<string, number>, scanned: boolean, reason: string|null }}
+ *   byWorkspace — workspaceId → 最近活跃的毫秒时间戳
+ *   scanned     — 是否真的扫过（false 时 byWorkspace 为空，界面应显示「未知」）
+ */
+function scanWorkspaceActivity(ctx, configPath) {
+  const out = new Map()
+  const fail = (reason) => ({ byWorkspace: out, scanned: false, reason })
+
+  let registry
+  try {
+    registry = ctx.get('workspaceRegistry')
+  } catch {
+    return fail('workspaceRegistry 不可用')
+  }
+  if (!registry || typeof registry.list !== 'function') return fail('workspaceRegistry 不可用')
+
+  let workspaces
+  try {
+    workspaces = registry.list()
+  } catch (err) {
+    return fail(`列出工作区失败：${String((err && err.message) || err)}`)
+  }
+  if (!Array.isArray(workspaces) || workspaces.length === 0) {
+    return { byWorkspace: out, scanned: true, reason: null }
+  }
+
+  // 会话根目录与 soul-config.json 同级（$DSH_HOME/sessions）
+  const sessionsRoot = join(dirname(configPath), 'sessions')
+  if (!existsSync(sessionsRoot)) {
+    // 目录不存在不是错误：可能从没跑过会话。如实标记「扫过了，但没数据」
+    return { byWorkspace: out, scanned: true, reason: null }
+  }
+
+  let dirNames
+  try {
+    dirNames = readdirSync(sessionsRoot, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+  } catch (err) {
+    return fail(`读取会话目录失败：${String((err && err.message) || err)}`)
+  }
+
+  // 工作区 id → path
+  const pathOfId = new Map()
+  const paths = []
+  for (const ws of workspaces) {
+    const id = ws && ws.id !== undefined ? String(ws.id) : ''
+    const p = ws && typeof ws.path === 'string' ? ws.path : ''
+    if (id === '' || p === '') continue
+    pathOfId.set(id, p)
+    paths.push(p)
+  }
+  if (paths.length === 0) return { byWorkspace: out, scanned: true, reason: null }
+
+  // 目录名 → 工作区 path（正向编码精确匹配）
+  const dirToPath = matchSessionDirsToWorkspaces(dirNames, paths)
+  if (dirToPath.size === 0) return { byWorkspace: out, scanned: true, reason: null }
+
+  // path → id（用于回填）
+  const idOfPath = new Map()
+  for (const [id, p] of pathOfId) {
+    const key = pathCompareKey(p)
+    if (!idOfPath.has(key)) idOfPath.set(key, id)
+  }
+
+  for (const [dir, wsPath] of dirToPath) {
+    const id = idOfPath.get(pathCompareKey(wsPath))
+    if (id === undefined) continue
+    const newest = newestMtimeUnder(join(sessionsRoot, dir))
+    if (newest === null) continue
+    const prev = out.get(id)
+    if (prev === undefined || newest > prev) out.set(id, newest)
+  }
+
+  return { byWorkspace: out, scanned: true, reason: null }
+}
+
+/**
+ * 取一个目录下（递归两层：工作区目录 → 会话目录 → 文件）最新文件的 mtime。
+ *
+ * 只递归两层就够了（结构固定为 <工作区>/<会话>/<文件>），不做无界遍历 ——
+ * 会话目录下可能有几百个会话，但每层只 stat 目录本身与文件，成本可控。
+ *
+ * @returns {number|null} 毫秒时间戳；读不到返回 null（不抛错）
+ */
+function newestMtimeUnder(workspaceDir) {
+  let newest = null
+  const bump = (ms) => {
+    if (Number.isFinite(ms) && (newest === null || ms > newest)) newest = ms
+  }
+  let sessionDirs
+  try {
+    sessionDirs = readdirSync(workspaceDir, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const entry of sessionDirs) {
+    if (!entry.isDirectory()) continue
+    const sessionDir = join(workspaceDir, entry.name)
+    let files
+    try {
+      files = readdirSync(sessionDir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const f of files) {
+      if (!f.isFile()) continue
+      try {
+        bump(statSync(join(sessionDir, f.name)).mtimeMs)
+      } catch {
+        // 单个文件 stat 失败不影响整体
+      }
+    }
+  }
+  return newest
+}
+
 // 活动会话的目录与解析结果，供设置页回答「我这个项目现在是谁」。
 //
 // 为什么必须由宿主算：设置页的槽位 scope 是 `root`（设计 §7.7），它**拿不到
@@ -2069,6 +2201,26 @@ function enqueueBindingsWrite(task) {
 function describeActiveSessions(ctx, config) {
   const out = []
   const agents = ctx.get('agents')
+  // 级联归属要用的映射：当场从 workspaceRegistry 建一次。
+  // 不用全局 sessionWorkspaceIndex —— 那份由装配路径按需维护，设置页/详情页
+  // 打开时可能还没建（实测为空），拿它会让 workspaceId 恒 null。
+  const wsOfSession = (() => {
+    const map = new Map()
+    try {
+      const registry = ctx.get('workspaceRegistry')
+      if (!registry || typeof registry.list !== 'function') return map
+      for (const ws of registry.list() || []) {
+        const id = ws && ws.id !== undefined ? String(ws.id) : ''
+        if (id === '') continue
+        let ids
+        try { ids = ws.sessionIds } catch { continue }
+        for (const sid of Array.isArray(ids) ? ids : []) map.set(String(sid), id)
+      }
+    } catch {
+      // 建不出来就不带归属：界面会把会话归到「未归属」组，不静默丢
+    }
+    return map
+  })()
   if (!agents || typeof agents.list !== 'function') return out
 
   let listed
@@ -2086,7 +2238,15 @@ function describeActiveSessions(ctx, config) {
     if (!cwd) {
       // cwd 缺席是宿主允许的情况（会话没有工作目录）。必须如实说出来 ——
       // 让用户对着空白猜「为什么绑了没生效」，不如直接告诉他这个会话没有目录。
-      out.push({ id, cwd: null, persona: resolveActivePersonaName(config), binding: null, shadowed: [] })
+      out.push({
+        id,
+        cwd: null,
+        // 级联归属：无 cwd 也可能有工作区归属（索引里有就带上）
+        workspaceId: id === null ? null : (wsOfSession.get(String(id)) || null),
+        persona: resolveActivePersonaName(config),
+        binding: null,
+        shadowed: []
+      })
       continue
     }
 
@@ -2107,6 +2267,8 @@ function describeActiveSessions(ctx, config) {
     out.push({
       id,
       cwd,
+      // 级联归属：总览页按工作区分组时要靠它
+      workspaceId: id === null ? null : (wsOfSession.get(String(id)) || null),
       persona: resolveActivePersonaName(effective),
       binding,
       shadowed: resolved ? resolved.shadowed : []
@@ -2138,8 +2300,39 @@ async function bindingsView(ctx) {
     warning: bindingsLoadFailure,
     max: MAX_BINDINGS,
     maxPathLength: MAX_PATH_LENGTH,
-    sessions: describeActiveSessions(ctx, config)
+    sessions: await enrichSessionsWithOverride(ctx, config)
   }
+}
+
+/**
+ * 给活动会话补上「这个会话有没有临时覆盖」，并说明覆盖成了谁。
+ *
+ * 为什么必须由宿主补：覆盖存 sidecar（$DSH_HOME/soul-sessions/），
+ * 客户端拿不到；而「本会话覆盖」正是总览页最需要被看见的偏离 ——
+ * 只有它会让会话偏离所属工作区的人设。
+ *
+ * 读失败不影响其它会话：那一条的 hasOverride 保持 false（宁可少标，不误标）。
+ */
+async function enrichSessionsWithOverride(ctx, config) {
+  const sessions = describeActiveSessions(ctx, config)
+  const out = []
+  for (const s of sessions) {
+    let hasOverride = false
+    let overridePersona = null
+    if (s.id !== null && s.id !== undefined) {
+      const key = String(s.id)
+      try {
+        // 读一次 sidecar（会同时填充 sessionOverrides / sessionPersonaNames 缓存）
+        const name = await recordedSessionPersonaName(key)
+        hasOverride = sessionOverrides.has(key)
+        overridePersona = name
+      } catch {
+        // 读不出来就不标：错标成「有覆盖」比漏标更误导
+      }
+    }
+    out.push({ ...s, hasOverride, overridePersona })
+  }
+  return out
 }
 
 function registerBindingRoutes(ctx) {
@@ -2342,6 +2535,9 @@ function registerWorkspaceRoutes(ctx) {
 
       const workspaces = []
       let indexProblem = null
+      // 最近活跃时间：宿主不提供（workspaceRegistry 无时间字段），只能扫会话目录。
+      // 扫失败不影响列表本身 —— activityProblem 会如实说明，界面显示「未知」。
+      const activity = scanWorkspaceActivity(ctx, configPath())
       if (!registry || typeof registry.list !== 'function') {
         indexProblem = 'workspaceRegistry 服务不可用：无法列出宿主的工作区。'
       } else {
@@ -2376,7 +2572,9 @@ function registerWorkspaceRoutes(ctx) {
             // 绑的是哪个预设：界面要显示它，而不是只说"已绑定"。
             // 失效时仍原样返回 —— 用户需要看到"它原本指向谁"才能判断怎么处理。
             persona: refName,
-            invalidPersona
+            invalidPersona,
+            // 最近活跃（毫秒时间戳）；undefined = 没有会话记录，null = 没扫到
+            lastActiveAt: activity.byWorkspace.get(id) ?? null
           })
         }
       }
@@ -2384,12 +2582,61 @@ function registerWorkspaceRoutes(ctx) {
       return {
         workspaces,
         indexProblem,
+        // 活跃时间是否扫成功：false 时界面显示「未知」而不是编一个时间
+        activityScanned: activity.scanned,
+        activityProblem: activity.reason,
         max: MAX_WORKSPACE_SCOPES,
         // 供 UI 展示「当前有几条覆盖」。数字取自配置而非上面的列表：
         // 覆盖可以指向一个已被删除的工作区，那种条目仍占着表。
         boundCount: Object.keys(scopes).length
       }
     }
+
+    // 侧栏「Soul 人设总览」面板的**一次性数据源**。
+    //
+    // 为什么单开一个端点而不是让客户端拉三次：总览页必须同时拿到
+    // 工作区（含 lastActiveAt）/ 活动会话（含 workspaceId 与覆盖标记）/
+    // 预设库（含内置/自建分类）—— 三次往返之间数据可能已经变（用户正在
+    // 切换会话），拼出来的画面会自相矛盾。一次取齐，同一时刻的快照。
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/overview',
+      handler: async (req, res) => {
+        if (req.method !== 'GET') {
+          send(res, 405, { ok: false, error: 'Method not allowed' })
+          return
+        }
+        try {
+          const config = await loadConfig()
+          const wsView = await workspaceView()
+          const sessions = await enrichSessionsWithOverride(ctx, config)
+          const library = mergePersonas(config.personas)
+          const builtinNames = []
+          const customNames = []
+          for (const name of Object.keys(library).sort((a, b) => a.localeCompare(b, 'zh'))) {
+            if (isBuiltinPersona(name)) builtinNames.push(name)
+            else customNames.push(name)
+          }
+          send(res, 200, {
+            ok: true,
+            // 全局当前生效
+            globalPersona: resolveActivePersonaName(config),
+            enabled: config.enabled === true,
+            // 预设库：分类返回，界面直接画（不再由客户端判断内置与否）
+            personas: { builtin: builtinNames, custom: customNames },
+            // 工作区（含 lastActiveAt / 绑定 / 失效标注）
+            workspaces: wsView.workspaces,
+            indexProblem: wsView.indexProblem,
+            activityScanned: wsView.activityScanned,
+            activityProblem: wsView.activityProblem,
+            // 活动会话（含 workspaceId / hasOverride / overridePersona）
+            sessions
+          })
+        } catch (err) {
+          send(res, 500, { ok: false, error: String(err.message || err) })
+        }
+      }
+    })
 
     wsCtx.webServer.register({
       kind: 'exact',
