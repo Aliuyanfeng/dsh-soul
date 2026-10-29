@@ -75,7 +75,7 @@ import {
   validateWorkspaceBinding
 } from './lib/workspace-scope.mjs'
 import { createInjectionSource } from './lib/injection.mjs'
-import { matchSessionDirsToWorkspaces, pathCompareKey } from './lib/session-dir.mjs'
+import { encodeSessionDirName, matchSessionDirsToWorkspaces, pathCompareKey } from './lib/session-dir.mjs'
 import {
   findDuplicatePersonas, isBuiltinPersona, builtinPersonaNames, mergePersonas, personaMatches, resolvePersona, declaredPersonaKeys } from './lib/personas.mjs'
 import { configWriteRefusal, describeConfigFailure, moveAsideConfigFile, readConfigFile, writeConfigFile } from './lib/store.mjs'
@@ -2263,25 +2263,92 @@ function newestMtimeUnder(workspaceDir) {
 }
 
 /**
- * 总览面板用的**全量会话清单**。
+ * 会话 id 的规范形式（去掉 `session-` 前缀）。
  *
- * ⚠️ 为什么不复用 describeActiveSessions：那个走 `agents.list()` ——
- * 那是**本进程的活动 registry**，只有用户点开过的会话才在里面。
- * 用户反馈「必须点进会话才看得到它」正是这个原因。
+ * 磁盘目录两种形式都有（`0ea71bdb-…` 与 `session-00f2c9aa-…`），
+ * 而注册表统一带前缀 —— 比较前必须归一，否则同一个会话会被当成两个。
+ */
+function normalizeSessionId(id) {
+  return String(id === undefined || id === null ? '' : id).replace(/^session-/, '')
+}
+
+/**
+ * 归档集合。**宿主没有暴露它的读取方法**（workspaceRegistry 只有
+ * archiveSession / unarchiveSession），只能读持久化状态文件。
  *
- * 这里改以**磁盘上的会话目录**为准：`$DSH_HOME/sessions/<工作区目录>/<会话 id>/`。
- * 目录存在即代表这个会话存在过，与本次进程是否打开过无关。
- * 归属靠目录名 → 工作区路径的正向编码匹配（lib/session-dir.mjs），
- * 活跃时间取该会话目录下最新文件的 mtime，标题向 sessionQuery 要。
+ * 位置：`$DSH_HOME/storages/workspace.json` 的 `global.archivedSessionIds`。
+ * 这是宿主的内部存储格式（带 version 字段），所以：
+ *   - 读不到 / 解析失败 / 结构不对 ⇒ 返回 null，调用方据此**如实说明**
+ *     「归档状态未知」，而不是假装没有归档会话
+ *   - 绝不写这个文件
  *
- * @returns {Promise<Array<{id: string, title: string|null, workspaceId: string|null,
- *   lastActiveAt: number|null, persona: string|null, hasOverride: boolean, live: boolean}>>}
- *   按活跃时间倒序；读不到会话目录时返回空数组（不抛错）。
+ * @returns {Set<string>|null} 规范化后的会话 id 集合；读不到返回 null
+ */
+function readArchivedSessionIds() {
+  const file = join(dirname(configPath()), 'storages', 'workspace.json')
+  if (!existsSync(file)) return null
+  try {
+    const state = JSON.parse(readFileSync(file, 'utf8'))
+    const list = state && state.global && state.global.archivedSessionIds
+    if (!Array.isArray(list)) return null
+    return new Set(list.map(normalizeSessionId))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 子代理会话的 id 集合（只取有父级的记录）。
+ *
+ * 侧栏只列**根会话**，子代理会话挂在父会话下、单独不占一行。总览要与侧栏
+ * 数量一致，就必须同样排除它们 —— 否则「工作区显示 4 个，总览列出 10 个」。
+ *
+ * @returns {Promise<Set<string>|null>} 读不到返回 null（调用方如实说明）
+ */
+async function readChildSessionIds(ctx) {
+  let service
+  try {
+    service = ctx.get('sessionQuery')
+  } catch {
+    return null
+  }
+  if (!service || typeof service.listSessions !== 'function') return null
+  try {
+    const records = await service.listSessions()
+    const out = new Set()
+    for (const record of records || []) {
+      const header = record && record.header
+      if (!header) continue
+      // 字段名两版都认：parent / parentSessionId
+      const parent = header.parent !== undefined ? header.parent : header.parentSessionId
+      if (parent === undefined || parent === null || parent === '') continue
+      out.add(normalizeSessionId(header.id))
+    }
+    return out
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 总览面板用的会话清单 —— **口径与侧栏一致**。
+ *
+ * 口径（逐条都是从真实数据对出来的）：
+ *   1. 成员来自 `workspaceRegistry` 的 `sessionIds`（宿主持久化的归属），
+ *      不是扫磁盘 —— 磁盘上有 25 个孤儿目录（会话已从工作区移除但目录还在）
+ *   2. 排除归档（`archivedSessionIds`，读 storages/workspace.json）
+ *   3. 排除子代理会话（有父级的），侧栏不单独列它们
+ *   4. 活跃时间取会话目录下最新文件的 mtime
+ *   5. 标题向 `sessionQuery.readTitleSnapshots` 要（事件流折叠的，别处没有）
+ *
+ * 每一步都可能缺服务/缺文件，一律降级并在 `filtersApplied` 里如实回报 ——
+ * 数字对不上时用户能看出是哪一步没做成，而不是只看到一个可疑的数字。
+ *
+ * @returns {Promise<{sessions: Array, filtersApplied: object}>}
  */
 async function listSessionsForOverview(ctx, config) {
-  const collected = []
+  const filtersApplied = { archived: false, children: false, registry: false }
 
-  // 工作区：id ↔ path
   let workspaces = []
   try {
     const registry = ctx.get('workspaceRegistry')
@@ -2289,69 +2356,81 @@ async function listSessionsForOverview(ctx, config) {
   } catch {
     workspaces = []
   }
-  const paths = []
-  const idOfPathKey = new Map()
-  for (const ws of Array.isArray(workspaces) ? workspaces : []) {
-    const id = ws && ws.id !== undefined ? String(ws.id) : ''
-    const p = ws && typeof ws.path === 'string' ? ws.path : ''
-    if (id === '' || p === '') continue
-    paths.push(p)
-    idOfPathKey.set(pathCompareKey(p), id)
+  if (!Array.isArray(workspaces) || workspaces.length === 0) {
+    return { sessions: [], filtersApplied }
   }
+  filtersApplied.registry = true
+
+  const archived = readArchivedSessionIds()
+  filtersApplied.archived = archived !== null
+  const childIds = await readChildSessionIds(ctx)
+  filtersApplied.children = childIds !== null
 
   const sessionsRoot = join(dirname(configPath()), 'sessions')
-  if (!existsSync(sessionsRoot) || paths.length === 0) return collected
 
-  let dirNames
-  try {
-    dirNames = readdirSync(sessionsRoot, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-  } catch {
-    return collected
-  }
-
-  const dirToPath = matchSessionDirsToWorkspaces(dirNames, paths)
-
-  // 本进程真正活着（打开过）的会话：只作为 live 标记，不作为清单来源
-  const liveIds = new Set()
-  try {
-    const agents = ctx.get('agents')
-    if (agents && typeof agents.list === 'function') {
-      for (const agent of agents.list() || []) {
-        const id = agent && typeof agent.id === 'string' ? agent.id : ''
-        if (id !== '') liveIds.add(id)
-      }
-    }
-  } catch {
-    // 活会话缺席不算错误：清单本身不依赖它
-  }
-
-  for (const [dir, wsPath] of dirToPath) {
-    const workspaceId = idOfPathKey.get(pathCompareKey(wsPath)) || null
-    const base = join(sessionsRoot, dir)
-    let entries
+  // 收集：工作区 → 会话 id
+  const collected = []
+  for (const ws of workspaces) {
+    const workspaceId = ws && ws.id !== undefined ? String(ws.id) : ''
+    const wsPath = ws && typeof ws.path === 'string' ? ws.path : ''
+    if (workspaceId === '' || wsPath === '') continue
+    let ids
     try {
-      entries = readdirSync(base, { withFileTypes: true })
+      ids = ws.sessionIds
     } catch {
+      // 单个工作区的 getter 抛错不该让整张清单失败（宿主注释：候选会话可能已被移出）
       continue
     }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const id = sessionIdFromDirName(entry.name)
-      if (id === null) continue
+    if (!Array.isArray(ids) || ids.length === 0) continue
+
+    // 该工作区在磁盘上的目录（正向编码，绝不反向解码去猜）
+    const dirName = encodeSessionDirName(wsPath)
+    const baseDir = dirName === null ? null : join(sessionsRoot, dirName)
+
+    for (const raw of ids) {
+      const norm = normalizeSessionId(raw)
+      if (norm === '') continue
+      if (archived !== null && archived.has(norm)) continue
+      if (childIds !== null && childIds.has(norm)) continue
       collected.push({
-        id,
+        id: String(raw),
+        norm,
         workspaceId,
-        workspacePath: wsPath,
-        lastActiveAt: newestMtimeInDir(join(base, entry.name))
+        baseDir
       })
     }
   }
 
-  if (collected.length === 0) return collected
+  if (collected.length === 0) return { sessions: [], filtersApplied }
 
-  const titles = await readSessionTitles(ctx, collected.map((s) => s.id))
+  // 活跃时间：会话目录下最新文件（目录名两种形式都试）
+  for (const s of collected) {
+    let ms = null
+    if (s.baseDir !== null && existsSync(s.baseDir)) {
+      for (const candidate of [s.norm, 'session-' + s.norm]) {
+        const dir = join(s.baseDir, candidate)
+        if (!existsSync(dir)) continue
+        const found = newestMtimeInDir(dir)
+        if (found !== null && (ms === null || found > ms)) ms = found
+      }
+    }
+    s.lastActiveAt = ms
+  }
+
+  // 标题：先用注册表形式，拿不到再用规范化形式（两版 id 都可能被识别）
+  const titles = new Map()
+  {
+    const byId = new Map() // 传给服务的 id → 规范化 id
+    for (const s of collected) {
+      byId.set(s.id, s.norm)
+      if (s.id !== s.norm) byId.set(s.norm, s.norm)
+    }
+    const found = await readSessionTitles(ctx, [...byId.keys()])
+    for (const [id, title] of found) {
+      const norm = byId.get(id)
+      if (norm !== undefined && !titles.has(norm)) titles.set(norm, title)
+    }
+  }
 
   const out = []
   for (const s of collected) {
@@ -2368,13 +2447,24 @@ async function listSessionsForOverview(ctx, config) {
     }
     out.push({
       id: s.id,
-      title: titles.get(s.id) || null,
+      title: titles.get(s.norm) || null,
       workspaceId: s.workspaceId,
       lastActiveAt: s.lastActiveAt,
       persona,
       hasOverride,
-      live: liveIds.has(s.id)
+      live: false
     })
+  }
+
+  // 活会话标记：只作为「运行中」提示，不参与成员判定
+  try {
+    const agents = ctx.get('agents')
+    if (agents && typeof agents.list === 'function') {
+      const liveIds = new Set((agents.list() || []).map((a) => normalizeSessionId(a && a.id)))
+      for (const s of out) s.live = liveIds.has(normalizeSessionId(s.id))
+    }
+  } catch {
+    // 活会话缺席不算错误
   }
 
   // 活跃时间倒序；没有时间的排最后（不当作 0，那会让它们看似「很久以前」）
@@ -2386,7 +2476,8 @@ async function listSessionsForOverview(ctx, config) {
     if (bm === null) return -1
     return bm - am
   })
-  return out
+
+  return { sessions: out, filtersApplied }
 }
 
 // 活动会话的目录与解析结果，供设置页回答「我这个项目现在是谁」。
@@ -2807,8 +2898,9 @@ function registerWorkspaceRoutes(ctx) {
         try {
           const config = await loadConfig()
           const wsView = await workspaceView()
-          // 全量清单：磁盘会话目录为准，不信 live registry（那只有点开过的）
-          const sessions = await listSessionsForOverview(ctx, config)
+          // 清单口径与侧栏一致：注册表成员 − 归档 − 子代理会话
+          const listed = await listSessionsForOverview(ctx, config)
+          const sessions = listed.sessions
           const library = mergePersonas(config.personas)
           const builtinNames = []
           const customNames = []
@@ -2828,8 +2920,10 @@ function registerWorkspaceRoutes(ctx) {
             indexProblem: wsView.indexProblem,
             activityScanned: wsView.activityScanned,
             activityProblem: wsView.activityProblem,
-            // 活动会话（含 workspaceId / hasOverride / overridePersona）
-            sessions
+            // 会话（含 workspaceId / hasOverride / title / lastActiveAt）
+            sessions,
+            // 哪几层过滤真的生效了：false 表示那一步缺服务/缺文件，数字可能偏大
+            filtersApplied: listed.filtersApplied
           })
         } catch (err) {
           send(res, 500, { ok: false, error: String(err.message || err) })

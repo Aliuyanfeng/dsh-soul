@@ -4651,31 +4651,37 @@ if (failures.length > 0) {
   console.log(`\n结果：失败（${failures.length} 项未通过）。`)
   process.exit(1)
 }
-check('总览会话清单以磁盘会话目录为准，不拿 live registry 当来源', () => {
-  // 用户实测反馈：必须点进某个会话，它才出现在总览里 —— 因为清单原先走
-  // agents.list()，那是**本进程的活动 registry**，只有打开过的会话在里面。
+check('总览会话口径与侧栏一致：注册表成员 − 归档 − 子代理会话', () => {
+  // 这条守的是「数量对不对得上侧栏」。踩过两次：
+  //   1) 最初用 agents.list()（本进程活动 registry）⇒ 只有点开过的会话才出现；
+  //   2) 后来扫磁盘会话目录 ⇒ 把 25 个孤儿目录和归档会话都算进去（10 vs 49）。
+  // 正确口径：工作区注册表的 sessionIds 是成员来源，再减去归档与子代理会话。
   const fn = extractObject(indexSource, 'async function listSessionsForOverview')
   assert.ok(fn !== '', '找不到 listSessionsForOverview')
-  // 以磁盘为准：扫 sessions 根目录 + 用目录名正向匹配工作区
-  assert.match(fn, /sessionsRoot/, '清单应扫会话根目录')
-  assert.match(fn, /readdirSync\(sessionsRoot/, '清单应枚举磁盘上的会话目录')
-  assert.match(fn, /matchSessionDirsToWorkspaces\(/, '工作区归属应走目录名正向编码匹配')
-  assert.match(fn, /newestMtimeInDir\(/, '活跃时间应取会话目录下**文件**的 mtime（会话目录里是文件，不是子目录）')
-  // agents.list() 只能用来标 live，绝不能当清单来源：
-  // 它出现在 liveIds 那一块里，且必须紧跟 has(id) 的用法。
-  assert.match(fn, /const liveIds = new Set\(\)/, 'agents.list() 只喂 live 标记')
-  assert.match(fn, /liveIds\.has\(s\.id\)/, 'live 标记来自 liveIds，不是清单来源')
-  // 清单遍历体里不得直接出现 agents.list（那会退回「只有打开过的才算」）
-  const loopStart = fn.indexOf('for (const [dir, wsPath] of dirToPath)')
-  assert.ok(loopStart > 0, '清单主体应按工作区目录遍历')
-  const loopBody = fn.slice(loopStart)
-  assert.equal(/agents\.list/.test(loopBody), false, '清单主体不得依赖 agents.list()')
-  // 标题必须问 sessionQuery（标题是事件流折叠出来的，没有别处可取）
-  assert.match(fn, /readSessionTitles\(/, '应取会话标题')
-  const titles = extractObject(indexSource, 'async function readSessionTitles')
-  assert.ok(titles !== '', '找不到 readSessionTitles')
-  assert.match(titles, /readTitleSnapshots/, '标题只能来自 sessionQuery.readTitleSnapshots')
-  assert.equal(/throw /.test(titles), false, '读标题失败不得抛错：标题缺席只是少一行字')
+  // 成员来自注册表，不是扫磁盘目录
+  assert.match(fn, /ws\.sessionIds/, '会话成员应来自工作区注册表的 sessionIds')
+  assert.equal(/readdirSync\(sessionsRoot/.test(fn), false, '不得再扫磁盘目录当成员来源（会把孤儿与归档目录算进来）')
+  // 归档过滤 + 子代理过滤都必须存在，且依据来自各自的权威来源
+  assert.match(fn, /readArchivedSessionIds\(/, '必须排除归档会话')
+  assert.match(fn, /readChildSessionIds\(/, '必须排除子代理会话（侧栏不单独列它们）')
+  // 光「调用了」不够 —— 必须真的拿结果去过滤。否则删掉过滤那一行断言照样绿
+  // （实测过：只查调用时，把 `if (archived.has(norm)) continue` 删掉，断言仍然通过）。
+  assert.match(fn, /archived\.has\(norm\)/, '归档集合必须真的参与过滤，不能只读不用')
+  assert.match(fn, /childIds\.has\(norm\)/, '子代理集合必须真的参与过滤，不能只读不用')
+  const arch = extractObject(indexSource, 'function readArchivedSessionIds')
+  assert.ok(arch !== '', '找不到 readArchivedSessionIds')
+  assert.match(arch, /archivedSessionIds/, '归档集合来自 storages/workspace.json 的 archivedSessionIds')
+  assert.equal(/writeFileSync|writeFile\(/.test(arch), false, '只读宿主状态文件，绝不写')
+  const kids = extractObject(indexSource, 'async function readChildSessionIds')
+  assert.ok(kids !== '', '找不到 readChildSessionIds')
+  assert.match(kids, /listSessions\(/, '子代理判据来自 sessionQuery.listSessions() 的 header')
+  assert.match(kids, /parent/, '按 header 的父级字段判断是不是子代理会话')
+  // 名字归一：磁盘两种形式（带/不带 session- 前缀），不归一会把同一会话数成两个
+  assert.match(indexSource, /function normalizeSessionId/, '必须有会话 id 归一函数')
+  assert.match(fn, /normalizeSessionId\(/, '清单必须用归一后的 id 比较')
+  // 降级必须如实回报，不能假装过滤成功
+  assert.match(fn, /filtersApplied/, '要回报哪几层过滤真的生效')
+  assert.match(fn, /filtersApplied\.archived = archived !== null/, '归档过滤是否生效要如实记录')
 })
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 

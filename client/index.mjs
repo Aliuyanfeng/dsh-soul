@@ -1958,6 +1958,9 @@ window.__ModuleLoader__.load({
       'ov.customName': '自定义',
       'ov.moreSessions': '还有 {count} 个更早的会话',
       'ov.presetsHint': '预设的增删改在「设置 → 个性化 → 人设预设」里。',
+      'ov.filterArchivedMissing': '读不到归档状态，可能列出已归档的会话。',
+      'ov.filterChildrenMissing': '读不到子代理会话信息，可能多列出几个会话。',
+      'ov.countMatchesSidebar': '只列侧栏可见的会话（已排除归档与子代理会话）。',
       'ov.noteActivityHint': '展开可看该工作区下的活动会话。',
       'personas.applyAfterSaveHint': '不勾选则保留当前配置不变（表单恢复到已保存的设置）',
       'notice.personaUsed': '已应用预设「{name}」。',
@@ -2327,6 +2330,9 @@ window.__ModuleLoader__.load({
       'ov.customName': 'Custom',
       'ov.moreSessions': '{count} older sessions not shown',
       'ov.presetsHint': 'Presets are edited under Settings → Personalization → Persona presets.',
+      'ov.filterArchivedMissing': 'Archive state is unavailable, so archived sessions may be listed.',
+      'ov.filterChildrenMissing': 'Subagent sessions are unavailable, so a few extra sessions may appear.',
+      'ov.countMatchesSidebar': 'Lists what the sidebar shows (archived and subagent sessions excluded).',
       'ov.noteActivityHint': 'Expand to see the live sessions in this workspace.',
       'personas.applyAfterSaveHint': 'Leave unchecked to keep the current config unchanged (the form reverts to the saved settings)',
       'notice.personaUsed': 'Applied persona "{name}".',
@@ -4316,6 +4322,8 @@ window.__ModuleLoader__.load({
         }
 
         const invalidCount = workspaces.filter((w) => w.invalidPersona === true).length
+        // 哪几层过滤真的生效了：false = 那一步缺服务/缺文件，数字可能偏大
+        const filters = (view && view.filtersApplied) || {}
         const activityOk = view.activityScanned !== false
 
         return e('div', { className: 'soul-ov' },
@@ -4350,10 +4358,18 @@ window.__ModuleLoader__.load({
               e('div', { className: 'soul-ov-lib-title' }, t('ov.unassigned')),
               renderSessions(sessionsByWorkspace.orphan)),
             e('div', { className: 'soul-ov-note' },
-              t('ov.noteActivity'),
+              // 口径先写清楚：与会话数对不上时，用户第一反应是「是不是算错了」，
+              // 所以直说「只列侧栏可见的会话」，再补降级原因。
+              t('ov.countMatchesSidebar'),
               ' ',
               activityOk ? t('ov.noteActivityHint') : t('ov.noteActivityUnknown'),
-              invalidCount > 0 ? ` ${t('ov.noteInvalid')}` : '')
+              invalidCount > 0 ? ` ${t('ov.noteInvalid')}` : ''),
+            (filters.archived === false || filters.children === false) && e('div', {
+              className: 'soul-ov-note'
+            },
+              filters.archived === false ? t('ov.filterArchivedMissing') : '',
+              filters.archived === false && filters.children === false ? ' ' : '',
+              filters.children === false ? t('ov.filterChildrenMissing') : '')
           ),
 
           renderPresets()
