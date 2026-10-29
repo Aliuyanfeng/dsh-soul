@@ -2998,19 +2998,19 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     // ⑤ 解绑：第一次点只 arm，第二次才发请求
     tree = await render()
     const boundCard = findAllByClass(tree, 'soul-ws-card')[2]
-    // 解绑已改为**图标按钮**（0.9.0-an，照抄宿主设置-模型页的编辑/删除）：
-    // 没有文字，语义在 aria-label / title 上。按 aria-label 找，而不是按文案。
-    const unbindBtn = () => findAllByClass(tree, 'soul-ws-iconbtn')
-      .find((b) => b.props?.['aria-label'] === zh['workspaces.unbind'])
-    assert.ok(unbindBtn(), '已绑定的卡片应有「解除绑定」图标按钮')
+    // 解绑是**文字按钮**（0.9.0-ao，照抄宿主设置-模型页的「删除」= dangerButton）：
+    // 文案在按钮文字上，按文案找。
+    const unbindBtn = () => findAllByClass(tree, 'soul-ws-btn-danger')
+      .find((b) => textOf(b) === zh['workspaces.unbind'])
+    assert.ok(unbindBtn(), '已绑定的卡片应有「解除绑定」按钮')
     await unbindBtn().props.onClick()
     tree = await render()
     assert.equal(posts.length, 1, '第一次点解绑不得发请求')
-    // armed 态：同一个按钮带上 danger 类与 data-armed 标记，tooltip 换成「再点一次」文案
-    const armed = findAllByClass(tree, 'soul-ws-iconbtn-danger')
+    // armed 态：同一按钮多一个 armed 类，文字换成「确认解绑…」
+    const armed = findAllByClass(tree, 'soul-ws-btn-armed')
     assert.equal(armed.length, 1, '第一次点后应进入 armed 态')
     assert.equal(armed[0].props['data-armed'], 'true', 'armed 态应有 data-armed 标记')
-    assert.equal(armed[0].props['aria-label'], zh['workspaces.unbindArmed'], 'armed 态的无障碍标签应换成确认文案')
+    assert.equal(textOf(armed[0]), zh['workspaces.unbindArmed'], 'armed 态文案应换成确认文案')
     await armed[0].props.onClick()
     tree = await render()
     assert.equal(posts.length, 2, '第二次点才发解绑请求')
@@ -3465,58 +3465,46 @@ await check('C56 工作区人设按钮：hover 不得改文字色（深底白字
   )
 })
 
-await check('C57 改绑/解绑图标按钮：规格照抄宿主设置-模型页的编辑/删除（.iconButton 族）', async () => {
-  // 用户要求：这两个按钮参考「设置-模型」里的「编辑 / 删除」。
-  // 宿主那套（ui-settings-models 的 CSS 模块）是：
-  //   .iconButton{width:28px;height:28px;border:none;background:0 0;
-  //               color:var(--dsw-alias-label-tertiary)}
-  //   .iconButton:hover:not(:disabled){background:interactive-bg-hover;
-  //               color:var(--dsw-alias-label-primary)}
-  //   .iconButton:disabled{opacity:.4;cursor:default}
-  //   .iconButtonDanger:hover:not(:disabled){background:...-hover-danger;
-  //               color:state-error-primary}
-  // 即「平时灰图标、悬停才出浅底与主色」，而不是常驻描边/实心按钮。
+await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型页的编辑(secondaryButton)/删除(dangerButton)', async () => {
+  // 用户指出：宿主设置-模型页的「编辑 / 删除」是**文字按钮**，不是图标按钮。
+  // 我上一版误抄了同页面的 .iconButton（那是别处的图标形态），已纠正。
+  //
+  // 宿主真实实现（ui-settings-models 的 CSS 模块）：
+  //   编辑 → .secondaryButton
+  //     {border:.5px solid border-l3; color:label-primary; background:0 0}
+  //     {border-radius:sm; height:28px; padding:0 10px; font-size:12px; line-height:18px}
+  //     :hover{background:interactive-bg-hover-solid}
+  //     :disabled{opacity:.4;cursor:default}
+  //   删除 → .dangerButton（紧凑尺寸同上）
+  //     {color:state-error-primary; background:0 0; border:none}   ← 无描边、红字
+  //     :hover{background:interactive-bg-hover-danger}
   const rule = (cls) => {
     const m = source.match(new RegExp('\\.' + cls + '\\{[^}]*\\}'))
     assert.ok(m, '缺少样式规则 .' + cls)
     return m[0]
   }
-  const base = rule('soul-ws-iconbtn')
-  assert.ok(/width:28px/.test(base) && /height:28px/.test(base), '尺寸应为 28×28（与宿主 .iconButton 一致）')
-  assert.ok(/border:none/.test(base), '不得有边框（宿主 .iconButton 是 border:none）')
-  assert.ok(/background:transparent/.test(base), '默认透明底（宿主 .iconButton 是 background:0 0）')
-  assert.ok(
-    /color:var\(--dsw-alias-label-tertiary\)/.test(base),
-    '默认图标色应为次要灰 label-tertiary（宿主同款）'
+  const base = rule('soul-ws-btn')
+  assert.ok(/border:\.5px solid var\(--dsw-alias-border-l3\)/.test(base), '描边应为 .5px border-l3（宿主 secondaryButton 同款）')
+  assert.ok(/height:28px/.test(base), '高度应为 28px（宿主紧凑尺寸）')
+  assert.ok(/padding:0 10px/.test(base), '左右内边距应为 10px（宿主紧凑尺寸）')
+  assert.ok(/font-size:12px/.test(base) && /line-height:18px/.test(base), '字号/行高应为 12/18（宿主紧凑尺寸）')
+  assert.ok(/color:var\(--dsw-alias-label-primary\)/.test(base), '文字色应为 label-primary（宿主编辑按钮同款）')
+  const hover = rule('soul-ws-btn:hover:not\\(:disabled\\)')
+  assert.ok(/interactive-bg-hover-solid/.test(hover), '悬停底色应为 interactive-bg-hover-solid（宿主 secondaryButton 同款）')
+  // 删除：无描边 + 红字 + 浅红悬停
+  const danger = rule('soul-ws-btn-danger')
+  assert.ok(/border:none/.test(danger), '删除按钮不应有描边（宿主 dangerButton 是 border:none）')
+  assert.ok(/state-error-primary/.test(danger), '删除按钮应为红字（宿主 dangerButton 同款）')
+  const dangerHover = rule('soul-ws-btn-danger:hover:not\\(:disabled\\)')
+  assert.ok(/interactive-bg-hover-danger/.test(dangerHover), '删除悬停应为 danger 浅红底（宿主同款）')
+  // 必须是文字按钮：不得再引用任何图标组件
+  assert.equal(
+    /ui\.Icon\w+/.test(source),
+    false,
+    '工作区按钮应为文字按钮 —— 不得引用 ui.Icon*（图标名还在宿主模块表里踩过 #130）'
   )
-  const hover = rule('soul-ws-iconbtn:hover:not\\(:disabled\\)')
-  assert.ok(/interactive-bg-hover/.test(hover), '悬停底色应为 interactive-bg-hover（宿主同款）')
-  assert.ok(/label-primary/.test(hover), '悬停图标色应变 label-primary（宿主同款）')
-  const danger = rule('soul-ws-iconbtn-danger:hover:not\\(:disabled\\)')
-  assert.ok(/interactive-bg-hover-danger/.test(danger), '删除悬停底色应为 danger 版（宿主同款）')
-  assert.ok(/state-error-primary/.test(danger), '删除悬停图标色应转红（宿主同款）')
-  // 两个按钮都用图标（无文字）：改绑 = 刷新箭头，解绑 = 垃圾桶
-  // 图标名必须用**宿主运行时**提供的命名体系（*Regular / *Medium）。
-  // ⚠️ npm 包的类型声明里写的是 IconRefreshOutline14 / IconTrashOutline16，
-  // 但宿主 seed 给插件的模块表里只有 *Regular / *Medium —— 用错名会拿到
-  // undefined，React 直接抛 Minified React error #130，整个区块被卸载。
-  // 用户实测：工作区人设区块整块消失，控制台报 #130。
-  assert.ok(
-    /IconRefreshOutlineRegular/.test(source),
-    '改绑按钮应用 IconRefreshOutlineRegular（宿主运行时命名，不是 ...14）'
-  )
-  assert.ok(
-    /IconTrashOutlineRegular/.test(source),
-    '解绑按钮应用 IconTrashOutlineRegular（宿主运行时命名，不是 ...16）'
-  )
-  // 反向断言：不得再出现数字后缀形式的图标名
-  for (const bad of ['IconRefreshOutline14', 'IconTrashOutline16', 'IconEditOutline16']) {
-    assert.equal(
-      source.includes('ui.' + bad),
-      false,
-      '不得使用 ui.' + bad + ' —— 宿主模块表里没有这个名字（会 undefined ⇒ React #130）'
-    )
-  }
+  // 文案必须还在（文字按钮的核心：靠文字表达动作）
+  assert.ok(/workspaces\.rebind/.test(source) && /workspaces\.unbindArmed/.test(source), '按钮文案应保留')
 })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
