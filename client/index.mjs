@@ -3486,7 +3486,7 @@ window.__ModuleLoader__.load({
                     'aria-label': t('workspaces.rebind'),
                     disabled: busy,
                     onClick: () => setPicking(isPicking ? null : ws.workspaceId)
-                  }, e(ui.IconRefreshOutline14, { size: 14 })),
+                  }, e(ui.IconRefreshOutlineRegular, { size: 14 })),
                   e('button', {
                     type: 'button',
                     className: armed ? 'soul-ws-iconbtn soul-ws-iconbtn-danger' : 'soul-ws-iconbtn',
@@ -3497,7 +3497,7 @@ window.__ModuleLoader__.load({
                     'data-armed': armed ? 'true' : 'false',
                     disabled: busy,
                     onClick: () => { void unbind(ws) }
-                  }, e(ui.IconTrashOutline16, { size: 14 }))
+                  }, e(ui.IconTrashOutlineRegular, { size: 14 }))
                 )
                 : e(Fragment, null,
                   e('span', { className: 'soul-ws-unbound' }, t('workspaces.unbound')),

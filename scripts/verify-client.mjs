@@ -339,6 +339,20 @@ function loadClient(routes, options = {}) {
         Tooltip: 'ui-tooltip',
         IconAgentPresetOutlineRegular: 'ui-icon-persona'
       }
+      // 白名单校验：访问未声明的名字一律返回 undefined（与真实宿主一致），
+      // 并大声报错 —— 让「用了宿主没有的图标名」在测试期就暴露，
+      // 而不是等它在浏览器里把整个区块崩掉。
+      return new Proxy(shimmed, {
+        get(target, prop) {
+          if (typeof prop !== 'string') return target[prop]
+          if (prop in target) return target[prop]
+          if (ICON_WHITELIST.has(prop)) return 'ui-' + prop
+          throw new Error(
+            'ui.' + prop + ' 不在宿主模块表里（真实运行时会拿到 undefined ⇒ React error #130）。' +
+            '可用图标见 ICON_WHITELIST 或宿主 bundle 的 TU 定义。'
+          )
+        }
+      })
     }
     throw new Error(`未预料的 require：${spec}`)
   }
@@ -3482,12 +3496,27 @@ await check('C57 改绑/解绑图标按钮：规格照抄宿主设置-模型页�
   assert.ok(/interactive-bg-hover-danger/.test(danger), '删除悬停底色应为 danger 版（宿主同款）')
   assert.ok(/state-error-primary/.test(danger), '删除悬停图标色应转红（宿主同款）')
   // 两个按钮都用图标（无文字）：改绑 = 刷新箭头，解绑 = 垃圾桶
+  // 图标名必须用**宿主运行时**提供的命名体系（*Regular / *Medium）。
+  // ⚠️ npm 包的类型声明里写的是 IconRefreshOutline14 / IconTrashOutline16，
+  // 但宿主 seed 给插件的模块表里只有 *Regular / *Medium —— 用错名会拿到
+  // undefined，React 直接抛 Minified React error #130，整个区块被卸载。
+  // 用户实测：工作区人设区块整块消失，控制台报 #130。
   assert.ok(
-    /IconRefreshOutline14[\s\S]{0,120}workspaces\.rebind/.test(source) ||
-    /workspaces\.rebind[\s\S]{0,200}IconRefreshOutline14/.test(source),
-    '改绑按钮应用 IconRefreshOutline14'
+    /IconRefreshOutlineRegular/.test(source),
+    '改绑按钮应用 IconRefreshOutlineRegular（宿主运行时命名，不是 ...14）'
   )
-  assert.ok(/IconTrashOutline16/.test(source), '解绑按钮应用 IconTrashOutline16（与宿主删除同图标）')
+  assert.ok(
+    /IconTrashOutlineRegular/.test(source),
+    '解绑按钮应用 IconTrashOutlineRegular（宿主运行时命名，不是 ...16）'
+  )
+  // 反向断言：不得再出现数字后缀形式的图标名
+  for (const bad of ['IconRefreshOutline14', 'IconTrashOutline16', 'IconEditOutline16']) {
+    assert.equal(
+      source.includes('ui.' + bad),
+      false,
+      '不得使用 ui.' + bad + ' —— 宿主模块表里没有这个名字（会 undefined ⇒ React #130）'
+    )
+  }
 })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
