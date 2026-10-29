@@ -6581,29 +6581,37 @@ window.__ModuleLoader__.load({
       // main 面板：key 必须与下面 sidebar.panellist 的 id 相同（宿主按 key 找面板）。
       // `main` 是 keyed 槽位、scope root —— 拿不到 sessionId，所以这里只做总览，
       // 改会话人设仍归会话内的「人设」tab。
-      ctx.slots.register({
-        name: 'main',
-        key: 'soul-persona-panel',
-        locale: NS,
-        inject: () => ({
-          hooks: {
-            soulController: controller.store
-          },
-          controller
-        })
-      }, SoulOverview)
+      // 入口与面板**成对注册**：宿主不声明 sidebar.panellist 时两个都不注册 ——
+      // 只注册 main 会留下一个没有入口的幽灵面板，只注册图标则点开无处可去
+      // （0.9.0-ag 踩过：图标在、面板不在，点了保持当前选择，看起来像没反应）。
+      ctx.slots.inject('sidebar.panellist', () => {
+        const panel = ctx.slots.register({
+          name: 'main',
+          key: 'soul-persona-panel',
+          locale: NS,
+          inject: () => ({
+            hooks: {
+              soulController: controller.store
+            },
+            controller
+          })
+        }, SoulOverview)
 
-      // 面板图标：点它 → 宿主 selectPanel('soul-persona-panel') → 上面那个 main 面板。
-      // 默认开启（0.9.0-ap）：这个面板回答「我现在是谁」，每次开会话都关心，
-      // 与「装插件」那种偶发行为不同，所以不像 dsh-market 那样默认关闭。
-      ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-        name: 'sidebar.panellist',
-        id: 'soul-persona-panel',
-        order: 20,
-        locale: NS,
-        label: () => navT('nav.panelLabel'),
-        inject: () => ({})
-      }, SoulPanelIcon))
+        const row = ctx.slots.register({
+          name: 'sidebar.panellist',
+          id: 'soul-persona-panel',
+          order: 20,
+          locale: NS,
+          label: () => navT('nav.panelLabel'),
+          inject: () => ({})
+        }, SoulPanelIcon)
+
+        // 卸载时先退出该面板再拆 —— 否则主列停在一个已消失的 key 上。
+        return () => {
+          if (typeof row === 'function') row()
+          if (typeof panel === 'function') panel()
+        }
+      })
 
       // 服务到了再让跳转按钮出现（没有这个服务的宿主上不画点不动的按钮）。
       ctx.inject(['pluginNavigation'], (scoped) => {
