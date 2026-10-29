@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 59
+const EXPECTED_ASSERTIONS = 61
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -3677,6 +3677,59 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     const active = findAllByClass(tree, 'soul-ov-ws-active')[0]
     assert.ok(active, '应有活跃时间节点')
     assert.equal(textOf(active), world.dicts.zh['ov.justNow'], `时差为负应显示「刚刚」，实际「${textOf(active)}」`)
+  })
+
+  await check('C65 会话行显示会话标题，不是 UUID（标题缺席才退回短 id）', async () => {
+    const world = await boot()
+    stubOverview(world, {
+      workspaces: [
+        { workspaceId: 'ws-a', title: '项目', path: 'D:\\a', sessionCount: 2, bound: false, persona: null, invalidPersona: false, lastActiveAt: Date.now() }
+      ],
+      sessions: [
+        { id: '0ea71bdb-3c97-46b9-889c-26e65505b7d7', title: '为人设总览加级联', workspaceId: 'ws-a', persona: '资深架构师', hasOverride: true, live: true },
+        { id: '48bc79f4-31e8-49fd-84b1-1fe75028c720', title: null, workspaceId: 'ws-a', persona: null, hasOverride: false, live: false }
+      ]
+    })
+    const tree = await mountOverview(world, world.dicts.zh)
+    const names = findAllByClass(tree, 'soul-ov-session-name').map(textOf)
+    assert.equal(names.length, 2, '应有两条会话行')
+    assert.equal(names[0], '为人设总览加级联', '第一条应显示会话标题')
+    assert.equal(
+      /[0-9a-f]{8}-[0-9a-f]{4}/.test(names[0]),
+      false,
+      '会话名里不应出现 UUID（用户认不出 id）'
+    )
+    assert.equal(names[1], '48bc79f4', '标题缺席时退回短 id（8 位），至少能认出来')
+  })
+
+  await check('C66 单个工作区会话过多时只列最近的 20 条，其余如实计数', async () => {
+    const world = await boot()
+    // 本机实测有一个工作区有 49 个会话：全展开会整屏都是会话行，
+    // 反而看不到别的工作区。上限 20，余下的用一行小字说明。
+    const many = []
+    for (let i = 0; i < 25; i++) {
+      many.push({
+        id: 'sess-' + i,
+        title: '会话 ' + i,
+        workspaceId: 'ws-big',
+        persona: '资深架构师',
+        hasOverride: i === 0,
+        live: false,
+      })
+    }
+    stubOverview(world, {
+      workspaces: [
+        { workspaceId: 'ws-big', title: '大会话量', path: 'D:\\big', sessionCount: 25, bound: false, persona: null, invalidPersona: false, lastActiveAt: Date.now() }
+      ],
+      sessions: many
+    })
+    const tree = await mountOverview(world, world.dicts.zh)
+    const rows = findAllByClass(tree, 'soul-ov-session')
+    assert.equal(rows.length, 20, `最多列 20 条，实际 ${rows.length}`)
+    const notes = findAllByClass(tree, 'soul-ov-empty').map(textOf)
+    const more = notes.find((x) => x.includes('还有'))
+    assert.ok(more, '应该用一行小字说明还有多少个更早的会话')
+    assert.ok(more.includes('5'), `应说明还有 5 个，实际「${more}」`)
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

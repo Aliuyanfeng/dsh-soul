@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 157
+const EXPECTED_ASSERTIONS = 158
 
 let passed = 0
 const failures = []
@@ -4651,6 +4651,32 @@ if (failures.length > 0) {
   console.log(`\n结果：失败（${failures.length} 项未通过）。`)
   process.exit(1)
 }
+check('总览会话清单以磁盘会话目录为准，不拿 live registry 当来源', () => {
+  // 用户实测反馈：必须点进某个会话，它才出现在总览里 —— 因为清单原先走
+  // agents.list()，那是**本进程的活动 registry**，只有打开过的会话在里面。
+  const fn = extractObject(indexSource, 'async function listSessionsForOverview')
+  assert.ok(fn !== '', '找不到 listSessionsForOverview')
+  // 以磁盘为准：扫 sessions 根目录 + 用目录名正向匹配工作区
+  assert.match(fn, /sessionsRoot/, '清单应扫会话根目录')
+  assert.match(fn, /readdirSync\(sessionsRoot/, '清单应枚举磁盘上的会话目录')
+  assert.match(fn, /matchSessionDirsToWorkspaces\(/, '工作区归属应走目录名正向编码匹配')
+  assert.match(fn, /newestMtimeInDir\(/, '活跃时间应取会话目录下**文件**的 mtime（会话目录里是文件，不是子目录）')
+  // agents.list() 只能用来标 live，绝不能当清单来源：
+  // 它出现在 liveIds 那一块里，且必须紧跟 has(id) 的用法。
+  assert.match(fn, /const liveIds = new Set\(\)/, 'agents.list() 只喂 live 标记')
+  assert.match(fn, /liveIds\.has\(s\.id\)/, 'live 标记来自 liveIds，不是清单来源')
+  // 清单遍历体里不得直接出现 agents.list（那会退回「只有打开过的才算」）
+  const loopStart = fn.indexOf('for (const [dir, wsPath] of dirToPath)')
+  assert.ok(loopStart > 0, '清单主体应按工作区目录遍历')
+  const loopBody = fn.slice(loopStart)
+  assert.equal(/agents\.list/.test(loopBody), false, '清单主体不得依赖 agents.list()')
+  // 标题必须问 sessionQuery（标题是事件流折叠出来的，没有别处可取）
+  assert.match(fn, /readSessionTitles\(/, '应取会话标题')
+  const titles = extractObject(indexSource, 'async function readSessionTitles')
+  assert.ok(titles !== '', '找不到 readSessionTitles')
+  assert.match(titles, /readTitleSnapshots/, '标题只能来自 sessionQuery.readTitleSnapshots')
+  assert.equal(/throw /.test(titles), false, '读标题失败不得抛错：标题缺席只是少一行字')
+})
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 
 console.log(`\n全部通过：${passed} 项检查`)

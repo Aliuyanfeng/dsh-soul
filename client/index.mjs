@@ -1955,6 +1955,7 @@ window.__ModuleLoader__.load({
       'ov.daysAgo': '{n} 天前',
       'ov.neverActive': '无会话',
       'ov.customName': '自定义',
+      'ov.moreSessions': '还有 {count} 个更早的会话',
       'ov.noteActivityHint': '展开可看该工作区下的活动会话。',
       'personas.applyAfterSaveHint': '不勾选则保留当前配置不变（表单恢复到已保存的设置）',
       'notice.personaUsed': '已应用预设「{name}」。',
@@ -2322,6 +2323,7 @@ window.__ModuleLoader__.load({
       'ov.daysAgo': '{n} d ago',
       'ov.neverActive': 'no sessions',
       'ov.customName': 'Custom',
+      'ov.moreSessions': '{count} older sessions not shown',
       'ov.noteActivityHint': 'Expand to see the live sessions in this workspace.',
       'personas.applyAfterSaveHint': 'Leave unchecked to keep the current config unchanged (the form reverts to the saved settings)',
       'notice.personaUsed': 'Applied persona "{name}".',
@@ -4046,6 +4048,9 @@ window.__ModuleLoader__.load({
       return new URL(`/api/soul/persona-art/${encodeURIComponent(name)}`, hostBase()).href
     }
 
+    /** 每个工作区在总览里最多列出多少条会话（其余折叠成一行计数）。 */
+    const SESSIONS_PER_WS = 20
+
     function SoulOverview(props) {
       const { controller, useSoulController } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
@@ -4145,18 +4150,26 @@ window.__ModuleLoader__.load({
 
       const renderSessions = (list) => {
         if (list.length === 0) return null
+        // 单个工作区可能有几十上百个会话（本机实测有一个 49 个）。
+        // 展开后整屏都是会话行，反而看不到别的工作区 —— 只列最近的 SESSIONS_PER_WS 条，
+        // 其余用一行小字说明「还有 N 个」，不静默藏起来。
+        const shown = list.slice(0, SESSIONS_PER_WS)
+        const rest = list.length - shown.length
         return e('div', { className: 'soul-ov-sessions' },
-          list.map((s) => {
+          shown.map((s) => {
             const hasOverride = s.hasOverride === true
             // 来源如实说明：有覆盖就是「本会话覆盖」；否则只说到「跟随上层」，
             // 不去断言是工作区还是全局 —— 会话的解析还会受目录绑定影响，
             // 断言错了比不说更糟。
             const sourceText = hasOverride ? t('ov.sessionOverride') : t('ov.sessionFollowUpper')
-            const title = typeof s.id === 'string' ? s.id : ''
-            return e('div', { className: 'soul-ov-session', key: `sess-${title}` },
+            const id = typeof s.id === 'string' ? s.id : ''
+            // 显示**会话标题**（宿主的折叠标题），不是 id —— id 是一串 UUID，
+            // 对用户没有意义。标题缺席时退回短 id，至少还能认出来。
+            const title = typeof s.title === 'string' && s.title !== '' ? s.title : ''
+            const label = title !== '' ? title : (id === '' ? t('ov.untitledSession') : id.slice(0, 8))
+            return e('div', { className: 'soul-ov-session', key: `sess-${id}`, title: id },
               e('span', { className: hasOverride ? 'soul-ov-dot soul-ov-dot-override' : 'soul-ov-dot' }),
-              e('span', { className: 'soul-ov-session-name', title },
-                title === '' ? t('ov.untitledSession') : title),
+              e('span', { className: 'soul-ov-session-name' }, label),
               s.persona && e('span', { className: 'soul-ov-session-persona' }, s.persona),
               e('span', {
                 className: hasOverride
@@ -4164,7 +4177,8 @@ window.__ModuleLoader__.load({
                   : 'soul-ov-session-src'
               }, sourceText)
             )
-          })
+          }),
+          rest > 0 && e('div', { className: 'soul-ov-empty' }, t('ov.moreSessions', { count: rest }))
         )
       }
 

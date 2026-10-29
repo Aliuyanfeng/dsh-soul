@@ -2159,6 +2159,77 @@ function scanWorkspaceActivity(ctx, configPath) {
  *
  * @returns {number|null} 毫秒时间戳；读不到返回 null（不抛错）
  */
+/**
+ * 取一个目录下最新**文件**的 mtime。
+ *
+ * ⚠️ 与会话目录结构有关：`<工作区>/<会话 id>/session.v4.jsonl.zstd` ——
+ * 会话目录里直接就是文件。所以这里只看文件，不看子目录。
+ * 曾误用 newestMtimeUnder（那是给工作区目录用的，只递归子目录里的文件），
+ * 结果是每个会话的活跃时间都是 null，界面上全部显示「无会话」。
+ *
+ * @returns {number|null} 毫秒时间戳；读不到返回 null（不抛错）
+ */
+function newestMtimeInDir(dir) {
+  let newest = null
+  let entries
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const f of entries) {
+    if (!f.isFile()) continue
+    try {
+      const ms = statSync(join(dir, f.name)).mtimeMs
+      if (Number.isFinite(ms) && (newest === null || ms > newest)) newest = ms
+    } catch {
+      // 单个文件 stat 失败不影响整体
+    }
+  }
+  return newest
+}
+
+/** 会话目录名 → 会话 id。目录名可能带 `session-` 前缀（历史格式），剥掉。 */
+function sessionIdFromDirName(dirName) {
+  const raw = typeof dirName === 'string' ? dirName.trim() : ''
+  if (raw === '') return null
+  return raw.startsWith('session-') ? raw.slice('session-'.length) : raw
+}
+
+/**
+ * 批量取会话标题。**宿主没有公开的「按 id 取标题」以外的方式** ——
+ * 标题是事件流折叠出来的（foldSessionTitle），只能问 sessionQuery。
+ *
+ * 拿不到就不给（返回空 Map），界面退回显示短 id：标题是锦上添花，
+ * 不能因为它让整个面板打不开。
+ */
+async function readSessionTitles(ctx, ids) {
+  const out = new Map()
+  if (!Array.isArray(ids) || ids.length === 0) return out
+  let service
+  try {
+    service = ctx.get('sessionQuery')
+  } catch {
+    return out
+  }
+  if (!service || typeof service.readTitleSnapshots !== 'function') return out
+  try {
+    const observations = await service.readTitleSnapshots(ids)
+    for (const observation of observations || []) {
+      if (!observation || observation.status === 'rejected') continue
+      const title = observation.value && observation.value.title
+        && typeof observation.value.title.title === 'string'
+        ? observation.value.title.title.trim()
+        : ''
+      if (title === '' || title === 'untitled') continue
+      out.set(String(observation.sessionId), title)
+    }
+  } catch {
+    // 读标题失败不影响清单
+  }
+  return out
+}
+
 function newestMtimeUnder(workspaceDir) {
   let newest = null
   const bump = (ms) => {
@@ -2189,6 +2260,133 @@ function newestMtimeUnder(workspaceDir) {
     }
   }
   return newest
+}
+
+/**
+ * 总览面板用的**全量会话清单**。
+ *
+ * ⚠️ 为什么不复用 describeActiveSessions：那个走 `agents.list()` ——
+ * 那是**本进程的活动 registry**，只有用户点开过的会话才在里面。
+ * 用户反馈「必须点进会话才看得到它」正是这个原因。
+ *
+ * 这里改以**磁盘上的会话目录**为准：`$DSH_HOME/sessions/<工作区目录>/<会话 id>/`。
+ * 目录存在即代表这个会话存在过，与本次进程是否打开过无关。
+ * 归属靠目录名 → 工作区路径的正向编码匹配（lib/session-dir.mjs），
+ * 活跃时间取该会话目录下最新文件的 mtime，标题向 sessionQuery 要。
+ *
+ * @returns {Promise<Array<{id: string, title: string|null, workspaceId: string|null,
+ *   lastActiveAt: number|null, persona: string|null, hasOverride: boolean, live: boolean}>>}
+ *   按活跃时间倒序；读不到会话目录时返回空数组（不抛错）。
+ */
+async function listSessionsForOverview(ctx, config) {
+  const collected = []
+
+  // 工作区：id ↔ path
+  let workspaces = []
+  try {
+    const registry = ctx.get('workspaceRegistry')
+    if (registry && typeof registry.list === 'function') workspaces = registry.list() || []
+  } catch {
+    workspaces = []
+  }
+  const paths = []
+  const idOfPathKey = new Map()
+  for (const ws of Array.isArray(workspaces) ? workspaces : []) {
+    const id = ws && ws.id !== undefined ? String(ws.id) : ''
+    const p = ws && typeof ws.path === 'string' ? ws.path : ''
+    if (id === '' || p === '') continue
+    paths.push(p)
+    idOfPathKey.set(pathCompareKey(p), id)
+  }
+
+  const sessionsRoot = join(dirname(configPath()), 'sessions')
+  if (!existsSync(sessionsRoot) || paths.length === 0) return collected
+
+  let dirNames
+  try {
+    dirNames = readdirSync(sessionsRoot, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+  } catch {
+    return collected
+  }
+
+  const dirToPath = matchSessionDirsToWorkspaces(dirNames, paths)
+
+  // 本进程真正活着（打开过）的会话：只作为 live 标记，不作为清单来源
+  const liveIds = new Set()
+  try {
+    const agents = ctx.get('agents')
+    if (agents && typeof agents.list === 'function') {
+      for (const agent of agents.list() || []) {
+        const id = agent && typeof agent.id === 'string' ? agent.id : ''
+        if (id !== '') liveIds.add(id)
+      }
+    }
+  } catch {
+    // 活会话缺席不算错误：清单本身不依赖它
+  }
+
+  for (const [dir, wsPath] of dirToPath) {
+    const workspaceId = idOfPathKey.get(pathCompareKey(wsPath)) || null
+    const base = join(sessionsRoot, dir)
+    let entries
+    try {
+      entries = readdirSync(base, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const id = sessionIdFromDirName(entry.name)
+      if (id === null) continue
+      collected.push({
+        id,
+        workspaceId,
+        workspacePath: wsPath,
+        lastActiveAt: newestMtimeInDir(join(base, entry.name))
+      })
+    }
+  }
+
+  if (collected.length === 0) return collected
+
+  const titles = await readSessionTitles(ctx, collected.map((s) => s.id))
+
+  const out = []
+  for (const s of collected) {
+    // 生效人设：与真实装配同一条路径（工作区覆盖 + sidecar 覆盖都在里面）
+    let persona = null
+    let hasOverride = false
+    try {
+      const override = await loadSessionOverride(s.id)
+      hasOverride = sessionOverrides.has(String(s.id)) || override !== null
+      const resolved = configForScope(config, null, s.workspaceId, override)
+      persona = resolveActivePersonaName(resolved.config)
+    } catch {
+      persona = null
+    }
+    out.push({
+      id: s.id,
+      title: titles.get(s.id) || null,
+      workspaceId: s.workspaceId,
+      lastActiveAt: s.lastActiveAt,
+      persona,
+      hasOverride,
+      live: liveIds.has(s.id)
+    })
+  }
+
+  // 活跃时间倒序；没有时间的排最后（不当作 0，那会让它们看似「很久以前」）
+  out.sort((a, b) => {
+    const am = typeof a.lastActiveAt === 'number' ? a.lastActiveAt : null
+    const bm = typeof b.lastActiveAt === 'number' ? b.lastActiveAt : null
+    if (am === null && bm === null) return 0
+    if (am === null) return 1
+    if (bm === null) return -1
+    return bm - am
+  })
+  return out
 }
 
 // 活动会话的目录与解析结果，供设置页回答「我这个项目现在是谁」。
@@ -2609,7 +2807,8 @@ function registerWorkspaceRoutes(ctx) {
         try {
           const config = await loadConfig()
           const wsView = await workspaceView()
-          const sessions = await enrichSessionsWithOverride(ctx, config)
+          // 全量清单：磁盘会话目录为准，不信 live registry（那只有点开过的）
+          const sessions = await listSessionsForOverview(ctx, config)
           const library = mergePersonas(config.personas)
           const builtinNames = []
           const customNames = []
