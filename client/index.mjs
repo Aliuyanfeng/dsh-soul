@@ -1040,6 +1040,7 @@ window.__ModuleLoader__.load({
       '.soul-ov-lib-name-builtin{background:transparent;border:.5px dashed var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary)}',
       '.soul-ov-note{margin-top:10px;padding:8px 10px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px}',
       '.soul-ov-empty{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
+      '.soul-ov-hint{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;margin:2px 0 10px}',
       // 失效行的「修复」按钮：宿主 dangerButton 同族（红字 + 浅红底 + 无描边）
       '.soul-ov-fix{height:24px;padding:0 8px;border:none;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);cursor:pointer;font:inherit;font-size:11px;line-height:18px;flex:none}',
       '.soul-ov-fix:hover{background:var(--dsw-alias-interactive-bg-hover-solid)}',
@@ -1956,6 +1957,7 @@ window.__ModuleLoader__.load({
       'ov.neverActive': '无会话',
       'ov.customName': '自定义',
       'ov.moreSessions': '还有 {count} 个更早的会话',
+      'ov.presetsHint': '预设的增删改在「设置 → 个性化 → 人设预设」里。',
       'ov.noteActivityHint': '展开可看该工作区下的活动会话。',
       'personas.applyAfterSaveHint': '不勾选则保留当前配置不变（表单恢复到已保存的设置）',
       'notice.personaUsed': '已应用预设「{name}」。',
@@ -2324,6 +2326,7 @@ window.__ModuleLoader__.load({
       'ov.neverActive': 'no sessions',
       'ov.customName': 'Custom',
       'ov.moreSessions': '{count} older sessions not shown',
+      'ov.presetsHint': 'Presets are edited under Settings → Personalization → Persona presets.',
       'ov.noteActivityHint': 'Expand to see the live sessions in this workspace.',
       'personas.applyAfterSaveHint': 'Leave unchecked to keep the current config unchanged (the form reverts to the saved settings)',
       'notice.personaUsed': 'Applied persona "{name}".',
@@ -4275,16 +4278,14 @@ window.__ModuleLoader__.load({
         const custom = Array.isArray(lib.custom) ? lib.custom : []
         const builtin = Array.isArray(lib.builtin) ? lib.builtin : []
         return e('div', { className: 'soul-ov-card' },
+          // 这里**不放跳转按钮**：宿主的设置弹窗没有公开的打开方式
+          // （客户端 18 个服务里没有设置导航，pluginNavigation 只能开插件页），
+          // 画一个点不动的按钮比不画更糟。改成一行指引，用户自己两下就能到。
           e('div', { className: 'soul-ov-card-head' },
             e('h3', {}, t('ov.presets')),
-            e('span', { className: 'soul-ov-count' }, String(custom.length + builtin.length)),
-            e('span', { className: 'soul-ov-spacer' }),
-            canJump && e(ui.Button, {
-              variant: 'outline',
-              size: 'sm',
-              onClick: openPluginPage
-            }, t('ov.openDetail'))
+            e('span', { className: 'soul-ov-count' }, String(custom.length + builtin.length))
           ),
+          e('div', { className: 'soul-ov-hint' }, t('ov.presetsHint')),
           custom.length > 0 && e('div', { className: 'soul-ov-lib' },
             e('div', { className: 'soul-ov-lib-title' },
               t('ov.customGroup', { count: custom.length })),

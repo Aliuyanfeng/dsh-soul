@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 61
+const EXPECTED_ASSERTIONS = 62
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -3730,6 +3730,28 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     const more = notes.find((x) => x.includes('还有'))
     assert.ok(more, '应该用一行小字说明还有多少个更早的会话')
     assert.ok(more.includes('5'), `应说明还有 5 个，实际「${more}」`)
+  })
+
+  await check('C67 预设库只给指引、不画跳转按钮（宿主没有打开设置页的公开能力）', async () => {
+    // 为什么这条值得钉住：客户端 18 个服务（layout / locale / sessions / slots /
+    // theme / timer / uiWorkspace / workspaces …）里**没有设置导航**，
+    // pluginNavigation 只能打开插件页。所以「打开 设置→个性化」做不到；
+    // 画一个点了没反应的按钮比不画更糟，改为一行指引。
+    const world = await boot()
+    stubOverview(world, { personas: { builtin: ['极简主义者'], custom: ['专业的Li666'] } })
+    const navInject = world.captured.injected.find((i) => (Array.isArray(i.deps) ? i.deps : Object.keys(i.deps || {})).includes('pluginNavigation'))
+    // 即使跳转服务存在（最有利的情况），预设库也不该有按钮
+    navInject.cb({ pluginNavigation: { openBundle: () => {} } })
+    const tree = await mountOverview(world, world.dicts.zh)
+    const hints = findAllByClass(tree, 'soul-ov-hint').map(textOf)
+    assert.equal(hints.length, 1, '预设库应有一行指引')
+    assert.ok(hints[0].includes('个性化'), `指引应写明去「设置 → 个性化」，实际「${hints[0]}」`)
+    // 预设库卡片里不得有按钮：找到卡片后确认卡片内没有 button
+    const cards = findAllByClass(tree, 'soul-ov-card')
+    const presetCard = cards.find((c) => textOf(c).includes(world.dicts.zh['ov.presets']))
+    assert.ok(presetCard, '应找到预设库卡片')
+    const buttons = findAll(presetCard, (n) => n.type === 'button')
+    assert.equal(buttons.length, 0, `预设库卡片里不应有按钮（宿主无法打开设置页），实际 ${buttons.length} 个`)
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
