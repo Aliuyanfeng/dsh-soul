@@ -979,72 +979,81 @@ window.__ModuleLoader__.load({
       '.soul-hover-persona-name{min-width:0;color:var(--dsw-static-neutral-bluish-00);font-size:12px;line-height:16px;overflow-wrap:break-word}',
 
       // ==================== 侧栏「Soul 人设总览」面板（0.9.0-ap）====================
-      // 版式照抄宿主设置页：无外层盒子，分组用卡片（.5px 描边 + radius-lg）。
-      '.soul-ov{display:flex;flex-direction:column;gap:12px;max-width:var(--dsh-chat-content-width,760px);width:100%;margin:0 auto;padding:20px 24px 32px;box-sizing:border-box;color:var(--dsw-alias-label-primary)}',
-      '.soul-ov-head{display:flex;align-items:center;gap:10px;margin-bottom:4px}',
+      //
+      // **字号一律走宿主的类型阶梯**（从 dsh-web-frontend 的 index CSS 实测出来的）：
+      //   16 / 600 / 24  —— 页面标题（_wordmark_、_title_o6lrb_）
+      //   14 / 600 / 22  —— 卡片内标题（_failedTitle_）
+      //   13 / 500 / 1.5 —— 行标签、列表项标题（_label_bjqpo_）
+      //   12 / 400 / 1.6 —— 说明文字（_help_bjqpo_）
+      //   11 / 500 / 17  —— 标签胶囊、分组小标题（_tag_、_heading_121p8_）
+      //
+      // 两条踩过的坑：
+      //   1) 宿主 body 不设 font-size，所以**任何没写字号的行都继承 16px** ——
+      //      工作区名与会话名曾因此比周围大一圈，看起来「字体不统一」。
+      //      现在在 .soul-ov 上定基准 13px/1.5，逐条再显式声明。
+      //   2) 字重最重只到 600：宿主没有 700（正文 400、行标签 500、标题 600）。
+      '.soul-ov{display:flex;flex-direction:column;gap:12px;max-width:var(--dsh-chat-content-width,760px);width:100%;margin:0 auto;padding:20px 24px 32px;box-sizing:border-box;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary)}',
+      '.soul-ov-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}',
+      '.soul-ov-title-icon{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;color:var(--dsw-alias-label-secondary);flex:none}',
       '.soul-ov-title{margin:0;font-size:16px;line-height:24px;font-weight:600}',
-      '.soul-ov-sub{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;margin-left:auto}',
+      '.soul-ov-sub{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:19px;margin-left:auto}',
       // 区块卡片
       '.soul-ov-card{border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);padding:14px 16px}',
-      '.soul-ov-card-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}',
-      '.soul-ov-card-head h3{margin:0;font-size:13px;line-height:20px;font-weight:600}',
-      '.soul-ov-count{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px}',
+      '.soul-ov-card-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}',
+      '.soul-ov-card-head h3{margin:0;font-size:14px;line-height:22px;font-weight:600}',
+      '.soul-ov-count{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:19px}',
       '.soul-ov-spacer{margin-left:auto}',
       // 当前生效：插画 + 名称 + 特质
       '.soul-ov-current{display:flex;align-items:flex-start;gap:12px}',
-      // 插画 64px 见方：与设置页人设卡同源（/api/soul/persona-art/<name>）
       '.soul-ov-art{width:64px;height:64px;flex:none;border-radius:var(--dsw-radius-xl);overflow:hidden;border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-bg-module-platform)}',
       '.soul-ov-art img{display:block;width:100%;height:100%;object-fit:cover}',
-      // 插画缺失时的兜底：同一个盒子里放面具，不至于塌成空白
       '.soul-ov-art-fallback{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary)}',
       '.soul-ov-cur-body{flex:1;min-width:0}',
-      '.soul-ov-cur-name{display:flex;align-items:center;gap:8px;font-size:14px;line-height:22px;font-weight:700}',
-      '.soul-ov-scope{font-size:11px;line-height:18px;padding:0 6px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-weight:400}',
-      '.soul-ov-traits{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px;margin-top:2px}',
+      '.soul-ov-cur-name{display:flex;align-items:center;gap:8px;font-size:14px;line-height:22px;font-weight:600}',
+      '.soul-ov-scope{font-size:11px;line-height:17px;font-weight:500;padding:0 6px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary)}',
+      '.soul-ov-traits{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:19px;margin-top:2px}',
       // 级联：工作区 → 会话
-      '.soul-ov-tree{display:flex;flex-direction:column;gap:2px}',
-      '.soul-ov-ws{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:var(--dsw-radius-sm);cursor:pointer;background:transparent;border:none;font:inherit;color:inherit;text-align:left;width:100%}',
+      '.soul-ov-tree{display:flex;flex-direction:column;gap:1px}',
+      // 行：13/500 —— 与宿主列表项标签同规格
+      '.soul-ov-ws{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--dsw-radius-sm);cursor:pointer;background:transparent;border:none;font:inherit;font-size:13px;line-height:1.5;color:inherit;text-align:left;width:100%}',
       '.soul-ov-ws:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-      // 失效绑定的工作区：左侧一道红条，扫视时立刻能发现
       '.soul-ov-ws[data-invalid="true"]{box-shadow:inset 2px 0 0 var(--dsw-alias-state-error-primary)}',
       '.soul-ov-ws[data-invalid="true"]:hover{background:var(--dsw-alias-interactive-bg-hover-danger)}',
       '.soul-ov-caret{width:14px;height:14px;flex:none;color:var(--dsw-alias-label-tertiary);transition:transform .12s ease;display:flex;align-items:center;justify-content:center}',
       '.soul-ov-ws[aria-expanded="true"] .soul-ov-caret{transform:rotate(90deg)}',
       // 名字与路径竖排一组：路径不与右侧胶囊抢宽度（否则两者都会被挤成 0）
       '.soul-ov-ws-main{display:flex;flex-direction:column;gap:1px;flex:1 1 0%;min-width:0;width:100%}',
-      '.soul-ov-ws-title{display:block;width:100%;min-width:0;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.soul-ov-ws-path{display:block;width:100%;min-width:0;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:14px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.soul-ov-ws-title{display:block;width:100%;min-width:0;font-size:13px;line-height:1.5;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.soul-ov-ws-path{display:block;width:100%;min-width:0;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.soul-ov-arrow{color:var(--dsw-alias-label-tertiary);flex:none}',
-      '.soul-ov-pill{display:inline-flex;align-items:center;flex:0 1 auto;min-width:0;max-width:220px;padding:1px 7px;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font-size:11px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      // 跟随全局：虚线胶囊（未绑定，与「绑定了某个预设」区分开）
+      // 胶囊：11/500 —— 与宿主 _tag_ 同规格
+      '.soul-ov-pill{display:inline-flex;align-items:center;flex:0 1 auto;min-width:0;max-width:220px;padding:1px 7px;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font-size:11px;line-height:17px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.soul-ov-pill-inherit{background:transparent;border:.5px dashed var(--dsw-alias-border-l3);color:var(--dsw-alias-label-secondary)}',
       '.soul-ov-pill-bad{background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}',
-      '.soul-ov-ws-count{color:var(--dsw-alias-label-tertiary);font-size:11px;flex:none;white-space:nowrap}',
-      '.soul-ov-ws-active{color:var(--dsw-alias-label-tertiary);font-size:11px;flex:none;white-space:nowrap;min-width:64px;text-align:right}',
-      // 会话子行
+      '.soul-ov-ws-count{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;flex:none;white-space:nowrap}',
+      '.soul-ov-ws-active{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;flex:none;white-space:nowrap;min-width:64px;text-align:right}',
+      // 会话子行：标题 13/400，元信息 11 —— 侧栏会话行就是这个层级
       '.soul-ov-sessions{display:flex;flex-direction:column;gap:1px;margin:0 0 4px 22px}',
       '.soul-ov-session{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-secondary)}',
       '.soul-ov-session:hover{background:var(--dsw-alias-interactive-bg-hover)}',
       '.soul-ov-dot{width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-border-l3);flex:none}',
       '.soul-ov-dot-override{background:var(--dsw-alias-brand-primary)}',
-      '.soul-ov-session-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary)}',
-      '.soul-ov-session-src{font-size:11px;color:var(--dsw-alias-label-tertiary);flex:none}',
+      '.soul-ov-session-name{min-width:0;flex:1;font-size:13px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary)}',
+      '.soul-ov-session-persona{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);flex:none;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.soul-ov-session-src{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);flex:none}',
       '.soul-ov-session-src-override{color:var(--dsw-alias-brand-primary);font-weight:500}',
-      '.soul-ov-session-persona{font-size:11px;color:var(--dsw-alias-label-secondary);flex:none;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       // 预设库：只读名字胶囊
-      '.soul-ov-lib{margin-top:10px}',
-      '.soul-ov-lib-title{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;margin-bottom:6px}',
+      '.soul-ov-lib{margin-top:8px}',
+      '.soul-ov-lib-title{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;font-weight:500;margin-bottom:6px}',
       '.soul-ov-lib-names{display:flex;flex-wrap:wrap;gap:6px}',
-      '.soul-ov-lib-name{padding:1px 8px;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:18px}',
-      // 内置：虚线胶囊（与设置页「内置」标记同一语义）
+      '.soul-ov-lib-name{padding:1px 8px;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:17px;font-weight:500}',
       '.soul-ov-lib-name-builtin{background:transparent;border:.5px dashed var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary)}',
-      '.soul-ov-note{margin-top:10px;padding:8px 10px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px}',
-      '.soul-ov-empty{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
-      '.soul-ov-hint{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;margin:2px 0 10px}',
-      // 失效行的「修复」按钮：宿主 dangerButton 同族（红字 + 浅红底 + 无描边）
-      '.soul-ov-fix{height:24px;padding:0 8px;border:none;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);cursor:pointer;font:inherit;font-size:11px;line-height:18px;flex:none}',
+      // 说明与指引：12/1.6 —— 宿主 _help_ 同规格
+      '.soul-ov-hint{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:19px;margin:0 0 8px}',
+      '.soul-ov-note{margin-top:8px;padding:8px 10px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:19px}',
+      '.soul-ov-empty{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:19px}',
+      '.soul-ov-fix{height:24px;padding:0 8px;border:none;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);cursor:pointer;font:inherit;font-size:11px;line-height:17px;font-weight:500;flex:none}',
       '.soul-ov-fix:hover{background:var(--dsw-alias-interactive-bg-hover-solid)}',
-      '.soul-ov-title-icon{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;color:var(--dsw-alias-label-secondary);flex:none}',
       '.soul-session-persona-label-scope{flex:none;font-size:11px;opacity:.8}',
       '@container (width<=540px){.soul-session-persona-label{display:none}}',
       // 错误提示：颜色改用宿主真实存在的 state-error-primary（原先引用不存在的 token ⇒ 渲染成黑色）

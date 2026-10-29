@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 62
+const EXPECTED_ASSERTIONS = 63
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -3752,6 +3752,40 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     assert.ok(presetCard, '应找到预设库卡片')
     const buttons = findAll(presetCard, (n) => n.type === 'button')
     assert.equal(buttons.length, 0, `预设库卡片里不应有按钮（宿主无法打开设置页），实际 ${buttons.length} 个`)
+  })
+
+  await check('C68 总览面板的字号只取宿主类型阶梯，字重不超过 600', async () => {
+    // 用户的反馈是「字体大小和宿主不统一」。根因不是随便调几个数字就完事：
+    // 宿主 body **不设 font-size**，所以任何没写字号的行都继承 16px ——
+    // 工作区名与会话名当时就是这样，比周围大一圈。
+    //
+    // 宿主实际的类型阶梯（从 dsh-web-frontend 的 index CSS 实测）：
+    //   16/600/24 页面标题、14/600/22 卡片标题、13/500/1.5 行标签、
+    //   12/400/1.6 说明、11/500/17 标签胶囊。字重最重 600（没有 700）。
+    const LADDER = [10, 11, 12, 13, 14, 16]
+    const lines = source.split('\n').filter((l) => /^\s*'\.soul-ov/.test(l))
+    assert.ok(lines.length > 30, `应抽到足够多的总览规则，实际 ${lines.length}`)
+    const bad = []
+    const heavy = []
+    for (const line of lines) {
+      const m = line.match(/^\s*'\.([\w-]+)[^{]*\{([^}]*)\}/)
+      if (!m) continue
+      const cls = m[1]
+      const body = m[2]
+      const size = body.match(/font-size:\s*([\d.]+)px/)
+      if (size) {
+        const px = Number(size[1])
+        if (!LADDER.includes(px)) bad.push(cls + '=' + px + 'px')
+      }
+      const weight = body.match(/font-weight:\s*(\d+)/)
+      if (weight && Number(weight[1]) > 600) heavy.push(cls + '=' + weight[1])
+    }
+    assert.deepEqual(bad, [], '字号必须落在宿主类型阶梯上（' + LADDER.join('/') + '），越界的：' + bad.join(', '))
+    assert.deepEqual(heavy, [], '字重不得超过 600（宿主没有 700）：' + heavy.join(', '))
+    // 基准字号必须显式声明在面板根上：否则继承 body 的 16px
+    const root = lines.find((l) => /^\s*'\.soul-ov\{/.test(l))
+    assert.ok(root, '应有 .soul-ov 根规则')
+    assert.match(root, /font-size:13px/, '面板根必须显式声明基准字号（13px，宿主行标签同规格）')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
