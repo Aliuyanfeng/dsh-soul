@@ -4369,13 +4369,40 @@ function componentBody(text, name) {
     const handlerAt = body.indexOf('const openSessionOf = (rawId) => {')
     assert.ok(handlerAt >= 0, '找不到 openSessionOf 函数')
     // 到下一个同级缩进的 `}` 为止（该函数很短，800 字符足够覆盖）
-    const handlerBody = body.slice(handlerAt, handlerAt + 800)
+    // 按括号配平精确切出函数体（handler 变长后固定 800 字符会截断，
+    // 导致「结构存在但断言搜不到」的假失败）。
+    const handlerBody = (() => {
+      let depth = 0
+      let started = false
+      for (let i = handlerAt; i < body.length; i++) {
+        if (body[i] === '{') { depth++; started = true }
+        else if (body[i] === '}') { depth--; if (started && depth === 0) return body.slice(handlerAt, i + 1) }
+      }
+      return body.slice(handlerAt)
+    })()
 
-    // ★ id 前缀必须剥掉（否则宿主 retain 找不到会话）
-    assert.match(handlerBody, /replace\(\/\^session-\/, ''\)/, '调用 openSession 前必须剥掉 session- 前缀')
-    assert.match(handlerBody, /service\.openSession\(/, '必须调用宿主 uiWorkspace.openSession')
-    // 跳转失败要静默，不能打断用户
-    assert.match(handlerBody, /catch\s*\{/, 'openSession 失败必须被 catch 住（静默）')
+    // ★ id 形式：两种都试（不再押一种）
+    //
+    // 宿主 `resolveTarget` 的校验是：has(id) || summaries.some(s => s.sessionId === id)
+    // || subagentAddress。而 `summaries` 只含**列表已加载**的会话、`sessions` 只含
+    // **已实例化**的，所以哪个 id 形式能过取决于运行时状态，不能靠静态推断押一个。
+    assert.match(handlerBody, /replace\(\/\^session-\/, ''\)/, '必须算出无前缀形式')
+    // 必须真的包含**两种**形式；只写一个候选时两种都试就退化成「押一种」，
+    // 而这正是原来的 bug。断言只查 candidates 是否存在是不够的（实测漏检）。
+    assert.match(handlerBody, /\[bare, raw\]/, '候选必须同时包含无前缀与原样两种形式')
+    assert.match(handlerBody, /const candidates = bare === raw \? \[raw\] : \[bare, raw\]/, '候选构造必须覆盖两种形式')
+    assert.match(handlerBody, /for \(const candidate of candidates\)/, '必须按候选顺序逐个尝试')
+    assert.match(handlerBody, /service\.openSession\(candidate\)/, '必须调用宿主 uiWorkspace.openSession')
+
+    // ★ 失败必须被捕获 —— 但不能静默
+    //
+    // 最初这里是 `catch {}`，结果用户点了没反应、也无从得知原因。
+    // 现在：捕获 + 把宿主原话显示到面板 + 打 console。
+    assert.match(handlerBody, /catch \(err\)/, 'openSession 失败必须被捕获（不能抛到渲染层）')
+    assert.match(handlerBody, /setOpenError\(t\('ov\.openFailed'/, '失败必须把原因显示出来，不得静默')
+    assert.match(handlerBody, /console\.warn/, '失败同时要打 console 便于排查')
+    assert.match(body, /className: 'soul-ov-open-error'/, '面板必须渲染失败提示')
+    assert.match(body, /setOpenError\(null\)/, '提示必须可关闭')
 
     // ★ 降级：服务缺席时不给可点样式
     assert.match(body, /const openable = canOpenSession/, '可点性必须由服务可用性决定')

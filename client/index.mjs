@@ -1125,6 +1125,10 @@ window.__ModuleLoader__.load({
       //   tertiary  亮 3.71 / 暗 6.53 —— 亮色低于 WCAG AA 的 4.5
       //   secondary 亮 5.0+ / 暗 更高 —— 达标
       // 它是**可交互控件**（不是装饰文字），对比度要求比次要说明更高。
+      // 跳转失败提示：紧凑一行，红字 + 淡红底 + 关闭按钮
+      '.soul-ov-open-error{display:flex;align-items:center;gap:8px;margin:0 0 8px;padding:6px 10px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:19px}',
+      '.soul-ov-open-error-close{flex:none;margin-left:auto;padding:0 4px;border:none;background:transparent;color:inherit;font:inherit;font-size:14px;line-height:1;cursor:pointer;opacity:.7}',
+      '.soul-ov-open-error-close:hover{opacity:1}',
       '.soul-ov-more{display:inline-flex;align-items:center;align-self:flex-start;margin:2px 0 0;padding:2px 6px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:16px;cursor:pointer}',
       '.soul-ov-more:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
       // 失效绑定的「修复」按钮：宿主 Button 的 **sm + outline** 变体。
@@ -2117,6 +2121,9 @@ window.__ModuleLoader__.load({
       'ov.customName': '自定义',
       'ov.moreSessions': '还有 {count} 个更早的会话',
       'ov.openSessionTitle': '在主视图打开这个会话',
+      'ov.openNoService': '无法跳转：当前连接拿不到工作区服务',
+      'ov.openFailed': '打开会话失败：{reason}',
+      'ov.openErrorDismiss': '关闭提示',
       'ov.presetsHint': '预设的增删改在「设置 → 个性化 → 人设预设」里。',
       'ov.filterArchivedMissing': '读不到归档状态，可能列出已归档的会话。',
       'ov.filterChildrenMissing': '读不到子代理会话信息，可能多列出几个会话。',
@@ -2499,6 +2506,9 @@ window.__ModuleLoader__.load({
       'ov.customName': 'Custom',
       'ov.moreSessions': '{count} older sessions not shown',
       'ov.openSessionTitle': 'Open this session in the main view',
+      'ov.openNoService': 'Cannot navigate: the workspace service is unavailable on this connection',
+      'ov.openFailed': 'Failed to open session: {reason}',
+      'ov.openErrorDismiss': 'Dismiss',
       'ov.presetsHint': 'Presets are edited under Settings → Personalization → Persona presets.',
       'ov.filterArchivedMissing': 'Archive state is unavailable, so archived sessions may be listed.',
       'ov.filterChildrenMissing': 'Subagent sessions are unavailable, so a few extra sessions may appear.',
@@ -4368,6 +4378,8 @@ window.__ModuleLoader__.load({
 
       // 宿主 uiWorkspace 可能晚于本包装载：订阅它，到了再让会话行可点。
       // 服务缺席时行照常显示，只是不带可点样式 —— 不给「点不动的按钮」。
+      // 跳转失败要**说出来**，不能静默 —— 静默正是「点了没反应」的成因。
+      const [openError, setOpenError] = React.useState(null)
       const [canOpenSession, setCanOpenSession] = React.useState(
         () => workspaceService.get() !== null
       )
@@ -4379,19 +4391,43 @@ window.__ModuleLoader__.load({
       /**
        * 把某个会话切到主视图。
        *
-       * id 形式：注册表里是 `session-<uuid>`，而宿主内部（`sessions.retain`）
-       * 用的是**无前缀**的 `<uuid>` —— 必须剥掉前缀，否则 retain 找不到会话。
+       * ── 为什么两种 id 形式都试 ──
+       * 注册表里是 `session-<uuid>`，而宿主内部大多用无前缀 `<uuid>`。但宿主
+       * `resolveTarget` 的校验是：
+       *   has(id) || summaries.some(s => s.sessionId === id) || subagentAddress
+       * 三者都不匹配就抛 `sessions.retain: unknown session`。
+       * 而 `summaries` 只包含**列表已加载**的会话、`sessions` 只含**已实例化**的，
+       * 所以哪个形式能过并不完全由代码决定，取决于运行时状态。
+       * 与其押一种，不如两种按顺序试 —— 失败的那个会自行 release，无副作用。
        *
-       * 打不开就静默：一次跳转失败不该打断用户（会话可能刚被归档或删除）。
+       * ── 为什么不再静默 ──
+       * 最初这里是 `catch {}`，结果「点了没反应」而无从得知原因。
+       * 现在失败会把宿主给的原话显示出来。
        */
       const openSessionOf = (rawId) => {
         const service = workspaceService.get()
-        if (!service || typeof service.openSession !== 'function') return
-        try {
-          service.openSession(String(rawId).replace(/^session-/, ''))
-        } catch {
-          // 静默：跳转失败不影响面板本身
+        if (!service || typeof service.openSession !== 'function') {
+          setOpenError(t('ov.openNoService'))
+          return
         }
+        const raw = String(rawId)
+        const bare = raw.replace(/^session-/, '')
+        // 先试无前缀（宿主内部主流形式），再试带前缀（注册表原样）
+        const candidates = bare === raw ? [raw] : [bare, raw]
+        let lastError = null
+        for (const candidate of candidates) {
+          try {
+            service.openSession(candidate)
+            setOpenError(null)
+            return
+          } catch (err) {
+            lastError = err
+          }
+        }
+        const reason = lastError === null ? '' : String(lastError.message || lastError)
+        setOpenError(t('ov.openFailed', { reason }))
+        // 同时打到控制台：面板上的提示可能被用户忽略，控制台留给排查
+        if (typeof console !== 'undefined' && console.warn) console.warn('[dsh-soul] openSession failed:', lastError)
       }
 
       const [view, setView] = React.useState(null)
@@ -5029,6 +5065,16 @@ window.__ModuleLoader__.load({
             e('span', { className: 'soul-ov-visually-hidden' }, t('ov.loading')))
         }
 
+        // 跳转失败提示：不静默。放在最前面，紧邻用户刚点的会话行。
+        const openErrorNotice = openError !== null && e('div', { className: 'soul-ov-open-error', role: 'alert' },
+          e('span', {}, openError),
+          e('button', {
+            type: 'button',
+            className: 'soul-ov-open-error-close',
+            'aria-label': t('ov.openErrorDismiss'),
+            onClick: () => setOpenError(null)
+          }, '×'))
+
         const invalidCount = workspaces.filter((w) => w.invalidPersona === true).length
         // 哪几层过滤真的生效了：false = 那一步缺服务/缺文件，数字可能偏大
         const filters = (view && view.filtersApplied) || {}
@@ -5044,6 +5090,7 @@ window.__ModuleLoader__.load({
               }, SOUL_MASK_PATHS.map((d, i) => e('path', { key: i, d })))),
             e('h2', { className: 'soul-ov-title' }, t('ov.title'))),
 
+          openErrorNotice,
           renderCurrent(),
 
           e('div', { className: 'soul-ov-card' },
