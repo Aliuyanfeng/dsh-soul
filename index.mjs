@@ -2211,32 +2211,84 @@ function sessionIdFromDirName(dirName) {
  * 拿不到就不给（返回空 Map），界面退回显示短 id：标题是锦上添花，
  * 不能因为它让整个面板打不开。
  */
+/**
+ * 标题缓存：sessionId（无前缀）→ 标题。
+ *
+ * 标题是**折叠出来的**（要读完整事件流），单次很贵（34 个会话约 5 秒）。
+ * 但它不会变 —— 同一会话的标题折叠一次就够。缓存让第二次打开面板
+ * 从数秒变成即时。
+ *
+ * 只在进程内缓存，不落盘：标题不是配置，丢了重新折叠即可。
+ */
+const sessionTitleCache = new Map()
+
 async function readSessionTitles(ctx, ids) {
   const out = new Map()
   if (!Array.isArray(ids) || ids.length === 0) return out
+
+  // 先吃缓存，只把未命中的交给宿主
+  const missing = []
+  for (const id of ids) {
+    const key = normalizeSessionId(id)
+    if (key === '') continue
+    const hit = sessionTitleCache.get(key)
+    if (typeof hit === 'string') out.set(key, hit)
+    else missing.push(key)
+  }
+  if (missing.length === 0) return out
+
   let service
   try {
     service = ctx.get('sessionQuery')
   } catch {
     return out
   }
-  if (!service || typeof service.readTitleSnapshots !== 'function') return out
+  if (!service) return out
+
+  // ⚠️ **不能拿注册表的 id 直接查标题**。
+  // 工作区注册表存的是 `session-0ea71bdb-…`（带前缀），而宿主内部
+  // （`sessions.get()`、持久化记录、`readTitleSnapshots`）用的是**无前缀**的
+  // `0ea71bdb-…`。用带前缀的 id 去查会整批 rejected，界面于是只剩短 id
+  // —— 用户看到的就是「全都显示 8 位 ID」。
+  //
+  // 但也不能盲猜：不同版本、不同后端下 header.id 的形式可能不同。
+  // 所以先问一次 `listSessions()` 拿到**真实 id 与它的对应关系**，
+  // 再用真实 id 查标题。多一次调用，但换来正确性。
+  const realIdByNorm = new Map()
+  if (typeof service.listSessions === 'function') {
+    try {
+      const records = await service.listSessions()
+      for (const record of records || []) {
+        const header = record && record.header
+        if (!header || header.id === undefined) continue
+        const norm = normalizeSessionId(header.id)
+        if (norm !== '' && !realIdByNorm.has(norm)) realIdByNorm.set(norm, String(header.id))
+      }
+    } catch {
+      // 列不出来就退回「直接用传入的 id 试一次」
+    }
+  }
+
+  const queryIds = []
+  const normOfQuery = new Map() // 传给服务的 id → 规范化 id
+  for (const norm of missing) {
+    const real = realIdByNorm.get(norm) || norm
+    queryIds.push(real)
+    normOfQuery.set(real, norm)
+  }
+  if (queryIds.length === 0) return out
+  if (typeof service.readTitleSnapshots !== 'function') return out
 
   // 标题读取要**限时**：readTitleSnapshots 会为每个会话折叠整条事件流，
   // 会话多时单次可达数秒。它是可选的附加信息 —— 超时就放弃，
   // 让界面用短 id，而不是把一个可选的装饰拖成整页的等待。
-  //
-  // 这个超时是「兜底」而不是「预期路径」：正常情况下客户端分两阶段请求，
-  // 标题请求本来就在后台跑，用户不会等它。只有极端情况（会话极多、
-  // 磁盘很慢）才靠它收尾。
   const TIMEOUT_MS = 8000
   let timer = null
   try {
     const observations = await Promise.race([
-      service.readTitleSnapshots(ids),
+      service.readTitleSnapshots(queryIds),
       new Promise((resolve) => {
         timer = setTimeout(() => resolve(null), TIMEOUT_MS)
-        // 不要阻止进程退出
         if (timer && typeof timer.unref === 'function') timer.unref()
       })
     ])
@@ -2248,7 +2300,12 @@ async function readSessionTitles(ctx, ids) {
         ? observation.value.title.title.trim()
         : ''
       if (title === '' || title === 'untitled') continue
-      out.set(String(observation.sessionId), title)
+      const key = normOfQuery.get(String(observation.sessionId))
+        || normalizeSessionId(observation.sessionId)
+      if (key === '') continue
+      // 写回缓存：下次同一会话直接命中
+      sessionTitleCache.set(key, title)
+      out.set(key, title)
     }
   } catch {
     // 读标题失败不影响清单
@@ -2456,15 +2513,14 @@ async function listSessionsForOverview(ctx, config, withTitles = false) {
   // withTitles=false 时整段跳过 —— 这是「点开就显示」的关键。
   const titles = new Map()
   if (withTitles) {
-    const byId = new Map() // 传给服务的 id → 规范化 id
-    for (const s of collected) {
-      byId.set(s.id, s.norm)
-      if (s.id !== s.norm) byId.set(s.norm, s.norm)
-    }
-    const found = await readSessionTitles(ctx, [...byId.keys()])
+    // ⚠️ 必须用**无前缀** id 去查：宿主 `sessions.get(id)` 与持久化记录的 key
+    // 都是无前缀形式（磁盘目录名就是 `0ea71bdb-…`，没有 `session-`）。
+    // 而工作区注册表存的是带前缀的 `session-0ea71bdb-…` —— 直接用注册表的 id
+    // 去查会全部 rejected，界面于是只剩短 id（用户看到「全都显示 8 位 ID」）。
+    const found = await readSessionTitles(ctx, collected.map((s) => s.norm))
     for (const [id, title] of found) {
-      const norm = byId.get(id)
-      if (norm !== undefined && !titles.has(norm)) titles.set(norm, title)
+      const norm = normalizeSessionId(id)
+      if (!titles.has(norm)) titles.set(norm, title)
     }
   }
 

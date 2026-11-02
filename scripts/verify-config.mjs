@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 159
+const EXPECTED_ASSERTIONS = 160
 
 let passed = 0
 const failures = []
@@ -4702,6 +4702,27 @@ check('总览的两个慢点都有兜底：标题限时、sidecar 读盘可短�
   assert.ok(load !== '', '找不到 loadSessionOverride')
   assert.match(load, /sessionOverridesKnown\.has\(/, '已知且无覆盖时应短路，不再读盘')
   assert.ok(load.indexOf('sessionOverridesKnown.has(') < load.indexOf('readSessionScope('), '短路必须发生在读盘之前')
+})
+check('标题查询必须用宿主真实的会话 id，不能用注册表的 session- 前缀形式', () => {
+  // 用户报「全都显示 8 位 ID」。根因：工作区注册表存 `session-0ea71bdb-…`（带前缀），
+  // 而宿主内部（sessions.get / 持久化记录 / readTitleSnapshots）用无前缀的
+  // `0ea71bdb-…`。拿带前缀的 id 去查标题 ⇒ 整批 rejected ⇒ 界面只剩短 id。
+  const titles = extractObject(indexSource, 'async function readSessionTitles')
+  assert.ok(titles !== '', '找不到 readSessionTitles')
+  // 必须先问 listSessions() 拿真实 id，不能盲用传入的 id
+  assert.match(titles, /service\.listSessions\(/, '必须先列一次会话，拿到宿主真实的 id 形式')
+  assert.match(titles, /realIdByNorm/, '要维护「规范化 id → 真实 id」的映射')
+  assert.match(titles, /normOfQuery/, '查询结果要能映射回规范化 id')
+  // 传入的 id 只是 fallback，不能直接当查询 id
+  assert.match(titles, /realIdByNorm\.get\(norm\) \|\| norm/, '真实 id 优先，传入值仅作兜底')
+  // 缓存：标题折叠一次就够，第二次打开不该再等数秒
+  assert.match(indexSource, /const sessionTitleCache = new Map\(\)/, '标题必须缓存')
+  assert.match(titles, /sessionTitleCache\.get\(/, '查询前先吃缓存')
+  assert.match(titles, /sessionTitleCache\.set\(/, '拿到标题要写回缓存')
+  // 缓存命中时不得再调宿主
+  const cacheIdx = titles.indexOf('sessionTitleCache.get(')
+  const callIdx = titles.indexOf('service.listSessions(')
+  assert.ok(cacheIdx > 0 && callIdx > 0 && cacheIdx < callIdx, '必须先查缓存再问宿主（否则缓存没有意义）')
 })
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 
