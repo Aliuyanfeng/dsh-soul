@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 72
+const EXPECTED_ASSERTIONS = 73
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -2743,9 +2743,12 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
       '生效中的应是当前覆盖的那个预设'
     )
     assert.equal(
-      findAllByClass(tree, 'soul-session-chip').filter((c) => textOf(c) === zh['session.clear']).length,
+      findAllByClass(tree, 'soul-session-clear').filter((c) => textOf(c) === zh['session.clear']).length,
       1,
-      '有覆盖时必须给出「取消本会话的临时人设」'
+      // 这个按钮必须用**独立类名** .soul-session-clear，不能与工作区页的预设胶囊
+      // 共用 .soul-session-chip —— 两者尺寸需求不同（前者与「用这个」配对走 md，
+      // 后者是一组小选项走 sm），共用一个类改一个会坏另一个。
+      '有覆盖时必须给出「取消本会话的临时人设」（独立类 .soul-session-clear）'
     )
   })
 
@@ -2873,7 +2876,7 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
     }
 
     // ② 点「取消本会话的临时人设」→ clear:true，且覆盖消失
-    const clearChip = findAllByClass(tree, 'soul-session-chip').find((c) => textOf(c) === zh['session.clear'])
+    const clearChip = findAllByClass(tree, 'soul-session-clear').find((c) => textOf(c) === zh['session.clear'])
     assert.ok(clearChip, '应有「取消本会话的临时人设」按钮')
     await clearChip.props.onClick()
     tree = await renderTab()
@@ -4238,6 +4241,52 @@ function componentBody(text, name) {
     // 不得出现重复的 hover 规则（此前写了两条，后者覆盖前者）
     const hovers = source.match(/\.soul-ov-switch:hover[^{]*\{/g) || []
     assert.equal(hovers.length, 1, `不得有重复的 hover 规则（实际 ${hovers.length} 条）`)
+  })
+
+  await check('C78 「取消本会话的临时人设」规格与宿主 md+outline 一致', async () => {
+    // 用户反馈：人设 tab 下这个按钮的样式和宿主不统一。
+    //
+    // 原实现有三处问题：
+    //   1) 用 md 的 36px 高度配 sm 的 12px/18px 字号 —— 宿主没有这种组合
+    //   2) 边框色用 settings-card-stroke，宿主 outline 用 border-l3
+    //   3) 通过 .soul-session-chip-clear 叠品牌蓝边框+文字，而宿主 outline 就是正文色
+    //
+    // 还有一处设计缺陷：它和**工作区页的预设胶囊**共用 .soul-session-chip。
+    // 两者尺寸需求不同（本按钮与「用这个」配对走 md，胶囊是一组小选项走 sm），
+    // 共用一个类改一个就坏另一个。所以拆出独立的 .soul-session-clear。
+    //
+    // 规格对齐宿主 Button.module.css 的 md + outline：
+    //   height:36px · padding:0 14px · radius-md · font-size:14px · line-height:22px
+    //   border:.5px solid border-l3 · background:transparent · color:label-primary
+    //   hover:interactive-bg-hover · active:interactive-bg-active · disabled:.4
+    const at = source.indexOf('.soul-session-clear{')
+    assert.ok(at > 0, '找不到 .soul-session-clear 规则')
+    const css = source.slice(at, at + 600)
+    const decl = (prop) => {
+      const m = new RegExp(prop.replace(/[-]/g, '\\-') + ':([^;}]+)').exec(css)
+      return m ? m[1].trim() : ''
+    }
+    // 尺寸：宿主 md 变体
+    assert.equal(decl('height'), '36px', '高度必须与宿主 md 一致（36px）')
+    assert.equal(decl('font-size'), '14px', '字号必须与宿主 md 一致（14px）')
+    assert.equal(decl('line-height'), '22px', '行高必须与宿主 md 一致（22px）')
+    assert.equal(decl('padding'), '0 14px', '内边距必须与宿主基础一致（0 14px）')
+    assert.match(decl('border-radius'), /^var\(--dsw-radius-md/, '圆角必须用 md 变体的 radius-md')
+    // outline 变体
+    assert.equal(decl('border'), '.5px solid var(--dsw-alias-border-l3)', '边框必须与宿主 outline 一致')
+    assert.equal(decl('background'), 'transparent', '背景必须透明（outline 语义）')
+    assert.equal(decl('color'), 'var(--dsw-alias-label-primary)', '文字色必须用 label-primary')
+    // ★ 不得用品牌色 —— 这就是用户说的「不统一」
+    assert.equal(/brand-primary/.test(css), false, '不得用品牌色（宿主 outline 按钮是正文色）')
+    // 三态必须齐全（宿主 Button 有）
+    assert.match(source, /\.soul-session-clear:hover:not\(:disabled\)\{background:var\(--dsw-alias-interactive-bg-hover\)\}/, 'hover 必须用 interactive-bg-hover')
+    assert.match(source, /\.soul-session-clear:active:not\(:disabled\)\{background:var\(--dsw-alias-interactive-bg-active\)\}/, '必须有 active 态')
+    assert.match(source, /\.soul-session-clear:disabled\{[^}]*opacity:\.4/, 'disabled 必须 opacity:.4')
+    // 渲染处必须用这个类，且不得再叠旧变体
+    assert.match(source, /className: 'soul-session-clear'/, '渲染必须用独立类 .soul-session-clear')
+    assert.equal(/soul-session-chip-clear/.test(source), false, '旧变体 .soul-session-chip-clear 必须删掉')
+    // 死代码不得残留
+    assert.equal(/soul-session-chip-active/.test(source), false, '死代码 .soul-session-chip-active 必须删掉')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

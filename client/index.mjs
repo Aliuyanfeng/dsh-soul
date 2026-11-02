@@ -1413,7 +1413,7 @@ window.__ModuleLoader__.load({
       // 会让「临时改用」与下方卡牌的间距比上方标题的 16px 小，视觉不齐（用户反馈）。
       // ⚠️ 0.9.0-af 补全：光清 .soul-field 不够 —— 前置排查发现容器内还有多处
       // 自带纵向 margin：.soul-field-label(8px bottom)、.soul-status(top)、
-      // .soul-session-split(top:2px)、.soul-session-clear-row(top)、
+      // .soul-session-split(top:2px)、
       // .soul-session-detail-actions(top)、.soul-session-scope-hint(top)。
       // 每漏一处，三段间距就有一段不齐（用户连续报了两次）。
       // 通配清零容器内所有子元素的纵向 margin —— 间距语义只归 gap 一处管。
@@ -1433,16 +1433,32 @@ window.__ModuleLoader__.load({
       '.soul-session-chips{display:flex;flex-wrap:wrap;gap:8px}',
       // 与「使用中」按钮（.soul-persona-action，36px / radius-md）并排，
       // 高度与圆角必须一致 —— 否则同一行里一高一低。
-      // .soul-session-chip 现在只剩「取消本会话的临时人设」这一个使用点
-      // （0.9.0-d 移除了旧胶囊选择器），直接对齐规格；配色保持描边式（次要动作）。
+      // .soul-session-chip 现在**只服务工作区页的预设胶囊**（多选项，sm 语义）。
+      // 「取消本会话的临时人设」已改用独立的 .soul-session-clear（md + outline），
+      // 因为它要与同行的「用这个」(md + primary) 配对 —— 尺寸需求不同，不能共用。
       '.soul-session-chip{box-sizing:border-box;display:inline-flex;align-items:center;height:36px;padding:0 14px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-md,12px);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
       '.soul-session-chip:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
       '.soul-session-chip:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.soul-session-chip:disabled{opacity:.5;cursor:default}',
-      '.soul-session-chip-active{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary-foreground)}',
-      // 「取消本会话的临时人设」用次要色：它可逆，不是破坏性动作
-      '.soul-session-chip-clear{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
-      '.soul-session-clear-row{display:flex;margin-top:10px}',
+      // 「取消本会话的临时人设」：宿主 Button 的 **md + outline** 变体。
+      //
+      // 为什么单独一个类而不是复用 .soul-session-chip —— 那个类还被工作区页的
+      // 预设胶囊复用（多个并排的小选项）。两者尺寸需求本就不同：
+      //   本按钮与「用这个」(md + primary) 并排 → 必须同为 md（36px / 14px）
+      //   预设胶囊是一组小选项            → 应走 sm
+      // 共用类名会导致「改一个坏另一个」，所以拆开。
+      //
+      // 规格对齐宿主 Button.module.css 的 md + outline：
+      //   height:36px（md）· padding:0 14px（基础）· radius-md（md）
+      //   font-size:14px / line-height:22px（md）
+      //   border:.5px solid border-l3 + background:transparent（outline）
+      //   color:label-primary（不用品牌色 —— 宿主 outline 就是正文色）
+      //   hover:interactive-bg-hover · active:interactive-bg-active ·
+      //   disabled:opacity .4（三态与宿主一致）
+      '.soul-session-clear{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:36px;padding:0 14px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md,12px);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;line-height:22px;cursor:pointer}',
+      '.soul-session-clear:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-session-clear:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
+      '.soul-session-clear:disabled{cursor:not-allowed;opacity:.4}',
       // —— 会话「人设」：左卡牌网格 + 右详情（0.9.0-d 改版）——
       //
       // 与设置页的人设卡牌**共用同一套视觉语言**（圆角、描边、浅底、插画 + 压图标题），
@@ -3428,7 +3444,7 @@ window.__ModuleLoader__.load({
             }, isEffective ? t('session.chipInUse') : t('session.useCard')),
             hasOverride && isEffective && e('button', {
               type: 'button',
-              className: 'soul-session-chip soul-session-chip-clear',
+              className: 'soul-session-clear',
               disabled: busy,
               onClick: () => { void clear() }
             }, t('session.clear'))
