@@ -1067,7 +1067,13 @@ window.__ModuleLoader__.load({
       '.soul-ov-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}',
       // 就地改绑：预设胶囊列表，缩进到工作区名下方
       // 「切换」按钮：卡片标题右侧的次要操作，hover 才明显
-      '.soul-ov-switch{flex:none;margin-left:auto;padding:1px 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:17px;font-weight:500;cursor:pointer}',
+      // 「切换」按钮：卡片标题右侧的主要操作。
+      //
+      // 第一版是 11px + 次要灰 + 透明底，实测**用户找不到**（控件存在但看不见
+      // 等于没做）。这里改成 12px + 主色文字 + 实底 + 明确边框，视觉重量与
+      // 「可点」这件事相称。
+      '.soul-ov-switch{flex:none;display:inline-flex;align-items:center;gap:2px;margin-left:auto;padding:2px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:19px;font-weight:500;cursor:pointer}',
+      '.soul-ov-switch:hover{background:var(--dsw-alias-interactive-bg-hover-solid);border-color:var(--dsw-alias-brand-primary)}',
       '.soul-ov-switch:hover{background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary)}',
       '.soul-ov-picker{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 6px 22px;padding:6px 8px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
       '.soul-ov-picker-label{flex:none;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:17px;font-weight:500}',
