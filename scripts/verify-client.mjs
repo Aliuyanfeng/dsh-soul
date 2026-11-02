@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 64
+const EXPECTED_ASSERTIONS = 65
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -3846,6 +3846,37 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     assert.equal(calls.length >= 2, true, `应发出两次请求（主体 + 标题），实际 ${calls.length} 次`)
     assert.equal(calls[0].includes('titles=1'), false, '第一次请求不得带 titles=1（否则又会等 5 秒）')
     assert.equal(calls.some((c) => c.includes('titles=1')), true, '应有第二次带 titles=1 的请求去补标题')
+  })
+
+  await check('C70 阶段 2 的标题真的显示出来（不是只在返回体里）', async () => {
+    // 用户实测的坑：服务端**已经返回了标题**（17/34 条有 title），
+    // 但界面还是全显示短 id —— 因为标题被合并进 view 时依赖了
+    // 「函数式 setState 的 prev 一定是最新值」，那一步在真实 React 里失效了。
+    //
+    // 这条断言必须盯**渲染结果**，不能只盯请求有没有发。
+    const world = await boot()
+    world.routes['/api/soul/overview'] = (call) => {
+      const wantTitles = String(call.search || '').includes('titles=1')
+      return {
+        ok: true,
+        globalPersona: null,
+        enabled: true,
+        personas: { builtin: [], custom: [] },
+        workspaces: [
+          { workspaceId: 'ws-a', title: '项目', path: 'D:\\a', sessionCount: 2, bound: false, persona: null, invalidPersona: false, lastActiveAt: Date.now() }
+        ],
+        sessions: [
+          { id: 'session-5d29165d-348c-41f6-a7e0-3544a13a4318', title: wantTitles ? 'dsh-soul插件开发' : null, workspaceId: 'ws-a', persona: null, hasOverride: true, live: true },
+          { id: 'session-2c8f20e5-43da-41b3-b72d-3f3e0b5da1a1', title: null, workspaceId: 'ws-a', persona: null, hasOverride: false, live: false }
+        ],
+        filtersApplied: { archived: true, children: true, registry: true }
+      }
+    }
+    const tree = await mountOverview(world, world.dicts.zh)
+    const names = findAllByClass(tree, 'soul-ov-session-name').map(textOf)
+    assert.equal(names.length, 2, '应有两条会话行')
+    assert.equal(names[0], 'dsh-soul插件开发', '阶段 2 拿到的标题必须显示出来（这是用户报的那条 bug）')
+    assert.equal(names[1], '2c8f20e5', '没有标题的那条仍退回短 id')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

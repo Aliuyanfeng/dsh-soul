@@ -4079,6 +4079,8 @@ window.__ModuleLoader__.load({
       const state = useSoulController((s) => s)
 
       const [view, setView] = React.useState(null)
+      // 会话标题单独一份：阶段 2 才拿到，合并发生在渲染时（见 reload 的说明）
+      const [titles, setTitles] = React.useState({})
       const [error, setError] = React.useState(null)
       // 用户手动展开/收起过的工作区（workspaceId → 是否展开）。
       // 与「自动展开」分开存：自动展开每次渲染算得出来，用户的点击必须能压过它。
@@ -4113,22 +4115,21 @@ window.__ModuleLoader__.load({
         }
 
         // 阶段 2：标题。失败不算错误 —— 没有标题时行上显示短 id，仍然可用。
+        //
+        // 标题存**独立 state**，不塞进 view：
+        //   view 是阶段 1 的快照，阶段 2 只多一批标题。拆成两份状态后，
+        //   合并发生在渲染时（按 id 查表），不再依赖「函数式 setState 的
+        //   prev 一定是最新值」这个前提 —— 后者在中间被别的 setView 插队、
+        //   或 updater 被重复调用时都会失效，表现为标题永远不出现。
         try {
           const titled = await controller.fetchOverview(true)
-          setView((prev) => {
-            if (prev === null) return prev
-            // 只把标题合并进来，其余字段保留阶段 1 的 —— 阶段 2 期间用户可能
-            // 已经展开/收起过工作区，整体替换会让那些交互白做。
-            const byId = new Map()
-            for (const s of titled.sessions || []) byId.set(s.id, s.title)
-            return {
-              ...prev,
-              sessions: (prev.sessions || []).map((s) => {
-                const title = byId.get(s.id)
-                return typeof title === 'string' && title !== '' ? { ...s, title } : s
-              })
+          const map = {}
+          for (const s of titled.sessions || []) {
+            if (typeof s.id === 'string' && typeof s.title === 'string' && s.title !== '') {
+              map[s.id] = s.title
             }
-          })
+          }
+          setTitles(map)
         } catch {
           // 标题拿不到就用短 id，不打扰用户
         }
@@ -4216,7 +4217,10 @@ window.__ModuleLoader__.load({
             const id = typeof s.id === 'string' ? s.id : ''
             // 显示**会话标题**（宿主的折叠标题），不是 id —— id 是一串 UUID，
             // 对用户没有意义。标题缺席时退回短 id，至少还能认出来。
-            const title = typeof s.title === 'string' && s.title !== '' ? s.title : ''
+            // 阶段 2 的标题按 id 查表：阶段 1 时表还是空的，行上先显示短 id，
+            // 标题到了这一行会自然重渲染出标题。
+            const staged = typeof titles[id] === 'string' ? titles[id] : ''
+            const title = staged !== '' ? staged : (typeof s.title === 'string' ? s.title : '')
             // 标题缺席时的短 id：**必须先剥掉 `session-` 前缀再截断**。
             // 否则 slice(0,8) 恰好切在 "session-" 上，每一行都显示成一样的
             // 「session-」，看起来像一堆脏数据（实际是我的显示 bug）。
