@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 71
+const EXPECTED_ASSERTIONS = 72
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4196,6 +4196,48 @@ function componentBody(text, name) {
     // CSS 必须让内容可滚
     assert.match(source, /\.soul-ov-scroll\{[^}]*overflow-y:auto/, '.soul-ov-scroll 必须可纵向滚动')
     assert.match(source, /\.soul-ov-scroll\{[^}]*overscroll-behavior:contain/, '滚到底不得把滚动传给外层')
+  })
+
+  await check('C77 「切换」按钮规格必须与宿主 Button 的 sm+outline 一致', async () => {
+    // 用户反馈：切换人设按钮的样式和宿主不统一。
+    //
+    // 规格取自宿主 Button.module.css（hash `_1rv3m_`，已核对真实声明）：
+    //   基础  border:none; border-radius:radius-md; font-size:14px; line-height:22px;
+    //         color:label-primary; background:transparent; padding:0 14px; gap:4px
+    //   sm    height:28px; font-size:12px; line-height:18px; padding:0 10px;
+    //         border-radius:radius-sm
+    //   outline  border:.5px solid border-l3; background:transparent
+    //         hover interactive-bg-hover; active interactive-bg-active
+    //   disabled cursor:not-allowed; opacity:.4
+    //
+    // 为什么选 outline 而不是 ghost：ghost 无边框，第一版就是「太轻」导致用户
+    // 找不到按钮。outline 有 .5px 边框，既符合宿主规格又保证可辨。
+    //
+    // 这条守「规格不得漂移」：以后谁调这个按钮，都得先回到宿主的定义。
+    const css = source.slice(source.indexOf('.soul-ov-switch{'), source.indexOf('.soul-ov-switch{') + 600)
+    assert.ok(css !== '', '找不到 .soul-ov-switch 规则')
+    const decl = (prop) => {
+      const m = new RegExp(prop.replace(/[-]/g, '\\-') + ':([^;}]+)').exec(css)
+      return m ? m[1].trim() : ''
+    }
+    // 尺寸：宿主 sm 变体
+    assert.equal(decl('height'), '28px', '高度必须与宿主 sm 一致（28px）')
+    assert.equal(decl('font-size'), '12px', '字号必须与宿主 sm 一致（12px）')
+    assert.equal(decl('line-height'), '18px', '行高必须与宿主 sm 一致（18px）')
+    assert.equal(decl('padding'), '0 10px', '内边距必须与宿主 sm 一致（0 10px）')
+    assert.equal(decl('border-radius'), 'var(--dsw-radius-sm)', '圆角必须用 sm 变体的 radius-sm')
+    // outline 变体：.5px 细边框 + 透明底 + 正文色
+    assert.equal(decl('border'), '.5px solid var(--dsw-alias-border-l3)', '边框必须与宿主 outline 一致（.5px border-l3）')
+    assert.equal(decl('background'), 'transparent', '背景必须与宿主 outline 一致（transparent）')
+    assert.equal(decl('color'), 'var(--dsw-alias-label-primary)', '文字色必须用 label-primary（不是品牌色）')
+    assert.equal(decl('gap'), '4px', '图标/文字间距必须与宿主一致（4px）')
+    // 交互态：宿主有 hover / active / disabled 三态
+    assert.match(source, /\.soul-ov-switch:hover:not\(:disabled\)\{background:var\(--dsw-alias-interactive-bg-hover\)\}/, 'hover 必须用宿主的 interactive-bg-hover')
+    assert.match(source, /\.soul-ov-switch:active:not\(:disabled\)\{background:var\(--dsw-alias-interactive-bg-active\)\}/, '必须有 active 态（宿主有）')
+    assert.match(source, /\.soul-ov-switch:disabled\{[^}]*opacity:\.4/, 'disabled 必须 opacity:.4（与宿主一致）')
+    // 不得出现重复的 hover 规则（此前写了两条，后者覆盖前者）
+    const hovers = source.match(/\.soul-ov-switch:hover[^{]*\{/g) || []
+    assert.equal(hovers.length, 1, `不得有重复的 hover 规则（实际 ${hovers.length} 条）`)
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

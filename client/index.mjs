@@ -1076,14 +1076,27 @@ window.__ModuleLoader__.load({
       '.soul-ov-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}',
       // 就地改绑：预设胶囊列表，缩进到工作区名下方
       // 「切换」按钮：卡片标题右侧的次要操作，hover 才明显
-      // 「切换」按钮：卡片标题右侧的主要操作。
+      // 「切换」按钮：完全对齐宿主 Button 的 `sm + outline` 变体。
       //
-      // 第一版是 11px + 次要灰 + 透明底，实测**用户找不到**（控件存在但看不见
-      // 等于没做）。这里改成 12px + 主色文字 + 实底 + 明确边框，视觉重量与
-      // 「可点」这件事相称。
-      '.soul-ov-switch{flex:none;display:inline-flex;align-items:center;gap:2px;margin-left:auto;padding:2px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:19px;font-weight:500;cursor:pointer}',
-      '.soul-ov-switch:hover{background:var(--dsw-alias-interactive-bg-hover-solid);border-color:var(--dsw-alias-brand-primary)}',
-      '.soul-ov-switch:hover{background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary)}',
+      // 规格取自宿主 Button.module.css（hash `_1rv3m_`）：
+      //   基础  border:none; border-radius:radius-md; font-size:14px; line-height:22px;
+      //         color:label-primary; background:transparent; padding:0 14px; gap:4px
+      //   sm    height:28px; font-size:12px; line-height:18px; padding:0 10px;
+      //         border-radius:radius-sm
+      //   outline  border:.5px solid border-l3; background:transparent
+      //         hover  interactive-bg-hover
+      //   ghost    hover interactive-bg-hover; active interactive-bg-active
+      //   disabled cursor:not-allowed; opacity:.4
+      //
+      // 为什么选 outline 而不是 ghost：ghost 无边框，第一版就是因为「太轻」
+      // 导致用户找不到按钮。outline 有 .5px 边框，既符合宿主规格又保证可辨。
+      //
+      // 唯一偏离宿主的是 margin-left:auto —— 那是本卡片标题行的右对齐需要，
+      // 与按钮自身规格无关。
+      '.soul-ov-switch{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;justify-content:center;gap:4px;margin-left:auto;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.soul-ov-switch:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-ov-switch:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
+      '.soul-ov-switch:disabled{cursor:not-allowed;opacity:.4}',
       '.soul-ov-picker{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 6px 22px;padding:6px 8px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
       '.soul-ov-picker-label{flex:none;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:17px;font-weight:500}',
       '.soul-ov-picker-item{flex:none;max-width:180px;padding:1px 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:999px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:17px;font-weight:500;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
