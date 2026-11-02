@@ -1002,6 +1002,9 @@ window.__ModuleLoader__.load({
       //      工作区名与会话名曾因此比周围大一圈，看起来「字体不统一」。
       //      现在在 .soul-ov 上定基准 13px/1.5，逐条再显式声明。
       //   2) 字重最重只到 600：宿主没有 700（正文 400、行标签 500、标题 600）。
+      // 滚动区：只负责「内容超出时能滚」，高度上限由组件按祖先实际高度设置。
+      // overscroll-behavior:contain —— 滚到底时不把滚动传给外层（避免整页跟着弹）。
+      '.soul-ov-scroll{overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;flex:1 1 auto;min-height:0}',
       '.soul-ov{display:flex;flex-direction:column;gap:12px;max-width:var(--dsh-chat-content-width,760px);width:100%;margin:0 auto;padding:20px 24px 32px;box-sizing:border-box;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary)}',
       '.soul-ov-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}',
       '.soul-ov-title-icon{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;color:var(--dsw-alias-label-secondary);flex:none}',
@@ -3615,81 +3618,6 @@ window.__ModuleLoader__.load({
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [])
 
-      // —— 数据变化时自动重拉 ——
-      //
-      // 两个触发源，覆盖两种真实场景：
-      //
-      //   ① **别处改了数据**（设置页改人设、插件详情页改绑、斜杠命令）：
-      //      这些都会写进 soulController store，订阅它即可立刻跟上。
-      //      这是用户最常遇到的 —— 改完切回来看还是旧的。
-      //   ② **切回本面板**（layout 的 activePanelId 变回本面板）：
-      //      宿主的 main 面板按 entryKey 切换子树，正常情况下切走会卸载、
-      //      切回会重新挂载并重拉。但「保活/不卸载」的实现差异不该让用户
-      //      看到旧数据，所以这里再兜一层。
-      //
-      // 都只在「需要时」触发，避免无谓重拉（每次都要走判空与标题）。
-
-      // ① store 变化：**直接订阅 store**，比较关键字段的指纹，变了才重拉。
-      //
-      // 为什么不在渲染里算指纹、靠 deps 触发：那依赖「store 通知 → 组件重渲染
-      // → effect deps 变化」这条链，中间任何一环不成立（比如宿主把面板保活、
-      // 或渲染被跳过）就永远不会重拉。直接订阅是单跳，最可靠。
-      //
-      // 为什么用指纹而不是「有任何变化就重拉」：store 里有 loading/saving
-      // 这类高频字段，全量响应会把面板刷成幻灯片。
-      React.useEffect(() => {
-        const store = controller.store
-        if (!store || typeof store.subscribe !== 'function') return undefined
-        const fingerprintOf = (snapshot) => {
-          const s = snapshot || {}
-          const personas = s.personas ? Object.keys(s.personas).sort().join(',') : ''
-          const bound = s.bindings ? Object.keys(s.bindings).sort().join(',') : ''
-          // store 把配置字段**平铺在根上**（没有嵌套的 config）
-          const shape = [s.style, s.headingLists, s.emoji, s.tables, s.replyLength, s.language]
-            .map((v) => String(v))
-            .join('|')
-          return personas + '#' + bound + '#' + shape
-        }
-        let last = fingerprintOf(store.getSnapshot())
-        const unsubscribe = store.subscribe(() => {
-          const next = fingerprintOf(store.getSnapshot())
-          if (next === last) return
-          last = next
-          void reload()
-        })
-        return unsubscribe
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [])
-      const wasVisibleRef = React.useRef(isOverviewVisible())
-      React.useEffect(() => {
-        const check = () => {
-          const now = isOverviewVisible()
-          const before = wasVisibleRef.current
-          wasVisibleRef.current = now
-          if (!before && now) void reload()
-        }
-        // layout 到达 / 变化时都检查一次
-        const offLayout = layoutService.subscribe(check)
-        // panelInfo 本身是宿主 store：能订阅就订阅，订阅不了就退回轮询。
-        // 轮询是有代价的，所以只在拿不到 store 时启用，且间隔放宽到 2s。
-        let offStore = null
-        const service = layoutService.get()
-        if (service && service.panelInfo && typeof service.panelInfo.subscribe === 'function') {
-          try {
-            offStore = service.panelInfo.subscribe(check)
-          } catch {
-            offStore = null
-          }
-        }
-        const timer = offStore === null ? setInterval(check, 2000) : null
-        return () => {
-          offLayout()
-          if (typeof offStore === 'function') offStore()
-          if (timer !== null) clearInterval(timer)
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [])
-
       // 解绑的二次确认 5 秒后复位（同设置页的 armed 态）
       React.useEffect(() => {
         if (pendingUnbind === null) return undefined
@@ -4335,6 +4263,18 @@ window.__ModuleLoader__.load({
       // 为什么单独一份而不是复用 rebinding：那是「给某个工作区改绑」，
       // 两者语义不同（一个动全局配置、一个动工作区绑定），混用一个 state
       // 会让「点工作区的修复」把全局那张卡也展开。
+      // —— 面板自滚动 ——
+      //
+      // 问题：展开的工作区越多，内容越长，下方的预设库被顶出可见区就看不到了。
+      //
+      // 为什么不用纯 CSS（height:100%）：宿主把 main 面板放在它的布局容器里，
+      // 那些类名是 hash 过的、且 CSS 打在 web 前端的 bundle 里，插件无法可靠地
+      // 假设「父容器高度可继承」。height:100% 一旦落在 auto 高度的容器上就失效。
+      //
+      // 所以直接量：沿祖先链找到**第一个会裁剪内容的容器**（overflowY !== visible
+      // 且有实际高度），把它的可见高度作为本面板的上限。这样不论宿主怎么排布
+      // 都成立，且内容不超出时不会多出一条没用的滚动槽。
+      const scrollRef = React.useRef(null)
       const [switchingGlobal, setSwitchingGlobal] = React.useState(false)
       const [switchBusy, setSwitchBusy] = React.useState(false)
       const [switchError, setSwitchError] = React.useState(null)
@@ -4406,6 +4346,127 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => {
         void reload()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+
+      // —— 面板自滚动 ——
+      //
+      // 问题：展开的工作区越多，内容越长，下方的预设库被顶出可见区就看不到了。
+      //
+      // 为什么不用纯 CSS（height:100%）：宿主把 main 面板放在它的布局容器里，
+      // 那些类名是 hash 过的、且 CSS 打在 web 前端的 bundle 里，插件无法可靠地
+      // 假设「父容器高度可继承」。height:100% 一旦落在 auto 高度的容器上就失效。
+      //
+      // 所以直接量：沿祖先链找到**第一个会裁剪内容的容器**（overflowY !== visible
+      // 且有实际高度），把它的可见高度作为本面板的上限。这样不论宿主怎么排布
+      // 都成立，且内容不超出时不会多出一条没用的滚动槽。
+      React.useEffect(() => {
+        const el = scrollRef.current
+        if (!el) return undefined
+        const sync = () => {
+          // 沿祖先链找第一个「会裁剪」的容器：它才是真正限制可见高度的那层
+          let node = el.parentElement
+          let limit = 0
+          while (node !== null && node !== undefined) {
+            let overflowY = ''
+            try {
+              overflowY = globalThis.getComputedStyle(node).overflowY
+            } catch {
+              overflowY = ''
+            }
+            // hidden / auto / scroll 都会裁剪；visible 不裁
+            if (overflowY !== '' && overflowY !== 'visible' && node.clientHeight > 0) {
+              limit = node.clientHeight
+              break
+            }
+            node = node.parentElement
+          }
+          // 找不到裁剪容器（页面整体滚动）时不设上限：那种情况本来就看得全，
+          // 硬加一条滚动槽反而多一层嵌套滚动。
+          if (limit > 0) el.style.maxHeight = `${limit}px`
+          else el.style.removeProperty('max-height')
+        }
+        sync()
+        if (typeof globalThis.ResizeObserver !== 'function') return undefined
+        // 观察窗口大小变化（祖先高度随之变）与自身内容变化（展开/收起工作区）
+        const observer = new globalThis.ResizeObserver(sync)
+        if (el.parentElement) observer.observe(el.parentElement)
+        return () => observer.disconnect()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+
+      // —— 数据变化时自动重拉 ——
+      //
+      // 两个触发源，覆盖两种真实场景：
+      //
+      //   ① **别处改了数据**（设置页改人设、插件详情页改绑、斜杠命令）：
+      //      这些都会写进 soulController store，订阅它即可立刻跟上。
+      //      这是用户最常遇到的 —— 改完切回来看还是旧的。
+      //   ② **切回本面板**（layout 的 activePanelId 变回本面板）：
+      //      宿主的 main 面板按 entryKey 切换子树，正常情况下切走会卸载、
+      //      切回会重新挂载并重拉。但「保活/不卸载」的实现差异不该让用户
+      //      看到旧数据，所以这里再兜一层。
+      //
+      // 都只在「需要时」触发，避免无谓重拉（每次都要走判空与标题）。
+
+      // ① store 变化：**直接订阅 store**，比较关键字段的指纹，变了才重拉。
+      //
+      // 为什么不在渲染里算指纹、靠 deps 触发：那依赖「store 通知 → 组件重渲染
+      // → effect deps 变化」这条链，中间任何一环不成立（比如宿主把面板保活、
+      // 或渲染被跳过）就永远不会重拉。直接订阅是单跳，最可靠。
+      //
+      // 为什么用指纹而不是「有任何变化就重拉」：store 里有 loading/saving
+      // 这类高频字段，全量响应会把面板刷成幻灯片。
+      React.useEffect(() => {
+        const store = controller.store
+        if (!store || typeof store.subscribe !== 'function') return undefined
+        const fingerprintOf = (snapshot) => {
+          const s = snapshot || {}
+          const personas = s.personas ? Object.keys(s.personas).sort().join(',') : ''
+          const bound = s.bindings ? Object.keys(s.bindings).sort().join(',') : ''
+          // store 把配置字段**平铺在根上**（没有嵌套的 config）
+          const shape = [s.style, s.headingLists, s.emoji, s.tables, s.replyLength, s.language]
+            .map((v) => String(v))
+            .join('|')
+          return personas + '#' + bound + '#' + shape
+        }
+        let last = fingerprintOf(store.getSnapshot())
+        const unsubscribe = store.subscribe(() => {
+          const next = fingerprintOf(store.getSnapshot())
+          if (next === last) return
+          last = next
+          void reload()
+        })
+        return unsubscribe
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+      const wasVisibleRef = React.useRef(isOverviewVisible())
+      React.useEffect(() => {
+        const check = () => {
+          const now = isOverviewVisible()
+          const before = wasVisibleRef.current
+          wasVisibleRef.current = now
+          if (!before && now) void reload()
+        }
+        // layout 到达 / 变化时都检查一次
+        const offLayout = layoutService.subscribe(check)
+        // panelInfo 本身是宿主 store：能订阅就订阅，订阅不了就退回轮询。
+        // 轮询是有代价的，所以只在拿不到 store 时启用，且间隔放宽到 2s。
+        let offStore = null
+        const service = layoutService.get()
+        if (service && service.panelInfo && typeof service.panelInfo.subscribe === 'function') {
+          try {
+            offStore = service.panelInfo.subscribe(check)
+          } catch {
+            offStore = null
+          }
+        }
+        const timer = offStore === null ? setInterval(check, 2000) : null
+        return () => {
+          offLayout()
+          if (typeof offStore === 'function') offStore()
+          if (timer !== null) clearInterval(timer)
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [])
 
@@ -4850,7 +4911,9 @@ window.__ModuleLoader__.load({
         )
       }
 
-      return body()
+      // 三种状态（错误 / 骨架 / 正常）统一包进滚动区：
+      // 长内容只可能出现在「正常」态，但包一层比按状态分支更不容易漏。
+      return e('div', { className: 'soul-ov-scroll', ref: scrollRef }, body())
     }
 
     function SoulPanelIcon(props) {

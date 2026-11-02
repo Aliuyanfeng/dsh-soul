@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 70
+const EXPECTED_ASSERTIONS = 71
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4049,36 +4049,38 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     assert.equal(root.props['aria-busy'], 'true', '首屏容器应标记 aria-busy')
   })
 
-  await check('C74 总览订阅 store：别处改了人设/绑定会自动重拉（不用刷浏览器）', async () => {
+  await check('C74 自动刷新装在总览组件体内（不是别处），且按指纹过滤', async () => {
     // 真实场景：在设置页改了人设、或在插件详情页改绑了工作区，然后切回总览 ——
     // 之前看到的是挂载时那份旧快照，只能手动刷新浏览器。
     //
+    // ⚠️ 这条最早只断言「源码里有 store.subscribe」，结果那段代码被插进了
+    // **SoulWorkspaces**（工作区人设页）而不是 SoulOverview —— 断言照样通过，
+    // 功能却从没在总览生效。所以现在必须切出组件体来断言「在哪」。
+    //
     // 实现要点（两条都不能丢）：
-    //   ① 订阅 `controller.store`，**不是**订阅整个渲染 —— store 通知是单跳，
-    //      比「靠重渲染让 deps 变化」可靠（面板可能被宿主保活、渲染被跳过）。
+    //   ① 订阅 `controller.store`，不是靠重渲染让 deps 变化 —— store 通知是单跳，
+    //      更可靠（面板可能被宿主保活、渲染被跳过）。
     //   ② 用**指纹**过滤：store 里有 loading/saving 这类高频字段，
     //      全量响应会把面板刷成幻灯片。
-    //
-    // 为什么这里做源文本断言而不是跑异步订阅：离线垫片的 effect 生命周期与
-    // 真实 React 不同（每轮 settle 会 cleanup 再重挂），订阅回调在垫片里
-    // 落在「已清理、未重挂」的窗口里，测不出真实行为 —— 那样的断言会假失败。
-    // 所以这里守「结构」，指纹的过滤逻辑单独用纯函数验。
-    assert.match(source, /const store = controller\.store/, '必须订阅 controller.store')
-    // 必须真的调 subscribe，且把返回的退订函数交回给 effect（否则泄漏或从不生效）
-    assert.match(source, /const unsubscribe = store\.subscribe\(\(\) => \{/, '必须真的订阅 store')
-    assert.match(source, /return unsubscribe/, 'effect 必须返回退订函数（否则泄漏 / 重复订阅）')
-    assert.match(source, /typeof store\.subscribe !== 'function'/, 'store 缺席时要降级，不能崩')
-    assert.match(source, /const fingerprintOf = \(snapshot\) => \{/, '必须有指纹函数')
-    assert.match(source, /const next = fingerprintOf\(store\.getSnapshot\(\)\)/, '通知时重算指纹')
-    assert.match(source, /if \(next === last\) return/, '指纹没变就不重拉（防高频字段刷屏）')
-    assert.match(source, /void reload\(\)/, '指纹变了要重拉')
-    // 指纹必须覆盖「人设库 / 工作区绑定 / 人格字段」三类 —— 它们是总览的全部内容
-    const fp = source.slice(source.indexOf('const fingerprintOf'), source.indexOf('const fingerprintOf') + 900)
+    const body = componentBody(source, 'SoulOverview')
+    assert.ok(body !== '', '找不到 SoulOverview 组件体')
+    assert.match(body, /const store = controller\.store/, 'SoulOverview 必须订阅 controller.store')
+    assert.match(body, /const unsubscribe = store\.subscribe\(\(\) => \{/, 'SoulOverview 必须真的订阅 store')
+    assert.match(body, /return unsubscribe/, 'effect 必须返回退订函数（否则泄漏 / 重复订阅）')
+    assert.match(body, /const fingerprintOf = \(snapshot\) => \{/, 'SoulOverview 必须有指纹函数')
+    assert.match(body, /const next = fingerprintOf\(store\.getSnapshot\(\)\)/, '通知时重算指纹')
+    assert.match(body, /if \(next === last\) return/, '指纹没变就不重拉（防高频字段刷屏）')
+    assert.match(body, /void reload\(\)/, '指纹变了要重拉')
+    // 指纹必须覆盖「人设库 / 工作区绑定 / 人格字段」三类
+    const fp = body.slice(body.indexOf('const fingerprintOf'), body.indexOf('const fingerprintOf') + 900)
     assert.match(fp, /personas/, '指纹要含人设库')
     assert.match(fp, /bindings/, '指纹要含工作区绑定')
     assert.match(fp, /style|headingLists/, '指纹要含人格字段')
     // 不得把高频字段算进指纹
     assert.equal(/s\.saving|s\.loading|s\.error/.test(fp), false, 'saving/loading/error 不得进指纹（会把面板刷成幻灯片）')
+    // 切回面板的兜底也必须在总览里
+    assert.match(body, /isOverviewVisible\(\)/, 'SoulOverview 必须有「切回面板」判断')
+    assert.match(body, /layoutService\.subscribe/, 'SoulOverview 必须订阅 layout 变化')
   })
 
   await check('C75 当前生效卡片可就地切换全局人设（不必去设置页走四步）', async () => {
@@ -4145,6 +4147,55 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
       overviewCalls > callsBefore,
       `切换成功后应重拉总览（切换前 ${callsBefore} 次，切换后 ${overviewCalls} 次）`
     )
+  })
+
+/**
+ * 切出某个组件函数的函数体（用于断言「这段代码写在哪个组件里」）。
+ *
+ * 为什么需要：源文本断言只能证明「代码存在」，不能证明「装在了正确的地方」。
+ * 自动刷新的订阅就曾因此被插进 SoulWorkspaces 却照样通过断言 ——
+ * 功能从没在总览生效，测试全绿。
+ *
+ * 组件按 4 空格缩进的 `function Name(props) {` 识别，遇到下一个同级 function 即止。
+ */
+function componentBody(text, name) {
+  const lines = text.split('\n')
+  const start = lines.findIndex((l) => new RegExp(`^    function ${name}\\(`).test(l))
+  if (start < 0) return ''
+  let end = lines.length
+  for (let k = start + 1; k < lines.length; k++) {
+    if (/^    function \w+\(/.test(lines[k])) { end = k; break }
+  }
+  return lines.slice(start, end).join('\n')
+}
+
+  await check('C76 展开多个工作区后预设库仍可达：面板自己滚动', async () => {
+    // 用户反馈：把所有工作区都展开后，下方的预设库被顶出可见区，看不到也点不到。
+    //
+    // 为什么不用纯 CSS（height:100%）：宿主把 main 面板放在它的布局容器里，
+    // 那些类名 hash 过、CSS 打在 web 前端 bundle 里，插件无法可靠假设
+    // 「父容器高度可继承」。height:100% 落在 auto 高度的容器上就是失效的。
+    //
+    // 所以沿祖先链找**第一个会裁剪内容的容器**，用它高度约束自己。
+    // 这样不论宿主怎么排布都成立，且内容不超出时不会多一条没用的滚动槽。
+    const body = componentBody(source, 'SoulOverview')
+    assert.ok(body !== '', '找不到 SoulOverview 组件体')
+    // 三种状态统一包进滚动区（错误 / 骨架 / 正常），不能只包正常态
+    assert.match(body, /className: 'soul-ov-scroll', ref: scrollRef/, '必须用滚动容器包住全部状态')
+    assert.match(body, /const scrollRef = React\.useRef\(null\)/, '必须有 scrollRef')
+    // 必须沿祖先链找裁剪容器（而不是假设直接父容器）
+    assert.match(body, /let node = el\.parentElement/, '必须从父元素开始向上找')
+    assert.match(body, /overflowY !== .visible./, '必须按 overflowY 判断哪个祖先会裁剪')
+    assert.match(body, /node\.clientHeight > 0/, '必须用有实际高度的祖先')
+    assert.match(body, /el\.style\.maxHeight = `\$\{limit\}px`/, '必须把祖先可见高度设为自身上限')
+    // 找不到裁剪容器时不得硬加高度（否则多一层嵌套滚动）
+    assert.match(body, /el\.style\.removeProperty\('max-height'\)/, '找不到裁剪容器时应清掉上限')
+    // 窗口/内容尺寸变化要跟随，否则窗口缩放后高度就错了
+    assert.match(body, /new globalThis\.ResizeObserver\(sync\)/, '必须用 ResizeObserver 跟随尺寸变化')
+    assert.match(body, /observer\.disconnect\(\)/, '必须断开观察（否则卸载后泄漏）')
+    // CSS 必须让内容可滚
+    assert.match(source, /\.soul-ov-scroll\{[^}]*overflow-y:auto/, '.soul-ov-scroll 必须可纵向滚动')
+    assert.match(source, /\.soul-ov-scroll\{[^}]*overscroll-behavior:contain/, '滚到底不得把滚动传给外层')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
