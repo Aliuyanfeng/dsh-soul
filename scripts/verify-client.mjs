@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 63
+const EXPECTED_ASSERTIONS = 64
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -310,7 +310,15 @@ function loadClient(routes, options = {}) {
   globalThis.fetch = async (input, init = {}) => {
     const url = new URL(String(input))
     const method = (init.method || 'GET').toUpperCase()
-    const call = { path: url.pathname, method, body: init.body ? JSON.parse(init.body) : null }
+    // 记 pathname + search：总览的两阶段加载靠 `?titles=1` 区分，
+    // 只记 pathname 的话这个区分在测试里根本不可见。
+    const call = {
+      path: url.pathname,
+      search: url.search,
+      full: url.pathname + url.search,
+      method,
+      body: init.body ? JSON.parse(init.body) : null
+    }
     fetchCalls.push(call)
     const handler = routes[url.pathname]
     const body = handler ? handler(call) : { ok: false, error: `no route: ${url.pathname}` }
@@ -3786,6 +3794,40 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     const root = lines.find((l) => /^\s*'\.soul-ov\{/.test(l))
     assert.ok(root, '应有 .soul-ov 根规则')
     assert.match(root, /font-size:13px/, '面板根必须显式声明基准字号（13px，宿主行标签同规格）')
+  })
+
+  await check('C69 总览两阶段加载：先出主体，标题随后补（不再干等 5 秒）', async () => {
+    // 用户实测：点开面板「加载中」约 5 秒。根因是读标题要为每个会话折叠整条
+    // 事件流（34 个会话约 5 秒），而它与主体数据挤在同一个请求里。
+    // 修法：阶段 1 只取主体（titles 关闭）立刻渲染，阶段 2 单独补标题。
+    const world = await boot()
+    // 记录两次请求的 URL：必须一次不带 titles、一次带 titles=1
+    const calls = []
+    world.routes['/api/soul/overview'] = (call) => {
+      calls.push(String(call.search || ''))
+      const wantTitles = String(call.search || '').includes('titles=1')
+      return {
+        ok: true,
+        globalPersona: null,
+        enabled: true,
+        personas: { builtin: [], custom: [] },
+        workspaces: [
+          { workspaceId: 'ws-a', title: '项目', path: 'D:\\a', sessionCount: 1, bound: false, persona: null, invalidPersona: false, lastActiveAt: Date.now() }
+        ],
+        sessions: [
+          { id: 'sess-1', title: wantTitles ? '真实标题' : null, workspaceId: 'ws-a', persona: null, hasOverride: true, live: false }
+        ],
+        filtersApplied: { archived: true, children: true, registry: true }
+      }
+    }
+    const tree = await mountOverview(world, world.dicts.zh)
+    // 阶段 1 必须已经画出来（不等标题）
+    const rows = findAllByClass(tree, 'soul-ov-session')
+    assert.ok(rows.length >= 1, '阶段 1 就应渲染出会话行，不能等标题')
+    // 两次请求都发生过，且第一次不带 titles
+    assert.equal(calls.length >= 2, true, `应发出两次请求（主体 + 标题），实际 ${calls.length} 次`)
+    assert.equal(calls[0].includes('titles=1'), false, '第一次请求不得带 titles=1（否则又会等 5 秒）')
+    assert.equal(calls.some((c) => c.includes('titles=1')), true, '应有第二次带 titles=1 的请求去补标题')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

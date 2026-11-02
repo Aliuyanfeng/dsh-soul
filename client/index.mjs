@@ -786,10 +786,14 @@ window.__ModuleLoader__.load({
         return await this.postJSON('/api/soul/workspaces', null, { method: 'GET' })
       }
 
-      // 总览面板的一次性数据源（0.9.0-ap）：工作区 + 活动会话 + 预设库
-      // 在同一时刻的快照。分开拉三次的话，用户正在切会话时拼出来的画面会自相矛盾。
-      async fetchOverview() {
-        return await this.postJSON('/api/soul/overview', null, { method: 'GET' })
+      // 总览面板的数据源（0.9.0-ap）：工作区 + 会话 + 预设库的快照。
+      // 分开拉三次的话，用户正在切会话时拼出来的画面会自相矛盾。
+      //
+      // `withTitles` 默认 false：读标题要为每个会话折叠整条事件流
+      // （实测 34 个会话约 5 秒）。面板先画出主体，标题随后单独补。
+      async fetchOverview(withTitles = false) {
+        const path = withTitles ? '/api/soul/overview?titles=1' : '/api/soul/overview'
+        return await this.postJSON(path, null, { method: 'GET' })
       }
 
       async saveWorkspacePersona(workspaceId, persona) {
@@ -4090,14 +4094,43 @@ window.__ModuleLoader__.load({
       )
 
       const reload = async () => {
+        // 两阶段加载（0.9.0-aq）：
+        //   阶段 1（快，~20ms）：工作区 / 会话成员 / 活跃时间 / 人设 —— 立刻可见
+        //   阶段 2（慢，数秒）：会话标题 —— 到了再补，不挡着第一屏
+        //
+        // 之所以要拆：标题走 sessionQuery.readTitleSnapshots，它要为每个会话
+        // 折叠整条事件流；34 个会话实测约 5 秒。而标题只是锦上添花，
+        // 让用户对着「加载中」干等 5 秒是不可接受的。
         try {
-          const payload = await controller.fetchOverview()
+          const payload = await controller.fetchOverview(false)
           setView(payload)
           setError(null)
         } catch (err) {
           // 失败即清空：继续渲染上一次成功的列表会让用户对着过期数据做判断
           setView(null)
           setError(messageOf(err))
+          return
+        }
+
+        // 阶段 2：标题。失败不算错误 —— 没有标题时行上显示短 id，仍然可用。
+        try {
+          const titled = await controller.fetchOverview(true)
+          setView((prev) => {
+            if (prev === null) return prev
+            // 只把标题合并进来，其余字段保留阶段 1 的 —— 阶段 2 期间用户可能
+            // 已经展开/收起过工作区，整体替换会让那些交互白做。
+            const byId = new Map()
+            for (const s of titled.sessions || []) byId.set(s.id, s.title)
+            return {
+              ...prev,
+              sessions: (prev.sessions || []).map((s) => {
+                const title = byId.get(s.id)
+                return typeof title === 'string' && title !== '' ? { ...s, title } : s
+              })
+            }
+          })
+        } catch {
+          // 标题拿不到就用短 id，不打扰用户
         }
       }
 

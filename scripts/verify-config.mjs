@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 158
+const EXPECTED_ASSERTIONS = 159
 
 let passed = 0
 const failures = []
@@ -4682,6 +4682,26 @@ check('总览会话口径与侧栏一致：注册表成员 − 归档 − 子代
   // 降级必须如实回报，不能假装过滤成功
   assert.match(fn, /filtersApplied/, '要回报哪几层过滤真的生效')
   assert.match(fn, /filtersApplied\.archived = archived !== null/, '归档过滤是否生效要如实记录')
+})
+check('总览的两个慢点都有兜底：标题限时、sidecar 读盘可短路', () => {
+  // 用户实测点开面板要等约 5 秒。两个慢点：
+  //   1) 读标题：readTitleSnapshots 为每个会话折叠整条事件流
+  //   2) 读 sidecar：每个会话一次 readSessionScope（34 次）
+  const titles = extractObject(indexSource, 'async function readSessionTitles')
+  assert.ok(titles !== '', '找不到 readSessionTitles')
+  assert.match(titles, /TIMEOUT_MS/, '标题读取必须限时：它是可选装饰，不能拖住整页')
+  assert.match(titles, /Promise\.race\(/, '限时要靠 Promise.race 实现')
+  assert.match(titles, /clearTimeout\(/, '超时定时器必须清理，否则泄漏')
+  // 清单默认不读标题（两阶段的关键）
+  const fn = extractObject(indexSource, 'async function listSessionsForOverview')
+  // extractObject 抽的是函数体，不含签名行 —— 签名要在 indexSource 上匹配。
+  assert.match(indexSource, /async function listSessionsForOverview\(ctx, config, withTitles = false\)/, '标题必须是可选项且默认关闭')
+  assert.match(fn, /if \(withTitles\)/, '不读标题时整段跳过，而不是读了再丢弃')
+  // sidecar 读盘短路：已知无覆盖就不读
+  const load = extractObject(indexSource, 'async function loadSessionOverride')
+  assert.ok(load !== '', '找不到 loadSessionOverride')
+  assert.match(load, /sessionOverridesKnown\.has\(/, '已知且无覆盖时应短路，不再读盘')
+  assert.ok(load.indexOf('sessionOverridesKnown.has(') < load.indexOf('readSessionScope('), '短路必须发生在读盘之前')
 })
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 

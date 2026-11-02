@@ -1162,6 +1162,14 @@ function sessionOverridesOrNull(sessionId) {
 
 // 读一个会话的 sidecar 进缓存。
 async function loadSessionOverride(sessionId) {
+  // 已知且无覆盖 ⇒ 直接返回，不再读盘。
+  //
+  // 总览页要为**每个**会话解析生效人设（34 个会话就是 34 次 readSessionScope）。
+  // 绝大多数会话没有 sidecar，这次读盘纯属浪费 —— 而它发生在用户点开面板的
+  // 关键路径上。`sessionOverridesKnown` 正是为此存在的标记，之前只在写入侧维护，
+  // 读取侧没用上。
+  const knownKey = String(sessionId)
+  if (sessionOverridesKnown.has(knownKey) && !sessionOverrides.has(knownKey)) return null
   try {
     const filePath = sessionScopePathFor(configPath(), sessionId)
     const result = await readSessionScope(filePath, sessionId)
@@ -2213,8 +2221,26 @@ async function readSessionTitles(ctx, ids) {
     return out
   }
   if (!service || typeof service.readTitleSnapshots !== 'function') return out
+
+  // 标题读取要**限时**：readTitleSnapshots 会为每个会话折叠整条事件流，
+  // 会话多时单次可达数秒。它是可选的附加信息 —— 超时就放弃，
+  // 让界面用短 id，而不是把一个可选的装饰拖成整页的等待。
+  //
+  // 这个超时是「兜底」而不是「预期路径」：正常情况下客户端分两阶段请求，
+  // 标题请求本来就在后台跑，用户不会等它。只有极端情况（会话极多、
+  // 磁盘很慢）才靠它收尾。
+  const TIMEOUT_MS = 8000
+  let timer = null
   try {
-    const observations = await service.readTitleSnapshots(ids)
+    const observations = await Promise.race([
+      service.readTitleSnapshots(ids),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), TIMEOUT_MS)
+        // 不要阻止进程退出
+        if (timer && typeof timer.unref === 'function') timer.unref()
+      })
+    ])
+    if (observations === null) return out
     for (const observation of observations || []) {
       if (!observation || observation.status === 'rejected') continue
       const title = observation.value && observation.value.title
@@ -2226,10 +2252,11 @@ async function readSessionTitles(ctx, ids) {
     }
   } catch {
     // 读标题失败不影响清单
+  } finally {
+    if (timer !== null) clearTimeout(timer)
   }
   return out
 }
-
 function newestMtimeUnder(workspaceDir) {
   let newest = null
   const bump = (ms) => {
@@ -2346,7 +2373,15 @@ async function readChildSessionIds(ctx) {
  *
  * @returns {Promise<{sessions: Array, filtersApplied: object}>}
  */
-async function listSessionsForOverview(ctx, config) {
+/**
+ * @param {object} config
+ * @param {boolean} withTitles
+ *   是否顺带读会话标题。**默认 false** —— 读标题走
+ *   `sessionQuery.readTitleSnapshots`，它要为每个会话折叠整条事件流
+ *   （实测 34 个会话约 5 秒）。而标题只是锦上添花：先让面板立刻画出
+ *   工作区与数量，标题由客户端随后单独补一次，用户就不必盯着「加载中」。
+ */
+async function listSessionsForOverview(ctx, config, withTitles = false) {
   const filtersApplied = { archived: false, children: false, registry: false }
 
   let workspaces = []
@@ -2418,8 +2453,9 @@ async function listSessionsForOverview(ctx, config) {
   }
 
   // 标题：先用注册表形式，拿不到再用规范化形式（两版 id 都可能被识别）
+  // withTitles=false 时整段跳过 —— 这是「点开就显示」的关键。
   const titles = new Map()
-  {
+  if (withTitles) {
     const byId = new Map() // 传给服务的 id → 规范化 id
     for (const s of collected) {
       byId.set(s.id, s.norm)
@@ -2898,8 +2934,18 @@ function registerWorkspaceRoutes(ctx) {
         try {
           const config = await loadConfig()
           const wsView = await workspaceView()
-          // 清单口径与侧栏一致：注册表成员 − 归档 − 子代理会话
-          const listed = await listSessionsForOverview(ctx, config)
+          // 清单口径与侧栏一致：注册表成员 − 归档 − 子代理会话。
+          // 默认不读标题（那一步要折叠每个会话的事件流，很慢）；
+          // 客户端先渲染主体，再带 titles=1 单独补一次。
+          const withTitles = (() => {
+            try {
+              const url = new URL(req.url, 'http://localhost')
+              return url.searchParams.get('titles') === '1'
+            } catch {
+              return false
+            }
+          })()
+          const listed = await listSessionsForOverview(ctx, config, withTitles)
           const sessions = listed.sessions
           const library = mergePersonas(config.personas)
           const builtinNames = []
