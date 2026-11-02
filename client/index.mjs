@@ -1292,11 +1292,24 @@ window.__ModuleLoader__.load({
       // 操作区：「使用」是卡牌主操作（要突出），弹性占满可用宽度；
       // 「删除」是次要破坏性操作，定宽小按钮，不抢主次。
       // 内置预设无删除 ⇒ 不渲染删除按钮，「使用」自然占满整行。
-      '.soul-persona-actions{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:2px}',
+      // flex-wrap：两个按钮并排，「取消本会话的临时人设」文本较长，
+      // 字号统一到 14px 后窄容器里容易挤 —— 允许换行比压缩文字好。
+      '.soul-persona-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:auto;padding-top:2px}',
       // 主按钮：走主题的主按钮色族（brand 底 + 反色前景）。
       // 为什么不再沿用「对齐宿主 linkButton」的 28px 透明底：那是**列表行**里的
       // 文字按钮规格，而卡牌的主操作需要更强的视觉权重（样张里也是实心主色按钮）。
-      '.soul-persona-action{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:5px;height:36px;padding:0 14px;border:0;border-radius:var(--dsw-radius-md,12px);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font:inherit;font-size:13px;font-weight:600;line-height:20px;cursor:pointer;white-space:nowrap;flex:1 1 auto;min-width:0;transition:filter .15s ease}',
+      // 「用这个」：宿主 Button 的 **md + primary** 变体。
+      //
+      // 原先字号 13px / 字重 600 / 行高 20px，而宿主 md 是 14px / 继承 / 22px。
+      // 关键问题不在「是否标准」，而在它**与同行的「取消本会话的临时人设」**
+      // （.soul-session-clear，36px/14px/22px）并列时字号差 1px、字重还不同 ——
+      // 用户反复反馈的「不统一」就是这个。
+      //
+      // 去掉 font-weight:600：宿主 Button 不设字重（继承正文）。
+      // hover 保留 filter:brightness —— 宿主 primary 用的是换 token
+      // （button-primary-hover），但这里已用 button-primary-fill 作底色，
+      // brightness 在深浅主题下都成立，且不需要额外 token。
+      '.soul-persona-action{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:36px;padding:0 14px;border:0;border-radius:var(--dsw-radius-md,12px);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font:inherit;font-size:14px;line-height:22px;cursor:pointer;white-space:nowrap;flex:1 1 auto;min-width:0;transition:filter .15s ease}',
       '.soul-persona-action:hover:not(:disabled){filter:brightness(1.08)}',
       '.soul-persona-action:active:not(:disabled){filter:brightness(0.96)}',
       '.soul-persona-action:disabled{cursor:default;opacity:.5}',

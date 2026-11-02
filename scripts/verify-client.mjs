@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 76
+const EXPECTED_ASSERTIONS = 77
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4438,6 +4438,65 @@ function componentBody(text, name) {
     // 不得有重复的 hover 规则
     const hovers = source.match(/\.soul-session-chip:hover[^{]*\{/g) || []
     assert.equal(hovers.length, 1, `不得有重复的 hover 规则（实际 ${hovers.length} 条）`)
+  })
+
+  await check('C82 「用这个」与「取消」并排：字号行高必须一致，且符合宿主 md', async () => {
+    // 这一行里两个按钮并排（.soul-persona-actions 容器内）：
+    //   「用这个」          = soul-persona-action（md + primary）
+    //   「取消本会话的临时人设」= soul-session-clear（md + outline）
+    //
+    // 改之前：「用这个」是 13px / font-weight 600 / line-height 20px，
+    // 而「取消」是 14px / 继承字重 / 22px —— 同一行字号差 1px、字重还不同。
+    // 用户反复反馈的「不统一」就是这种**局部不一致**。
+    //
+    // 宿主 md 的规格是 14px / 22px / 不设字重（继承），两个按钮都对它。
+    const ruleOf = (cls) => {
+      const at = source.indexOf(`.${cls}{`)
+      if (at < 0) return ''
+      return source.slice(at, source.indexOf('}', at) + 1)
+    }
+    const declOf = (css, prop) => {
+      const m = new RegExp(prop.replace(/[-]/g, '\\-') + ':([^;}]+)').exec(css)
+      return m ? m[1].trim() : ''
+    }
+
+    const primaryBtn = ruleOf('soul-persona-action')
+    assert.ok(primaryBtn !== '', '找不到 .soul-persona-action 规则')
+    // 尺寸：宿主 md
+    assert.equal(declOf(primaryBtn, 'height'), '36px', '「用这个」高度必须与宿主 md 一致（36px）')
+    assert.equal(declOf(primaryBtn, 'font-size'), '14px', '「用这个」字号必须与宿主 md 一致（14px）')
+    assert.equal(declOf(primaryBtn, 'line-height'), '22px', '「用这个」行高必须与宿主 md 一致（22px）')
+    assert.equal(declOf(primaryBtn, 'padding'), '0 14px', '「用这个」内边距必须与宿主基础一致（0 14px）')
+    assert.match(declOf(primaryBtn, 'border-radius'), /^var\(--dsw-radius-md/, '「用这个」圆角必须用 md 的 radius-md')
+    // primary 变体配色
+    assert.equal(declOf(primaryBtn, 'background'), 'var(--dsw-alias-button-primary-fill)', '背景必须用 button-primary-fill')
+    assert.equal(declOf(primaryBtn, 'color'), 'var(--dsw-alias-label-primary-foreground)', '文字色必须用 label-primary-foreground')
+    // 宿主 Button 不设字重（继承）—— 设了就会与邻居不一致
+    assert.equal(/font-weight/.test(primaryBtn), false, '不得设 font-weight（宿主 Button 继承正文）')
+
+    // ★ 核心：两个并排按钮的字号与行高必须相同
+    const outlineBtn = ruleOf('soul-session-clear')
+    assert.ok(outlineBtn !== '', '找不到 .soul-session-clear 规则')
+    assert.equal(
+      declOf(primaryBtn, 'font-size'),
+      declOf(outlineBtn, 'font-size'),
+      '同一行两个按钮的字号必须一致'
+    )
+    assert.equal(
+      declOf(primaryBtn, 'line-height'),
+      declOf(outlineBtn, 'line-height'),
+      '同一行两个按钮的行高必须一致'
+    )
+    assert.equal(
+      declOf(primaryBtn, 'height'),
+      declOf(outlineBtn, 'height'),
+      '同一行两个按钮的高度必须一致'
+    )
+
+    // 容器允许换行：字号统一到 14px 后，长文本按钮在窄容器里不硬挤
+    const row = ruleOf('soul-persona-actions')
+    assert.ok(row !== '', '找不到 .soul-persona-actions 容器规则')
+    assert.match(row, /flex-wrap:wrap/, '容器必须允许换行（避免长文本按钮被压缩溢出）')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

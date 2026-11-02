@@ -1237,11 +1237,15 @@ check('卡牌操作按钮：主操作突出（实心主色），删除为次要�
   for (const [pattern, why] of [
     [/background:var\(--dsw-alias-button-primary-fill\)/, '「使用」应为实心主按钮底（用主题主按钮 token）'],
     [/color:var\(--dsw-alias-label-primary-foreground\)/, '主按钮文字应为反色前景（保证对比度）'],
-    [/flex:1 1 auto/, '主按钮应弹性占满可用宽度（卡牌主操作要显眼）'],
-    [/font-weight:600/, '主按钮字重应为 600（突出主操作）']
+    [/flex:1 1 auto/, '主按钮应弹性占满可用宽度（卡牌主操作要显眼）']
   ]) {
     assert.ok(pattern.test(btn), why)
   }
+  // 曾经要求 font-weight:600 来「突出主操作」，**已移除**（0.10.0 样式统一）：
+  // 宿主 Button 不设字重（继承正文），靠「实心主色底 + 反色文字」表达主次。
+  // 这里多设 600 会让它与**同一行**的 .soul-session-clear（继承字重）不一致 ——
+  // 用户反复反馈的「不统一」正是这种局部差异。突出感由实心底承担，不靠字重。
+  assert.equal(/font-weight/.test(btn), false, '不得设 font-weight（宿主 Button 继承正文，主次由实心底承担）')
   // 高度必须足够大：按钮偏小是这一版明确修过的问题 ⇒ 校验量级而非「有 height」
   const h = Number((btn.match(/height:(\d+)px/) ?? [])[1] ?? 0)
   assert.ok(h >= 32, `主按钮高度应 ≥32px（当前 ${h}px，卡牌上过小会不突出且难点）`)
