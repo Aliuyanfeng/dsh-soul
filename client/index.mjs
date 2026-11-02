@@ -213,8 +213,14 @@ window.__ModuleLoader__.load({
     //      尺寸、布局、绘制都与外部彻底隔离。
 
     const TRAIL_DASH = 12
-    const TRAIL_LAYERS = 8
-    const TRAIL_LAYER_STEP = 2.2
+    // 拖尾由多层叠加而成：层数越密、每层错开越小，尾部越接近连续渐变。
+    //
+    // 为什么从 8 改成 16：8 层 × 2.2% 步长 × butt 硬边，尾部会露出**肉眼可见的
+    // 8 段深浅**（用户反馈「尾部有明显分段深浅颜色」）。层数翻倍后每层只差
+    // 约 1% 路径长度，叠加起来就是连续渐变。
+    const TRAIL_LAYERS = 16
+    // 保持拖尾总长度不变（15.4% 路径）：原来是 7 × 2.2，现在是 15 × 1.027
+    const TRAIL_LAYER_STEP = 15.4 / (TRAIL_LAYERS - 1)
     const TRAIL_RADIUS = 22
     const TRAIL_COLOR_FALLBACK = '#679EFE'
     const TRAIL_PRESET_COLORS = ['#679EFE', '#22C55E', '#EF4444', '#A855F7', '#06B6D4', '#F59E0B']
@@ -1318,23 +1324,23 @@ window.__ModuleLoader__.load({
       // 设置页示例用的零高度挂载锚点：只定位占坑，不参与任何尺寸计算
       '.soul-trail-anchor{position:absolute;inset:0 0 auto;height:0;pointer-events:none}',
       // 速度档位（整体比首版慢一档）：normal 3.6s / slow 4.8s / fast 2.4s
-      '.soul-trail-layer{fill:none;stroke:var(--soul-trail-color,#679EFE);stroke-width:2.5;stroke-linecap:butt;animation-name:soul-trail-run-0;animation-duration:3.6s;animation-timing-function:linear;animation-iteration-count:infinite}',
-      '.soul-trail-layer[data-layer="0"]{opacity:1;stroke-linecap:round}',
-      '.soul-trail-layer[data-layer="1"]{animation-name:soul-trail-run-1;opacity:.87}',
-      '.soul-trail-layer[data-layer="2"]{animation-name:soul-trail-run-2;opacity:.74}',
-      '.soul-trail-layer[data-layer="3"]{animation-name:soul-trail-run-3;opacity:.61}',
-      '.soul-trail-layer[data-layer="4"]{animation-name:soul-trail-run-4;opacity:.47}',
-      '.soul-trail-layer[data-layer="5"]{animation-name:soul-trail-run-5;opacity:.34}',
-      '.soul-trail-layer[data-layer="6"]{animation-name:soul-trail-run-6;opacity:.21}',
-      '.soul-trail-layer[data-layer="7"]{animation-name:soul-trail-run-7;opacity:.08}',
-      '@keyframes soul-trail-run-0{from{stroke-dashoffset:0px}to{stroke-dashoffset:-100px}}',
-      '@keyframes soul-trail-run-1{from{stroke-dashoffset:2.2px}to{stroke-dashoffset:-97.8px}}',
-      '@keyframes soul-trail-run-2{from{stroke-dashoffset:4.4px}to{stroke-dashoffset:-95.6px}}',
-      '@keyframes soul-trail-run-3{from{stroke-dashoffset:6.6px}to{stroke-dashoffset:-93.4px}}',
-      '@keyframes soul-trail-run-4{from{stroke-dashoffset:8.8px}to{stroke-dashoffset:-91.2px}}',
-      '@keyframes soul-trail-run-5{from{stroke-dashoffset:11px}to{stroke-dashoffset:-89px}}',
-      '@keyframes soul-trail-run-6{from{stroke-dashoffset:13.2px}to{stroke-dashoffset:-86.8px}}',
-      '@keyframes soul-trail-run-7{from{stroke-dashoffset:15.4px}to{stroke-dashoffset:-84.6px}}',
+      // stroke-linecap 用 round：butt 会让每层末端是硬切边，多层叠加时边界
+      // 锐利可见；圆头让相邻层互相咬合，尾部自然过渡。
+      '.soul-trail-layer{fill:none;stroke:var(--soul-trail-color,#679EFE);stroke-width:2.5;stroke-linecap:round;animation-name:soul-trail-run-0;animation-duration:3.6s;animation-timing-function:linear;animation-iteration-count:infinite}',
+      // 每层的透明度与错位**按层数生成**，不再手写固定条数 ——
+      // 层数是可调参数，写死 8 条规则会让「改层数」变成两处改、且容易漏。
+      // 透明度从 1 线性降到 0.04：层数够密时，这个递减序列叠加起来就是连续渐变。
+      ...Array.from({ length: TRAIL_LAYERS }, (_, layer) => {
+        const opacity = layer === 0
+          ? 1
+          : Math.max(0.04, 1 - (layer / (TRAIL_LAYERS - 1)) * 0.96)
+        return `.soul-trail-layer[data-layer="${layer}"]{opacity:${opacity.toFixed(3)};animation-name:soul-trail-run-${layer}}`
+      }),
+      // 每层错开一个步长；终点同步平移 -100px，保证循环无缝（起点与终点错开量相同）
+      ...Array.from({ length: TRAIL_LAYERS }, (_, layer) => {
+        const offset = layer * TRAIL_LAYER_STEP
+        return `@keyframes soul-trail-run-${layer}{from{stroke-dashoffset:${offset.toFixed(3)}px}to{stroke-dashoffset:${(offset - 100).toFixed(3)}px}}`
+      }),
       '[data-soul-trail-speed="slow"] .soul-trail-layer{animation-duration:4.8s}',
       '[data-soul-trail-speed="fast"] .soul-trail-layer{animation-duration:2.4s}',
       '[data-soul-trail-width="thin"] .soul-trail-layer{stroke-width:1.5}',

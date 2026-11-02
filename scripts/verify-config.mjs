@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 161
+const EXPECTED_ASSERTIONS = 162
 
 let passed = 0
 const failures = []
@@ -4754,6 +4754,36 @@ check('空会话判据：逐帧解压找消息事件，不得用文件大小近�
   // agent/inbox/spliced 不算消息 —— 那是 dsh-soul 注入的人设快照
   assert.equal(/inbox/.test(has), false, 'agent/inbox/spliced 不得算作对话消息（那是插件注入的人设）')
 })
+check('光轨拖尾必须平滑：层数够密 + 圆头，不得露出分段色阶', () => {
+  // 用户反馈：深色模式下光轨尾部有明显分段深浅颜色。
+  //
+  // 根因：拖尾是「多层错开 + 透明度递减」叠出来的，原来只有 8 层、
+  // 每层错开 2.2%、且 stroke-linecap 是 butt（硬切边）—— 8 个色阶边界锐利可见。
+  //
+  // 修法：层数翻倍到 16（每层只差约 1% 路径长度）+ 全部圆头（相邻层咬合）。
+  // 拖尾总长度保持不变（15.4%），只是分得更细。
+  //
+  // 这里守三条不能回退的事：
+  //   1) 层数不得退回个位数（少了就重新露出色阶）
+  //   2) 不得再用 butt 硬边
+  //   3) 层规则必须按层数生成，不能写死条数（否则改层数会两处不同步）
+  const layers = clientCode.match(/const TRAIL_LAYERS = (\d+)/)
+  assert.ok(layers !== null, '找不到 TRAIL_LAYERS 常量')
+  assert.ok(Number(layers[1]) >= 12, `层数不得少于 12（实际 ${layers[1]}，太少会露出分段）`)
+  // 步长必须由层数推导，保持拖尾总长度不变
+  assert.match(clientCode, /const TRAIL_LAYER_STEP = 15\.4 \/ \(TRAIL_LAYERS - 1\)/, '步长应由层数推导，保持拖尾总长 15.4')
+  // 不得有 butt 硬边
+  assert.equal(/stroke-linecap:butt/.test(clientCode), false, '不得使用 butt 硬边（会让分层边界锐利可见）')
+  assert.match(clientCode, /stroke-linecap:round/, '光轨层必须用 round 圆头')
+  // 层规则按层数生成（源文本里是 Array.from 展开，不是 8 条硬编码）
+  assert.match(clientCode, /\.\.\.Array\.from\(\{ length: TRAIL_LAYERS \}/, '层规则应按 TRAIL_LAYERS 生成，不能写死条数')
+  assert.match(clientCode, /data-layer="\$\{layer\}"/, '层规则的选择器应由层号生成')
+  // 透明度必须从 1 单调降到接近 0（渐变感的来源）
+  assert.match(clientCode, /Math\.max\(0\.04, 1 - \(layer \/ \(TRAIL_LAYERS - 1\)\) \* 0\.96\)/, '透明度应按层号线性递减到 0.04')
+  // 每层 from→to 必须恰好 -100（否则循环接缝会跳）
+  assert.match(clientCode, /\(offset - 100\)\.toFixed\(3\)/, '每层终点应平移 -100，保证循环无缝')
+})
+
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 
 console.log(`\n全部通过：${passed} 项检查`)
