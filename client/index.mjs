@@ -4217,7 +4217,11 @@ window.__ModuleLoader__.load({
             // 显示**会话标题**（宿主的折叠标题），不是 id —— id 是一串 UUID，
             // 对用户没有意义。标题缺席时退回短 id，至少还能认出来。
             const title = typeof s.title === 'string' && s.title !== '' ? s.title : ''
-            const label = title !== '' ? title : (id === '' ? t('ov.untitledSession') : id.slice(0, 8))
+            // 标题缺席时的短 id：**必须先剥掉 `session-` 前缀再截断**。
+            // 否则 slice(0,8) 恰好切在 "session-" 上，每一行都显示成一样的
+            // 「session-」，看起来像一堆脏数据（实际是我的显示 bug）。
+            const shortId = id.replace(/^session-/, '').slice(0, 8)
+            const label = title !== '' ? title : (shortId === '' ? t('ov.untitledSession') : shortId)
             return e('div', { className: 'soul-ov-session', key: `sess-${id}`, title: id },
               e('span', { className: hasOverride ? 'soul-ov-dot soul-ov-dot-override' : 'soul-ov-dot' }),
               e('span', { className: 'soul-ov-session-name' }, label),

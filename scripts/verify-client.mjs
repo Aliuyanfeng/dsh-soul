@@ -3708,6 +3708,24 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
       '会话名里不应出现 UUID（用户认不出 id）'
     )
     assert.equal(names[1], '48bc79f4', '标题缺席时退回短 id（8 位），至少能认出来')
+    // 关键回归：宿主的会话 id 常带 `session-` 前缀，slice(0,8) 会恰好切在前缀上，
+    // 每行都显示成一样的「session-」—— 用户会以为是一堆脏数据（实际是显示 bug）。
+    // 必须先剥前缀再截断。
+    const prefixed = await (async () => {
+      const w2 = await boot()
+      stubOverview(w2, {
+        workspaces: [
+          { workspaceId: 'ws-a', title: '项目', path: 'D:\\a', sessionCount: 1, bound: false, persona: null, invalidPersona: false, lastActiveAt: Date.now() }
+        ],
+        sessions: [
+          { id: 'session-5d29165d-348c-41f6-a7e0-3544a13a4318', title: null, workspaceId: 'ws-a', persona: null, hasOverride: true, live: false }
+        ]
+      })
+      const tree2 = await mountOverview(w2, w2.dicts.zh)
+      return findAllByClass(tree2, 'soul-ov-session-name').map(textOf)[0]
+    })()
+    assert.equal(prefixed, '5d29165d', '带 session- 前缀的 id 也必须显示为去前缀的短 id')
+    assert.notEqual(prefixed, 'session-', '绝不能显示成光秃秃的 session-（那就是这个 bug 的样子）')
   })
 
   await check('C66 单个工作区会话过多时只列最近的 20 条，其余如实计数', async () => {
