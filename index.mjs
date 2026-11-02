@@ -17,6 +17,7 @@
 //   - 配置写入统一走写队列，返回 changed（有无实际变更）与 promptChanged（是否需要刷新提示词并注入会话）
 
 import { join, dirname } from 'node:path'
+import { zstdDecompressSync } from 'node:zlib'
 import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
@@ -2069,35 +2070,81 @@ function enqueueBindingsWrite(task) {
 }
 
 /**
- * 会话是否「从未产生对话」—— 即日志里只有系统初始化事件，
- * 没有一条 user / assistant 消息。
+ * 会话是否「从未产生对话」—— 即日志里没有一条 user/assistant 消息。
  *
  * 为什么需要它：这类会话**折叠不出标题**（foldSessionTitle 要读消息），
  * 界面只能退回短 id（`2c8f20e5`）。用户看到一串 id 会以为是脏数据，
- * 所以要把「从未对话过的空会话」如实标出来。
+ * 所以要把「从未对话过的空会话」如实标出来（并默认隐藏）。
  *
- * 判据用文件大小与 mtime 不靠日志解析：解压多帧 zstd 再逐行找消息
- * 代价太高（面板要为几十个会话判断）。这里用「文件很小」近似 ——
- * 实测空会话日志 6-17 行、8KB 以下，而有对话的最少 25 行、且多数上百行。
+ * ── 判据怎么定下来的（两次试错）──
+ *
+ * 1) 先用「日志 < 8KB」近似 —— **不可靠**：真实空会话从 8.6KB 到 22.6KB
+ *    都有（日志里除了系统事件，还有 dsh-soul 自己注入的人设配置快照
+ *    `agent/inbox/spliced`，字数不少）。
+ * 2) 改成「只解第一帧找消息」—— **更糟**：真实对话在后面的帧里，
+ *    实测把 18 个有对话的会话误判成空。误判会让用户以为会话内容丢了，
+ *    比显示一串 id 严重得多。
+ *
+ * 所以只能**逐帧解压**，找到第一条消息就停（大多数有对话的会话在前几帧
+ * 就能命中，不必解完整条日志）。
+ *
  * 宁可漏判（显示短 id）也不误判（把有对话的标成空）。
  *
- * @returns {boolean} true = 几乎肯定是空会话
+ * @returns {boolean} true = 确实没有对话
  */
 function looksLikeBlankSession(dir) {
   if (typeof dir !== 'string' || !existsSync(dir)) return false
-  let newest = null
+  let file = null
   try {
     for (const f of readdirSync(dir, { withFileTypes: true })) {
       if (!f.isFile() || !f.name.startsWith('session')) continue
-      const st = statSync(join(dir, f.name))
-      if (newest === null || st.size > newest) newest = st.size
+      const full = join(dir, f.name)
+      if (file === null) file = full
+      else if (f.name.includes('v4')) file = full
     }
   } catch {
     return false
   }
-  // 8KB 以下：实测空会话 6-17 行压缩后都远小于此；有对话的最小样本 25 行。
-  // 保守取值，宁可漏判。
-  return newest !== null && newest < 8 * 1024
+  if (file === null) return false
+
+  let buf
+  try {
+    buf = readFileSync(file)
+  } catch {
+    return false
+  }
+
+  // 非 zstd（纯文本日志）：直接找
+  if (buf.length < 4 || buf.readUInt32BE(0) !== 0x28b52ffd) {
+    return !hasMessageEvent(buf.toString('utf8'))
+  }
+
+  // zstd 多帧：逐帧解，找到消息就提前返回 false
+  const magic = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
+  const starts = []
+  let i = 0
+  while ((i = buf.indexOf(magic, i)) >= 0) { starts.push(i); i += 4 }
+  if (starts.length === 0) return false
+
+  for (let k = 0; k < starts.length; k++) {
+    const from = starts[k]
+    const to = k + 1 < starts.length ? starts[k + 1] : buf.length
+    let chunk
+    try {
+      chunk = zstdDecompressSync(buf.subarray(from, to)).toString('utf8')
+    } catch {
+      continue
+    }
+    if (hasMessageEvent(chunk)) return false
+  }
+  // 全部帧都没有消息 ⇒ 空会话
+  return true
+}
+
+/** 文本里是否出现过真实的对话消息事件。 */
+function hasMessageEvent(text) {
+  if (typeof text !== 'string' || text === '') return false
+  return /"type"\s*:\s*"(user\/message|assistant\/message)"/.test(text)
 }
 
 /**

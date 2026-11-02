@@ -4724,20 +4724,27 @@ check('标题查询必须用宿主真实的会话 id，不能用注册表的 ses
   const callIdx = titles.indexOf('service.listSessions(')
   assert.ok(cacheIdx > 0 && callIdx > 0 && cacheIdx < callIdx, '必须先查缓存再问宿主（否则缓存没有意义）')
 })
-check('空会话判据必须保守：宁可漏判也不误判', () => {
-  // 空会话（只有系统初始化事件）折叠不出标题，界面要标成「空会话」。
-  // 但判据不能激进 —— 把有对话的会话误标成「空」比显示短 id 更糟。
+check('空会话判据：逐帧解压找消息事件，不得用文件大小近似', () => {
+  // 这条记录两次试错，防止再走回头路：
+  //   1) 用「日志 < 8KB」近似 —— 实测真实空会话 8.6KB~22.6KB，完全不可靠
+  //   2) 只解第一帧找消息 —— 实测把 18 个有对话的会话误判成空（灾难）
+  // 正确做法：逐帧解压，找到第一条 user/assistant 消息就提前退出。
   const fn = extractObject(indexSource, 'function looksLikeBlankSession')
   assert.ok(fn !== '', '找不到 looksLikeBlankSession')
-  assert.match(fn, /st\.size|size <|size <=/, '判据应基于日志文件大小')
-  assert.match(fn, /8 \* 1024/, '阈值应显式写出（8KB），便于核对与调整')
-  assert.match(fn, /return false/, '读不到时应返回 false（不误判为空）')
-  // 不得解压日志：面板要为几十个会话判断，解压多帧 zstd 代价过高
-  assert.equal(/zstd|decompress/i.test(fn), false, '不得在判据里解压日志（太贵）')
-  // blank 字段要真的进响应
-  const list = extractObject(indexSource, 'async function listSessionsForOverview')
-  assert.match(list, /blank,/, 'blank 要作为字段返回')
-  assert.match(list, /looksLikeBlankSession\(/, 'blank 必须由判据算出，不能写死')
+  // 不得用文件大小当判据
+  assert.equal(/st\.size|size <|size <=/.test(fn), false, '不得用文件大小判空（真实空会话 8.6~22.6KB，不可靠）')
+  // 必须逐帧解压
+  assert.match(fn, /zstdDecompressSync/, '必须解压日志才能判断有没有消息')
+  assert.match(fn, /indexOf\(magic/, '要按 zstd 帧切分逐帧解')
+  assert.match(fn, /for \(let k = 0; k < starts\.length/, '必须遍历全部帧（只解第一帧会漏掉后面的对话）')
+  // 找到消息要提前退出
+  assert.match(fn, /if \(hasMessageEvent\(chunk\)\) return false/, '找到消息应立即返回 false（提前退出）')
+  // 消息判据：必须是 user/message 或 assistant/message 事件类型
+  const has = extractObject(indexSource, 'function hasMessageEvent')
+  assert.ok(has !== '', '找不到 hasMessageEvent')
+  assert.match(has, /user\\\/message\|assistant\\\/message/, '判据必须是 user/message 或 assistant/message 事件')
+  // agent/inbox/spliced 不算消息 —— 那是 dsh-soul 注入的人设快照
+  assert.equal(/inbox/.test(has), false, 'agent/inbox/spliced 不得算作对话消息（那是插件注入的人设）')
 })
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 
