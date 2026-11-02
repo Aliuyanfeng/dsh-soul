@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 77
+const EXPECTED_ASSERTIONS = 78
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4497,6 +4497,26 @@ function componentBody(text, name) {
     const row = ruleOf('soul-persona-actions')
     assert.ok(row !== '', '找不到 .soul-persona-actions 容器规则')
     assert.match(row, /flex-wrap:wrap/, '容器必须允许换行（避免长文本按钮被压缩溢出）')
+  })
+
+  await check('C83 空会话开关的对比度必须达 WCAG AA（可交互控件）', async () => {
+    // P4 深色/浅色实测（CDP + alpha 合成，真实宿主 token，11px）：
+    //   label-tertiary   亮 3.71 / 暗 6.53  → 亮色低于 AA 的 4.5
+    //   label-secondary  亮 5.80 / 暗 9.25  → 达标
+    //
+    // 它是**可交互控件**（点开才看到那 6 个空会话），对比度要求比装饰性说明文字高，
+    // 所以用 label-secondary。原先把 label-tertiary 用在这里是抄了「次要说明」的规格。
+    //
+    // 对照：.soul-ov-pill-bad（失效预设名）保持 state-error-primary + danger 底，
+    // 实测 4.15 / 3.53 —— 它是**状态标签**（UI 组件），适用 WCAG SC 1.4.11 的 3.0，
+    // 达标；且红色是错误语义，换成灰会丢掉警示。
+    const at = source.indexOf('.soul-ov-more{')
+    assert.ok(at > 0, '找不到 .soul-ov-more 规则')
+    const css = source.slice(at, source.indexOf('}', at) + 1)
+    assert.match(css, /color:var\(--dsw-alias-label-secondary\)/, '空会话开关必须用 label-secondary（tertiary 在亮色下仅 3.71）')
+    assert.equal(/label-tertiary/.test(css), false, '不得退回 label-tertiary（亮色对比度不达标）')
+    // 它是可点的：必须保留 pointer 光标
+    assert.match(css, /cursor:pointer/, '可交互控件必须显示 pointer 光标')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

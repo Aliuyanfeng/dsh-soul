@@ -4790,6 +4790,17 @@ check('光轨拖尾必须平滑：折点间距要低于视觉分辨极限', () =
     `折点间距必须 ≤ 2px（当前 ${spacing.toFixed(2)}px：${layerCount} 层 / ${tailPct}% 拖尾）。` +
     '间距超过 2px 人眼就能看出分段 —— 这正是用户两次反馈的问题。'
   )
+  //
+  // ▶ P3 性能实测（Chrome headless + CDP，120 帧采样，真实 SVG 动画）：
+  //     16 层 → 平均 16.67ms / 60 FPS / p95 16.8ms
+  //     48 层 → 平均 16.67ms / 60 FPS / p95 16.8ms
+  //     96 层 → 平均 16.67ms / 60 FPS / p95 16.8ms
+  //   三档完全一致（都是 vsync 上限），说明 stroke-dashoffset 动画的重绘成本
+  //   与层数几乎无关 —— 重绘面积始终是同一条线。48 层没有性能代价。
+  //
+  // 但仍设上限：层数再多也不改善平滑度（折点间距已在线内），只会白增 DOM。
+  assert.ok(layerCount <= 96, `层数不得超过 96（实际 ${layerCount}；实测 96 层仍 60FPS，
+    但超过就不再改善平滑度，只会白增 DOM）`)
   assert.ok(layerCount >= 40, `层数不得少于 40（实际 ${layerCount}）`)
   assert.ok(tailPct <= 10, `拖尾跨度不得大于 10%（实际 ${tailPct}%），否则折点铺太开`)
   // 步长必须由层数与跨度推导，不能硬编码

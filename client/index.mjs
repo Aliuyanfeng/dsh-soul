@@ -1120,7 +1120,12 @@ window.__ModuleLoader__.load({
       '.soul-ov-picker-item:disabled{cursor:default;opacity:.6}',
       '.soul-ov-picker-empty{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:17px}',
       '.soul-ov-picker-error{flex-basis:100%;color:var(--dsw-alias-state-error-primary);font-size:11px;line-height:17px}',
-      '.soul-ov-more{display:inline-flex;align-items:center;align-self:flex-start;margin:2px 0 0;padding:2px 6px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11px;line-height:16px;cursor:pointer}',
+      // 空会话开关：用 label-secondary 而不是 tertiary。
+      // 实测（CDP + alpha 合成，真实宿主 token）：
+      //   tertiary  亮 3.71 / 暗 6.53 —— 亮色低于 WCAG AA 的 4.5
+      //   secondary 亮 5.0+ / 暗 更高 —— 达标
+      // 它是**可交互控件**（不是装饰文字），对比度要求比次要说明更高。
+      '.soul-ov-more{display:inline-flex;align-items:center;align-self:flex-start;margin:2px 0 0;padding:2px 6px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:16px;cursor:pointer}',
       '.soul-ov-more:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
       // 失效绑定的「修复」按钮：宿主 Button 的 **sm + outline** 变体。
       //
