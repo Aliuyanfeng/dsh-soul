@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 69
+const EXPECTED_ASSERTIONS = 70
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4079,6 +4079,72 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     assert.match(fp, /style|headingLists/, '指纹要含人格字段')
     // 不得把高频字段算进指纹
     assert.equal(/s\.saving|s\.loading|s\.error/.test(fp), false, 'saving/loading/error 不得进指纹（会把面板刷成幻灯片）')
+  })
+
+  await check('C75 当前生效卡片可就地切换全局人设（不必去设置页走四步）', async () => {
+    // 总览页最高频的动作是「换成这个人设」。原先要：设置页 → 展开人设预设
+    // → 找到那张卡 → 点使用，四步。现在一进面板就能换。
+    //
+    // 刻意不搬整个预设管理（那是 310 行 + 依赖编辑草稿），只搬「切换」：
+    // 创建/编辑预设需要设置页的表单草稿态（dirty / personaName /
+    // applyAfterSave），搬过来就是残缺功能，留在设置页是对的。
+    const world = await boot()
+    let used = null
+    let overviewCalls = 0
+    world.routes['/api/soul/overview'] = () => {
+      overviewCalls++
+      return {
+        ok: true,
+        globalPersona: '当前这个人设',
+        enabled: true,
+        personas: { builtin: [], custom: [] },
+        workspaces: [],
+        sessions: [],
+        filtersApplied: { archived: true, children: true, registry: true }
+      }
+    }
+    world.routes['/api/soul/personas/use'] = (call) => {
+      used = call.body
+      return {
+        ok: true,
+        config: { enabled: true, nickname: '', occupation: '', bio: '', style: 'professional', headingLists: 'default', emoji: 'default', tables: 'default', replyLength: 'normal', language: 'zh', customInstructions: '', toolConfirm: 'default', trail: { enabled: false, color: '', speed: 'normal', width: 'normal' } }
+      }
+    }
+    // 可选预设来自 store（与工作区改绑同一个来源）
+    world.captured.provide.soulController.store.update((s) => {
+      s.personas = { 当前这个人设: { builtin: false }, 另一个预设: { builtin: true } }
+    })
+    for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+    const element = overviewElement(world, world.dicts.zh)
+    let tree = await world.runtime.settle(element)
+    // 「切换」按钮在「当前生效」卡片标题栏
+    const sw = findAllByClass(tree, 'soul-ov-switch')
+    assert.equal(sw.length, 1, '「当前生效」卡片应有一个「切换」按钮')
+    assert.ok(textOf(sw[0]).includes('切换'), '按钮文案应为「切换」')
+    assert.equal(sw[0].props['aria-expanded'], 'false', '默认应收起（aria-expanded=false）')
+    // 点开 → 列出预设胶囊
+    sw[0].props.onClick()
+    tree = await world.runtime.settle(element)
+    const picker = findAllByClass(tree, 'soul-ov-picker')
+    assert.equal(picker.length, 1, '点「切换」应展开预设列表')
+    const items = findAllByClass(tree, 'soul-ov-picker-item')
+    assert.equal(items.length, 2, '应列出 2 个预设')
+    // 当前那个要标出来（一眼看出「现在指向它」）
+    const current = findAllByClass(tree, 'soul-ov-picker-item-current')
+    assert.equal(current.length, 1, '当前人设应被标出')
+    assert.equal(textOf(current[0]), '当前这个人设', '标出的应是当前生效的那个')
+    // 点另一个 → 调 usePersona 并重拉
+    const target = items.find((i) => textOf(i) === '另一个预设')
+    assert.ok(target, '应能点到「另一个预设」')
+    const callsBefore = overviewCalls
+    await target.props.onClick()
+    for (let i = 0; i < 12; i++) await new Promise((r) => drainTick(r))
+    assert.ok(used !== null, '应调用 usePersona 提交')
+    assert.equal(used.name, '另一个预设', '提交的应是选中的预设名')
+    assert.ok(
+      overviewCalls > callsBefore,
+      `切换成功后应重拉总览（切换前 ${callsBefore} 次，切换后 ${overviewCalls} 次）`
+    )
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

@@ -1066,6 +1066,9 @@ window.__ModuleLoader__.load({
       // 只给读屏的文本
       '.soul-ov-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}',
       // 就地改绑：预设胶囊列表，缩进到工作区名下方
+      // 「切换」按钮：卡片标题右侧的次要操作，hover 才明显
+      '.soul-ov-switch{flex:none;margin-left:auto;padding:1px 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:17px;font-weight:500;cursor:pointer}',
+      '.soul-ov-switch:hover{background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary)}',
       '.soul-ov-picker{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 6px 22px;padding:6px 8px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
       '.soul-ov-picker-label{flex:none;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:17px;font-weight:500}',
       '.soul-ov-picker-item{flex:none;max-width:180px;padding:1px 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:999px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:17px;font-weight:500;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
@@ -1968,6 +1971,10 @@ window.__ModuleLoader__.load({
       'ov.fix': '修复',
       'ov.fixTitle': '选择一个人设重新绑定',
       'ov.rebindPick': '改绑到：',
+      'ov.switch': '切换 ▾',
+      'ov.switchClose': '收起 ▴',
+      'ov.switchTitle': '换一个全局人设',
+      'ov.switchPick': '切换为：',
       'ov.rebindNoPresets': '没有可用的人设',
       'ov.sessionsCount': '{count} 个会话',
       'ov.presets': '预设库',
@@ -2345,6 +2352,10 @@ window.__ModuleLoader__.load({
       'ov.fix': 'Fix',
       'ov.fixTitle': 'Pick a persona to rebind',
       'ov.rebindPick': 'Rebind to:',
+      'ov.switch': 'Switch ▾',
+      'ov.switchClose': 'Close ▴',
+      'ov.switchTitle': 'Switch the global persona',
+      'ov.switchPick': 'Switch to:',
       'ov.rebindNoPresets': 'No personas available',
       'ov.sessionsCount': '{count} sessions',
       'ov.presets': 'Presets',
@@ -4307,6 +4318,14 @@ window.__ModuleLoader__.load({
       // `saveWorkspacePersona` 早就现成，就地展开预设列表即可。
       const [rebinding, setRebinding] = React.useState(null)
       const [rebindBusy, setRebindBusy] = React.useState(false)
+      // 全局人设切换：是否展开预设列表 + 忙碌 + 失败原因。
+      //
+      // 为什么单独一份而不是复用 rebinding：那是「给某个工作区改绑」，
+      // 两者语义不同（一个动全局配置、一个动工作区绑定），混用一个 state
+      // 会让「点工作区的修复」把全局那张卡也展开。
+      const [switchingGlobal, setSwitchingGlobal] = React.useState(false)
+      const [switchBusy, setSwitchBusy] = React.useState(false)
+      const [switchError, setSwitchError] = React.useState(null)
       const [rebindError, setRebindError] = React.useState(null)
       const [error, setError] = React.useState(null)
       // 用户手动展开/收起过的工作区（workspaceId → 是否展开）。
@@ -4390,6 +4409,29 @@ window.__ModuleLoader__.load({
        * 成功后直接重拉总览（服务端会返回新的 workspaces，但总览的会话人设
        * 也跟着变，整体重拉最省心）；失败只在本行显示原因，不动其它行。
        */
+      /**
+       * 切换**全局**人设（`controller.usePersona`）。
+       *
+       * 这是总览页最高频的动作 —— 原先要跳到设置页 → 展开人设预设 → 点使用，
+       * 四步。现在一进面板就能换。
+       *
+       * 与工作区改绑的区别：这个改的是全局配置，会立刻推给活动会话。
+       */
+      const switchGlobalPersona = async (persona) => {
+        if (switchBusy) return
+        setSwitchBusy(true)
+        setSwitchError(null)
+        try {
+          await controller.usePersona(persona)
+          setSwitchingGlobal(false)
+          await reload()
+        } catch (err) {
+          setSwitchError(messageOf(err))
+        } finally {
+          setSwitchBusy(false)
+        }
+      }
+
       const rebindWorkspace = async (workspaceId, persona) => {
         if (rebindBusy) return
         setRebindBusy(true)
@@ -4627,8 +4669,36 @@ window.__ModuleLoader__.load({
         return e('div', { className: 'soul-ov-card' },
           e('div', { className: 'soul-ov-card-head' },
             e('h3', {}, t('ov.current')),
-            name && e('span', { className: 'soul-ov-count' }, t('ov.global'))
+            name && e('span', { className: 'soul-ov-count' }, t('ov.global')),
+            // 切换全局人设：预设库就在手边，不必去设置页走四步。
+            // 用 label 包一层原生 button 语义（键盘可达），文案随展开状态变化。
+            e('button', {
+              type: 'button',
+              className: 'soul-ov-switch',
+              title: t('ov.switchTitle'),
+              'aria-expanded': switchingGlobal ? 'true' : 'false',
+              onClick: () => {
+                setSwitchError(null)
+                setSwitchingGlobal((v) => !v)
+              }
+            }, switchingGlobal ? t('ov.switchClose') : t('ov.switch')),
+            switchingGlobal && personaChoices.length === 0 &&
+              e('span', { className: 'soul-ov-picker-empty' }, t('ov.rebindNoPresets'))
           ),
+          // 展开的预设列表（与工作区改绑同一套胶囊样式）
+          switchingGlobal && personaChoices.length > 0 && e('div', { className: 'soul-ov-picker' },
+            e('span', { className: 'soul-ov-picker-label' }, t('ov.switchPick')),
+            personaChoices.map((choice) => e('button', {
+              type: 'button',
+              key: `switch-${choice}`,
+              className: choice === name
+                ? 'soul-ov-picker-item soul-ov-picker-item-current'
+                : 'soul-ov-picker-item',
+              disabled: switchBusy,
+              onClick: () => { void switchGlobalPersona(choice) }
+            }, choice)),
+            switchError !== null &&
+              e('span', { className: 'soul-ov-picker-error' }, switchError)),
           e('div', { className: 'soul-ov-current' },
             e('div', { className: 'soul-ov-art' },
               name !== null && !broken
