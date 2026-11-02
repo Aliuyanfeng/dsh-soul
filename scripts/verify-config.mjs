@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 160
+const EXPECTED_ASSERTIONS = 161
 
 let passed = 0
 const failures = []
@@ -4723,6 +4723,21 @@ check('标题查询必须用宿主真实的会话 id，不能用注册表的 ses
   const cacheIdx = titles.indexOf('sessionTitleCache.get(')
   const callIdx = titles.indexOf('service.listSessions(')
   assert.ok(cacheIdx > 0 && callIdx > 0 && cacheIdx < callIdx, '必须先查缓存再问宿主（否则缓存没有意义）')
+})
+check('空会话判据必须保守：宁可漏判也不误判', () => {
+  // 空会话（只有系统初始化事件）折叠不出标题，界面要标成「空会话」。
+  // 但判据不能激进 —— 把有对话的会话误标成「空」比显示短 id 更糟。
+  const fn = extractObject(indexSource, 'function looksLikeBlankSession')
+  assert.ok(fn !== '', '找不到 looksLikeBlankSession')
+  assert.match(fn, /st\.size|size <|size <=/, '判据应基于日志文件大小')
+  assert.match(fn, /8 \* 1024/, '阈值应显式写出（8KB），便于核对与调整')
+  assert.match(fn, /return false/, '读不到时应返回 false（不误判为空）')
+  // 不得解压日志：面板要为几十个会话判断，解压多帧 zstd 代价过高
+  assert.equal(/zstd|decompress/i.test(fn), false, '不得在判据里解压日志（太贵）')
+  // blank 字段要真的进响应
+  const list = extractObject(indexSource, 'async function listSessionsForOverview')
+  assert.match(list, /blank,/, 'blank 要作为字段返回')
+  assert.match(list, /looksLikeBlankSession\(/, 'blank 必须由判据算出，不能写死')
 })
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 

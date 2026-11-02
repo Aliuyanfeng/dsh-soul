@@ -1959,6 +1959,7 @@ window.__ModuleLoader__.load({
       'ov.sessionFollowWs': '跟随工作区',
       'ov.sessionFollowUpper': '跟随上层',
       'ov.untitledSession': '（未命名会话）',
+      'ov.blankSession': '（空会话 · 未开始对话）',
       'ov.unassigned': '未归属工作区的会话',
       'ov.noteActivity': '只列活动会话（宿主 agents.list() 的边界）。工作区行上的会话数来自工作区注册表，可能包含未打开的会话。',
       'ov.noteActivityUnknown': '读不到会话时间，活跃排序不可用。',
@@ -2331,6 +2332,7 @@ window.__ModuleLoader__.load({
       'ov.sessionFollowWs': 'Follows workspace',
       'ov.sessionFollowUpper': 'Follows upper scope',
       'ov.untitledSession': '(untitled session)',
+      'ov.blankSession': '(empty session · no conversation yet)',
       'ov.unassigned': 'Sessions without a workspace',
       'ov.noteActivity': 'Only live sessions are listed (the host agents.list() boundary). The per-workspace count comes from the workspace registry and may include sessions that are not open.',
       'ov.noteActivityUnknown': 'Session timestamps are unavailable, so activity ordering is off.',
@@ -4225,7 +4227,16 @@ window.__ModuleLoader__.load({
             // 否则 slice(0,8) 恰好切在 "session-" 上，每一行都显示成一样的
             // 「session-」，看起来像一堆脏数据（实际是我的显示 bug）。
             const shortId = id.replace(/^session-/, '').slice(0, 8)
-            const label = title !== '' ? title : (shortId === '' ? t('ov.untitledSession') : shortId)
+            // 显示优先级：标题 > 「空会话」> 短 id。
+            //
+            // 为什么单独标出空会话：这类会话只有系统初始化事件（permission/preset、
+            // sandbox/mode、agent/inbox/spliced…），从未产生 user/assistant 消息，
+            // 所以**折叠不出标题**。只显示一串 `2c8f20e5` 会让人以为数据坏了。
+            const label = title !== ''
+              ? title
+              : (s.blank === true
+                  ? t('ov.blankSession')
+                  : (shortId === '' ? t('ov.untitledSession') : shortId))
             return e('div', { className: 'soul-ov-session', key: `sess-${id}`, title: id },
               e('span', { className: hasOverride ? 'soul-ov-dot soul-ov-dot-override' : 'soul-ov-dot' }),
               e('span', { className: 'soul-ov-session-name' }, label),

@@ -2069,6 +2069,38 @@ function enqueueBindingsWrite(task) {
 }
 
 /**
+ * 会话是否「从未产生对话」—— 即日志里只有系统初始化事件，
+ * 没有一条 user / assistant 消息。
+ *
+ * 为什么需要它：这类会话**折叠不出标题**（foldSessionTitle 要读消息），
+ * 界面只能退回短 id（`2c8f20e5`）。用户看到一串 id 会以为是脏数据，
+ * 所以要把「从未对话过的空会话」如实标出来。
+ *
+ * 判据用文件大小与 mtime 不靠日志解析：解压多帧 zstd 再逐行找消息
+ * 代价太高（面板要为几十个会话判断）。这里用「文件很小」近似 ——
+ * 实测空会话日志 6-17 行、8KB 以下，而有对话的最少 25 行、且多数上百行。
+ * 宁可漏判（显示短 id）也不误判（把有对话的标成空）。
+ *
+ * @returns {boolean} true = 几乎肯定是空会话
+ */
+function looksLikeBlankSession(dir) {
+  if (typeof dir !== 'string' || !existsSync(dir)) return false
+  let newest = null
+  try {
+    for (const f of readdirSync(dir, { withFileTypes: true })) {
+      if (!f.isFile() || !f.name.startsWith('session')) continue
+      const st = statSync(join(dir, f.name))
+      if (newest === null || st.size > newest) newest = st.size
+    }
+  } catch {
+    return false
+  }
+  // 8KB 以下：实测空会话 6-17 行压缩后都远小于此；有对话的最小样本 25 行。
+  // 保守取值，宁可漏判。
+  return newest !== null && newest < 8 * 1024
+}
+
+/**
  * 扫描宿主的会话目录，得出**每个工作区的最近活跃时间**。
  *
  * 为什么必须这么做：宿主的 workspaceRegistry.list() 只给 id/title/path/sessionIds，
@@ -2537,6 +2569,17 @@ async function listSessionsForOverview(ctx, config, withTitles = false) {
     } catch {
       persona = null
     }
+    // 从未对话过的会话：日志里只有系统事件，折叠不出标题。
+    // 如实标成 blank，界面用「空会话」而不是一串 id 来显示。
+    let blank = false
+    if (s.baseDir !== null) {
+      for (const candidate of [s.norm, 'session-' + s.norm]) {
+        const dir = join(s.baseDir, candidate)
+        if (!existsSync(dir)) continue
+        blank = looksLikeBlankSession(dir)
+        break
+      }
+    }
     out.push({
       id: s.id,
       title: titles.get(s.norm) || null,
@@ -2544,6 +2587,7 @@ async function listSessionsForOverview(ctx, config, withTitles = false) {
       lastActiveAt: s.lastActiveAt,
       persona,
       hasOverride,
+      blank,
       live: false
     })
   }

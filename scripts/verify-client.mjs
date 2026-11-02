@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 65
+const EXPECTED_ASSERTIONS = 66
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -3877,6 +3877,40 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     assert.equal(names.length, 2, '应有两条会话行')
     assert.equal(names[0], 'dsh-soul插件开发', '阶段 2 拿到的标题必须显示出来（这是用户报的那条 bug）')
     assert.equal(names[1], '2c8f20e5', '没有标题的那条仍退回短 id')
+  })
+
+  await check('C71 空会话显示「空会话」而不是一串 id', async () => {
+    // 用户看到一堆 `2c8f20e5` 这样的 8 位 id，问「这些是什么」。
+    // 查下来它们都是**从未对话过**的会话：日志里只有系统初始化事件
+    // （permission/preset、sandbox/mode、agent/inbox/spliced…），
+    // 没有一条 user/assistant 消息，所以折叠不出标题。
+    // 这类会话要如实标成「空会话」，不能只丢一串 id 让人以为数据坏了。
+    const world = await boot()
+    world.routes['/api/soul/overview'] = (call) => {
+      const wantTitles = String(call.search || '').includes('titles=1')
+      return {
+        ok: true,
+        globalPersona: null,
+        enabled: true,
+        personas: { builtin: [], custom: [] },
+        workspaces: [
+          { workspaceId: 'ws-a', title: '项目', path: 'D:\\a', sessionCount: 3, bound: false, persona: null, invalidPersona: false, lastActiveAt: Date.now() }
+        ],
+        sessions: [
+          { id: 'session-5d29165d-348c-41f6-a7e0-3544a13a4318', title: wantTitles ? 'dsh-soul插件开发' : null, workspaceId: 'ws-a', persona: null, hasOverride: true, blank: false, live: true },
+          { id: 'session-2c8f20e5-43da-41b3-b72d-3f3e0b5da1a1', title: null, workspaceId: 'ws-a', persona: null, hasOverride: false, blank: true, live: false },
+          { id: 'session-48349b8b-f52f-4b70-9205-dbc478c520b7', title: null, workspaceId: 'ws-a', persona: null, hasOverride: false, blank: false, live: false }
+        ],
+        filtersApplied: { archived: true, children: true, registry: true }
+      }
+    }
+    const tree = await mountOverview(world, world.dicts.zh)
+    const names = findAllByClass(tree, 'soul-ov-session-name').map(textOf)
+    assert.equal(names.length, 3, '应有三条会话行')
+    assert.equal(names[0], 'dsh-soul插件开发', '有标题的显示标题')
+    assert.equal(names[1], world.dicts.zh['ov.blankSession'], '空会话显示「空会话」文案')
+    assert.notEqual(names[1], '2c8f20e5', '空会话不得只显示短 id')
+    assert.equal(names[2], '48349b8b', '有内容但无标题的仍退回短 id（它确实有对话）')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
