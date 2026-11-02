@@ -1058,7 +1058,11 @@ window.__ModuleLoader__.load({
       // 会话子行：标题 13/400，元信息 11 —— 侧栏会话行就是这个层级
       '.soul-ov-sessions{display:flex;flex-direction:column;gap:1px;margin:0 0 4px 22px}',
       '.soul-ov-session{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-secondary)}',
-      '.soul-ov-session:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      // hover 反馈只给**可点**的行：给不可点的行加 hover 等于承诺一个做不到的动作。
+      '.soul-ov-session-openable{cursor:pointer}',
+      '.soul-ov-session-openable:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      // 键盘焦点：inset 描边，不撑开行高
+      '.soul-ov-session-openable:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}',
       '.soul-ov-dot{width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-border-l3);flex:none}',
       '.soul-ov-dot-override{background:var(--dsw-alias-brand-primary)}',
       '.soul-ov-session-name{min-width:0;flex:1;font-size:13px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary)}',
@@ -2078,6 +2082,7 @@ window.__ModuleLoader__.load({
       'ov.neverActive': '无会话',
       'ov.customName': '自定义',
       'ov.moreSessions': '还有 {count} 个更早的会话',
+      'ov.openSessionTitle': '在主视图打开这个会话',
       'ov.presetsHint': '预设的增删改在「设置 → 个性化 → 人设预设」里。',
       'ov.filterArchivedMissing': '读不到归档状态，可能列出已归档的会话。',
       'ov.filterChildrenMissing': '读不到子代理会话信息，可能多列出几个会话。',
@@ -2459,6 +2464,7 @@ window.__ModuleLoader__.load({
       'ov.neverActive': 'no sessions',
       'ov.customName': 'Custom',
       'ov.moreSessions': '{count} older sessions not shown',
+      'ov.openSessionTitle': 'Open this session in the main view',
       'ov.presetsHint': 'Presets are edited under Settings → Personalization → Persona presets.',
       'ov.filterArchivedMissing': 'Archive state is unavailable, so archived sessions may be listed.',
       'ov.filterChildrenMissing': 'Subagent sessions are unavailable, so a few extra sessions may appear.',
@@ -4165,6 +4171,29 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // 宿主的 `uiWorkspace` 服务：把某个会话切到主视图。
+    //
+    // 为什么需要它：总览的会话行原本**有 hover 背景却没有 onClick** ——
+    // 看起来能点、点了没反应，比完全不响应更糟。
+    //
+    // 注入方式与目录点选一致：走**动态** ctx.inject，不能写进静态 inject 数组
+    // （那个服务缺失时整个插件都不会激活）。做成盒子，让晚到的服务也能生效。
+    const workspaceService = (() => {
+      let value = null
+      const listeners = new Set()
+      return {
+        get: () => value,
+        subscribe: (listener) => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+        attach: (next) => {
+          value = next
+          for (const listener of [...listeners]) listener()
+        }
+      }
+    })()
+
     // 宿主的 `sessions` 服务（客户端 store）：**标题的快速通道**。
     //
     // 为什么需要它：`sessionQuery.readTitleSnapshots` 要为每个会话折叠整条
@@ -4302,6 +4331,34 @@ window.__ModuleLoader__.load({
       const { controller, useSoulController } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((s) => s)
+
+      // 宿主 uiWorkspace 可能晚于本包装载：订阅它，到了再让会话行可点。
+      // 服务缺席时行照常显示，只是不带可点样式 —— 不给「点不动的按钮」。
+      const [canOpenSession, setCanOpenSession] = React.useState(
+        () => workspaceService.get() !== null
+      )
+      React.useEffect(
+        () => workspaceService.subscribe(() => setCanOpenSession(workspaceService.get() !== null)),
+        []
+      )
+
+      /**
+       * 把某个会话切到主视图。
+       *
+       * id 形式：注册表里是 `session-<uuid>`，而宿主内部（`sessions.retain`）
+       * 用的是**无前缀**的 `<uuid>` —— 必须剥掉前缀，否则 retain 找不到会话。
+       *
+       * 打不开就静默：一次跳转失败不该打断用户（会话可能刚被归档或删除）。
+       */
+      const openSessionOf = (rawId) => {
+        const service = workspaceService.get()
+        if (!service || typeof service.openSession !== 'function') return
+        try {
+          service.openSession(String(rawId).replace(/^session-/, ''))
+        } catch {
+          // 静默：跳转失败不影响面板本身
+        }
+      }
 
       const [view, setView] = React.useState(null)
       // 会话标题单独一份：阶段 2 才拿到，合并发生在渲染时（见 reload 的说明）
@@ -4690,7 +4747,29 @@ window.__ModuleLoader__.load({
               : (s.blank === true
                   ? t('ov.blankSession')
                   : (shortId === '' ? t('ov.untitledSession') : shortId))
-            return e('div', { className: 'soul-ov-session', key: `sess-${id}`, title: id },
+            // 可点：把会话切到主视图。
+            //
+            // 这一行原本**有 hover 背景却没有 onClick** —— 看起来能点、点了没反应，
+            // 比完全不给反馈更糟。服务缺席时（拿不到 uiWorkspace）退回纯展示，
+            // 且**不给**可点样式：不给「点不动的按钮」。
+            const openable = canOpenSession
+            return e('div', {
+              className: openable ? 'soul-ov-session soul-ov-session-openable' : 'soul-ov-session',
+              key: `sess-${id}`,
+              title: openable ? t('ov.openSessionTitle') : id,
+              // 键盘可达：div 需要显式声明按钮语义，并自己处理 Enter / Space
+              ...(openable ? {
+                role: 'button',
+                tabIndex: 0,
+                onClick: () => openSessionOf(id),
+                onKeyDown: (ev) => {
+                  if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault()
+                    openSessionOf(id)
+                  }
+                }
+              } : {})
+            },
               e('span', { className: hasOverride ? 'soul-ov-dot soul-ov-dot-override' : 'soul-ov-dot' }),
               e('span', { className: 'soul-ov-session-name' }, label),
               s.persona && e('span', { className: 'soul-ov-session-persona' }, s.persona),
@@ -6975,6 +7054,8 @@ window.__ModuleLoader__.load({
       // 调用失败（宿主 pickDirectory 抛错）时组件自行降级为手输，见 §7.5。
       ctx.inject(['uiWorkspace'], (scope) => {
         directoryPicker = scope.uiWorkspace
+        // 同一服务的另一用途：会话跳转（见 workspaceService 的说明）
+        workspaceService.attach(scope.uiWorkspace)
         scope.effect(() => () => {
           // 服务撤走 = 界面上不该再出现那个按钮（回调可能已被替换成新的 scope）
           if (directoryPicker === scope.uiWorkspace) directoryPicker = null

@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 74
+const EXPECTED_ASSERTIONS = 75
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4333,6 +4333,65 @@ function componentBody(text, name) {
     // 不得有重复的 hover 规则（此前残留一条旧的 :hover 会与新规则并存）
     const hovers = source.match(/\.soul-ov-fix:hover[^{]*\{/g) || []
     assert.equal(hovers.length, 1, `不得有重复的 hover 规则（实际 ${hovers.length} 条）`)
+  })
+
+  await check('C80 会话行可点击跳到主视图（护住 id 前缀与服务缺席降级）', async () => {
+    // 原本这一行**有 hover 背景却没有 onClick** —— 看起来能点、点了没反应，
+    // 比完全不给反馈更糟。
+    //
+    // 三个容易错的点，这条都守住：
+    //   ① **id 形式**：注册表是 `session-<uuid>`，而宿主内部（sessions.retain）
+    //      用无前缀的 `<uuid>` —— 不剥前缀 retain 就找不到会话
+    //   ② **服务缺席降级**：拿不到 uiWorkspace 时不给可点样式，
+    //      不画一个点不动的按钮
+    //   ③ **hover 只给可点的行**：给不可点的行加 hover 等于承诺做不到的动作
+
+    // ★ 结构前提：workspaceService 必须是**模块级**（4 空格缩进）。
+    // 这次真的踩过：把 canOpenSession 插进了 SoulWorkspaces 内部的一个子组件，
+    // 而 workspaceService 在模块级 —— 使用与声明不在同一作用域，直接 ReferenceError。
+    const boxLine = source.split('\n').find((l) => l.includes('const workspaceService = (() => {'))
+    assert.ok(boxLine !== undefined, '找不到 workspaceService 盒子')
+    const indent = boxLine.match(/^\s*/)[0].length
+    assert.equal(indent, 4, `workspaceService 必须是模块级（4 空格缩进），实际 ${indent} 空格`)
+
+    // ★ 使用点必须落在 SoulOverview 内
+    const body = componentBody(source, 'SoulOverview')
+    assert.ok(body !== '', '找不到 SoulOverview 组件体')
+    assert.match(body, /const \[canOpenSession, setCanOpenSession\] = React\.useState\(/, 'SoulOverview 内必须有 canOpenSession 状态')
+    assert.match(body, /const openSessionOf = \(rawId\) => \{/, 'SoulOverview 内必须有 openSessionOf')
+
+    // ★ 以下断言必须**只看 openSessionOf 的函数体**，不能看整个组件体。
+    //
+    // 踩过：一开始在 body 里搜 `replace(/^session-/, '')`，结果匹配到了
+    // renderSessions 里标题规范化那处（`const normId = id.replace(...)`）——
+    // 于是把「剥前缀」这行删掉，断言依然通过（假阳性）。
+    // 断言范围过大会让变异测试失效，这是最难发现的一类。
+    const handlerAt = body.indexOf('const openSessionOf = (rawId) => {')
+    assert.ok(handlerAt >= 0, '找不到 openSessionOf 函数')
+    // 到下一个同级缩进的 `}` 为止（该函数很短，800 字符足够覆盖）
+    const handlerBody = body.slice(handlerAt, handlerAt + 800)
+
+    // ★ id 前缀必须剥掉（否则宿主 retain 找不到会话）
+    assert.match(handlerBody, /replace\(\/\^session-\/, ''\)/, '调用 openSession 前必须剥掉 session- 前缀')
+    assert.match(handlerBody, /service\.openSession\(/, '必须调用宿主 uiWorkspace.openSession')
+    // 跳转失败要静默，不能打断用户
+    assert.match(handlerBody, /catch\s*\{/, 'openSession 失败必须被 catch 住（静默）')
+
+    // ★ 降级：服务缺席时不给可点样式
+    assert.match(body, /const openable = canOpenSession/, '可点性必须由服务可用性决定')
+    assert.match(body, /openable \? 'soul-ov-session soul-ov-session-openable' : 'soul-ov-session'/, '服务缺席时不得带可点样式')
+
+    // ★ 键盘可达：div 要显式声明按钮语义 + 自己处理 Enter / Space
+    assert.match(body, /role: 'button'/, '可点行必须有 role=button')
+    assert.match(body, /tabIndex: 0/, '可点行必须可聚焦（tabIndex 0）')
+    assert.match(body, /ev\.key === 'Enter' \|\| ev\.key === ' '/, '必须处理 Enter 与 Space')
+    assert.match(body, /ev\.preventDefault\(\)/, 'Space 必须 preventDefault（否则页面会滚动）')
+
+    // ★ CSS：hover 只给可点的行；旧的无条件 hover 必须删掉
+    assert.match(source, /\.soul-ov-session-openable\{cursor:pointer\}/, '可点行必须显示 pointer 光标')
+    assert.match(source, /\.soul-ov-session-openable:hover\{background:var\(--dsw-alias-interactive-bg-hover\)\}/, '可点行 hover 必须有反馈')
+    assert.equal(/\.soul-ov-session:hover\{/.test(source), false, '不得给所有行加 hover（不可点的行不该有反馈）')
+    assert.match(source, /\.soul-ov-session-openable:focus-visible\{outline:/, '可点行必须有键盘焦点样式')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
