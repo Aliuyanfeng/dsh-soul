@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 162
+const EXPECTED_ASSERTIONS = 163
 
 let passed = 0
 const failures = []
@@ -4782,6 +4782,35 @@ check('光轨拖尾必须平滑：层数够密 + 圆头，不得露出分段色�
   assert.match(clientCode, /Math\.max\(0\.04, 1 - \(layer \/ \(TRAIL_LAYERS - 1\)\) \* 0\.96\)/, '透明度应按层号线性递减到 0.04')
   // 每层 from→to 必须恰好 -100（否则循环接缝会跳）
   assert.match(clientCode, /\(offset - 100\)\.toFixed\(3\)/, '每层终点应平移 -100，保证循环无缝')
+})
+
+check('「N 个会话」必须与列表口径一致（不得用注册表原始长度）', () => {
+  // 用户反馈：工作区后面显示的会话数量和实际对不上。
+  //
+  // 根因：`workspaceView()` 的 sessionCount 用的是注册表原始 `sessionIds.length`，
+  // 里面含**归档会话**与**子代理会话**，而列表只列「注册表 − 归档 − 子代理」。
+  // 本机实测某工作区注册表 24、实际只列 10（另 14 个已归档）—— 数字大了一倍多。
+  //
+  // 修法：overview 端点已经拿到过滤后的 sessions，按工作区重新数一遍覆盖掉。
+  //
+  // 这条守两件事：
+  //   1) 不得退回「直接用 sessionIds.length」
+  //   2) 必须有按 workspaceId 统计过滤后 sessions 的循环
+  // 不得再用注册表原始长度
+  assert.equal(
+    /sessionCount: Array\.isArray\(workspace\.sessionIds\) \? workspace\.sessionIds\.length : 0/.test(indexSource),
+    false,
+    '不得用注册表原始 sessionIds.length 当会话数（含归档与子代理，会比列表多）'
+  )
+  // 必须按工作区统计过滤后的 sessions
+  assert.match(indexSource, /const countByWorkspace = new Map\(\)/, '必须按工作区统计过滤后的会话数')
+  assert.match(indexSource, /for \(const session of sessions\)/, '统计来源必须是过滤后的 sessions')
+  assert.match(indexSource, /countByWorkspace\.set\(key, \(countByWorkspace\.get\(key\) \|\| 0\) \+ 1\)/, '必须逐条累加')
+  assert.match(indexSource, /workspace\.sessionCount = countByWorkspace\.get\(String\(workspace\.workspaceId\)\) \|\| 0/, '必须把统计结果写回 sessionCount')
+  // 统计必须发生在 sessions 算好之后（顺序错了就统计不到）
+  const listedAt = indexSource.indexOf('const listed = await listSessionsForOverview')
+  const countAt = indexSource.indexOf('const countByWorkspace = new Map()')
+  assert.ok(listedAt > 0 && countAt > listedAt, '统计必须排在会话列表算好之后')
 })
 
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)

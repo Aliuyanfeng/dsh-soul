@@ -3108,7 +3108,10 @@ function registerWorkspaceRoutes(ctx) {
             workspaceId: id,
             title: typeof workspace.title === 'string' ? workspace.title : '',
             path: typeof workspace.path === 'string' ? workspace.path : '',
-            sessionCount: Array.isArray(workspace.sessionIds) ? workspace.sessionIds.length : 0,
+            // 这里**不再给 sessionCount**：注册表原始 sessionIds.length 含归档与子代理，
+            // 与界面口径不同（曾显示 24 而实际只列 10）。会话数由 overview 端点
+            // 按过滤后的 sessions 现算（见该端点里的 countByWorkspace）。
+            // 本字段原本也只有 overview 在用，且那边现在自己算，留着只会误导。
             bound: override !== null,
             // 绑的是哪个预设：界面要显示它，而不是只说"已绑定"。
             // 失效时仍原样返回 —— 用户需要看到"它原本指向谁"才能判断怎么处理。
@@ -3163,6 +3166,27 @@ function registerWorkspaceRoutes(ctx) {
           })()
           const listed = await listSessionsForOverview(ctx, config, withTitles)
           const sessions = listed.sessions
+
+          // 「N 个会话」必须与下面真正列出的会话数一致。
+          //
+          // `workspaceView()` 里的 sessionCount 是注册表原始 `sessionIds.length`，
+          // 含归档会话、子代理会话 —— 与列表口径不同，数字会比看到的行多得多
+          // （本机实测：某工作区显示 24，实际只列出 10 个，其中 6 个还是空会话）。
+          // 用户反馈「数量和实际对不上」就是这里。
+          //
+          // 已经拿到过滤后的 sessions，按工作区重新数一遍即可，零额外成本。
+          // 口径与列表一致：注册表成员 − 归档 − 子代理；空会话也算在内
+          // （它们确实存在，只是默认隐藏，界面上有「显示 N 个空会话」的开关）。
+          const countByWorkspace = new Map()
+          for (const session of sessions) {
+            const key = session.workspaceId === undefined || session.workspaceId === null
+              ? ''
+              : String(session.workspaceId)
+            countByWorkspace.set(key, (countByWorkspace.get(key) || 0) + 1)
+          }
+          for (const workspace of wsView.workspaces) {
+            workspace.sessionCount = countByWorkspace.get(String(workspace.workspaceId)) || 0
+          }
           const library = mergePersonas(config.personas)
           const builtinNames = []
           const customNames = []
