@@ -1057,6 +1057,14 @@ window.__ModuleLoader__.load({
       '.soul-ov-note{margin-top:8px;padding:8px 10px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:19px}',
       '.soul-ov-empty{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:19px}',
       // 空会话开关：次要文字按钮，hover 变主色 —— 与宿主的次要操作同规格
+      // 骨架：静态浅色块，不用动画（宿主也不给这类列表加 shimmer，
+      // 一闪一闪反而更抓注意力）
+      '.soul-ov-skeleton{display:block;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
+      '.soul-ov-skeleton-title{width:120px;height:18px;margin:3px 0}',
+      '.soul-ov-skeleton-line{height:12px;margin:8px 0}',
+      '.soul-ov-skeleton-short{width:45%}',
+      // 只给读屏的文本
+      '.soul-ov-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}',
       '.soul-ov-more{display:inline-flex;align-items:center;align-self:flex-start;margin:2px 0 0;padding:2px 6px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11px;line-height:16px;cursor:pointer}',
       '.soul-ov-more:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
       '.soul-ov-fix{height:24px;padding:0 8px;border:none;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);cursor:pointer;font:inherit;font-size:11px;line-height:17px;font-weight:500;flex:none}',
@@ -4492,8 +4500,24 @@ window.__ModuleLoader__.load({
                 t('ov.loadFailed', { reason: error }))))
         }
         if (view === null) {
-          return e('div', { className: 'soul-ov' },
-            e('p', { className: 'soul-status' }, t('ov.loading')))
+          // 首屏用**骨架**而不是「加载中」三个字。
+          //
+          // 数据其实只差 100ms 左右（阶段 1 走本地注册表 + 缓存），但
+          // 「加载中」这种文案一闪而过会让人注意到延迟；骨架保持相同的
+          // 版面结构，视觉上是「正在成形」而不是「卡住了」。
+          return e('div', { className: 'soul-ov', 'aria-busy': 'true' },
+            e('div', { className: 'soul-ov-head' },
+              e('span', { className: 'soul-ov-title-icon soul-ov-skeleton', 'aria-hidden': 'true' }),
+              e('span', { className: 'soul-ov-skeleton soul-ov-skeleton-title' })),
+            e('div', { className: 'soul-ov-card' },
+              e('div', { className: 'soul-ov-skeleton soul-ov-skeleton-line' }),
+              e('div', { className: 'soul-ov-skeleton soul-ov-skeleton-line soul-ov-skeleton-short' })),
+            e('div', { className: 'soul-ov-card' },
+              e('div', { className: 'soul-ov-skeleton soul-ov-skeleton-line' }),
+              e('div', { className: 'soul-ov-skeleton soul-ov-skeleton-line' }),
+              e('div', { className: 'soul-ov-skeleton soul-ov-skeleton-line soul-ov-skeleton-short' })),
+            // 读屏用户需要知道这是「正在加载」而不是空白
+            e('span', { className: 'soul-ov-visually-hidden' }, t('ov.loading')))
         }
 
         const invalidCount = workspaces.filter((w) => w.invalidPersona === true).length

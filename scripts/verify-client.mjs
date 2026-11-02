@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 67
+const EXPECTED_ASSERTIONS = 68
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -3972,6 +3972,48 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     assert.equal(names.length, 1, '空会话默认隐藏，只剩 1 条')
     assert.equal(names[0], '投影里的标题', '第一屏就该是标题（来自 sessions store 的投影，不等日志折叠）')
     assert.notEqual(names[0], '5d29165d', '不得先闪一下短 id')
+  })
+
+  await check('C73 首屏用骨架占位，不出现「加载中」文字闪烁', async () => {
+    // 用户报「有个加载中，然后立刻出现」。数据只差约 100ms，但「加载中」
+    // 三个字一闪会让人注意到延迟。骨架保持版面结构，视觉上是「正在成形」。
+    //
+    // 这条同时守住两件事：
+    //   1) 首屏不得渲染「加载中」文案（用户看得见的那三个字）
+    //   2) 必须有骨架节点 + 读屏可读的 aria-busy
+    const world = await boot()
+    // 让 overview 永不返回，把组件冻在「首屏」状态
+    world.routes['/api/soul/overview'] = () => new Promise(() => {})
+    const tree = await world.runtime.settle(overviewElement(world, world.dicts.zh))
+    const loadingText = world.dicts.zh['ov.loading']
+    // 只检查**可见**文本：读屏专用的 .soul-ov-visually-hidden 里本来就该有
+    // 「加载中」，那是给辅助技术的，用户看不见 —— 把它算进来会误报。
+    const hiddenNodes = new Set(findAllByClass(tree, 'soul-ov-visually-hidden'))
+    const visibleText = (() => {
+      const parts = []
+      const walkVisible = (node) => {
+        if (!node) return
+        if (hiddenNodes.has(node)) return
+        if (node.type === '#text') { parts.push(node.text); return }
+        for (const c of node.children || []) walkVisible(c)
+      }
+      walkVisible(tree)
+      return parts.join('')
+    })()
+    assert.equal(
+      visibleText.includes(loadingText),
+      false,
+      `首屏不得渲染可见的「${loadingText}」文案（用户会注意到这一闪）`
+    )
+    const skeletons = findAllByClass(tree, 'soul-ov-skeleton')
+    assert.ok(skeletons.length >= 4, `首屏应有骨架块，实际 ${skeletons.length}`)
+    // 读屏仍要能知道正在加载
+    const hidden = findAllByClass(tree, 'soul-ov-visually-hidden')
+    assert.equal(hidden.length, 1, '应有只给读屏的「加载中」文本')
+    assert.equal(textOf(hidden[0]), loadingText, '读屏文本应为「加载中」')
+    // 容器标记 aria-busy
+    const root = findAllByClass(tree, 'soul-ov')[0]
+    assert.equal(root.props['aria-busy'], 'true', '首屏容器应标记 aria-busy')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

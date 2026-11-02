@@ -4738,7 +4738,15 @@ check('空会话判据：逐帧解压找消息事件，不得用文件大小近�
   assert.match(fn, /indexOf\(magic/, '要按 zstd 帧切分逐帧解')
   assert.match(fn, /for \(let k = 0; k < starts\.length/, '必须遍历全部帧（只解第一帧会漏掉后面的对话）')
   // 找到消息要提前退出
-  assert.match(fn, /if \(hasMessageEvent\(chunk\)\) return false/, '找到消息应立即返回 false（提前退出）')
+  // 找到消息必须立刻返回（提前退出）。现在返回值经 remember() 包装，
+  // 因为要把结论写进缓存 —— 断言要跟上这个实现，不能死盯 return false。
+  assert.match(fn, /if \(hasMessageEvent\(chunk\)\) return remember\(false\)/, '找到消息应立即返回（提前退出）')
+  // 缓存必须参与：判空是逐帧解压，34 个会话 ~400ms，不缓存就会在首屏卡一下
+  assert.match(fn, /blankSessionCache\.has\(cacheKey\)/, '判空结果必须缓存（否则首屏慢）')
+  assert.match(fn, /blankSessionCache\.set\(cacheKey/, '算出的结论要写回缓存')
+  assert.match(fn, /statSync\(file\)\.mtimeMs/, '缓存键要含 mtime，日志追加后自动失效')
+  assert.match(indexSource, /ensureBlankCacheLoaded\(/, '缓存要落盘，否则重启后首次仍慢')
+  assert.match(indexSource, /persistBlankCache\(/, '缓存要能写回磁盘')
   // 消息判据：必须是 user/message 或 assistant/message 事件类型
   const has = extractObject(indexSource, 'function hasMessageEvent')
   assert.ok(has !== '', '找不到 hasMessageEvent')

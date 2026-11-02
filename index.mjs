@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
 import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
   DEFAULT_CONFIG,
@@ -2092,7 +2092,7 @@ function enqueueBindingsWrite(task) {
  *
  * @returns {boolean} true = 确实没有对话
  */
-function looksLikeBlankSession(dir) {
+function looksLikeBlankSession(dir, sessionId) {
   if (typeof dir !== 'string' || !existsSync(dir)) return false
   let file = null
   try {
@@ -2114,9 +2114,25 @@ function looksLikeBlankSession(dir) {
     return false
   }
 
+  ensureBlankCacheLoaded()
+  // 缓存命中：同一会话的日志没变过（mtime 相同）就直接用上次结论。
+  // 判空要逐帧解压，34 个会话实测 365-627ms —— 全在点开面板的关键路径上。
+  const cacheKey = String(sessionId || '') + '|' + String(statSync(file).mtimeMs)
+  if (blankSessionCache.has(cacheKey)) return blankSessionCache.get(cacheKey)
+  const remember = (verdict) => {
+    blankSessionCache.set(cacheKey, verdict)
+    // 攒几次再落盘：单次写文件比解压还贵，不能每个会话都写一遍。
+    pendingBlankWrites += 1
+    if (pendingBlankWrites >= 8) {
+      pendingBlankWrites = 0
+      persistBlankCache()
+    }
+    return verdict
+  }
+
   // 非 zstd（纯文本日志）：直接找
   if (buf.length < 4 || buf.readUInt32BE(0) !== 0x28b52ffd) {
-    return !hasMessageEvent(buf.toString('utf8'))
+    return remember(!hasMessageEvent(buf.toString('utf8')))
   }
 
   // zstd 多帧：逐帧解，找到消息就提前返回 false
@@ -2135,11 +2151,64 @@ function looksLikeBlankSession(dir) {
     } catch {
       continue
     }
-    if (hasMessageEvent(chunk)) return false
+    if (hasMessageEvent(chunk)) return remember(false)
   }
   // 全部帧都没有消息 ⇒ 空会话
-  return true
+  return remember(true)
 }
+
+/**
+ * 空会话判定的缓存：`${sessionId}|${mtimeMs}` → boolean。
+ *
+ * 为什么要缓存：判空要**逐帧解压**日志（不能只看文件大小，也不能只解首帧
+ * —— 两者都实测误判过）。34 个会话逐个解压实测 365-627ms，全花在用户
+ * 点开面板的关键路径上，于是出现「加载中」一闪。
+ *
+ * 用 mtime 做缓存键：日志一旦追加就会更新 mtime，届时自动失效重算。
+ * 会话一旦开始对话就永远有消息，所以这个缓存不会「过期成错的」。
+ */
+const blankSessionCache = new Map()
+
+// 判空结果的**落盘**副本：`$DSH_HOME/soul-blank-sessions.json`。
+//
+// 只存内存的话，进程重启后第一次打开面板仍要逐帧解压 34 个会话（~400ms），
+// 那一瞬就是「加载中」的来源。落盘后重启也能直接命中。
+//
+// 键是 `${sessionId}|${mtime}`：日志追加后 mtime 变化，旧结论自动失效。
+// 文件损坏/读不出来就当作空缓存（绝不因此报错）。
+const BLANK_CACHE_FILE = 'soul-blank-sessions.json'
+let blankCacheLoaded = false
+let pendingBlankWrites = 0
+
+/** 把落盘缓存读进内存（进程内只做一次）。 */
+function ensureBlankCacheLoaded() {
+  if (blankCacheLoaded) return
+  blankCacheLoaded = true
+  try {
+    const file = join(dirname(configPath()), BLANK_CACHE_FILE)
+    if (!existsSync(file)) return
+    const parsed = JSON.parse(readFileSync(file, 'utf8'))
+    if (!parsed || typeof parsed !== 'object') return
+    for (const key of Object.keys(parsed)) {
+      if (typeof parsed[key] === 'boolean') blankSessionCache.set(key, parsed[key])
+    }
+  } catch {
+    // 缓存坏了不影响功能：当作空缓存，重新算即可
+  }
+}
+
+/** 把内存缓存写回磁盘（失败静默 —— 这是纯优化，不是数据）。 */
+function persistBlankCache() {
+  try {
+    const file = join(dirname(configPath()), BLANK_CACHE_FILE)
+    const out = {}
+    for (const [key, value] of blankSessionCache) out[key] = value
+    writeFileSync(file, JSON.stringify(out), 'utf8')
+  } catch {
+    // 写不进去就只留内存缓存
+  }
+}
+
 
 /** 文本里是否出现过真实的对话消息事件。 */
 function hasMessageEvent(text) {
@@ -2623,7 +2692,7 @@ async function listSessionsForOverview(ctx, config, withTitles = false) {
       for (const candidate of [s.norm, 'session-' + s.norm]) {
         const dir = join(s.baseDir, candidate)
         if (!existsSync(dir)) continue
-        blank = looksLikeBlankSession(dir)
+        blank = looksLikeBlankSession(dir, s.norm)
         break
       }
     }
