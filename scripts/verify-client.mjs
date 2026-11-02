@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 75
+const EXPECTED_ASSERTIONS = 76
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4392,6 +4392,52 @@ function componentBody(text, name) {
     assert.match(source, /\.soul-ov-session-openable:hover\{background:var\(--dsw-alias-interactive-bg-hover\)\}/, '可点行 hover 必须有反馈')
     assert.equal(/\.soul-ov-session:hover\{/.test(source), false, '不得给所有行加 hover（不可点的行不该有反馈）')
     assert.match(source, /\.soul-ov-session-openable:focus-visible\{outline:/, '可点行必须有键盘焦点样式')
+  })
+
+  await check('C81 预设胶囊规格与宿主 sm+outline 一致', async () => {
+    // 工作区页展开后的预设胶囊：原实现是「36px 高度（md 档）+ 12px 字号
+    // （sm 档）」—— 宿主没有这种组合（md 配 14px、sm 配 12px）。
+    //
+    // 它是一组并排的小选项，本该走 sm。其余不符项一并改掉：
+    //   padding 0 14px（基础）→ 0 10px（sm）
+    //   圆角 radius-md → radius-sm
+    //   边框色 settings-card-stroke → border-l3（outline 变体的标准边框）
+    //   hover 用品牌色描边+文字 → interactive-bg-hover 背景（宿主写法）
+    //   disabled opacity .5 / cursor default → .4 / not-allowed
+    //
+    // focus-visible 保留品牌色焦点环：宿主 Button 用全局焦点样式，而这里
+    // 是自绘按钮，自己给焦点环更稳妥；它只在键盘操作时出现，不影响常态配色。
+    const at = source.indexOf('.soul-session-chip{')
+    assert.ok(at > 0, '找不到 .soul-session-chip 基础规则')
+    // 只取基础规则本身（到第一个 } 为止），避免把 :hover/:disabled 混进来
+    const base = source.slice(at, source.indexOf('}', at) + 1)
+    const decl = (prop) => {
+      const m = new RegExp(prop.replace(/[-]/g, '\\-') + ':([^;}]+)').exec(base)
+      return m ? m[1].trim() : ''
+    }
+    // 尺寸：宿主 sm 变体
+    assert.equal(decl('height'), '28px', '高度必须与宿主 sm 一致（28px）')
+    assert.equal(decl('font-size'), '12px', '字号必须与宿主 sm 一致（12px）')
+    assert.equal(decl('line-height'), '18px', '行高必须与宿主 sm 一致（18px）')
+    assert.equal(decl('padding'), '0 10px', '内边距必须与宿主 sm 一致（0 10px）')
+    assert.equal(decl('border-radius'), 'var(--dsw-radius-sm)', '圆角必须用 sm 变体的 radius-sm')
+    // outline 变体
+    assert.equal(decl('border'), '.5px solid var(--dsw-alias-border-l3)', '边框必须与宿主 outline 一致')
+    assert.equal(decl('background'), 'transparent', '背景必须透明（outline 语义）')
+    assert.equal(decl('color'), 'var(--dsw-alias-label-primary)', '文字色必须用 label-primary')
+    // 不得残留旧的非宿主取值
+    assert.equal(/settings-card-stroke/.test(base), false, '不得再用 settings-card-stroke（outline 用 border-l3）')
+    assert.equal(/radius-md/.test(base), false, '不得再用 radius-md（sm 变体用 radius-sm）')
+    assert.equal(/brand-primary/.test(base), false, '基础规则不得用品牌色（hover 应是背景变化）')
+    // 三态齐全（宿主 Button 有）
+    assert.match(source, /\.soul-session-chip\{/, '基础规则必须存在')
+    assert.match(source, /\.soul-session-chip:hover:not\(:disabled\)\{background:var\(--dsw-alias-interactive-bg-hover\)\}/, 'hover 必须用 interactive-bg-hover')
+    assert.match(source, /\.soul-session-chip:active:not\(:disabled\)\{background:var\(--dsw-alias-interactive-bg-active\)\}/, '必须有 active 态')
+    assert.match(source, /\.soul-session-chip:disabled\{[^}]*opacity:\.4/, 'disabled 必须 opacity:.4（宿主取值）')
+    assert.match(source, /\.soul-session-chip:disabled\{[^}]*cursor:not-allowed/, 'disabled 必须是 not-allowed')
+    // 不得有重复的 hover 规则
+    const hovers = source.match(/\.soul-session-chip:hover[^{]*\{/g) || []
+    assert.equal(hovers.length, 1, `不得有重复的 hover 规则（实际 ${hovers.length} 条）`)
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

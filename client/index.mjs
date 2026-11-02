@@ -1459,10 +1459,26 @@ window.__ModuleLoader__.load({
       // .soul-session-chip 现在**只服务工作区页的预设胶囊**（多选项，sm 语义）。
       // 「取消本会话的临时人设」已改用独立的 .soul-session-clear（md + outline），
       // 因为它要与同行的「用这个」(md + primary) 配对 —— 尺寸需求不同，不能共用。
-      '.soul-session-chip{box-sizing:border-box;display:inline-flex;align-items:center;height:36px;padding:0 14px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-md,12px);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
-      '.soul-session-chip:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
+      // 预设胶囊：宿主 Button 的 **sm + outline** 变体。
+      //
+      // 原实现是「36px 高度（md）+ 12px 字号（sm）」—— 宿主没有这种组合，
+      // md 配 14px、sm 配 12px。它是一组并排的小选项，本该走 sm。
+      //
+      // 其余不符项一并改掉：
+      //   padding 0 14px（基础）→ 0 10px（sm）
+      //   圆角 radius-md（md）→ radius-sm（sm）
+      //   边框色 settings-card-stroke → border-l3（outline）
+      //   hover 用品牌色描边+文字 → interactive-bg-hover 背景（宿主写法）
+      //   disabled opacity .5 / cursor default → .4 / not-allowed
+      //
+      // 保留 focus-visible：宿主 Button 没自定义焦点样式（用全局的），
+      // 但这里的胶囊是自绘按钮，自己给焦点环更稳妥 —— 它只在键盘操作时出现，
+      // 不影响常态配色的一致性。
+      '.soul-session-chip{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.soul-session-chip:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-session-chip:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
       '.soul-session-chip:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
-      '.soul-session-chip:disabled{opacity:.5;cursor:default}',
+      '.soul-session-chip:disabled{cursor:not-allowed;opacity:.4}',
       // 「取消本会话的临时人设」：宿主 Button 的 **md + outline** 变体。
       //
       // 为什么单独一个类而不是复用 .soul-session-chip —— 那个类还被工作区页的
