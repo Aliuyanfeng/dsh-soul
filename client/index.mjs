@@ -3578,6 +3578,81 @@ window.__ModuleLoader__.load({
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [])
 
+      // —— 数据变化时自动重拉 ——
+      //
+      // 两个触发源，覆盖两种真实场景：
+      //
+      //   ① **别处改了数据**（设置页改人设、插件详情页改绑、斜杠命令）：
+      //      这些都会写进 soulController store，订阅它即可立刻跟上。
+      //      这是用户最常遇到的 —— 改完切回来看还是旧的。
+      //   ② **切回本面板**（layout 的 activePanelId 变回本面板）：
+      //      宿主的 main 面板按 entryKey 切换子树，正常情况下切走会卸载、
+      //      切回会重新挂载并重拉。但「保活/不卸载」的实现差异不该让用户
+      //      看到旧数据，所以这里再兜一层。
+      //
+      // 都只在「需要时」触发，避免无谓重拉（每次都要走判空与标题）。
+
+      // ① store 变化：**直接订阅 store**，比较关键字段的指纹，变了才重拉。
+      //
+      // 为什么不在渲染里算指纹、靠 deps 触发：那依赖「store 通知 → 组件重渲染
+      // → effect deps 变化」这条链，中间任何一环不成立（比如宿主把面板保活、
+      // 或渲染被跳过）就永远不会重拉。直接订阅是单跳，最可靠。
+      //
+      // 为什么用指纹而不是「有任何变化就重拉」：store 里有 loading/saving
+      // 这类高频字段，全量响应会把面板刷成幻灯片。
+      React.useEffect(() => {
+        const store = controller.store
+        if (!store || typeof store.subscribe !== 'function') return undefined
+        const fingerprintOf = (snapshot) => {
+          const s = snapshot || {}
+          const personas = s.personas ? Object.keys(s.personas).sort().join(',') : ''
+          const bound = s.bindings ? Object.keys(s.bindings).sort().join(',') : ''
+          // store 把配置字段**平铺在根上**（没有嵌套的 config）
+          const shape = [s.style, s.headingLists, s.emoji, s.tables, s.replyLength, s.language]
+            .map((v) => String(v))
+            .join('|')
+          return personas + '#' + bound + '#' + shape
+        }
+        let last = fingerprintOf(store.getSnapshot())
+        const unsubscribe = store.subscribe(() => {
+          const next = fingerprintOf(store.getSnapshot())
+          if (next === last) return
+          last = next
+          void reload()
+        })
+        return unsubscribe
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+      const wasVisibleRef = React.useRef(isOverviewVisible())
+      React.useEffect(() => {
+        const check = () => {
+          const now = isOverviewVisible()
+          const before = wasVisibleRef.current
+          wasVisibleRef.current = now
+          if (!before && now) void reload()
+        }
+        // layout 到达 / 变化时都检查一次
+        const offLayout = layoutService.subscribe(check)
+        // panelInfo 本身是宿主 store：能订阅就订阅，订阅不了就退回轮询。
+        // 轮询是有代价的，所以只在拿不到 store 时启用，且间隔放宽到 2s。
+        let offStore = null
+        const service = layoutService.get()
+        if (service && service.panelInfo && typeof service.panelInfo.subscribe === 'function') {
+          try {
+            offStore = service.panelInfo.subscribe(check)
+          } catch {
+            offStore = null
+          }
+        }
+        const timer = offStore === null ? setInterval(check, 2000) : null
+        return () => {
+          offLayout()
+          if (typeof offStore === 'function') offStore()
+          if (timer !== null) clearInterval(timer)
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+
       // 解绑的二次确认 5 秒后复位（同设置页的 armed 态）
       React.useEffect(() => {
         if (pendingUnbind === null) return undefined
@@ -4021,6 +4096,50 @@ window.__ModuleLoader__.load({
     // ⚠️ inject 与 session 槽位不同：panellist 是 scope:'root'，runInject 只传
     // [binding.key, actions]（root 无 binding ⇒ 无参）—— inject 只需注入无状态
     // 内容，宿主的 PanelRow 自己拥有点击（拿我们的 id 去 selectPanel）。
+    // 宿主的 `layout` 服务：用来看「本面板现在是不是正在显示」。
+    //
+    // 为什么需要它：面板只在挂载时拉一次数据。用户去设置页改了人设、
+    // 或在别处绑定了工作区，切回来看到的还是旧数据 —— 得手动刷新浏览器。
+    // 有了 activePanelId 就能在「切回本面板」时自动重拉。
+    //
+    // `panelInfo` 不在 inspect 的 Service 目录里（那个目录只列了 5 个动作方法），
+    // 但宿主运行时确实有（dsh-market 就是用它判断当前面板的）。
+    const layoutService = (() => {
+      let value = null
+      const listeners = new Set()
+      return {
+        get: () => value,
+        subscribe: (listener) => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+        attach: (next) => {
+          value = next
+          for (const listener of [...listeners]) listener()
+        }
+      }
+    })()
+
+    /** 本面板在 main 槽位里的 key（与注册时一致）。 */
+    const OVERVIEW_PANEL_ID = 'soul-persona-panel'
+
+    /**
+     * 本面板当前是否正在显示。
+     *
+     * 拿不到 layout（宿主版本不同）时返回 true —— 宁可多刷新一次，
+     * 也不要因为读不到状态而永远不刷新。
+     */
+    function isOverviewVisible() {
+      const service = layoutService.get()
+      if (!service || !service.panelInfo || typeof service.panelInfo.getSnapshot !== 'function') return true
+      try {
+        const snapshot = service.panelInfo.getSnapshot()
+        return snapshot && snapshot.activePanelId === OVERVIEW_PANEL_ID
+      } catch {
+        return true
+      }
+    }
+
     // 宿主的 `sessions` 服务（客户端 store）：**标题的快速通道**。
     //
     // 为什么需要它：`sessionQuery.readTitleSnapshots` 要为每个会话折叠整条
@@ -6844,6 +6963,11 @@ window.__ModuleLoader__.load({
       })
 
       // 服务到了再让跳转按钮出现（没有这个服务的宿主上不画点不动的按钮）。
+      // layout 服务：判断本面板是否正在显示（切回时自动重拉）
+      ctx.inject(['layout'], (scoped) => {
+        layoutService.attach(scoped.layout)
+      })
+
       // sessions 服务：标题的快速通道（见 sessionsService 的说明）
       ctx.inject(['sessions'], (scoped) => {
         sessionsService.attach(scoped.sessions)

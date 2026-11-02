@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 68
+const EXPECTED_ASSERTIONS = 69
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4014,6 +4014,38 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     // 容器标记 aria-busy
     const root = findAllByClass(tree, 'soul-ov')[0]
     assert.equal(root.props['aria-busy'], 'true', '首屏容器应标记 aria-busy')
+  })
+
+  await check('C74 总览订阅 store：别处改了人设/绑定会自动重拉（不用刷浏览器）', async () => {
+    // 真实场景：在设置页改了人设、或在插件详情页改绑了工作区，然后切回总览 ——
+    // 之前看到的是挂载时那份旧快照，只能手动刷新浏览器。
+    //
+    // 实现要点（两条都不能丢）：
+    //   ① 订阅 `controller.store`，**不是**订阅整个渲染 —— store 通知是单跳，
+    //      比「靠重渲染让 deps 变化」可靠（面板可能被宿主保活、渲染被跳过）。
+    //   ② 用**指纹**过滤：store 里有 loading/saving 这类高频字段，
+    //      全量响应会把面板刷成幻灯片。
+    //
+    // 为什么这里做源文本断言而不是跑异步订阅：离线垫片的 effect 生命周期与
+    // 真实 React 不同（每轮 settle 会 cleanup 再重挂），订阅回调在垫片里
+    // 落在「已清理、未重挂」的窗口里，测不出真实行为 —— 那样的断言会假失败。
+    // 所以这里守「结构」，指纹的过滤逻辑单独用纯函数验。
+    assert.match(source, /const store = controller\.store/, '必须订阅 controller.store')
+    // 必须真的调 subscribe，且把返回的退订函数交回给 effect（否则泄漏或从不生效）
+    assert.match(source, /const unsubscribe = store\.subscribe\(\(\) => \{/, '必须真的订阅 store')
+    assert.match(source, /return unsubscribe/, 'effect 必须返回退订函数（否则泄漏 / 重复订阅）')
+    assert.match(source, /typeof store\.subscribe !== 'function'/, 'store 缺席时要降级，不能崩')
+    assert.match(source, /const fingerprintOf = \(snapshot\) => \{/, '必须有指纹函数')
+    assert.match(source, /const next = fingerprintOf\(store\.getSnapshot\(\)\)/, '通知时重算指纹')
+    assert.match(source, /if \(next === last\) return/, '指纹没变就不重拉（防高频字段刷屏）')
+    assert.match(source, /void reload\(\)/, '指纹变了要重拉')
+    // 指纹必须覆盖「人设库 / 工作区绑定 / 人格字段」三类 —— 它们是总览的全部内容
+    const fp = source.slice(source.indexOf('const fingerprintOf'), source.indexOf('const fingerprintOf') + 900)
+    assert.match(fp, /personas/, '指纹要含人设库')
+    assert.match(fp, /bindings/, '指纹要含工作区绑定')
+    assert.match(fp, /style|headingLists/, '指纹要含人格字段')
+    // 不得把高频字段算进指纹
+    assert.equal(/s\.saving|s\.loading|s\.error/.test(fp), false, 'saving/loading/error 不得进指纹（会把面板刷成幻灯片）')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
