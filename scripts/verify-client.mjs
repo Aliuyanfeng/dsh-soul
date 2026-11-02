@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 66
+const EXPECTED_ASSERTIONS = 67
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -3921,6 +3921,57 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     const namesAfter = findAllByClass(after, 'soul-ov-session-name').map(textOf)
     assert.equal(namesAfter.length, 3, `点开关后应显示全部 3 条，实际 ${namesAfter.length}`)
     assert.ok(namesAfter.includes(world.dicts.zh['ov.blankSession']), '展开后空会话应标成「空会话」而不是一串 id')
+  })
+
+  await check('C72 标题走宿主 sessions store 的投影：第一屏就有，不等日志折叠', async () => {
+    // 用户报「还是有一小段时间看到 session id」。根因是标题只能靠
+    // sessionQuery.readTitleSnapshots（要折叠每个会话的完整事件流，约 5 秒），
+    // 所以分两阶段：先短 id、后补标题 —— 那段等待就是「闪一下 id」。
+    //
+    // 正解：宿主自己维护了标题的**增量投影**（projectionValues.title），
+    // 侧栏就是靠它秒显的。读同一份投影零日志读取，第一屏就能出标题。
+    const world = await boot()
+    // 桩：sessions store 已经带着标题投影
+    const fakeSessions = {
+      list: {
+        getSnapshot: () => ({
+          byId: {
+            '5d29165d-348c-41f6-a7e0-3544a13a4318': {
+              id: '5d29165d-348c-41f6-a7e0-3544a13a4318',
+              projectionValues: { title: '投影里的标题' },
+              displayTitle: '投影里的标题'
+            },
+            '2c8f20e5-43da-41b3-b72d-3f3e0b5da1a1': {
+              id: '2c8f20e5-43da-41b3-b72d-3f3e0b5da1a1',
+              displayTitle: '2c8f20e5-43da-41b3-b72d-3f3e0b5da1a1'
+            }
+          }
+        })
+      }
+    }
+    const sessInject = world.captured.injected.find((i) => (Array.isArray(i.deps) ? i.deps : Object.keys(i.deps || {})).includes('sessions'))
+    assert.ok(sessInject, '必须声明对 sessions 服务的依赖（标题的快速通道）')
+    sessInject.cb({ sessions: fakeSessions })
+    // 阶段 1 的响应里 title 全是 null —— 只有 store 有标题
+    world.routes['/api/soul/overview'] = () => ({
+      ok: true,
+      globalPersona: null,
+      enabled: true,
+      personas: { builtin: [], custom: [] },
+      workspaces: [
+        { workspaceId: 'ws-a', title: '项目', path: 'D:\\a', sessionCount: 2, bound: false, persona: null, invalidPersona: false, lastActiveAt: Date.now() }
+      ],
+      sessions: [
+        { id: 'session-5d29165d-348c-41f6-a7e0-3544a13a4318', title: null, workspaceId: 'ws-a', persona: null, hasOverride: true, blank: false, live: true },
+        { id: 'session-2c8f20e5-43da-41b3-b72d-3f3e0b5da1a1', title: null, workspaceId: 'ws-a', persona: null, hasOverride: false, blank: true, live: false }
+      ],
+      filtersApplied: { archived: true, children: true, registry: true }
+    })
+    const tree = await mountOverview(world, world.dicts.zh)
+    const names = findAllByClass(tree, 'soul-ov-session-name').map(textOf)
+    assert.equal(names.length, 1, '空会话默认隐藏，只剩 1 条')
+    assert.equal(names[0], '投影里的标题', '第一屏就该是标题（来自 sessions store 的投影，不等日志折叠）')
+    assert.notEqual(names[0], '5d29165d', '不得先闪一下短 id')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

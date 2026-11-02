@@ -4013,6 +4013,70 @@ window.__ModuleLoader__.load({
     // ⚠️ inject 与 session 槽位不同：panellist 是 scope:'root'，runInject 只传
     // [binding.key, actions]（root 无 binding ⇒ 无参）—— inject 只需注入无状态
     // 内容，宿主的 PanelRow 自己拥有点击（拿我们的 id 去 selectPanel）。
+    // 宿主的 `sessions` 服务（客户端 store）：**标题的快速通道**。
+    //
+    // 为什么需要它：`sessionQuery.readTitleSnapshots` 要为每个会话折叠整条
+    // 事件流（34 个会话约 5 秒），所以之前只能「先显示短 id，标题稍后补」。
+    // 而宿主自己维护了标题的**增量投影**（`projectionValues.title`），
+    // 侧栏就是靠它秒显标题的。插件读同一份投影，就能一进来就有标题，
+    // 完全不必等那次昂贵的折叠。
+    //
+    // 做成盒子：该服务可能晚于本包装载。
+    const sessionsService = (() => {
+      let value = null
+      const listeners = new Set()
+      return {
+        get: () => value,
+        subscribe: (listener) => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+        attach: (next) => {
+          value = next
+          for (const listener of [...listeners]) listener()
+        }
+      }
+    })()
+
+    /**
+     * 从宿主 `sessions.list` 快照里读标题：sessionId → 标题。
+     *
+     * 取 `projectionValues.title`（宿主折叠好并增量维护的那份），
+     * **不触发任何日志读取** —— 这是它能秒回的原因。
+     *
+     * id 形式两种都试：快照的 key 是宿主内部形式（无前缀），
+     * 而注册表给的是 `session-…`。
+     *
+     * @returns {object} 形如 { "5d29165d-…": "标题" }，读不到时为空对象
+     */
+    function titlesFromSessionStore() {
+      const service = sessionsService.get()
+      if (!service || !service.list || typeof service.list.getSnapshot !== 'function') return {}
+      let snapshot
+      try {
+        snapshot = service.list.getSnapshot()
+      } catch {
+        return {}
+      }
+      const out = {}
+      const byId = (snapshot && snapshot.byId) || {}
+      for (const key of Object.keys(byId)) {
+        const row = byId[key]
+        if (!row) continue
+        // 标题可能挂在 projectionValues.title，也可能已展开成 displayTitle
+        const projected = row.projectionValues && row.projectionValues.title
+        const title = typeof projected === 'string' && projected !== ''
+          ? projected
+          : (typeof row.displayTitle === 'string' ? row.displayTitle : '')
+        if (title === '') continue
+        const norm = String(key).replace(/^session-/, '')
+        // 只有真的读到了标题才收；否则会把 id 当成标题
+        if (title === String(key) || title === norm) continue
+        out[norm] = title
+      }
+      return out
+    }
+
     // 宿主的 pluginNavigation（dsh 0.2.1+）：跳到本插件的详情页。
     //
     // 为什么必须放在这一层：组件（4 空格）是 `apply` 的**兄弟**，看不到 apply 的
@@ -4128,6 +4192,14 @@ window.__ModuleLoader__.load({
           return
         }
 
+        // ★ 立刻从宿主的 sessions store 取标题（**零日志读取，即时**）。
+        //
+        // 这是「一进来就有标题」的关键：宿主自己维护了标题的增量投影
+        // （projectionValues.title），侧栏就是靠它秒显的。读同一份投影不需要
+        // 折叠任何日志，所以第一屏就能出标题，不再出现「先闪一下短 id」。
+        const immediate = titlesFromSessionStore()
+        if (Object.keys(immediate).length > 0) setTitles(immediate)
+
         // 阶段 2：标题。失败不算错误 —— 没有标题时行上显示短 id，仍然可用。
         //
         // 标题存**独立 state**，不塞进 view：
@@ -4143,7 +4215,10 @@ window.__ModuleLoader__.load({
               map[s.id] = s.title
             }
           }
-          setTitles(map)
+          // **合并**而不是覆盖：阶段 1 之前已经从 sessions store 拿到一批标题，
+          // 直接 setTitles(map) 会把它们冲掉（map 只含日志折叠出来的那批，
+          // 而折叠可能失败或超时）。两份都留着，新值优先。
+          setTitles((prev) => ({ ...prev, ...map }))
         } catch {
           // 标题拿不到就用短 id，不打扰用户
         }
@@ -4249,7 +4324,12 @@ window.__ModuleLoader__.load({
             // 对用户没有意义。标题缺席时退回短 id，至少还能认出来。
             // 阶段 2 的标题按 id 查表：阶段 1 时表还是空的，行上先显示短 id，
             // 标题到了这一行会自然重渲染出标题。
-            const staged = typeof titles[id] === 'string' ? titles[id] : ''
+            // titles 的键是**无前缀**的规范化 id（宿主 store 的形式），
+            // 而 s.id 可能带 `session-` 前缀 —— 两种都查一次。
+            const normId = id.replace(/^session-/, '')
+            const staged = typeof titles[normId] === 'string'
+              ? titles[normId]
+              : (typeof titles[id] === 'string' ? titles[id] : '')
             const title = staged !== '' ? staged : (typeof s.title === 'string' ? s.title : '')
             // 标题缺席时的短 id：**必须先剥掉 `session-` 前缀再截断**。
             // 否则 slice(0,8) 恰好切在 "session-" 上，每一行都显示成一样的
@@ -6740,6 +6820,11 @@ window.__ModuleLoader__.load({
       })
 
       // 服务到了再让跳转按钮出现（没有这个服务的宿主上不画点不动的按钮）。
+      // sessions 服务：标题的快速通道（见 sessionsService 的说明）
+      ctx.inject(['sessions'], (scoped) => {
+        sessionsService.attach(scoped.sessions)
+      })
+
       ctx.inject(['pluginNavigation'], (scoped) => {
         hostNavigation.attach({
           openBundle: (packageName) => { scoped.pluginNavigation.openBundle(packageName) }
