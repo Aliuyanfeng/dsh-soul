@@ -1056,6 +1056,9 @@ window.__ModuleLoader__.load({
       '.soul-ov-hint{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:19px;margin:0 0 8px}',
       '.soul-ov-note{margin-top:8px;padding:8px 10px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:19px}',
       '.soul-ov-empty{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:19px}',
+      // 空会话开关：次要文字按钮，hover 变主色 —— 与宿主的次要操作同规格
+      '.soul-ov-more{display:inline-flex;align-items:center;align-self:flex-start;margin:2px 0 0;padding:2px 6px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11px;line-height:16px;cursor:pointer}',
+      '.soul-ov-more:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
       '.soul-ov-fix{height:24px;padding:0 8px;border:none;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);cursor:pointer;font:inherit;font-size:11px;line-height:17px;font-weight:500;flex:none}',
       '.soul-ov-fix:hover{background:var(--dsw-alias-interactive-bg-hover-solid)}',
       '.soul-session-persona-label-scope{flex:none;font-size:11px;opacity:.8}',
@@ -1960,6 +1963,8 @@ window.__ModuleLoader__.load({
       'ov.sessionFollowUpper': '跟随上层',
       'ov.untitledSession': '（未命名会话）',
       'ov.blankSession': '（空会话 · 未开始对话）',
+      'ov.showBlank': '显示 {count} 个空会话',
+      'ov.hideBlank': '隐藏 {count} 个空会话',
       'ov.unassigned': '未归属工作区的会话',
       'ov.noteActivity': '只列活动会话（宿主 agents.list() 的边界）。工作区行上的会话数来自工作区注册表，可能包含未打开的会话。',
       'ov.noteActivityUnknown': '读不到会话时间，活跃排序不可用。',
@@ -2333,6 +2338,8 @@ window.__ModuleLoader__.load({
       'ov.sessionFollowUpper': 'Follows upper scope',
       'ov.untitledSession': '(untitled session)',
       'ov.blankSession': '(empty session · no conversation yet)',
+      'ov.showBlank': 'Show {count} empty sessions',
+      'ov.hideBlank': 'Hide {count} empty sessions',
       'ov.unassigned': 'Sessions without a workspace',
       'ov.noteActivity': 'Only live sessions are listed (the host agents.list() boundary). The per-workspace count comes from the workspace registry and may include sessions that are not open.',
       'ov.noteActivityUnknown': 'Session timestamps are unavailable, so activity ordering is off.',
@@ -4083,6 +4090,11 @@ window.__ModuleLoader__.load({
       const [view, setView] = React.useState(null)
       // 会话标题单独一份：阶段 2 才拿到，合并发生在渲染时（见 reload 的说明）
       const [titles, setTitles] = React.useState({})
+      // 是否显示「空会话」（从未对话过的）。默认**隐藏** ——
+      // 它们只是占位，会把真正有内容的会话挤下去。
+      // 但绝不静默隐藏：下面有一行「显示 N 个空会话」的开关，
+      // 用户想看随时能展开。
+      const [showBlank, setShowBlank] = React.useState(false)
       const [error, setError] = React.useState(null)
       // 用户手动展开/收起过的工作区（workspaceId → 是否展开）。
       // 与「自动展开」分开存：自动展开每次渲染算得出来，用户的点击必须能压过它。
@@ -4204,11 +4216,27 @@ window.__ModuleLoader__.load({
 
       const renderSessions = (list) => {
         if (list.length === 0) return null
+
+        // 空会话（从未对话过的）默认不显示：它们只是占位，会把有内容的挤下去。
+        // 但绝不静默隐藏 —— 末尾有一行「显示 N 个空会话」的开关。
+        const blanks = list.filter((s) => s.blank === true)
+        const visible = showBlank ? list : list.filter((s) => s.blank !== true)
+
         // 单个工作区可能有几十上百个会话（本机实测有一个 49 个）。
         // 展开后整屏都是会话行，反而看不到别的工作区 —— 只列最近的 SESSIONS_PER_WS 条，
         // 其余用一行小字说明「还有 N 个」，不静默藏起来。
-        const shown = list.slice(0, SESSIONS_PER_WS)
-        const rest = list.length - shown.length
+        const shown = visible.slice(0, SESSIONS_PER_WS)
+        const rest = visible.length - shown.length
+
+        // 全部都是空会话且未开启显示时，给一行提示而不是一片空白
+        if (shown.length === 0 && blanks.length > 0) {
+          return e('div', { className: 'soul-ov-sessions' },
+            e('button', {
+              type: 'button',
+              className: 'soul-ov-more',
+              onClick: () => setShowBlank(true)
+            }, t('ov.showBlank', { count: blanks.length })))
+        }
         return e('div', { className: 'soul-ov-sessions' },
           shown.map((s) => {
             const hasOverride = s.hasOverride === true
@@ -4248,7 +4276,13 @@ window.__ModuleLoader__.load({
               }, sourceText)
             )
           }),
-          rest > 0 && e('div', { className: 'soul-ov-empty' }, t('ov.moreSessions', { count: rest }))
+          rest > 0 && e('div', { className: 'soul-ov-empty' }, t('ov.moreSessions', { count: rest })),
+          // 空会话的显示开关：默认隐藏，但必须留一个看得见的入口
+          blanks.length > 0 && e('button', {
+            type: 'button',
+            className: 'soul-ov-more',
+            onClick: () => setShowBlank((v) => !v)
+          }, t(showBlank ? 'ov.hideBlank' : 'ov.showBlank', { count: blanks.length }))
         )
       }
 

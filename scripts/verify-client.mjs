@@ -3879,12 +3879,14 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     assert.equal(names[1], '2c8f20e5', '没有标题的那条仍退回短 id')
   })
 
-  await check('C71 空会话显示「空会话」而不是一串 id', async () => {
+  await check('C71 空会话默认隐藏，但留可见开关可展开（不静默隐藏）', async () => {
     // 用户看到一堆 `2c8f20e5` 这样的 8 位 id，问「这些是什么」。
     // 查下来它们都是**从未对话过**的会话：日志里只有系统初始化事件
     // （permission/preset、sandbox/mode、agent/inbox/spliced…），
     // 没有一条 user/assistant 消息，所以折叠不出标题。
-    // 这类会话要如实标成「空会话」，不能只丢一串 id 让人以为数据坏了。
+    //
+    // 处置：默认**隐藏**（它们只是占位，会把有内容的挤下去），
+    // 但必须留一个看得见的开关 —— 静默隐藏比显示一串 id 更糟。
     const world = await boot()
     world.routes['/api/soul/overview'] = (call) => {
       const wantTitles = String(call.search || '').includes('titles=1')
@@ -3899,18 +3901,26 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
         sessions: [
           { id: 'session-5d29165d-348c-41f6-a7e0-3544a13a4318', title: wantTitles ? 'dsh-soul插件开发' : null, workspaceId: 'ws-a', persona: null, hasOverride: true, blank: false, live: true },
           { id: 'session-2c8f20e5-43da-41b3-b72d-3f3e0b5da1a1', title: null, workspaceId: 'ws-a', persona: null, hasOverride: false, blank: true, live: false },
-          { id: 'session-48349b8b-f52f-4b70-9205-dbc478c520b7', title: null, workspaceId: 'ws-a', persona: null, hasOverride: false, blank: false, live: false }
+          { id: 'session-48349b8b-f52f-4b70-9205-dbc478c520b7', title: null, workspaceId: 'ws-a', persona: null, hasOverride: false, blank: true, live: false }
         ],
         filtersApplied: { archived: true, children: true, registry: true }
       }
     }
     const tree = await mountOverview(world, world.dicts.zh)
+    // 默认只显示非空会话
     const names = findAllByClass(tree, 'soul-ov-session-name').map(textOf)
-    assert.equal(names.length, 3, '应有三条会话行')
+    assert.equal(names.length, 1, `默认应只显示 1 条非空会话，实际 ${names.length}`)
     assert.equal(names[0], 'dsh-soul插件开发', '有标题的显示标题')
-    assert.equal(names[1], world.dicts.zh['ov.blankSession'], '空会话显示「空会话」文案')
-    assert.notEqual(names[1], '2c8f20e5', '空会话不得只显示短 id')
-    assert.equal(names[2], '48349b8b', '有内容但无标题的仍退回短 id（它确实有对话）')
+    // 但必须留开关，且写明有几个被隐藏
+    const more = findAllByClass(tree, 'soul-ov-more')
+    assert.equal(more.length, 1, '应有一个空会话开关（不能静默隐藏）')
+    assert.ok(textOf(more[0]).includes('2'), `开关应写明有 2 个空会话，实际「${textOf(more[0])}」`)
+    // 点开关后应显示出来
+    more[0].props.onClick()
+    const after = await world.runtime.settle(overviewElement(world, world.dicts.zh))
+    const namesAfter = findAllByClass(after, 'soul-ov-session-name').map(textOf)
+    assert.equal(namesAfter.length, 3, `点开关后应显示全部 3 条，实际 ${namesAfter.length}`)
+    assert.ok(namesAfter.includes(world.dicts.zh['ov.blankSession']), '展开后空会话应标成「空会话」而不是一串 id')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
