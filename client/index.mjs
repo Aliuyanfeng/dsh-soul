@@ -1065,6 +1065,16 @@ window.__ModuleLoader__.load({
       '.soul-ov-skeleton-short{width:45%}',
       // 只给读屏的文本
       '.soul-ov-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}',
+      // 就地改绑：预设胶囊列表，缩进到工作区名下方
+      '.soul-ov-picker{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 6px 22px;padding:6px 8px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
+      '.soul-ov-picker-label{flex:none;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:17px;font-weight:500}',
+      '.soul-ov-picker-item{flex:none;max-width:180px;padding:1px 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:999px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:17px;font-weight:500;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.soul-ov-picker-item:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid)}',
+      // 当前绑定的那个：实心底 + 主色字，一眼看出「现在指向它」
+      '.soul-ov-picker-item-current{border-color:transparent;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-brand-primary)}',
+      '.soul-ov-picker-item:disabled{cursor:default;opacity:.6}',
+      '.soul-ov-picker-empty{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:17px}',
+      '.soul-ov-picker-error{flex-basis:100%;color:var(--dsw-alias-state-error-primary);font-size:11px;line-height:17px}',
       '.soul-ov-more{display:inline-flex;align-items:center;align-self:flex-start;margin:2px 0 0;padding:2px 6px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11px;line-height:16px;cursor:pointer}',
       '.soul-ov-more:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
       '.soul-ov-fix{height:24px;padding:0 8px;border:none;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);cursor:pointer;font:inherit;font-size:11px;line-height:17px;font-weight:500;flex:none}',
@@ -1955,8 +1965,10 @@ window.__ModuleLoader__.load({
       'ov.openDetail': '打开插件详情页',
       'ov.inheritGlobal': '跟随全局',
       'ov.invalid': '人设「{name}」已不存在',
-      'ov.fix': '修复 ↗',
-      'ov.fixTitle': '打开插件详情页修复这条绑定',
+      'ov.fix': '修复',
+      'ov.fixTitle': '选择一个人设重新绑定',
+      'ov.rebindPick': '改绑到：',
+      'ov.rebindNoPresets': '没有可用的人设',
       'ov.sessionsCount': '{count} 个会话',
       'ov.presets': '预设库',
       'ov.customGroup': '自建（{count}）',
@@ -2330,8 +2342,10 @@ window.__ModuleLoader__.load({
       'ov.openDetail': 'Open plugin page',
       'ov.inheritGlobal': 'Follows global',
       'ov.invalid': 'Persona "{name}" no longer exists',
-      'ov.fix': 'Fix ↗',
-      'ov.fixTitle': 'Open the plugin page to fix this binding',
+      'ov.fix': 'Fix',
+      'ov.fixTitle': 'Pick a persona to rebind',
+      'ov.rebindPick': 'Rebind to:',
+      'ov.rebindNoPresets': 'No personas available',
       'ov.sessionsCount': '{count} sessions',
       'ov.presets': 'Presets',
       'ov.customGroup': 'Custom ({count})',
@@ -4286,6 +4300,14 @@ window.__ModuleLoader__.load({
       // 但绝不静默隐藏：下面有一行「显示 N 个空会话」的开关，
       // 用户想看随时能展开。
       const [showBlank, setShowBlank] = React.useState(false)
+      // 正在就地改绑的工作区（null = 没有）。
+      //
+      // 为什么在总览里做：失效绑定的「修复」原先要跳到插件详情页，改完还得
+      // 切回来 —— 两次跳转只为了改一个下拉。而 controller 里
+      // `saveWorkspacePersona` 早就现成，就地展开预设列表即可。
+      const [rebinding, setRebinding] = React.useState(null)
+      const [rebindBusy, setRebindBusy] = React.useState(false)
+      const [rebindError, setRebindError] = React.useState(null)
       const [error, setError] = React.useState(null)
       // 用户手动展开/收起过的工作区（workspaceId → 是否展开）。
       // 与「自动展开」分开存：自动展开每次渲染算得出来，用户的点击必须能压过它。
@@ -4361,6 +4383,27 @@ window.__ModuleLoader__.load({
         if (state.personas === null) void controller.loadPersonas()
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [])
+
+      /**
+       * 就地改绑某个工作区的人设。
+       *
+       * 成功后直接重拉总览（服务端会返回新的 workspaces，但总览的会话人设
+       * 也跟着变，整体重拉最省心）；失败只在本行显示原因，不动其它行。
+       */
+      const rebindWorkspace = async (workspaceId, persona) => {
+        if (rebindBusy) return
+        setRebindBusy(true)
+        setRebindError(null)
+        try {
+          await controller.saveWorkspacePersona(workspaceId, persona)
+          setRebinding(null)
+          await reload()
+        } catch (err) {
+          setRebindError(messageOf(err))
+        } finally {
+          setRebindBusy(false)
+        }
+      }
 
       const openPluginPage = () => {
         const nav = hostNavigation.get()
@@ -4493,6 +4536,15 @@ window.__ModuleLoader__.load({
         )
       }
 
+      // 可选的预设名（内置优先，与设置页同一套排序，避免两处顺序不一致）
+      const personaChoices = state.personas
+        ? Object.keys(state.personas).sort((a, b) => {
+            const ab = state.personas[a] && state.personas[a].builtin === true ? 0 : 1
+            const bb = state.personas[b] && state.personas[b].builtin === true ? 0 : 1
+            return ab !== bb ? ab - bb : a.localeCompare(b, 'zh')
+          })
+        : []
+
       const renderWorkspace = (w) => {
         const id = String(w.workspaceId)
         const open = isOpen(id)
@@ -4525,16 +4577,38 @@ window.__ModuleLoader__.load({
                 e('span', { className: 'soul-ov-ws-path' }, w.path)),
             e('span', { className: 'soul-ov-arrow', 'aria-hidden': 'true' }, '→'),
             pill,
-            invalid && canJump && e('button', {
+            // 就地改绑：不再跳插件详情页（那要来回两次），直接展开预设列表。
+            invalid && e('button', {
               type: 'button',
               className: 'soul-ov-fix',
               title: t('ov.fixTitle'),
-              onClick: (ev) => { ev.stopPropagation(); openPluginPage() }
+              onClick: (ev) => {
+                ev.stopPropagation()
+                setRebindError(null)
+                setRebinding(rebinding === id ? null : id)
+              }
             }, t('ov.fix')),
             e('span', { className: 'soul-ov-ws-count' },
               t('ov.sessionsCount', { count: w.sessionCount })),
             e('span', { className: 'soul-ov-ws-active' }, activeAgoText(w.lastActiveAt, t))
           ),
+          // 就地改绑区：预设列表。与工作区人设页同一套交互（点一下就提交），
+          // 但样式走总览自己的类名，避免两个页面的 CSS 互相牵连。
+          rebinding === id && e('div', { className: 'soul-ov-picker' },
+            e('span', { className: 'soul-ov-picker-label' }, t('ov.rebindPick')),
+            personaChoices.length === 0
+              ? e('span', { className: 'soul-ov-picker-empty' }, t('ov.rebindNoPresets'))
+              : personaChoices.map((name) => e('button', {
+                  type: 'button',
+                  key: `pick-${name}`,
+                  className: name === w.persona
+                    ? 'soul-ov-picker-item soul-ov-picker-item-current'
+                    : 'soul-ov-picker-item',
+                  disabled: rebindBusy,
+                  onClick: (ev) => { ev.stopPropagation(); void rebindWorkspace(id, name) }
+                }, name)),
+            rebindError !== null && e('span', { className: 'soul-ov-picker-error' }, rebindError)),
+
           // 展开区：该工作区下的活动会话
           open && renderSessions(mine),
           // 有会话但一个都不在活动列表里：如实说明，不给一片空白

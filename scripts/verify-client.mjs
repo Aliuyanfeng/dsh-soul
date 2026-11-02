@@ -3635,27 +3635,60 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     assert.ok(textOf(overrides[0]).includes(world.dicts.zh['ov.sessionOverride']), '标记文案应为「本会话覆盖」')
   })
 
-  await check('C62 失效绑定：显示「修复」并跳到插件详情页（服务缺席时不画死按钮）', async () => {
+  await check('C62 失效绑定：就地改绑（不再跳插件详情页）', async () => {
+    // 原先「修复 ↗」要跳到插件详情页，改完还得切回来 —— 两次跳转只为了改
+    // 一个下拉。而 controller.saveWorkspacePersona 早就现成，就地展开即可。
     const world = await boot()
-    stubOverview(world, {
+    let saved = null
+    let overviewCalls = 0
+    world.routes['/api/soul/overview'] = () => {
+      overviewCalls++
+      return {
+      ok: true,
+      globalPersona: null,
+      enabled: true,
+      personas: { builtin: ['资深架构师'], custom: [] },
       workspaces: [
         { workspaceId: 'ws-bad', title: '坏绑定', path: 'D:\\bad', sessionCount: 0, bound: true, persona: '已删除的预设', invalidPersona: true, lastActiveAt: null }
-      ]
+      ],
+      sessions: [],
+      filtersApplied: { archived: true, children: true, registry: true }
+      }
+    }
+    world.routes['/api/soul/workspaces'] = (call) => {
+      if (call.method === 'GET') return { ok: true, workspaces: [] }
+      saved = call.body
+      return { ok: true, workspaces: [] }
+    }
+    // 可选项来自 store 里加载的预设库（不是 overview 响应里的 personas 字段）
+    world.captured.provide.soulController.store.update((s) => {
+      s.personas = { 资深架构师: { builtin: true } }
     })
-    // 先在没有 pluginNavigation 的宿主上渲染：不应出现「修复」（点了没反应比不画更糟）
-    let tree = await mountOverview(world, world.dicts.zh)
-    assert.equal(findAllByClass(tree, 'soul-ov-fix').length, 0, '没有 pluginNavigation 时不应出现「修复」按钮')
-    // 宿主给出服务后再渲染：出现「修复」，点它应调用 openBundle(dsh-soul)
-    const navInject = world.captured.injected.find((i) => (Array.isArray(i.deps) ? i.deps : Object.keys(i.deps || {})).includes('pluginNavigation'))
-    assert.ok(navInject, '应声明对 pluginNavigation 的依赖')
-    const opened = []
-    navInject.cb({ pluginNavigation: { openBundle: (name) => { opened.push(name) } } })
-    tree = await mountOverview(world, world.dicts.zh)
+    for (let i = 0; i < 6; i++) await new Promise((r) => drainTick(r))
+    const tree = await mountOverview(world, world.dicts.zh)
     const fix = findAllByClass(tree, 'soul-ov-fix')
-    assert.equal(fix.length, 1, '有 pluginNavigation 时应出现一个「修复」按钮')
+    assert.equal(fix.length, 1, '失效绑定应有一个「修复」按钮')
     assert.ok(textOf(fix[0]).includes('修复'), '按钮文案应为「修复」')
+    assert.equal(textOf(fix[0]).includes('↗'), false, '不应再带 ↗（它不再跳转）')
+    // 点「修复」→ 就地展开预设列表
     fix[0].props.onClick({ stopPropagation: () => {} })
-    assert.deepEqual(opened, ['dsh-soul'], '点「修复」应跳转到本插件的详情页')
+    const after = await world.runtime.settle(overviewElement(world, world.dicts.zh))
+    const picker = findAllByClass(after, 'soul-ov-picker')
+    assert.equal(picker.length, 1, '点「修复」应就地展开改绑列表')
+    const items = findAllByClass(after, 'soul-ov-picker-item')
+    assert.ok(items.length >= 1, '应列出可选的人设')
+    // 点某个人设 → 调 saveWorkspacePersona 提交
+    const callsBeforeRebind = overviewCalls
+    await items[0].props.onClick({ stopPropagation: () => {} })
+    for (let i = 0; i < 10; i++) await new Promise((r) => drainTick(r))
+    assert.ok(saved !== null, '应调用 saveWorkspacePersona 提交改绑')
+    assert.equal(saved.workspaceId, 'ws-bad', '提交的应是这个工作区')
+    assert.equal(saved.persona, '资深架构师', '提交的应是选中的人设')
+    // 改绑成功后必须重拉：否则界面上那条失效绑定还标红，用户以为没生效
+    assert.ok(
+      overviewCalls > callsBeforeRebind,
+      `改绑成功后应重拉总览（改绑前 ${callsBeforeRebind} 次，改绑后 ${overviewCalls} 次）`
+    )
   })
 
   await check('C63 预设库：内置与自建分组列出，且所有名字都渲染出来', async () => {
