@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 73
+const EXPECTED_ASSERTIONS = 74
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4287,6 +4287,52 @@ function componentBody(text, name) {
     assert.equal(/soul-session-chip-clear/.test(source), false, '旧变体 .soul-session-chip-clear 必须删掉')
     // 死代码不得残留
     assert.equal(/soul-session-chip-active/.test(source), false, '死代码 .soul-session-chip-active 必须删掉')
+  })
+
+  await check('C79 失效绑定的「修复」按钮对齐宿主 sm+outline（红由 pill 承担）', async () => {
+    // 原实现三处都不是宿主的写法：
+    //   24px 高（宿主只有 md 36 / sm 28）、border:none（outline 应有 .5px）、
+    //   danger 配色（宿主 Button 只有 primary/ghost/outline/toolbar/icon）。
+    //
+    // 关键判断：失效的红色语义**已由左侧 pill 承担**（.soul-ov-pill-bad 用同一套
+    // danger token）。按钮再叠一层红底红字是重复强调，反而让人分不清
+    // 「哪个是问题、哪个是操作」。所以按钮改灰，红留给 pill。
+    //
+    // 因此这条断言必须**成对**守住：按钮不得用 danger，**同时** pill 必须还在用
+    // danger —— 否则改掉按钮却没保住 pill，警示就悄悄丢了。
+    const at = source.indexOf('.soul-ov-fix{')
+    assert.ok(at > 0, '找不到 .soul-ov-fix 规则')
+    const css = source.slice(at, at + 600)
+    const decl = (prop) => {
+      const m = new RegExp(prop.replace(/[-]/g, '\\-') + ':([^;}]+)').exec(css)
+      return m ? m[1].trim() : ''
+    }
+    // 尺寸：宿主 sm 变体
+    assert.equal(decl('height'), '28px', '高度必须与宿主 sm 一致（28px）')
+    assert.equal(decl('font-size'), '12px', '字号必须与宿主 sm 一致（12px）')
+    assert.equal(decl('line-height'), '18px', '行高必须与宿主 sm 一致（18px）')
+    assert.equal(decl('padding'), '0 10px', '内边距必须与宿主 sm 一致（0 10px）')
+    assert.equal(decl('border-radius'), 'var(--dsw-radius-sm)', '圆角必须用 sm 变体的 radius-sm')
+    // outline 变体
+    assert.equal(decl('border'), '.5px solid var(--dsw-alias-border-l3)', '边框必须与宿主 outline 一致')
+    assert.equal(decl('background'), 'transparent', '背景必须透明（outline 语义）')
+    assert.equal(decl('color'), 'var(--dsw-alias-label-primary)', '文字色必须用 label-primary')
+    // ★ 按钮不得再用 danger 色（红已经由 pill 承担）
+    assert.equal(/interactive-bg-hover-danger|state-error-primary/.test(css), false,
+      '修复按钮不得再用 danger 色 —— 红色语义由 .soul-ov-pill-bad 承担')
+    // ★ 配对断言：pill 必须仍在用 danger，否则警示丢了
+    const pillAt = source.indexOf('.soul-ov-pill-bad{')
+    assert.ok(pillAt > 0, '找不到 .soul-ov-pill-bad 规则')
+    const pillCss = source.slice(pillAt, pillAt + 300)
+    assert.match(pillCss, /state-error-primary/, 'pill 必须保留 danger 文字色（失效警示的最后一道）')
+    assert.match(pillCss, /interactive-bg-hover-danger/, 'pill 必须保留 danger 背景')
+    // 三态齐全（宿主 Button 有）
+    assert.match(source, /\.soul-ov-fix:hover:not\(:disabled\)\{background:var\(--dsw-alias-interactive-bg-hover\)\}/, 'hover 必须用 interactive-bg-hover')
+    assert.match(source, /\.soul-ov-fix:active:not\(:disabled\)\{background:var\(--dsw-alias-interactive-bg-active\)\}/, '必须有 active 态')
+    assert.match(source, /\.soul-ov-fix:disabled\{[^}]*opacity:\.4/, 'disabled 必须 opacity:.4')
+    // 不得有重复的 hover 规则（此前残留一条旧的 :hover 会与新规则并存）
+    const hovers = source.match(/\.soul-ov-fix:hover[^{]*\{/g) || []
+    assert.equal(hovers.length, 1, `不得有重复的 hover 规则（实际 ${hovers.length} 条）`)
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

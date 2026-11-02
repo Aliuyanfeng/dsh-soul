@@ -1118,8 +1118,27 @@ window.__ModuleLoader__.load({
       '.soul-ov-picker-error{flex-basis:100%;color:var(--dsw-alias-state-error-primary);font-size:11px;line-height:17px}',
       '.soul-ov-more{display:inline-flex;align-items:center;align-self:flex-start;margin:2px 0 0;padding:2px 6px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11px;line-height:16px;cursor:pointer}',
       '.soul-ov-more:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-      '.soul-ov-fix{height:24px;padding:0 8px;border:none;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);cursor:pointer;font:inherit;font-size:11px;line-height:17px;font-weight:500;flex:none}',
-      '.soul-ov-fix:hover{background:var(--dsw-alias-interactive-bg-hover-solid)}',
+      // 失效绑定的「修复」按钮：宿主 Button 的 **sm + outline** 变体。
+      //
+      // 原实现三处都不是宿主的写法：24px 高（宿主只有 md 36 / sm 28）、
+      // border:none（outline 变体应有 .5px）、danger 配色（宿主 Button 没有
+      // danger 变体，只有 primary / ghost / outline / toolbar / icon）。
+      //
+      // 为什么可以去掉 danger 色：失效的红色语义**已由左侧 pill 承担**
+      // （.soul-ov-pill-bad，同一套 token）。按钮再叠一层红底红字是重复强调，
+      // 反而让人分不清「哪个是问题、哪个是操作」。改成灰底灰字后层次更清楚：
+      // 红 pill = 出了问题，灰按钮 = 点这里处理。
+      //
+      // 为什么用 sm 而不是宿主的行内图标按钮（_action_1pq26_43，24x24）：
+      // 宿主行内操作都是图标（帮助 / 复制 / 删除），但「修复」用图标表达
+      // 不如两个汉字直接。文字按钮在宿主里的最小档就是 sm（28px）。
+      //
+      // 行高代价：工作区行原本由这个 24px 按钮决定内容高度，改 28px 后
+      // 行高增加约 4px。只在「绑定失效」这一异常状态下出现，可以接受。
+      '.soul-ov-fix{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex:none;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.soul-ov-fix:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-ov-fix:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
+      '.soul-ov-fix:disabled{cursor:not-allowed;opacity:.4}',
       '.soul-session-persona-label-scope{flex:none;font-size:11px;opacity:.8}',
       '@container (width<=540px){.soul-session-persona-label{display:none}}',
       // 错误提示：颜色改用宿主真实存在的 state-error-primary（原先引用不存在的 token ⇒ 渲染成黑色）
