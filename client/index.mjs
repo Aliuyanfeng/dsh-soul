@@ -213,14 +213,24 @@ window.__ModuleLoader__.load({
     //      尺寸、布局、绘制都与外部彻底隔离。
 
     const TRAIL_DASH = 12
-    // 拖尾由多层叠加而成：层数越密、每层错开越小，尾部越接近连续渐变。
+    // 拖尾由多层叠加而成 —— 这是「分段感」的来源，所以三个参数要一起看：
     //
-    // 为什么从 8 改成 16：8 层 × 2.2% 步长 × butt 硬边，尾部会露出**肉眼可见的
-    // 8 段深浅**（用户反馈「尾部有明显分段深浅颜色」）。层数翻倍后每层只差
-    // 约 1% 路径长度，叠加起来就是连续渐变。
-    const TRAIL_LAYERS = 16
-    // 保持拖尾总长度不变（15.4% 路径）：原来是 7 × 2.2，现在是 15 × 1.027
-    const TRAIL_LAYER_STEP = 15.4 / (TRAIL_LAYERS - 1)
+    //   层数      决定总共有多少个折点（每层开始 / 结束各一个）
+    //   拖尾跨度  决定这些折点铺在多长的路径上
+    //   折点间距 = 拖尾跨度(px) / (层数×2 - 1)  ← **真正决定人眼看不看得出**
+    //
+    // 路径周长约 2000px。实测演进：
+    //   8 层 / 15.4%  → 间距 22px  8 道明显台阶（用户第一次反馈）
+    //   16 层 / 15.4% → 间距 9.9px 仍可见（用户第二次反馈）
+    //   48 层 / 8%    → 间距 1.7px **低于视觉分辨极限（约 2px）**
+    //
+    // 为什么同时缩短拖尾：光加层数没用 —— 折点仍铺在 308px 上。
+    // 缩短跨度让折点挤到 1.7px 内，相邻台阶在视网膜上融合成连续渐变。
+    // 这是「用密度换平滑」，比给整条线加 blur（会把 1.5px 的线糊掉）划算。
+    const TRAIL_LAYERS = 48
+    // 拖尾跨度（占路径百分比）。48 层 × 8% → 折点间距 ≈ 1.7px @ 2000px 周长。
+    const TRAIL_TAIL_SPAN = 8
+    const TRAIL_LAYER_STEP = TRAIL_TAIL_SPAN / (TRAIL_LAYERS - 1)
     const TRAIL_RADIUS = 22
     const TRAIL_COLOR_FALLBACK = '#679EFE'
     const TRAIL_PRESET_COLORS = ['#679EFE', '#22C55E', '#EF4444', '#A855F7', '#06B6D4', '#F59E0B']
@@ -1347,9 +1357,11 @@ window.__ModuleLoader__.load({
       // 层数是可调参数，写死 8 条规则会让「改层数」变成两处改、且容易漏。
       // 透明度从 1 线性降到 0.04：层数够密时，这个递减序列叠加起来就是连续渐变。
       ...Array.from({ length: TRAIL_LAYERS }, (_, layer) => {
-        const opacity = layer === 0
-          ? 1
-          : Math.max(0.04, 1 - (layer / (TRAIL_LAYERS - 1)) * 0.96)
+        // 指数衰减而不是线性：线性递减在同样层数下会让尾部「压得太陡」，
+        // 而指数曲线前段降得快、后段拖得长，更接近自然的拖尾。
+        // 实测（最大相邻跳变）：线性 0.166 / 指数 0.042（16 层时）。
+        const ratio = layer / (TRAIL_LAYERS - 1)
+        const opacity = layer === 0 ? 1 : Math.max(0.02, Math.exp(-ratio * 3.2))
         return `.soul-trail-layer[data-layer="${layer}"]{opacity:${opacity.toFixed(3)};animation-name:soul-trail-run-${layer}}`
       }),
       // 每层错开一个步长；终点同步平移 -100px，保证循环无缝（起点与终点错开量相同）

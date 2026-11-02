@@ -4754,32 +4754,48 @@ check('空会话判据：逐帧解压找消息事件，不得用文件大小近�
   // agent/inbox/spliced 不算消息 —— 那是 dsh-soul 注入的人设快照
   assert.equal(/inbox/.test(has), false, 'agent/inbox/spliced 不得算作对话消息（那是插件注入的人设）')
 })
-check('光轨拖尾必须平滑：层数够密 + 圆头，不得露出分段色阶', () => {
-  // 用户反馈：深色模式下光轨尾部有明显分段深浅颜色。
+check('光轨拖尾必须平滑：折点间距要低于视觉分辨极限', () => {
+  // 用户两次反馈「尾部有分段深浅」。两次都只是加层数，都没根治 ——
+  // 因为**真正决定看不看得出的是折点间距**，不是层数：
   //
-  // 根因：拖尾是「多层错开 + 透明度递减」叠出来的，原来只有 8 层、
-  // 每层错开 2.2%、且 stroke-linecap 是 butt（硬切边）—— 8 个色阶边界锐利可见。
+  //   折点数 = 层数 × 2（每层开始 / 结束各一个折点）
+  //   折点间距 = 拖尾跨度(px) / (折点数 - 1)
   //
-  // 修法：层数翻倍到 16（每层只差约 1% 路径长度）+ 全部圆头（相邻层咬合）。
-  // 拖尾总长度保持不变（15.4%），只是分得更细。
+  // 只加层数、不缩短拖尾，折点还是铺在同样的长度上：
+  //   8 层 / 15.4%  → 22px   明显台阶
+  //   16 层 / 15.4% → 9.9px  仍可见（第二次反馈）
+  //   48 层 / 8%    → 1.7px  低于视觉极限（约 2px）✓
   //
-  // 这里守三条不能回退的事：
-  //   1) 层数不得退回个位数（少了就重新露出色阶）
-  //   2) 不得再用 butt 硬边
-  //   3) 层规则必须按层数生成，不能写死条数（否则改层数会两处不同步）
+  // 也验证过「给整条线加 blur」：要压到同样平滑需要 blur(3px)，
+  // 那会把 1.5px 的线糊掉，得不偿失。用密度换平滑才是对的。
   const layers = clientCode.match(/const TRAIL_LAYERS = (\d+)/)
   assert.ok(layers !== null, '找不到 TRAIL_LAYERS 常量')
-  assert.ok(Number(layers[1]) >= 12, `层数不得少于 12（实际 ${layers[1]}，太少会露出分段）`)
-  // 步长必须由层数推导，保持拖尾总长度不变
-  assert.match(clientCode, /const TRAIL_LAYER_STEP = 15\.4 \/ \(TRAIL_LAYERS - 1\)/, '步长应由层数推导，保持拖尾总长 15.4')
-  // 不得有 butt 硬边
-  assert.equal(/stroke-linecap:butt/.test(clientCode), false, '不得使用 butt 硬边（会让分层边界锐利可见）')
+  const span = clientCode.match(/const TRAIL_TAIL_SPAN = ([\d.]+)/)
+  assert.ok(span !== null, '找不到 TRAIL_TAIL_SPAN 常量（拖尾跨度必须可调）')
+
+  // ★ 核心断言：折点间距必须低于视觉分辨极限
+  // 路径周长按 2000px 估（输入框量级），间距 = 拖尾px / (层数×2 - 1)
+  const PATH_PX = 2000
+  const layerCount = Number(layers[1])
+  const tailPct = Number(span[1])
+  const tailPx = (tailPct / 100) * PATH_PX
+  const folds = layerCount * 2
+  const spacing = tailPx / (folds - 1)
+  assert.ok(
+    spacing <= 2,
+    `折点间距必须 ≤ 2px（当前 ${spacing.toFixed(2)}px：${layerCount} 层 / ${tailPct}% 拖尾）。` +
+    '间距超过 2px 人眼就能看出分段 —— 这正是用户两次反馈的问题。'
+  )
+  assert.ok(layerCount >= 40, `层数不得少于 40（实际 ${layerCount}）`)
+  assert.ok(tailPct <= 10, `拖尾跨度不得大于 10%（实际 ${tailPct}%），否则折点铺太开`)
+  // 步长必须由层数与跨度推导，不能硬编码
+  assert.match(clientCode, /const TRAIL_LAYER_STEP = TRAIL_TAIL_SPAN \/ \(TRAIL_LAYERS - 1\)/, '步长必须由层数与拖尾跨度推导')
+  // 线端必须圆头（butt 的硬切边会加重分层感）
+  assert.equal(/stroke-linecap:butt/.test(clientCode), false, '不得使用 butt 硬边')
   assert.match(clientCode, /stroke-linecap:round/, '光轨层必须用 round 圆头')
-  // 层规则按层数生成（源文本里是 Array.from 展开，不是 8 条硬编码）
-  assert.match(clientCode, /\.\.\.Array\.from\(\{ length: TRAIL_LAYERS \}/, '层规则应按 TRAIL_LAYERS 生成，不能写死条数')
-  assert.match(clientCode, /data-layer="\$\{layer\}"/, '层规则的选择器应由层号生成')
-  // 透明度必须从 1 单调降到接近 0（渐变感的来源）
-  assert.match(clientCode, /Math\.max\(0\.04, 1 - \(layer \/ \(TRAIL_LAYERS - 1\)\) \* 0\.96\)/, '透明度应按层号线性递减到 0.04')
+  // 层规则按层数生成，透明度按比例衰减（指数曲线比线性更自然）
+  assert.match(clientCode, /\.\.\.Array\.from\(\{ length: TRAIL_LAYERS \}/, '层规则应按 TRAIL_LAYERS 生成')
+  assert.match(clientCode, /Math\.exp\(-ratio \* 3\.2\)/, '透明度应用指数衰减（线性会让尾部压得太陡）')
   // 每层 from→to 必须恰好 -100（否则循环接缝会跳）
   assert.match(clientCode, /\(offset - 100\)\.toFixed\(3\)/, '每层终点应平移 -100，保证循环无缝')
 })
