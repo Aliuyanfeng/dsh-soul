@@ -1406,7 +1406,10 @@ window.__ModuleLoader__.load({
       // 建议动作，不该与「使用」抢视觉权重）。
       '.soul-drift{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px;padding:8px 12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
       '.soul-drift-text{min-width:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
-      '.soul-drift-action{box-sizing:border-box;display:inline-flex;align-items:center;height:24px;padding:0 10px;border:.5px solid var(--dsw-alias-brand-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
+      // 24px → 28px：宿主只有 sm(28) / md(36) 两档，24 是自创的第三档。
+      // 边框与文字保留品牌色 —— 那是「强调型文本按钮」的语义，宿主没有等价变体，
+      // 强改成 border-l3 会失去可辨识性。尺寸档位才是需要统一的硬指标。
+      '.soul-drift-action{box-sizing:border-box;display:inline-flex;align-items:center;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-brand-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
       '.soul-drift-action:hover{background:var(--dsw-alias-interactive-bg-hover)}',
       '.soul-drift-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',      '.soul-saved-notice{margin:0;color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:18px}',
       // 失败红字：规格照抄宿主 .zGbnIq_error（state-error-primary、margin:0、12px/18px），
@@ -1683,7 +1686,8 @@ window.__ModuleLoader__.load({
       // 展开区的 .soul-note（见下方 .soul-note 注释），不再单独占一行。
       // 危险色描边文字钮（规格抄 .soul-persona-danger）：清空记录不可逆，
       // 是这一组唯一的破坏性动作。撤销按钮不用危险色 —— 它可以再撤销一次改回来。
-      '.soul-history-clear{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;height:24px;padding:0 10px;border:.5px solid var(--dsw-alias-state-error-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-state-error-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
+      // 同样从 24px 提到宿主 sm 的 28px（危险色描边保留：破坏性操作的语义）
+      '.soul-history-clear{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-state-error-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-state-error-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
       '.soul-history-clear:hover{background:var(--dsw-alias-interactive-bg-hover-danger,rgba(236,19,19,.05))}',
       '.soul-history-clear:focus-visible{outline:2px solid var(--dsw-alias-state-error-primary);outline-offset:1px}',
       // armed：实心危险色 + 文案变成「确认清空？」（样式抄 .soul-persona-danger-armed）
@@ -1702,7 +1706,8 @@ window.__ModuleLoader__.load({
       '.soul-history-source{flex:none;padding:0 6px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-xs);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px;white-space:nowrap}',
       '.soul-history-fields{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary)}',
       '.soul-history-item-actions{display:flex;align-items:center;gap:6px;flex:none}',
-      '.soul-history-action{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;height:24px;padding:0 8px;border:.5px solid var(--dsw-alias-brand-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
+      // 24px → 28px，padding 也归到 sm 档的 0 10px（原先是自创的 0 8px）
+      '.soul-history-action{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-brand-primary);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
       '.soul-history-action:hover{background:var(--dsw-alias-interactive-bg-hover)}',
       '.soul-history-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.soul-history-action-armed{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}',

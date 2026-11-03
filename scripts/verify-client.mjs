@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 80
+const EXPECTED_ASSERTIONS = 81
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4658,6 +4658,93 @@ function componentBody(text, name) {
     assert.match(source, /\.soul-ws-action:disabled\{[^}]*cursor:not-allowed/, 'disabled 必须 not-allowed')
     // 危险态的 hover 用危险底色
     assert.match(source, /\.soul-ws-action-armed:hover:not\(:disabled\)\{background:var\(--dsw-alias-interactive-bg-hover-danger\)\}/, 'armed 态 hover 必须用危险底色')
+  })
+
+  await check('C86 全部文本按钮必须落在宿主 sm/md 档位（自动发现，防新增违规）', async () => {
+    // 这条不做「逐个类名点名」，而是**扫描全部 .soul-* 规则自动发现**。
+    // 理由：逐条断言只能守住写它时想到的那些；而这个插件里按钮已经有 11 个，
+    // 靠人肉盘点必然漏 —— 事实上我第一次手工盘点就漏了 4 个（24px 那组）。
+    //
+    // 宿主的按钮只有两个尺寸档：
+    //   sm = 28px / 12px / 18px   md = 36px / 14px / 22px
+    // 任何第三档（26、24、32…）都是自创的，会在混排时露出破绽。
+    //
+    // 判据：只挑**文本按钮**，用四个自动特征排除其它控件：
+    //   · 有固定 width  → 方形/图标按钮（尺寸由图形决定，如翻页按钮 32×32）
+    //   · 无边框 / border:none → 文字链接（如「显示 N 个空会话」）
+    //   · 圆角 999px → 胶囊标签（如预设胶囊条目）
+    //   · 没有 px 高度或字号 → 不是按钮
+
+    // 从 css 数组里取规则（与插件运行时用的是同一份文本）
+    const cssStart = source.indexOf('const css = [')
+    const cssEnd = source.indexOf('].join', cssStart)
+    assert.ok(cssStart > 0 && cssEnd > cssStart, '找不到 css 数组')
+    const arr = source.slice(cssStart, cssEnd)
+    const rules = []
+    for (const line of arr.split('\n')) {
+      const m = /^\s*'((?:[^'\\]|\\.)*)',?\s*$/.exec(line)
+      if (!m) continue
+      const text = m[1].replace(/\\'/g, "'").replace(/\\\\/g, '\\')
+      if (!text.includes('{')) continue
+      rules.push(text)
+    }
+    assert.ok(rules.length > 200, `css 规则解析异常（只拿到 ${rules.length} 条）`)
+
+    const get = (body, prop) => {
+      const m = new RegExp('(?:^|;)' + prop + ':([^;}]+)').exec(body)
+      return m ? m[1].trim() : ''
+    }
+    const seen = new Set()
+    const textButtons = []
+    for (const rule of rules) {
+      const brace = rule.indexOf('{')
+      if (brace < 0) continue
+      const selector = rule.slice(0, brace)
+      const body = rule.slice(brace + 1, rule.lastIndexOf('}'))
+      // 只看基础类（不带伪类 / 后代 / 逗号选择器）
+      if (!/^\.soul-[\w-]+$/.test(selector)) continue
+      if (seen.has(selector)) continue
+      seen.add(selector)
+      const h = get(body, 'height')
+      const fz = get(body, 'font-size')
+      const cur = get(body, 'cursor')
+      if (!/^\d+px$/.test(h)) continue
+      if (!/^\d+px$/.test(fz)) continue
+      if (!/pointer/.test(cur)) continue
+      // 排除 ①：固定宽度 = 方形/图标按钮
+      if (/^\d+px$/.test(get(body, 'width'))) continue
+      // 排除 ②：无边框 = 文字链接
+      const border = get(body, 'border')
+      if (border === '' || /^none$/.test(border) || /^0$/.test(border)) continue
+      // 排除 ③：胶囊标签
+      if (/999px/.test(get(body, 'border-radius'))) continue
+      textButtons.push({
+        selector,
+        height: parseInt(h, 10),
+        fontSize: parseInt(fz, 10),
+        lineHeight: get(body, 'line-height')
+      })
+    }
+
+    // 防呆：扫描逻辑失效时不能静默通过
+    assert.ok(
+      textButtons.length >= 8,
+      `扫描到的文本按钮太少（${textButtons.length} 个），判据可能失效了`
+    )
+
+    const SM = { height: 28, fontSize: 12, lineHeight: '18px' }
+    const MD = { height: 36, fontSize: 14, lineHeight: '22px' }
+    const fits = (b) => (b.height === SM.height && b.fontSize === SM.fontSize && b.lineHeight === SM.lineHeight)
+      || (b.height === MD.height && b.fontSize === MD.fontSize && b.lineHeight === MD.lineHeight)
+
+    const offenders = textButtons.filter((b) => !fits(b))
+    assert.equal(
+      offenders.length,
+      0,
+      `以下文本按钮不符合宿主 sm(28/12/18) 或 md(36/14/22)：\n`
+        + offenders.map((b) => `  ${b.selector} → ${b.height}px / ${b.fontSize}px / ${b.lineHeight}`).join('\n')
+        + '\n（新增按钮请改用上述两档；方形图标按钮请显式给 width，会自动排除）'
+    )
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
