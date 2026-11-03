@@ -787,6 +787,11 @@ function injectPromptToAllAgents(ctx, config) {
 
   const T = promptTextOf(config)
 
+  // 为什么必须「注入」而不能只靠 systemPrompt.section：
+  // section 虽然每步求值（preStep 每个 step 都 assemble），但产物是 **system message**，
+  // 一旦进入会话历史就固定了 —— 所以「会话进行中改配置」不会生效。
+  // 完整查证（含 systemPrompt.context 这条更强通道、以及暂不采用的理由）见
+  // lib/injection.mjs 的模块头注释。
   let delivered = 0
   let failed = 0
   let lastError = null
