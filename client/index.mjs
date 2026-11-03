@@ -1142,7 +1142,7 @@ window.__ModuleLoader__.load({
       '.soul-ov-gc-more{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-ov-gc-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}',
       // 危险态：与 .soul-ws-action-armed 同一套视觉语言（红字 + 红描边），
-      // 但高度走宿主 sm 的 28px —— .soul-ws-action 的 26px 不在宿主档位上。
+      // 高度也走宿主 sm 的 28px（.soul-ws-action 原本是 26px，已在本版对齐）。
       // 维护按钮：与 .soul-ov-fix 同一规格（宿主 sm + outline / 28px），
       // 但**独立类名** —— .soul-ov-fix 的语义是「修复失效绑定」，
       // 复用它会让「检查回收」和「修复绑定」共享一个可演进的样式入口，
@@ -1645,17 +1645,24 @@ window.__ModuleLoader__.load({
       '.soul-ws-btn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger)}',
       // 待确认：文字已经变成「确认解绑…」，再叠一层浅红底让它更醒目
       '.soul-ws-btn-armed{background:var(--dsw-alias-interactive-bg-hover-danger)}',
-      '.soul-ws-action{box-sizing:border-box;display:inline-flex;align-items:center;height:26px;padding:0 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
-      // ⚠️ hover **只改边框，不改文字色**（0.9.0-am）。
-      // 原先这里还有 color:brand-primary —— 主色按钮（深底白字）hover 时文字被压成
-      // 近黑色，黑底黑字＝整块全黑；同时它也压掉了 .soul-ws-action-armed 的红字。
-      '.soul-ws-action:hover{border-color:var(--dsw-alias-brand-primary)}',
+      // 宿主 Button 的 **sm + outline** 变体：28px / 12px / 18px / radius-sm /
+      // .5px border-l3 / 透明底 / label-primary，hover 与 active 走背景色。
+      //
+      // 曾经是 26px —— 宿主没有这一档（sm=28、md=36），属于「自己发明的高度」。
+      //
+      // ⚠️ 历史坑（0.9.0-am，保留记录）：早期 hover 写的是 `color:brand-primary`，
+      // 于实心主色底的按钮上把白字压成近黑字 —— 黑底黑字，整块全黑，用户两次反馈。
+      // 现在 hover **只改背景**，不碰文字色，危险态（-armed）的红字也不会被盖掉。
+      '.soul-ws-action{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.soul-ws-action:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-ws-action:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
       '.soul-ws-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
-      '.soul-ws-action:disabled{opacity:.5;cursor:default}',
+      '.soul-ws-action:disabled{cursor:not-allowed;opacity:.4}',
       // 「绑定人设」是这一页的主操作：实心主色
 
       // 解绑 armed：危险色（与删除预设同一套）
       '.soul-ws-action-armed{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}',
+      '.soul-ws-action-armed:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger)}',
       // 内联展开的人设胶囊：占满整行，与卡片内容左对齐
       '.soul-ws-picker{flex-basis:100%;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:.5px solid var(--dsw-alias-settings-card-stroke)}',
       '.soul-ws-picker-label{flex:none;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
@@ -3876,10 +3883,13 @@ window.__ModuleLoader__.load({
                 )
                 : e(Fragment, null,
                   e('span', { className: 'soul-ws-unbound' }, t('workspaces.unbound')),
-                  // 0.9.0-am：改用宿主 ui.Button —— 原先自绘的
-                  // .soul-ws-action-primary 是实心主色底（浅色主题≈黑），
-                  // 而共用的 .soul-ws-action:hover 又把文字染成 brand 近黑色，
-                  // 黑底黑字 ⇒ 整块全黑（用户两次反馈的真实成因）。
+                  // 0.9.0-am：改用宿主 ui.Button —— 原先自绘的 .soul-ws-action-primary
+                  // 是实心主色底（浅色主题≈黑），且当时的 .soul-ws-action:hover 会把文字色
+                  // 改成 brand 近黑，黑底黑字 ⇒ 整块全黑（用户两次反馈的真实成因）。
+                  //
+                  // 注：那条 hover 规则现在已改为「只改背景、不碰文字色」，
+                  // .soul-ws-action-primary 本身也早已不存在。这里的 ui.Button 保留 ——
+                  // 主操作直接交给宿主组件，比自绘更不容易再漂。
                   e(ui.Button, {
                     variant: 'outline',
                     size: 'sm',

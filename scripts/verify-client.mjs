@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 79
+const EXPECTED_ASSERTIONS = 80
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -3507,13 +3507,23 @@ await check('C56 工作区人设按钮：hover 不得改文字色（深底白字
   // 于是深色底 + 被染成近黑色的文字 = 整块全黑；同一条规则也压掉了
   // .soul-ws-action-armed 的红色「确认解绑」提示。
   //
-  // 契约：hover 只允许改边框，不得改文字色；「绑定人设」改用宿主 ui.Button。
-  const hover = source.match(/\.soul-ws-action:hover\{([^}]*)\}/)
+  // 契约：hover **只改背景**，不得改文字色；「绑定人设」改用宿主 ui.Button。
+  //
+  // 后来把 .soul-ws-action 对齐到了宿主 sm+outline（28px / border-l3 /
+  // hover 走 interactive-bg-hover），规则从 .soul-ws-action:hover 变成
+  // .soul-ws-action:hover:not(:disabled) —— 与其它按钮一致，也更正确
+  // （禁用态不该有 hover 背景）。
+  const hover = source.match(/\.soul-ws-action:hover(?::not\(:disabled\))?\{([^}]*)\}/)
   assert.ok(hover, '找不到 .soul-ws-action:hover 规则')
   assert.equal(
     /[^-]color\s*:/.test(hover[1]),
     false,
     `hover 不得改文字色（会让深底按钮变成黑底黑字）：${hover[1]}`
+  )
+  assert.match(
+    hover[1],
+    /background:var\(--dsw-alias-interactive-bg-hover\)/,
+    'hover 必须走宿主的 interactive-bg-hover 背景'
   )
   // 自绘的主色按钮样式必须彻底移除（现在用 ui.Button 的 outline 变体）
   assert.equal(
@@ -4604,6 +4614,50 @@ function componentBody(text, name) {
 
     // ⑥ 删除后要有可见结果
     assert.match(body, /t\('sessions\.collected'/, '清理后必须显示结果')
+  })
+
+  await check('C85 插件详情页的清理按钮：宿主 sm+outline，不得再是 26px', async () => {
+    // `.soul-ws-action` 原本是 26px 高度 —— 宿主没有这一档（sm=28、md=36），
+    // 是「自己发明的高度」。它同时还有三处偏差：
+    //   · 边框用 settings-card-stroke（outline 变体应走 border-l3）
+    //   · hover 用品牌色描边（宿主是 interactive-bg-hover 背景）
+    //   · 缺 :active，disabled 用 .5 / cursor:default（宿主是 .4 / not-allowed）
+    //
+    // 这是插件里发现的第 6 处按钮规格不一致，也是最后一处。
+    const at = source.indexOf('.soul-ws-action{')
+    assert.ok(at > 0, '找不到 .soul-ws-action 基础规则')
+    const base = source.slice(at, source.indexOf('}', at) + 1)
+    const decl = (prop) => {
+      const m = new RegExp(prop.replace(/[-]/g, '\\-') + ':([^;}]+)').exec(base)
+      return m ? m[1].trim() : ''
+    }
+    // 宿主 sm 档位
+    assert.equal(decl('height'), '28px', '高度必须与宿主 sm 一致（28px），26px 不在宿主档位上')
+    assert.equal(decl('font-size'), '12px', '字号必须与宿主 sm 一致（12px）')
+    assert.equal(decl('line-height'), '18px', '行高必须与宿主 sm 一致（18px）')
+    assert.equal(decl('padding'), '0 10px', '内边距必须与宿主 sm 一致（0 10px）')
+    assert.equal(decl('border-radius'), 'var(--dsw-radius-sm)', '圆角必须用 sm 变体的 radius-sm')
+    // outline 变体
+    assert.equal(decl('border'), '.5px solid var(--dsw-alias-border-l3)', '边框必须走 border-l3（outline 变体）')
+    assert.equal(decl('background'), 'transparent', '背景必须透明（outline 语义）')
+    assert.equal(decl('color'), 'var(--dsw-alias-label-primary)', '文字色必须用 label-primary')
+    // 不得残留旧值
+    assert.equal(/settings-card-stroke/.test(base), false, '不得再用 settings-card-stroke（outline 走 border-l3）')
+    // 只禁「按钮类」出现 26px，不做全局禁令 ——
+    // 实测踩过：.soul-trail-swatch / .soul-trail-picker 是 26×26 的**色板方块**与
+    // 取色器，尺寸按图形需求定，不受按钮档位约束。全局禁令会误伤它们。
+    assert.equal(
+      /\.soul-(?:ws-action|ov-switch|ov-fix|gc-btn|session-clear|session-chip|persona-action)\{[^}]*height:26px/.test(source),
+      false,
+      '按钮类不得使用 26px 高度（宿主只有 sm=28 / md=36）'
+    )
+    // 三态齐全
+    assert.match(source, /\.soul-ws-action:hover:not\(:disabled\)\{background:var\(--dsw-alias-interactive-bg-hover\)\}/, 'hover 必须走 interactive-bg-hover')
+    assert.match(source, /\.soul-ws-action:active:not\(:disabled\)\{background:var\(--dsw-alias-interactive-bg-active\)\}/, '必须有 active 态')
+    assert.match(source, /\.soul-ws-action:disabled\{[^}]*opacity:\.4/, 'disabled 必须 opacity:.4（宿主取值）')
+    assert.match(source, /\.soul-ws-action:disabled\{[^}]*cursor:not-allowed/, 'disabled 必须 not-allowed')
+    // 危险态的 hover 用危险底色
+    assert.match(source, /\.soul-ws-action-armed:hover:not\(:disabled\)\{background:var\(--dsw-alias-interactive-bg-hover-danger\)\}/, 'armed 态 hover 必须用危险底色')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
