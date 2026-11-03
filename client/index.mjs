@@ -1129,6 +1129,30 @@ window.__ModuleLoader__.load({
       '.soul-ov-open-error{display:flex;align-items:center;gap:8px;margin:0 0 8px;padding:6px 10px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:19px}',
       '.soul-ov-open-error-close{flex:none;margin-left:auto;padding:0 4px;border:none;background:transparent;color:inherit;font:inherit;font-size:14px;line-height:1;cursor:pointer;opacity:.7}',
       '.soul-ov-open-error-close:hover{opacity:1}',
+      // ── 会话覆盖维护 ──
+      // 说明与状态行统一 12px / 1.6 行高（宿主帮助文字档位）
+      '.soul-ov-gc-hint{margin:0 0 8px;font-size:12px;line-height:19px;color:var(--dsw-alias-label-secondary)}',
+      '.soul-ov-gc-note{margin:0 0 8px;font-size:12px;line-height:19px;color:var(--dsw-alias-label-secondary)}',
+      '.soul-ov-gc-error{color:var(--dsw-alias-state-error-primary)}',
+      // 成功提示靠右，与标题同一行
+      '.soul-ov-gc-notice{margin-left:auto;font-size:12px;line-height:19px;color:var(--dsw-alias-label-secondary)}',
+      // 可回收清单：等宽短 id 胶囊，一行排开
+      '.soul-ov-gc-list{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 8px}',
+      '.soul-ov-gc-id{padding:1px 6px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}',
+      '.soul-ov-gc-more{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}',
+      '.soul-ov-gc-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}',
+      // 危险态：与 .soul-ws-action-armed 同一套视觉语言（红字 + 红描边），
+      // 但高度走宿主 sm 的 28px —— .soul-ws-action 的 26px 不在宿主档位上。
+      // 维护按钮：与 .soul-ov-fix 同一规格（宿主 sm + outline / 28px），
+      // 但**独立类名** —— .soul-ov-fix 的语义是「修复失效绑定」，
+      // 复用它会让「检查回收」和「修复绑定」共享一个可演进的样式入口，
+      // 将来清理按钮需要更危险的外形时，改一处会连带改到绑定修复。
+      '.soul-ov-gc-btn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex:none;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.soul-ov-gc-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-ov-gc-btn:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
+      '.soul-ov-gc-btn:disabled{cursor:not-allowed;opacity:.4}',
+      '.soul-ov-gc-armed{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}',
+      '.soul-ov-gc-armed:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger)}',
       '.soul-ov-more{display:inline-flex;align-items:center;align-self:flex-start;margin:2px 0 0;padding:2px 6px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:16px;cursor:pointer}',
       '.soul-ov-more:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
       // 失效绑定的「修复」按钮：宿主 Button 的 **sm + outline** 变体。
@@ -2124,6 +2148,9 @@ window.__ModuleLoader__.load({
       'ov.openNoService': '无法跳转：当前连接拿不到工作区服务',
       'ov.openFailed': '打开会话失败：{reason}',
       'ov.openErrorDismiss': '关闭提示',
+      'ov.gcTitle': '会话覆盖维护',
+      'ov.gcCheck': '检查',
+      'ov.gcRecheck': '重新检查',
       'ov.presetsHint': '预设的增删改在「设置 → 个性化 → 人设预设」里。',
       'ov.filterArchivedMissing': '读不到归档状态，可能列出已归档的会话。',
       'ov.filterChildrenMissing': '读不到子代理会话信息，可能多列出几个会话。',
@@ -2509,6 +2536,9 @@ window.__ModuleLoader__.load({
       'ov.openNoService': 'Cannot navigate: the workspace service is unavailable on this connection',
       'ov.openFailed': 'Failed to open session: {reason}',
       'ov.openErrorDismiss': 'Dismiss',
+      'ov.gcTitle': 'Session override maintenance',
+      'ov.gcCheck': 'Check',
+      'ov.gcRecheck': 'Check again',
       'ov.presetsHint': 'Presets are edited under Settings → Personalization → Persona presets.',
       'ov.filterArchivedMissing': 'Archive state is unavailable, so archived sessions may be listed.',
       'ov.filterChildrenMissing': 'Subagent sessions are unavailable, so a few extra sessions may appear.',
@@ -4380,6 +4410,54 @@ window.__ModuleLoader__.load({
       // 服务缺席时行照常显示，只是不带可点样式 —— 不给「点不动的按钮」。
       // 跳转失败要**说出来**，不能静默 —— 静默正是「点了没反应」的成因。
       const [openError, setOpenError] = React.useState(null)
+      // ── 会话覆盖维护 ──
+      //
+      // 默认**不扫描**：清理是运维动作，不该在打开面板时悄悄跑一遍（会读全部
+      // sidecar 并比对磁盘会话清单）。与插件详情页的策略一致。
+      const [gcPlan, setGcPlan] = React.useState(null)
+      const [gcError, setGcError] = React.useState(null)
+      const [gcNotice, setGcNotice] = React.useState(null)
+      const [gcBusy, setGcBusy] = React.useState(false)
+      // null = 还没预览过；数字 = 已预览、等待二次确认的条数
+      const [gcArmed, setGcArmed] = React.useState(null)
+
+      const scanGc = async () => {
+        if (gcBusy) return
+        setGcBusy(true)
+        setGcError(null)
+        setGcNotice(null)
+        try {
+          const payload = await controller.scanSessionScopeGc()
+          setGcPlan(payload)
+          // 预览即 arm：按钮文案随之变成「确认清理 N 项？」——第一次点击只是预览
+          setGcArmed(Array.isArray(payload.collectable) ? payload.collectable.length : 0)
+        } catch (err) {
+          setGcPlan(null)
+          setGcError(String((err && err.message) || err))
+        } finally {
+          setGcBusy(false)
+        }
+      }
+
+      // 删除不可逆：只有「已预览 + 有可回收项」才真删，否则再扫一次。
+      const applyGc = async () => {
+        if (gcBusy || gcPlan === null) return
+        if (gcArmed === null || gcArmed === 0) { void scanGc(); return }
+        setGcBusy(true)
+        setGcError(null)
+        try {
+          const payload = await controller.applySessionScopeGc()
+          setGcPlan(payload)
+          setGcArmed(null)
+          const removed = Array.isArray(payload.removed) ? payload.removed.length : 0
+          setGcNotice(t('sessions.collected', { count: String(removed) }))
+        } catch (err) {
+          setGcError(String((err && err.message) || err))
+        } finally {
+          setGcBusy(false)
+        }
+      }
+
       const [canOpenSession, setCanOpenSession] = React.useState(
         () => workspaceService.get() !== null
       )
@@ -5037,6 +5115,76 @@ window.__ModuleLoader__.load({
 
       // —— 骨架 ——
 
+      /**
+       * 会话覆盖维护区块。
+       *
+       * 为什么放在总览面板：这个面板本来就是「人设分布在哪些工作区/会话」的全景图，
+       * 而回收的依据正是「会话还在不在」—— 放在这里，用户看到某工作区会话数为 0
+       * 时就近能处理它留下的覆盖，不必记住 /soul sessions 这个命令。
+       *
+       * 三条安全约束（与详情页一致，缺一不可）：
+       *   ① 默认不扫描，点「检查」才跑；
+       *   ② 扫描不完整（拿不到宿主会话清单）时**不给清理入口** —— 状态机那时对一切
+       *      返回 keep，「没看到」不等于「已删除」；
+       *   ③ 删除要两步：先预览，按钮变成「确认清理 N 项？」后才真删。
+       */
+      const renderMaintenance = () => {
+        const collectable = gcPlan && Array.isArray(gcPlan.collectable) ? gcPlan.collectable.length : 0
+        const complete = gcPlan !== null && gcPlan.scanComplete !== false
+        // 真删按钮的三个条件
+        const canApply = gcArmed !== null && collectable > 0 && complete
+
+        const gcBody = (() => {
+          if (gcError !== null && gcPlan === null) {
+            return e('p', { className: 'soul-ov-gc-note soul-ov-gc-error', role: 'alert' },
+              t('sessions.scanFailed', { reason: gcError }))
+          }
+          if (gcPlan === null) {
+            return e('p', { className: 'soul-ov-gc-note' }, t('sessions.previewHint'))
+          }
+          return e(Fragment, null,
+            e('p', { className: 'soul-ov-gc-note' },
+              complete
+                ? t('sessions.summary', {
+                  total: String(gcPlan.total || 0),
+                  markable: String((gcPlan.markable || []).length),
+                  collectable: String(collectable),
+                  quarantine: String((gcPlan.quarantine || []).length)
+                })
+                : t('sessions.scanIncomplete')),
+            // 可回收清单：删之前先让用户看见具体是哪些
+            collectable > 0 && e('div', { className: 'soul-ov-gc-list' },
+              ...gcPlan.collectable.slice(0, 10).map((item) => e('code', {
+                key: item.sessionId || item.file,
+                className: 'soul-ov-gc-id'
+              }, String(item.sessionId || item.file))),
+              collectable > 10 && e('span', { className: 'soul-ov-gc-more' }, `+${collectable - 10}`)),
+            complete && collectable === 0 && e('p', { className: 'soul-ov-gc-note' }, t('sessions.nothing'))
+          )
+        })()
+
+        return e('div', { className: 'soul-ov-card soul-ov-gc' },
+          e('div', { className: 'soul-ov-card-head' },
+            e('h3', { className: 'soul-ov-gc-title' }, t('ov.gcTitle')),
+            gcNotice !== null && e('span', { className: 'soul-ov-gc-notice', role: 'status' }, gcNotice)),
+          e('p', { className: 'soul-ov-gc-hint' }, t('sessions.hint')),
+          gcBody,
+          e('div', { className: 'soul-ov-gc-actions' },
+            e('button', {
+              type: 'button',
+              className: 'soul-ov-gc-btn',
+              disabled: gcBusy,
+              onClick: () => { void scanGc() }
+            }, gcBusy ? t('sessions.scanning') : (gcPlan === null ? t('ov.gcCheck') : t('ov.gcRecheck'))),
+            canApply && e('button', {
+              type: 'button',
+              className: 'soul-ov-gc-btn soul-ov-gc-armed',
+              disabled: gcBusy,
+              onClick: () => { void applyGc() }
+            }, t('sessions.collectArmed', { count: String(collectable) })))
+        )
+      }
+
       const body = () => {
         if (error !== null) {
           return e('div', { className: 'soul-ov' },
@@ -5127,7 +5275,9 @@ window.__ModuleLoader__.load({
               filters.children === false ? t('ov.filterChildrenMissing') : '')
           ),
 
-          renderPresets()
+          renderPresets(),
+          // 维护区放最后：它是运维动作，不该出现在「当前生效」之前抢注意力
+          renderMaintenance()
         )
       }
 

@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 78
+const EXPECTED_ASSERTIONS = 79
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -464,6 +464,24 @@ async function boot(configPayload = {}, personaPayload = null, options = {}) {
       indexProblem: null,
       activityScanned: true,
       activityProblem: null
+    }),
+    // 会话覆盖回收。默认是「扫描完整、无任何条目」——宿主在健康状态下的样子。
+    // 危险操作的用例自己覆写这个桩（scanComplete:false、collectable 非空等）。
+    //
+    // 这个桩原本缺失，后果不只是「用到时才报错」：C84 有一条断言守「不得在挂载时
+    // 自动扫描」，而做判断力对照时，把扫描塞进 useEffect 的变体会**真的发请求**，
+    // 拿不到路由就抛错 → 整个验证进程崩溃 → C84 根本没跑到。
+    // 崩溃看起来像「变异被检测到了」，其实掩盖了「这条断言到底有没有效」。
+    '/api/soul/session-scope/gc': () => ({
+      ok: true,
+      dryRun: true,
+      scanComplete: true,
+      persistenceProblem: null,
+      total: 0,
+      entries: [],
+      markable: [],
+      collectable: [],
+      quarantine: []
     })
   }
   const world = loadClient(routes, options)
@@ -4544,6 +4562,48 @@ function componentBody(text, name) {
     assert.equal(/label-tertiary/.test(css), false, '不得退回 label-tertiary（亮色对比度不达标）')
     // 它是可点的：必须保留 pointer 光标
     assert.match(css, /cursor:pointer/, '可交互控件必须显示 pointer 光标')
+  })
+
+  await check('C84 总体概览·会话覆盖维护：危险操作必须两步，扫描不完整不得给删除入口', async () => {
+    // 会话覆盖回收本来只有两个入口：/soul sessions 命令、插件详情页按钮。
+    // 总览面板是最自然的位置（它展示的正是「哪个工作区还有几个会话」），
+    // 但删除不可逆，所以接进来必须守住三条：
+    //
+    //   ① 默认**不扫描** —— 清理是运维动作，不该在打开面板时悄悄跑一遍
+    //      （要读全部 sidecar 并比对磁盘会话清单）
+    //   ② 扫描不完整时**不给删除入口** —— 状态机那时对一切返回 keep，
+    //      「没看到」不等于「已删除」；这是「缺证据时保留」在 UI 上的最后一道闸
+    //   ③ 删除要**两步**：先预览，按钮变成「确认清理 N 项？」后才真删
+    const body = componentBody(source, 'SoulOverview')
+    assert.ok(body !== '', '找不到 SoulOverview 组件体')
+
+    // ① 默认不扫描
+    assert.match(body, /const \[gcPlan, setGcPlan\] = React\.useState\(null\)/, '维护状态初始必须是 null（未扫描）')
+    // 用精确形态断言：effect 回调体（不含嵌套 }）里不得出现扫描调用。
+    // 原先写的是 /useEffect\\([\\s\\S]{0,400}scanSessionScopeGc/ —— 太宽，
+    // 实测「挂载时自动扫描」的变体照样通过（因为更早的 useEffect 也在这个窗口里）。
+    assert.equal(/useEffect\(\(\) => \{[^}]*scanSessionScopeGc/.test(body), false, '不得在挂载时自动扫描（清理是运维动作）')
+    assert.equal(/useEffect\(\(\) => \{[^}]*scanGc/.test(body), false, '不得在挂载时调用扫描函数')
+
+    // ② dry-run 与真删走两个不同方法
+    assert.match(body, /controller\.scanSessionScopeGc\(\)/, '必须调用 dry-run 扫描')
+    assert.match(body, /controller\.applySessionScopeGc\(\)/, '必须调用真删方法')
+
+    // ③ 真删按钮的三个条件缺一不可
+    assert.match(body, /const complete = gcPlan !== null && gcPlan\.scanComplete !== false/, '必须把「扫描完整」算成一个独立条件')
+    assert.match(body, /const canApply = gcArmed !== null && collectable > 0 && complete/, '真删必须同时满足：已预览 + 有可回收项 + 扫描完整')
+
+    // ④ 扫描不完整时要显式说明，而不是静默显示 0
+    assert.match(body, /t\('sessions\.scanIncomplete'\)/, '扫描不完整必须如实说明')
+
+    // ⑤ 按钮用独立类名：复用 .soul-ov-fix 会让「修复绑定」与「清理回收」共享样式入口
+    assert.match(body, /className: 'soul-ov-gc-btn'/, '维护按钮必须用独立类名 .soul-ov-gc-btn')
+    assert.equal(/soul-ov-fix/.test(body.slice(body.indexOf('renderMaintenance'), body.indexOf('const body = ()'))), false, '维护区块不得复用 .soul-ov-fix')
+    assert.match(source, /\.soul-ov-gc-btn\{[^}]*height:28px/, '维护按钮高度必须与宿主 sm 一致（28px）')
+    assert.match(source, /\.soul-ov-gc-armed\{[^}]*state-error-primary/, 'armed 态必须用错误色（危险操作）')
+
+    // ⑥ 删除后要有可见结果
+    assert.match(body, /t\('sessions\.collected'/, '清理后必须显示结果')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
