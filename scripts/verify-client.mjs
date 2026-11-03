@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 81
+const EXPECTED_ASSERTIONS = 82
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4745,6 +4745,63 @@ function componentBody(text, name) {
         + offenders.map((b) => `  ${b.selector} → ${b.height}px / ${b.fontSize}px / ${b.lineHeight}`).join('\n')
         + '\n（新增按钮请改用上述两档；方形图标按钮请显式给 width，会自动排除）'
     )
+  })
+
+  await check('C87 引用作为上下文：按会话分桶、选区不塌陷、经 context 送达', async () => {
+    // 这个功能横跨客户端与宿主，所以一条断言同时查两端 —— 断任何一端都会「功能消失」，
+    // 而两端各自看起来都正常，正是最难排查的形态。
+    const host = readFileSync(new URL('../index.mjs', import.meta.url), 'utf8')
+
+    // ── 客户端 ──
+    // ① 引用层必须**按会话分桶**：A 会话的引用绝不能出现在 B 会话的请求里，
+    //    那比不送达更糟（模型会以为你说了一段你没说的话）。
+    assert.match(source, /const quoteBuckets = new Map\(\)/, '引用层必须是模块级 Map（跨槽位共享）')
+    assert.match(source, /function quoteBucketOf\(sessionId\)/, '必须有按 sessionId 取桶的函数')
+    // ★ 光有函数还不够：必须真的**用 sessionId 派生桶键**。
+    // 实测漏检过 —— 只断言函数存在时，把 key 写成空常量（所有会话共用一个桶）
+    // 这个变体照样通过，而这正是最危险的失败形态（跨会话串引用）。
+    const bucketFnAt = source.indexOf('function quoteBucketOf(sessionId)')
+    const bucketFn = source.slice(bucketFnAt, bucketFnAt + 420)
+    assert.match(bucketFn, /const key = [^\n]*sessionId/, '桶键必须由 sessionId 派生（不能用常量）')
+    assert.match(bucketFn, /quoteBuckets\.get\(key\)/, '必须按该键取桶')
+    // 模块级：引用层不能写在组件体内（组件重挂载会丢，两个槽位也共享不到）
+    const bucketIndent = source.split('\n').find((l) => l.includes('const quoteBuckets = new Map()'))
+    assert.ok(bucketIndent !== undefined, '找不到 quoteBuckets 声明')
+    assert.equal(bucketIndent.match(/^\s*/)[0].length, 4, 'quoteBuckets 必须是模块级（4 空格缩进）')
+
+    // ② 按钮按下时不得塌陷选区 —— 否则「选中一段再点」永远拿不到那段话
+    assert.match(source, /onMouseDown: \(ev\) => ev\.preventDefault\(\)/, '引用按钮必须 onMouseDown preventDefault')
+    assert.match(source, /window\.getSelection\(\)/, '必须从 window.getSelection() 取选区文本')
+
+    // ③ 开关关闭时两个组件都不渲染（关掉只影响引用，人设照常）
+    const actionBody = componentBody(source, 'SoulQuoteAction')
+    const dockBody = componentBody(source, 'SoulQuoteDock')
+    assert.ok(actionBody !== '' && dockBody !== '', '找不到引用相关组件')
+    assert.match(actionBody, /state\.quoteAsContext !== true\) return null/, '按钮必须受开关控制')
+    assert.match(dockBody, /state\.quoteAsContext !== true\) return null/, '浮层必须受开关控制')
+
+    // ④ 引用要同步给宿主（否则送达侧永远拿到空）
+    assert.match(dockBody, /controller\.saveQuotes\(/, '浮层必须把引用推给宿主')
+    assert.match(source, /async saveQuotes\(sessionId, quotes\)/, 'controller 必须有 saveQuotes')
+    assert.match(source, /postJSON\('\/api\/soul\/quotes'/, 'saveQuotes 必须打到 /api/soul/quotes')
+
+    // ── 宿主 ──
+    assert.match(host, /path: '\/api\/soul\/quotes'/, '宿主必须有引用端点')
+    assert.match(host, /const quotePending = new Map\(\)/, '宿主侧引用必须按会话存储')
+    assert.match(host, /spCtx\.systemPrompt\.context\(/, '引用必须经 systemPrompt.context 送达')
+
+    // ⑤ context 的两个参数是安全底线：
+    //    required —— 被 suppressRuntimeContext() 时也要送达（用户明确表达的意图）
+    //    interpolate:false —— 引用原文含 {{...}} 时不会让整个装配抛错
+    const ctxAt = host.indexOf("name: 'soul:quotes'")
+    assert.ok(ctxAt > 0, '找不到 soul:quotes 的 context 注册')
+    const ctxBlock = host.slice(ctxAt, ctxAt + 700)
+    assert.match(ctxBlock, /required: true/, '引用 context 必须 required（不被 suppress 吞掉）')
+    assert.match(ctxBlock, /interpolate: false/, '引用 context 必须关闭插值（原文含 {{}} 时不能炸）')
+
+    // ⑥ 两端 sessionId 必须**同样归一化** —— 形式不一致会「存了但取不到」，静默失配
+    assert.match(host, /function quoteKeyOf\(raw\)/, '宿主必须归一化 sessionId')
+    assert.match(host, /replace\(\/\^session-\/, ''\)/, '宿主必须剥掉 session- 前缀')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

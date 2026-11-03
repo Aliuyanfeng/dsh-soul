@@ -64,6 +64,7 @@ function record(name, ok, detail) {
 function makeCtx(agentSpecs) {
   const state = {
     sections: [],        // 每次 systemPrompt.section() 的注册
+    contexts: [],        // 每次 systemPrompt.context() 的注册（引用送达走这条通道）
     disposals: 0,
     routes: new Map(),   // path -> handler
     routeKeys: [],       // "kind path" 注册序列（重复注册在 register 里直接抛）
@@ -104,6 +105,17 @@ function makeCtx(agentSpecs) {
   const systemPrompt = {
     section(options) {
       state.sections.push(options)
+      let live = true
+      return () => {
+        if (live) state.disposals += 1
+        live = false
+      }
+    },
+    // 「引用作为上下文」走的是 **context** 通道而不是 section。
+    // 桩若不提供它，插件装配时会抛 "systemPrompt.context is not a function"，
+    // 而那会让所有 e2e 用例一起崩掉 —— 看不出真实原因。
+    context(options) {
+      state.contexts.push(options)
       let live = true
       return () => {
         if (live) state.disposals += 1

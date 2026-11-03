@@ -834,6 +834,13 @@ window.__ModuleLoader__.load({
         return await this.postJSON('/api/soul/session-scope/gc', { apply: true })
       }
 
+      // 引用作为上下文：把当前会话的引用推给宿主。
+      // 客户端只维护「这个会话引用了哪些片段」，送达由宿主的 systemPrompt.context
+      // 在每次请求前读取 —— 两边职责分开，客户端不需要知道提示词怎么拼。
+      async saveQuotes(sessionId, quotes) {
+        return await this.postJSON('/api/soul/quotes', { sessionId, quotes })
+      }
+
       // 统一请求：body 为 null 时不携带请求体（GET 用）
       async postJSON(path, body, overrides = {}) {
         const url = new URL(path, hostBase())
@@ -1131,6 +1138,26 @@ window.__ModuleLoader__.load({
       '.soul-ov-open-error{display:flex;align-items:center;gap:8px;margin:0 0 8px;padding:6px 10px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:19px}',
       '.soul-ov-open-error-close{flex:none;margin-left:auto;padding:0 4px;border:none;background:transparent;color:inherit;font:inherit;font-size:14px;line-height:1;cursor:pointer;opacity:.7}',
       '.soul-ov-open-error-close:hover{opacity:1}',
+      // ── 引用作为上下文 ──
+      // 动作行按钮：走宿主 sm 档（28 / 12 / 18 / radius-sm / border-l3），
+      // 与插件里其它按钮同规格 —— C86 的档位审计会自动检查它。
+      '.soul-quote-action{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
+      '.soul-quote-action:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-quote-action:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
+      '.soul-quote-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      // 浮层：与宿主的「目标 / 队列」同区，视觉上贴齐它们（细边框 + 圆角 + 模块底色）
+      '.soul-quote-dock{display:flex;flex-direction:column;gap:4px;margin:0 0 6px;padding:6px 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
+      '.soul-quote-dock-head{display:flex;align-items:center;gap:8px}',
+      '.soul-quote-dock-title{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
+      '.soul-quote-dock-clear{margin-left:auto;padding:0 4px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.soul-quote-dock-clear:hover{color:var(--dsw-alias-label-primary)}',
+      '.soul-quote-item{display:flex;align-items:flex-start;gap:6px}',
+      '.soul-quote-text{flex:1 1 auto;min-width:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);word-break:break-word}',
+      // 删除按钮是**方形图标按钮**（有固定 width）—— 按 C86 的判据会自动排除在档位审计之外，
+      // 这正是「方形控件尺寸由图形需求决定」的正当用法。
+      '.soul-quote-remove{flex:none;width:18px;height:18px;padding:0;border:none;border-radius:var(--dsw-radius-xs);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:13px;line-height:1;cursor:pointer}',
+      '.soul-quote-remove:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+
       // ── 会话覆盖维护 ──
       // 说明与状态行统一 12px / 1.6 行高（宿主帮助文字档位）
       '.soul-ov-gc-hint{margin:0 0 8px;font-size:12px;line-height:19px;color:var(--dsw-alias-label-secondary)}',
@@ -2028,6 +2055,13 @@ window.__ModuleLoader__.load({
       'field.toolConfirm': '人设变更需确认',
       'field.quoteAsContext': '引用作为上下文',
       'hint.quoteAsContext': '开启后，可在回答里选中一段文字并点「引用」，它作为上下文随下一轮请求送达模型 —— 不进你的消息正文，也不写进对话历史。',
+      'quote.action': '引用',
+      'quote.actionHint': '选中回答里的一段文字后点此，作为上下文随下一轮请求送达模型',
+      'quote.selectFirst': '先选中一段文字',
+      'quote.tooMany': '引用已达上限',
+      'quote.dockTitle': '引用（{count}）',
+      'quote.clear': '清空',
+      'quote.remove': '删除这条引用',
       'hint.toolConfirm': '开启后，Agent 改人设会先在输入框处弹出审批面板（Enter 允许 / Esc 拒绝）。若会话审批通道不可用（策略为 never），则退化为待确认提议，需用 /soul confirm 处理 —— 此时建议关闭本开关，否则每次改动都要手输命令。',
       // —— 变更记录（0.8.0）——
       'group.history': '变更记录',
@@ -2423,6 +2457,13 @@ window.__ModuleLoader__.load({
       'field.toolConfirm': 'Require confirmation for persona changes',
       'field.quoteAsContext': 'Quote as context',
       'hint.quoteAsContext': 'When on, select a passage in a reply and click "Quote" — it is sent to the model as context with the next request, without entering your message or the chat history.',
+      'quote.action': 'Quote',
+      'quote.actionHint': 'Select a passage in a reply, then click here to send it to the model as context with the next request',
+      'quote.selectFirst': 'Select some text first',
+      'quote.tooMany': 'Quote limit reached',
+      'quote.dockTitle': 'Quote ({count})',
+      'quote.clear': 'Clear',
+      'quote.remove': 'Remove this quote',
       'hint.toolConfirm': 'When on, persona changes by the agent first raise an approval panel above the input box (Enter = allow, Esc = reject). If the session approval channel is unavailable (policy = never), it falls back to a pending proposal applied only via /soul confirm. Under full permissions the panel never appears, so turning this switch off is recommended.',
       // —— Change history (0.8.0) ——
       'group.history': 'Change history',
@@ -4422,6 +4463,200 @@ window.__ModuleLoader__.load({
 
     /** 每个工作区在总览里最多列出多少条会话（其余折叠成一行计数）。 */
     const SESSIONS_PER_WS = 20
+
+    // -------------------------------------------------------------------------
+    // 引用作为上下文（0.11.0）
+    // -------------------------------------------------------------------------
+    //
+    // 选中回答里的一段文字 → 点「引用」→ 进入按会话分桶的引用层 → 下一轮请求时
+    // 由宿主经 systemPrompt.context 送达模型（**不进消息正文、不写进对话历史**）。
+    //
+    // 为什么引用层是**模块级 Map**：
+    //   它要在两个槽位之间共享（assistant-actions 的按钮、input.dock 的浮层），
+    //   且组件重挂载 / 切会话都不能丢。组件 state 做不到跨槽位共享。
+    //
+    // 为什么要按 sessionId 分桶：多会话并行时，A 会话的引用绝不能出现在 B 会话的
+    // 请求里 —— 那比不送达更糟（模型会以为你说了一段你没说的话）。
+    const QUOTE_MAX_ITEMS = 20
+    const QUOTE_MAX_CHARS = 4000
+    const QUOTE_PREVIEW_CHARS = 60
+    const quoteBuckets = new Map()
+
+    function quoteBucketOf(sessionId) {
+      const key = typeof sessionId === 'string' && sessionId !== '' ? sessionId : ''
+      let bucket = quoteBuckets.get(key)
+      if (bucket === undefined) {
+        bucket = { quotes: [], listeners: new Set() }
+        quoteBuckets.set(key, bucket)
+      }
+      return bucket
+    }
+
+    function quoteListOf(sessionId) {
+      return quoteBucketOf(sessionId).quotes
+    }
+
+    function quoteSubscribe(sessionId, listener) {
+      const bucket = quoteBucketOf(sessionId)
+      bucket.listeners.add(listener)
+      return () => {
+        bucket.listeners.delete(listener)
+      }
+    }
+
+    function quoteNotify(sessionId) {
+      for (const listener of [...quoteBucketOf(sessionId).listeners]) listener()
+    }
+
+    /**
+     * 追加一条引用。
+     *
+     * 上限两条腿：条数（20）与单条长度（4000 字符）。没有上限的引用会成为
+     * 「往提示词里灌任意长文本」的后门，而送达侧还有一层字符预算兜底。
+     *
+     * @returns 是否真的写入（空文本与超限都返回 false，由调用方决定提示）
+     */
+    function quoteAdd(sessionId, text) {
+      const raw = String(text === null || text === undefined ? '' : text)
+      const trimmed = raw.trim()
+      if (trimmed === '') return { ok: false, reason: 'empty' }
+      const bucket = quoteBucketOf(sessionId)
+      if (bucket.quotes.length >= QUOTE_MAX_ITEMS) return { ok: false, reason: 'tooMany' }
+      const clipped = trimmed.length > QUOTE_MAX_CHARS ? trimmed.slice(0, QUOTE_MAX_CHARS) : trimmed
+      bucket.quotes.push({
+        id: 'q' + Date.now().toString(36) + '-' + bucket.quotes.length,
+        text: clipped,
+        truncated: clipped.length < trimmed.length
+      })
+      quoteNotify(sessionId)
+      return { ok: true, reason: null }
+    }
+
+    function quoteRemove(sessionId, id) {
+      const bucket = quoteBucketOf(sessionId)
+      const next = bucket.quotes.filter((q) => q.id !== id)
+      if (next.length === bucket.quotes.length) return
+      bucket.quotes = next
+      quoteNotify(sessionId)
+    }
+
+    function quoteClear(sessionId) {
+      const bucket = quoteBucketOf(sessionId)
+      if (bucket.quotes.length === 0) return
+      bucket.quotes = []
+      quoteNotify(sessionId)
+    }
+
+    /**
+     * 取当前选区文本。
+     *
+     * 只认「有选区」的情况：没有选区时我们不猜你想引用哪条消息 ——
+     * 猜错的代价是模型收到一段你没打算引用的内容。
+     */
+    function currentSelectionText() {
+      if (typeof window === 'undefined' || typeof window.getSelection !== 'function') return ''
+      const selection = window.getSelection()
+      if (selection === null) return ''
+      return String(selection.toString() || '')
+    }
+
+    // ── 按钮：挂在每条助手消息的动作行 ──
+    function SoulQuoteAction(props) {
+      const { useSoulController } = props
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const state = useSoulController((s) => s)
+      const sessionId = typeof props.sessionId === 'string' && props.sessionId !== '' ? props.sessionId : ''
+      const [notice, setNotice] = React.useState(null)
+
+      if (sessionId === '') return null
+      if (state.quoteAsContext !== true) return null
+
+      const onQuote = () => {
+        const result = quoteAdd(sessionId, currentSelectionText())
+        if (result.ok) {
+          // 引用成功后清掉选区：视觉上「这段已经被取走了」，
+          // 避免用户以为还要再点一次。
+          if (typeof window !== 'undefined' && window.getSelection) {
+            const selection = window.getSelection()
+            if (selection !== null && typeof selection.removeAllRanges === 'function') {
+              selection.removeAllRanges()
+            }
+          }
+          setNotice(null)
+          return
+        }
+        setNotice(result.reason === 'tooMany' ? t('quote.tooMany') : t('quote.selectFirst'))
+        if (typeof setTimeout === 'function') {
+          setTimeout(() => setNotice(null), 2400)
+        }
+      }
+
+      return e(Fragment, null,
+        e('button', {
+          type: 'button',
+          className: 'soul-quote-action',
+          // ★ 必须 preventDefault：按下按钮会先塌陷选区，那样「选中一段再点」
+          //   就永远拿不到那段话（这是原库记在同一处的坑）。
+          onMouseDown: (ev) => ev.preventDefault(),
+          onClick: onQuote,
+          title: t('quote.actionHint')
+        }, notice !== null ? notice : t('quote.action')))
+    }
+
+    // ── 浮层：挂在输入框上方（与「目标」「队列」同区） ──
+    function SoulQuoteDock(props) {
+      const { useSoulController } = props
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const state = useSoulController((s) => s)
+      const sessionId = typeof props.sessionId === 'string' && props.sessionId !== '' ? props.sessionId : ''
+      const [quotes, setQuotes] = React.useState(() => (sessionId === '' ? [] : [...quoteListOf(sessionId)]))
+
+      React.useEffect(() => {
+        if (sessionId === '') return undefined
+        setQuotes([...quoteListOf(sessionId)])
+        return quoteSubscribe(sessionId, () => setQuotes([...quoteListOf(sessionId)]))
+      }, [sessionId])
+
+      // 把引用同步给宿主。用「id 序列」当依赖而不是数组本身 —— 数组每次都是新引用，
+      // 直接依赖它会让 effect 每渲染都跑一遍。
+      //
+      // 空数组即清除（端点语义如此），所以「清空」不需要额外的 API。
+      const quoteKey = quotes.map((q) => q.id).join('|')
+      const controller = props.controller
+      React.useEffect(() => {
+        if (sessionId === '') return
+        if (!controller || typeof controller.saveQuotes !== 'function') return
+        // 失败不打断用户：引用留在本地，下一次变更会再试。
+        // 送达侧的 context 每次都读宿主侧的最新值，所以一次失败不影响已有引用。
+        Promise.resolve(controller.saveQuotes(sessionId, quotes.map((q) => ({ text: q.text }))))
+          .catch(() => {})
+      }, [sessionId, quoteKey])
+
+      if (sessionId === '') return null
+      if (state.quoteAsContext !== true) return null
+      if (quotes.length === 0) return null
+
+      return e('div', { className: 'soul-quote-dock' },
+        e('div', { className: 'soul-quote-dock-head' },
+          e('span', { className: 'soul-quote-dock-title' },
+            t('quote.dockTitle', { count: String(quotes.length) })),
+          e('button', {
+            type: 'button',
+            className: 'soul-quote-dock-clear',
+            onClick: () => quoteClear(sessionId)
+          }, t('quote.clear'))),
+        ...quotes.map((quote) => e('div', { className: 'soul-quote-item', key: quote.id },
+          e('span', { className: 'soul-quote-text' },
+            quote.text.length > QUOTE_PREVIEW_CHARS
+              ? quote.text.slice(0, QUOTE_PREVIEW_CHARS) + '…'
+              : quote.text),
+          e('button', {
+            type: 'button',
+            className: 'soul-quote-remove',
+            'aria-label': t('quote.remove'),
+            onClick: () => quoteRemove(sessionId, quote.id)
+          }, '×'))))
+    }
 
     function SoulOverview(props) {
       const { controller, useSoulController } = props
@@ -7665,6 +7900,40 @@ window.__ModuleLoader__.load({
           sessionId: typeof sessionId === 'string' && sessionId !== '' ? sessionId : null
         })
       }, SoulSessionPersonaLabel))
+
+      // 引用作为上下文 —— 两个槽位分工：
+      //   · assistant-actions：每条助手消息的动作行放「引用」按钮（ownerProps 带 messageId，
+      //     本插件不依赖它，取选区就够）；
+      //   · input.dock：输入框上方的引用浮层，与宿主的「目标」(order 10)、「队列」(order 20) 同区。
+      // 两者都是 scope:'session'，inject 的位置参数就是 sessionId —— 引用层按它分桶，
+      // 保证 A 会话的引用不会出现在 B 会话的请求里。
+      ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
+        name: 'conversation.chat.assistant-actions',
+        id: 'soul-quote-action',
+        order: 30,
+        locale: NS,
+        inject: (sessionId) => ({
+          hooks: {
+            soulController: controller.store
+          },
+          controller,
+          sessionId: typeof sessionId === 'string' && sessionId !== '' ? sessionId : null
+        })
+      }, SoulQuoteAction))
+
+      ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+        name: 'conversation.input.dock',
+        id: 'soul-quote-dock',
+        order: 30,
+        locale: NS,
+        inject: (sessionId) => ({
+          hooks: {
+            soulController: controller.store
+          },
+          controller,
+          sessionId: typeof sessionId === 'string' && sessionId !== '' ? sessionId : null
+        })
+      }, SoulQuoteDock))
 
       // 会话人设标签：挂到会话 header（标题旁，「创造模式」「费用明细」那一行）。
       //

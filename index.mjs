@@ -1239,10 +1239,83 @@ function cwdOfAgent(agent) {
   return typeof cwd === 'string' && cwd.trim() !== '' ? cwd : null
 }
 
+// ==================== 引用作为上下文 ====================
+
+// 按会话分桶的待送达引用。
+//
+// 键做**前缀归一化**：客户端槽位 inject 拿到的 sessionId 与宿主 `agent.session.id`
+// 的形式不保证一致（历史上见过带 / 不带 `session-` 两种）。统一剥掉前缀再存，
+// 避免「引用明明存了、送达时却取不到」这种静默失配 —— 那类问题最难排查。
+const quotePending = new Map()
+
+const QUOTE_MAX_ITEMS = 20
+const QUOTE_MAX_CHARS = 4000
+const QUOTE_PROMPT_BUDGET = 8000
+
+function quoteKeyOf(raw) {
+  return String(raw === null || raw === undefined ? '' : raw).replace(/^session-/, '')
+}
+
+function setQuotes(rawSessionId, rawQuotes) {
+  const key = quoteKeyOf(rawSessionId)
+  if (key === '') return { ok: false, error: '缺少 sessionId' }
+  const list = Array.isArray(rawQuotes) ? rawQuotes : []
+  const cleaned = []
+  for (const item of list) {
+    if (cleaned.length >= QUOTE_MAX_ITEMS) break
+    const text = typeof item === 'string' ? item : String(item && item.text !== undefined ? item.text : '')
+    const trimmed = text.trim()
+    if (trimmed === '') continue
+    cleaned.push({ text: trimmed.slice(0, QUOTE_MAX_CHARS) })
+  }
+  if (cleaned.length === 0) quotePending.delete(key)
+  else quotePending.set(key, cleaned)
+  return { ok: true, count: cleaned.length }
+}
+
+function quotesOf(rawSessionId) {
+  const key = quoteKeyOf(rawSessionId)
+  return key === '' ? [] : (quotePending.get(key) || [])
+}
+
 // ==================== HTTP 路由 ====================
 
 function registerRoutes(ctx) {
   ctx.inject(['webServer'], (wsCtx) => {
+    // 引用作为上下文：客户端推入 / 清除某个会话的引用。
+    //
+    // 只做「存」与「取」，不做送达 —— 送达由 systemPrompt.context 在每次请求前读取。
+    // 空数组视为清除，省掉一个 delete 方法（客户端只需一个调用点）。
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/quotes',
+      handler: async (req, res) => {
+        const send = (status, body) => {
+          res.writeHead(status, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(body))
+        }
+        if (req.method !== 'POST') {
+          send(405, { ok: false, error: 'Method not allowed' })
+          return
+        }
+        try {
+          const parsed = await readJsonBody(req)
+          if (!parsed.ok) {
+            send(parsed.status, { ok: false, error: parsed.error })
+            return
+          }
+          const result = setQuotes(parsed.body && parsed.body.sessionId, parsed.body && parsed.body.quotes)
+          if (!result.ok) {
+            send(400, result)
+            return
+          }
+          send(200, result)
+        } catch (err) {
+          send(500, { ok: false, error: String((err && err.message) || err) })
+        }
+      }
+    })
+
     // 获取配置
     wsCtx.webServer.register({
       kind: 'exact',
@@ -4230,6 +4303,42 @@ let globalUpdatePrompt = null
 function registerSystemPrompt(ctx) {
   ctx.inject(['systemPrompt'], (spCtx) => {
     let disposeSection = null
+
+    // 引用作为上下文 —— 走 **context** 而不是 section。
+    //
+    // 为什么是 context：section 的产物是 system message，一旦进入会话历史就固定了，
+    // 「会话进行中改配置不生效」正是这个成因（见 lib/injection.mjs 的模块头注释）。
+    // 而 context 由宿主在**每次模型请求前** refreshContext 重新求值并投影，
+    // 正好匹配「用户随时加 / 删引用」这种高频变化的语义。
+    //
+    // required: true 的理由：即使宿主或用户调用 suppressRuntimeContext()，引用也要送达。
+    // 它承载的是用户**明确表达**的意图，静默丢弃比不提供这个功能更糟。
+    //
+    // interpolate: false 与 section 同理：引用原文里若含 {{...}}，插值的严格模式会让
+    // 整个 system prompt 装配抛错 —— 不是「忽略那段」，而是该会话每一轮都失败。
+    spCtx.systemPrompt.context({
+      name: 'soul:quotes',
+      order: 100,
+      required: true,
+      interpolate: false,
+      text: (context) => {
+        const sessionId = context && context.agent && context.agent.session
+          ? context.agent.session.id
+          : undefined
+        const quotes = quotesOf(sessionId)
+        if (quotes.length === 0) return ''
+        let budget = QUOTE_PROMPT_BUDGET
+        const parts = []
+        for (let i = 0; i < quotes.length; i++) {
+          const block = `引用${i + 1}：\n${quotes[i].text}`
+          if (block.length > budget) break
+          budget -= block.length
+          parts.push(block)
+        }
+        if (parts.length === 0) return ''
+        return '## 用户当前引用的原文\n\n用户选中了下列内容并希望你就此回应（这是**引用**，不是用户本次输入）：\n\n' + parts.join('\n\n')
+      }
+    })
 
     const registerSection = () => {
       // 重新注册前先移除旧 section。
