@@ -63,6 +63,7 @@ window.__ModuleLoader__.load({
       customInstructions: '',
       // set_persona 确认模式（v0.5.0）
       requireToolConfirmation: false,
+  quoteAsContext: true,
       // 输入框光轨（v0.6.0）：Agent 回复中时输入框边框的流光动效
       trailEnabled: true,
       trailColor: '#679EFE',
@@ -460,6 +461,7 @@ window.__ModuleLoader__.load({
         s.language = config.language || 'zh'
         s.customInstructions = config.customInstructions
         s.requireToolConfirmation = config.requireToolConfirmation === true
+    s.quoteAsContext = config.quoteAsContext === true
         s.trailEnabled = config.trailEnabled !== false
         s.trailColor = config.trailColor || TRAIL_COLOR_FALLBACK
         s.trailSpeed = config.trailSpeed || 'slow'
@@ -2024,6 +2026,8 @@ window.__ModuleLoader__.load({
       'sessions.previewHint': '预览不会删除任何文件；确认后才会真的清理。',
       'group.tool': 'Agent 工具',
       'field.toolConfirm': '人设变更需确认',
+      'field.quoteAsContext': '引用作为上下文',
+      'hint.quoteAsContext': '开启后，可在回答里选中一段文字并点「引用」，它作为上下文随下一轮请求送达模型 —— 不进你的消息正文，也不写进对话历史。',
       'hint.toolConfirm': '开启后，Agent 改人设会先在输入框处弹出审批面板（Enter 允许 / Esc 拒绝）。若会话审批通道不可用（策略为 never），则退化为待确认提议，需用 /soul confirm 处理 —— 此时建议关闭本开关，否则每次改动都要手输命令。',
       // —— 变更记录（0.8.0）——
       'group.history': '变更记录',
@@ -2417,6 +2421,8 @@ window.__ModuleLoader__.load({
       'sessions.previewHint': 'Previewing deletes nothing; files are removed only after you confirm.',
       'group.tool': 'Agent tools',
       'field.toolConfirm': 'Require confirmation for persona changes',
+      'field.quoteAsContext': 'Quote as context',
+      'hint.quoteAsContext': 'When on, select a passage in a reply and click "Quote" — it is sent to the model as context with the next request, without entering your message or the chat history.',
       'hint.toolConfirm': 'When on, persona changes by the agent first raise an approval panel above the input box (Enter = allow, Esc = reject). If the session approval channel is unavailable (policy = never), it falls back to a pending proposal applied only via /soul confirm. Under full permissions the panel never appears, so turning this switch off is recommended.',
       // —— Change history (0.8.0) ——
       'group.history': 'Change history',
@@ -2654,7 +2660,7 @@ window.__ModuleLoader__.load({
     ]
 
     // 设置页表单驱动的字段（dirty 检测与保存载荷共用）。
-    const FORM_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+    const FORM_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
 
     // 由**别的界面**就地管理、因而不在这张表单里的配置字段：
     //   · `historyMaxEntries` —— 插件详情页的变更记录区块（改完即时落盘，不经保存按钮）；
@@ -2701,6 +2707,7 @@ window.__ModuleLoader__.load({
       language: 'field.language',
       customInstructions: 'field.instructions',
       requireToolConfirmation: 'field.toolConfirm',
+      quoteAsContext: 'field.quoteAsContext',
       trailEnabled: 'trail.enable',
       trailColor: 'trail.color',
       trailSpeed: 'trail.speed',
@@ -5801,7 +5808,7 @@ window.__ModuleLoader__.load({
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
 
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
@@ -5815,6 +5822,7 @@ window.__ModuleLoader__.load({
       const [localLanguage, setLocalLanguage] = React.useState(language || 'zh')
       const [localInstructions, setLocalInstructions] = React.useState(customInstructions)
       const [localToolConfirm, setLocalToolConfirm] = React.useState(requireToolConfirmation === true)
+      const [localQuote, setLocalQuote] = React.useState(quoteAsContext === true)
       const [localTrailEnabled, setLocalTrailEnabled] = React.useState(trailEnabled === true)
       const [localTrailColor, setLocalTrailColor] = React.useState(trailColor || TRAIL_COLOR_FALLBACK)
       const [localTrailSpeed, setLocalTrailSpeed] = React.useState(trailSpeed || 'slow')
@@ -5935,9 +5943,9 @@ window.__ModuleLoader__.load({
       //
       // saving 期间仍然整体跳过：保存流程自身会带着响应回填（见 saveConfig →
       // applyConfig → 本 effect），中途再插一次写入只会造成闪烁。
-      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
-      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
-      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
+      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, quoteAsContext: quoteAsContext === true, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
       const lastSyncRef = React.useRef(null)
       // 判断某字段是否被用户动过：与「上次同步的快照」比。没有快照（首帧）时
       // 一律视为未动过 —— 首帧本地值本来就来自 store，无从谈起「编辑过」。
@@ -5970,13 +5978,14 @@ window.__ModuleLoader__.load({
         setLocalLanguage(next.language)
         setLocalInstructions(next.customInstructions)
         setLocalToolConfirm(next.requireToolConfirmation)
+        setLocalQuote(next.quoteAsContext)
         setLocalTrailEnabled(next.trailEnabled)
         setLocalTrailColor(next.trailColor)
         setLocalTrailSpeed(next.trailSpeed)
         setLocalTrailWidth(next.trailWidth)
         // 依赖与 serverValues 的来源一致；localValues/sameValue 每次渲染都是新的，
         // 但只在「某字段真要写」时才 setState，故不会形成死循环。
-      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth])
+      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, trailEnabled, trailColor, trailSpeed, trailWidth])
 
       // toast 的消失交给宿主 Toast 组件自己（holdMs 后淡出并回调 onDone）。
       // 此前这里有个 2s 定时器 + 自绘 CSS 动画，两者时长必须手工对齐，
@@ -5991,8 +6000,8 @@ window.__ModuleLoader__.load({
       const sameValue = (a, b) => (typeof a === 'string' && typeof b === 'string'
         ? a.trim() === b.trim()
         : a === b)
-      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, trailEnabled, trailColor, trailSpeed, trailWidth }
-      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, trailEnabled, trailColor, trailSpeed, trailWidth }
+      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
       const dirty = FORM_FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
 
       // 宿主 savedNotice 语义：一旦用户开始新的编辑（dirty 变 true），
@@ -6166,6 +6175,7 @@ window.__ModuleLoader__.load({
             setLocalLanguage(language || 'zh')
             setLocalInstructions(customInstructions || '')
             setLocalToolConfirm(requireToolConfirmation === true)
+                    setLocalQuote(quoteAsContext === true)
             setLocalTrailEnabled(trailEnabled)
             setLocalTrailColor(trailColor)
             setLocalTrailSpeed(trailSpeed)
@@ -6215,6 +6225,7 @@ window.__ModuleLoader__.load({
           setLocalLanguage(language || 'zh')
           setLocalInstructions(customInstructions || '')
           setLocalToolConfirm(requireToolConfirmation === true)
+                    setLocalQuote(quoteAsContext === true)
           setLocalTrailEnabled(trailEnabled)
           setLocalTrailColor(trailColor)
           setLocalTrailSpeed(trailSpeed)
@@ -6881,6 +6892,18 @@ window.__ModuleLoader__.load({
               }),
               e('label', { htmlFor: 'soul-toolConfirm' }, t('field.toolConfirm')),
               e(SoulHint, { text: t('hint.toolConfirm') })
+            ),
+
+            // 引用作为上下文：独立开关，关掉只影响引用，人设照常工作。
+            e('div', { className: 'soul-toggle' },
+              e('input', {
+                type: 'checkbox',
+                id: 'soul-quoteAsContext',
+                checked: localQuote,
+                onChange: (ev) => setLocalQuote(ev.target.checked)
+              }),
+              e('label', { htmlFor: 'soul-quoteAsContext' }, t('field.quoteAsContext')),
+              e(SoulHint, { text: t('hint.quoteAsContext') })
             ),
 
             e('div', { className: 'soul-group-title' }, t('trail.title')),
