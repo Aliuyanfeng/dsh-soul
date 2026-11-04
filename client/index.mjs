@@ -1154,6 +1154,11 @@ window.__ModuleLoader__.load({
       // ── 引用作为上下文 ──
       // 动作行按钮：走宿主 sm 档（28 / 12 / 18 / radius-sm / border-l3），
       // 与插件里其它按钮同规格 —— C86 的档位审计会自动检查它。
+      // 历史里「这条消息带了引用」的胶囊。不可点，所以不设 height ——
+      // C86 的档位审计以「有 px 高度 + 字号 + pointer」判定按钮，这里刻意避开，
+      // 因为它只是标注而非控件。
+      '.soul-quote-sent{display:block;width:fit-content;max-width:100%;margin:0 0 6px;padding:2px 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;cursor:default}',
+
       // 浮动按钮：胶囊 + 阴影，像系统级浮层。
       // 注意它**没有边框** —— C86 的档位判据会把「无边框」认作文字链接而跳过，
       // 这正是我们要的：浮层按钮不受正文按钮档位约束，尺寸由浮层语境决定。
@@ -2090,6 +2095,8 @@ window.__ModuleLoader__.load({
       'hint.quoteAsContext': '开启后，可在回答里选中一段文字并点「引用」，它作为上下文随下一轮请求送达模型 —— 不进你的消息正文，也不写进对话历史。',
       'quote.action': '引用',
       'quote.actionFloat': '引用这段',
+      'quote.sentBadge': '{count} 个已选文本片段',
+      'quote.sentItem': '引用{index}：{text}',
       'quote.actionHint': '选中回答里的一段文字后点此，作为上下文随下一轮请求送达模型',
       'quote.selectFirst': '先选中一段文字',
       'quote.tooMany': '引用已达上限',
@@ -2493,6 +2500,8 @@ window.__ModuleLoader__.load({
       'hint.quoteAsContext': 'When on, select a passage in a reply and click "Quote" — it is sent to the model as context with the next request, without entering your message or the chat history.',
       'quote.action': 'Quote',
       'quote.actionFloat': 'Quote this',
+      'quote.sentBadge': '{count} quoted passage(s)',
+      'quote.sentItem': 'Quote {index}: {text}',
       'quote.actionHint': 'Select a passage in a reply, then click here to send it to the model as context with the next request',
       'quote.selectFirst': 'Select some text first',
       'quote.tooMany': 'Quote limit reached',
@@ -4681,6 +4690,102 @@ window.__ModuleLoader__.load({
         }
       }, [enabled, sessionId])
 
+      // ── 发送检测 + 历史注入（方案 B：DOM 注入）──
+      //
+      // 为什么放在这个组件：Dock 在没有引用时不渲染，发送后引用被清空会把它卸载 ——
+      // 而「发送之后把胶囊画到历史里」这件事必须继续存在。本组件在 quotes 为空时
+      // 仍挂着（只是返回 null），是更合适的宿主。
+      //
+      // 发送信号：消息列表里多了一个回合（[data-chat-turn]）。手动删字不会新增回合。
+      //
+      // ⚠️ 这是**脆弱实现**：依赖宿主的 [data-chat-turn] 这个 DOM 标识。
+      //    宿主改版若换掉它，注入会静默失效（引用功能本身不受影响）。
+      //    之所以还是选它：宿主没有提供「用户消息上方」的槽位（只有回合尾部的
+      //    turnTail），而用户明确要胶囊在消息上方。
+      React.useEffect(() => {
+        if (state.quoteAsContext !== true) return undefined
+        if (sessionId === '') return undefined
+        if (typeof document === 'undefined') return undefined
+        if (typeof MutationObserver !== 'function') return undefined
+
+        const ATTR = 'data-soul-quote-sent'
+        let list = null
+        let observer = null
+        let turnCount = -1
+
+        function findList() {
+          const first = document.querySelector('[data-chat-turn]')
+          return first === null ? null : first.parentElement
+        }
+
+        function countTurns() {
+          return list === null ? 0 : list.querySelectorAll('[data-chat-turn]').length
+        }
+
+        // 把胶囊画到**最新那条回合**的最前面（用户消息上方）
+        function paint() {
+          for (const stale of document.querySelectorAll('[' + ATTR + ']')) {
+            if (stale.parentElement !== null) stale.parentElement.removeChild(stale)
+          }
+          const sent = sentQuoteBuckets.get(sessionId)
+          if (sent === undefined || list === null || list.isConnected === false) return
+          const turns = list.querySelectorAll('[data-chat-turn]')
+          if (turns.length === 0) return
+          const last = turns[turns.length - 1]
+          const badge = document.createElement('div')
+          badge.className = 'soul-quote-sent'
+          badge.setAttribute(ATTR, String(sent.at))
+          badge.textContent = t('quote.sentBadge', { count: String(sent.quotes.length) })
+          // hover 展示引用原文。用原生 title：零布局成本、不参与宿主的事件体系。
+          badge.title = sent.quotes
+            .map((q, i) => t('quote.sentItem', { index: String(i + 1), text: q.text }))
+            .join('\n\n')
+          last.insertBefore(badge, last.firstChild)
+        }
+
+        function onMutate() {
+          // 消息列表被整体重建（切会话、清空对话）→ 重新挂载
+          if (list !== null && list.isConnected === false) {
+            attach()
+            return
+          }
+          const next = countTurns()
+          // 只有**增加**才算「新消息发出去了」；删除/清空不会触发
+          if (turnCount >= 0 && next > turnCount) {
+            // 先快照当前引用，再清空 —— 顺序不能反，否则历史里没有内容可画
+            const current = quoteListOf(sessionId)
+            if (current.length > 0) {
+              sentQuoteBuckets.set(sessionId, {
+                quotes: current.map((q) => ({ text: q.text })),
+                at: Date.now()
+              })
+              quoteClear(sessionId)
+            }
+            paint()
+          }
+          turnCount = next
+        }
+
+        function attach() {
+          const found = findList()
+          if (found === null) return
+          if (observer !== null) observer.disconnect()
+          list = found
+          turnCount = countTurns()
+          observer = new MutationObserver(onMutate)
+          observer.observe(list, { childList: true, subtree: true })
+          paint()
+        }
+
+        attach()
+        return () => {
+          if (observer !== null) observer.disconnect()
+          for (const stale of document.querySelectorAll('[' + ATTR + ']')) {
+            if (stale.parentElement !== null) stale.parentElement.removeChild(stale)
+          }
+        }
+      }, [state.quoteAsContext, sessionId, t])
+
       if (pos === null || !enabled) return null
 
       const onQuote = () => {
@@ -4821,49 +4926,6 @@ window.__ModuleLoader__.load({
           window.removeEventListener('resize', align)
         }
       })
-
-      // 发送完成后自动清空引用。
-      //
-      // ⚠️ 曾用「输入框内容从有变空」当信号 —— **那是错的**：
-      //   · 用户输入一段话再手动删光，草稿同样变空 ⇒ 刚加的引用被误清；
-      //   · 且「只引用不输入就发送」那种情况永远检测不到。
-      //   一句话：草稿状态反映的是"输入区有没有字"，不是"消息有没有发出去"。
-      //
-      // 现在的信号：**消息列表里多了一个回合**（[`data-chat-turn`]）。
-      //   它和「发送成功」语义完全等价 —— 手动删字不会新增回合。
-      //
-      // 拿不到回合容器时**不清空**（失败方向安全：宁可多留一次引用，
-      // 也不要误清；用户随时可以点浮层上的「清空」）。
-      const turnCountRef = React.useRef(-1)
-      React.useEffect(() => {
-        if (sessionId === '') return undefined
-        if (quotes.length === 0) return undefined
-        if (typeof MutationObserver !== 'function') return undefined
-        if (typeof document === 'undefined') return undefined
-
-        // 回合容器的父节点即消息列表。取第一个回合向上找一层。
-        const firstTurn = document.querySelector('[data-chat-turn]')
-        const list = firstTurn === null ? null : firstTurn.parentElement
-        if (list === null) return undefined
-
-        const countTurns = () => list.querySelectorAll('[data-chat-turn]').length
-        turnCountRef.current = countTurns()
-
-        const check = () => {
-          const next = countTurns()
-          // 只有**增加**才算「新消息发出去了」；删除/清空会话不触发
-          if (next <= turnCountRef.current) {
-            turnCountRef.current = next
-            return
-          }
-          turnCountRef.current = next
-          quoteClear(sessionId)
-        }
-
-        const observer = new MutationObserver(check)
-        observer.observe(list, { childList: true, subtree: true })
-        return () => observer.disconnect()
-      }, [sessionId, quotes.length])
 
       if (sessionId === '') return null
       if (state.quoteAsContext !== true) return null

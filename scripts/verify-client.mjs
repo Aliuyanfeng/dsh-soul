@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 86
+const EXPECTED_ASSERTIONS = 87
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4946,31 +4946,75 @@ function componentBody(text, name) {
     //
     // 现在的信号：消息列表里多了一个回合（[data-chat-turn]）——
     //   它与「发送成功」语义等价，手动删字不会新增回合。
-    const body = componentBody(source, 'SoulQuoteDock')
-    assert.ok(body !== '', '找不到 SoulQuoteDock 组件')
+    //
+    // 检测放在 SoulQuoteFloating 而不是 Dock：Dock 在没有引用时不渲染，
+    // 发送后引用被清空会把它卸载，而「发送之后把胶囊画到历史里」必须继续存在。
+    const body = componentBody(source, 'SoulQuoteFloating')
+    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+    assert.equal(/data-chat-turn/.test(componentBody(source, 'SoulQuoteDock')), false, 'Dock 不得再持有发送检测（会被卸载）')
 
     // ① 必须观察**消息列表**而不是输入框
-    assert.match(body, /querySelector\('\[data-chat-turn\]'\)/, '必须以回合节点定位消息列表')
-    assert.match(body, /new MutationObserver\(check\)/, '必须用 MutationObserver')
-    assert.match(body, /observer\.observe\(list, \{ childList: true, subtree: true \}\)/, '必须观察消息列表')
+    assert.ok(body.includes("querySelector('[data-chat-turn]')"), '必须以回合节点定位消息列表')
+    assert.match(body, /new MutationObserver\(/, '必须用 MutationObserver')
+    assert.ok(body.includes('observer.observe(list, { childList: true, subtree: true })'), '必须观察消息列表')
 
     // ② ★ 核心：只有回合数**增加**才清空
     //    删除会话、清空对话、手动删字都不会让回合数增加。
-    assert.match(body, /if \(next <= turnCountRef\.current\)/, '只有回合数增加才算发送（不得用其他信号）')
-    assert.match(body, /const turnCountRef = React\.useRef\(-1\)/, '必须记录回合数基线')
+    assert.match(body, /next > turnCount/, '只有回合数增加才算发送（不得用其他信号）')
 
     // ③ 禁止再用「草稿变空」那套错误信号
     assert.equal(/hadContentRef/.test(body), false, '不得再用「曾经有内容」那套草稿信号（手动删字会误清）')
 
-    // ④ 失败方向安全：拿不到回合容器时**不清空**（宁多留，不误清）
-    assert.match(body, /if \(list === null\) return undefined/, '拿不到消息列表时必须放弃清空（不猜）')
+    // ④ 失败方向安全：拿不到消息列表时不清空（宁多留，不误清）
+    assert.match(body, /if \(found === null\) return/, '拿不到消息列表时必须放弃（不猜）')
     assert.match(body, /quoteClear\(sessionId\)/, '必须调用 quoteClear')
 
-    // ⑤ 环境不支持 / 无引用时不挂观察器；卸载时断开
+    // ⑤ 环境不支持时降级
     assert.match(body, /typeof MutationObserver !== 'function'\) return undefined/, 'MutationObserver 不可用时要降级')
-    assert.match(body, /quotes\.length === 0\) return undefined/, '没有引用时不必挂观察器')
-    assert.match(body, /observer\.disconnect\(\)/, '卸载时必须 disconnect')
   })
+
+  await check('C92 发送后把引用胶囊注入历史（方案 B：DOM 注入，脆弱实现）', async () => {
+    // 用户要的是「发送后，在用户消息上方显示一个「N 个已选文本片段」胶囊，hover 看原文」。
+    //
+    // 宿主没有「用户消息上方」的槽位（只有回合尾部的 turnTail），所以只能直接往
+    // 宿主的 DOM 里插节点。**这是脆弱实现**：依赖 [data-chat-turn] 这个标识，
+    // 宿主改版若换掉它，注入会静默失效（引用功能本身不受影响）。选它的理由是用户
+    // 明确要胶囊在消息上方，而官方槽位做不到。
+    const body = componentBody(source, 'SoulQuoteFloating')
+    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+
+    // ① 必须用原生 DOM 造节点（不是 React）—— 目标是宿主的渲染树
+    assert.match(body, /document\.createElement\('div'\)/, '必须用 createElement 造胶囊')
+    assert.match(body, /className = 'soul-quote-sent'/, '胶囊必须有独立类名')
+
+    // ② 必须插到**回合最前面**（用户消息上方），不是追加到末尾
+    assert.match(body, /insertBefore\(badge, last\.firstChild\)/, '胶囊必须插到回合最前（用户消息上方）')
+    assert.match(body, /turns\[turns\.length - 1\]/, '必须挂到最新那条回合')
+
+    // ③ hover 展示引用原文
+    assert.match(body, /badge\.title = sent\.quotes/, '必须把引用原文放进 title（hover 可见）')
+
+    // ④ ★ 顺序：先快照、再清空 —— 反了就没内容可画
+    const snapAt = body.indexOf('sentQuoteBuckets.set(sessionId')
+    const clearAt = body.indexOf('quoteClear(sessionId)')
+    assert.ok(snapAt > 0 && clearAt > 0, '必须同时有快照与清空')
+    assert.ok(snapAt < clearAt, '必须先快照再清空（否则历史里没有内容可注入）')
+
+    // ⑤ 幂等 + 清理：重复注入会叠出多个胶囊；卸载必须移除
+    // ★ 位置关系，不是"模式存在"：清理必须在 paint() 内、且在 insertBefore 之前。
+    // 实测漏检过 —— 卸载时也有一处同样的清理代码，只查模式会让"删掉 paint 里的清理"
+    // 这个变体照样通过，而那正是会叠出多个胶囊的 bug。
+    const paintAt = body.indexOf('function paint()')
+    const insertAt = body.indexOf('last.insertBefore(badge')
+    const cleanAt = body.indexOf('removeChild(stale)')
+    assert.ok(paintAt > 0 && insertAt > paintAt, '找不到 paint() 或插入点')
+    assert.ok(cleanAt > paintAt && cleanAt < insertAt, '必须在本轮注入前清理旧胶囊（幂等），且在插入之前')
+    assert.match(body, /removeChild\(stale\)/, '卸载时必须移除注入的节点')
+
+    // ⑥ 列表重建时要能重新挂载（切会话/清空对话会让 list 脱离文档）
+    assert.match(body, /list\.isConnected === false/, '列表脱离文档时必须重新挂载')
+  })
+
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 
 console.log(`\n全部通过：${passed} 项检查`)
