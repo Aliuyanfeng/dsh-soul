@@ -4824,41 +4824,44 @@ window.__ModuleLoader__.load({
 
       // 发送完成后自动清空引用。
       //
-      // 信号：输入框内容 **从有变空**。宿主发出去之后会清空草稿 —— 这是最直接的外部
-      // 表现，不必去读宿主的草稿状态（那是内部 API，跨版本不稳）。
+      // ⚠️ 曾用「输入框内容从有变空」当信号 —— **那是错的**：
+      //   · 用户输入一段话再手动删光，草稿同样变空 ⇒ 刚加的引用被误清；
+      //   · 且「只引用不输入就发送」那种情况永远检测不到。
+      //   一句话：草稿状态反映的是"输入区有没有字"，不是"消息有没有发出去"。
       //
-      // ★ 为什么必须记「曾经有内容」：引用本身可以在草稿为空时添加（选中一段直接引用，
-      //   此时输入框是空的）。若只看「当前是否为空」，刚加的引用会被自己立刻清掉。
+      // 现在的信号：**消息列表里多了一个回合**（[`data-chat-turn`]）。
+      //   它和「发送成功」语义完全等价 —— 手动删字不会新增回合。
       //
-      // 已知局限（有意的取舍）：若用户**只引用、一个字不输**就发送，草稿从未非空
-      // ⇒ 检测不到，引用会留到下一轮。宁可少清一次，也不要误清刚加的引用。
-      const hadContentRef = React.useRef(false)
+      // 拿不到回合容器时**不清空**（失败方向安全：宁可多留一次引用，
+      // 也不要误清；用户随时可以点浮层上的「清空」）。
+      const turnCountRef = React.useRef(-1)
       React.useEffect(() => {
         if (sessionId === '') return undefined
         if (quotes.length === 0) return undefined
         if (typeof MutationObserver !== 'function') return undefined
-        const dock = dockRef.current
-        const stack = dock === null || dock === undefined ? null : dock.parentElement
-        if (stack === null) return undefined
-        const editable = stack.querySelector('[contenteditable="true"]')
-        if (editable === null) return undefined
+        if (typeof document === 'undefined') return undefined
 
-        const readText = () => String(editable.textContent || '').trim()
-        // 挂上观察器时先取一次基线：如果此刻已有内容，后续「变空」才算发送
-        hadContentRef.current = readText() !== ''
+        // 回合容器的父节点即消息列表。取第一个回合向上找一层。
+        const firstTurn = document.querySelector('[data-chat-turn]')
+        const list = firstTurn === null ? null : firstTurn.parentElement
+        if (list === null) return undefined
+
+        const countTurns = () => list.querySelectorAll('[data-chat-turn]').length
+        turnCountRef.current = countTurns()
 
         const check = () => {
-          if (readText() !== '') {
-            hadContentRef.current = true
+          const next = countTurns()
+          // 只有**增加**才算「新消息发出去了」；删除/清空会话不触发
+          if (next <= turnCountRef.current) {
+            turnCountRef.current = next
             return
           }
-          if (!hadContentRef.current) return
-          hadContentRef.current = false
+          turnCountRef.current = next
           quoteClear(sessionId)
         }
 
         const observer = new MutationObserver(check)
-        observer.observe(editable, { childList: true, characterData: true, subtree: true })
+        observer.observe(list, { childList: true, subtree: true })
         return () => observer.disconnect()
       }, [sessionId, quotes.length])
 

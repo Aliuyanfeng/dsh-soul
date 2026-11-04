@@ -4936,40 +4936,41 @@ function componentBody(text, name) {
     assert.match(dockBody, /removeEventListener\('resize'/, '卸载时必须移除 resize 监听')
   })
 
-  await check('C91 发送完成后自动清空引用（且不得误清刚加的引用）', async () => {
+  await check('C91 发送完成后自动清空引用（用「新回合出现」而非「草稿变空」）', async () => {
     // 用户要求：发完消息，输入框上方的引用自动消失。
     //
-    // 信号选的是「输入框内容**从有变空**」—— 宿主发出去后会清空草稿，这是最直接的
-    // 外部表现，不必去读宿主的草稿状态（内部 API，跨版本不稳）。
+    // ⚠️ 第一版用「输入框内容从有变空」当信号 —— 用户当场指出这是错的：
+    //   输入一段话再**手动删光**，草稿同样变空 ⇒ 刚加的引用被误清。
+    //   而且「只引用不输入就发送」那种情况永远检测不到。
+    //   根因：草稿状态反映「输入区有没有字」，与「消息有没有发出去」无关。
     //
-    // ★ 这里最容易写错的地方：只判断「当前为空」就清。
-    //   引用可以在草稿为空时添加（选中一段直接引用，输入框本来就是空的），
-    //   那样刚加的引用会被自己立刻清掉 —— 功能看起来完全没生效。
-    //   所以必须先记「曾经有内容」。
+    // 现在的信号：消息列表里多了一个回合（[data-chat-turn]）——
+    //   它与「发送成功」语义等价，手动删字不会新增回合。
     const body = componentBody(source, 'SoulQuoteDock')
     assert.ok(body !== '', '找不到 SoulQuoteDock 组件')
 
-    // ① 必须监听输入框内容变化
-    assert.match(body, /new MutationObserver\(/, '必须用 MutationObserver 监听输入框')
-    assert.match(body, /observer\.observe\(editable/, '必须观察输入框节点')
-    assert.match(body, /childList: true, characterData: true, subtree: true/, '必须覆盖文本节点变化')
+    // ① 必须观察**消息列表**而不是输入框
+    assert.match(body, /querySelector\('\[data-chat-turn\]'\)/, '必须以回合节点定位消息列表')
+    assert.match(body, /new MutationObserver\(check\)/, '必须用 MutationObserver')
+    assert.match(body, /observer\.observe\(list, \{ childList: true, subtree: true \}\)/, '必须观察消息列表')
 
-    // ② 必须记「曾经有内容」—— 否则会误清刚加的引用
-    assert.match(body, /const hadContentRef = React\.useRef\(false\)/, '必须有「曾经有内容」的记录')
-    assert.match(body, /hadContentRef\.current = readText\(\) !== ''/, '挂观察器时必须先取基线')
-    assert.match(body, /if \(!hadContentRef\.current\) return/, '内容为空但从未有过内容时不得清空')
+    // ② ★ 核心：只有回合数**增加**才清空
+    //    删除会话、清空对话、手动删字都不会让回合数增加。
+    assert.match(body, /if \(next <= turnCountRef\.current\)/, '只有回合数增加才算发送（不得用其他信号）')
+    assert.match(body, /const turnCountRef = React\.useRef\(-1\)/, '必须记录回合数基线')
 
-    // ③ 变空时才清
+    // ③ 禁止再用「草稿变空」那套错误信号
+    assert.equal(/hadContentRef/.test(body), false, '不得再用「曾经有内容」那套草稿信号（手动删字会误清）')
+
+    // ④ 失败方向安全：拿不到回合容器时**不清空**（宁多留，不误清）
+    assert.match(body, /if \(list === null\) return undefined/, '拿不到消息列表时必须放弃清空（不猜）')
     assert.match(body, /quoteClear\(sessionId\)/, '必须调用 quoteClear')
 
-    // ④ 环境不支持时降级，并且卸载时断开（否则泄漏观察器）
+    // ⑤ 环境不支持 / 无引用时不挂观察器；卸载时断开
     assert.match(body, /typeof MutationObserver !== 'function'\) return undefined/, 'MutationObserver 不可用时要降级')
-    assert.match(body, /observer\.disconnect\(\)/, '卸载时必须 disconnect')
-
-    // ⑤ 没有引用时不该挂观察器（省开销，也避免无意义地跑 clear）
     assert.match(body, /quotes\.length === 0\) return undefined/, '没有引用时不必挂观察器')
+    assert.match(body, /observer\.disconnect\(\)/, '卸载时必须 disconnect')
   })
-
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 
 console.log(`\n全部通过：${passed} 项检查`)
