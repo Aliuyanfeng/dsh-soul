@@ -5068,12 +5068,15 @@ function componentBody(text, name) {
     // ★ 绘制时就地补回合：不再依赖回合通道是否触发。
     // 用户实测「胶囊仍然跟着轮次移动」→ turn 一直为空，每次都在走兜底。
     assert.ok(body.includes('sent.turn = turnNode.getAttribute'),
+      'paint 必须在 turn 为空时就地补上（否则兜底到最后一条，胶囊会迁移）')
 
     // ★ 实测日志证明 userRow 的祖先里**没有** data-chat-turn（turn 永远为空），
     // 所以必须另有一条不依赖该属性的定位路径：索引。
-    assert.ok(body.includes('sent.index'), 'paint 必须支持按索引定位（turn 拿不到时的退路）')
+    // ★ 必须查**定位条件本身**，不能只查变量名：实测漏检过 ——
+    // 把条件改成 if(false) 后，sent.index 仍在块内部，只查变量名照样通过。
+    assert.ok(body.includes('if (target === null && sent.index !== undefined'),
+      'paint 必须真的按索引定位（turn 拿不到时的退路）')
     assert.ok(source.includes('index = document.querySelectorAll'), '快照时必须记录索引')
-      'paint 必须在 turn 为空时就地补上（否则兜底到最后一条，胶囊会迁移）')
     assert.ok(helperAt > 0, '必须有 snapshotSentQuotes helper')
     const snapAt = source.indexOf('sentQuoteBuckets.set(sessionId', helperAt)
     const clearAt = source.indexOf('quoteClear(sessionId)', helperAt)
