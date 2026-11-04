@@ -5267,6 +5267,15 @@ function componentBody(text, name) {
     const sizeMatch = /font-size:(\d+)px/.exec(iconCss)
     assert.ok(sizeMatch !== null, '图标必须有明确的 font-size（不能靠继承）')
     assert.ok(Number(sizeMatch[1]) >= 14, `图标字号至少 14px（当前 ${sizeMatch[1]}px —— 12px 时用户反馈「不太明显」）`)
+
+    // 排队消息与引用卡同时存在时，要取消引用卡的上圆角。
+    //
+    // 现象：两者都带 radius-lg 上圆角，叠在一起时峰与峰之间会露出一道缝。
+    // 判据用 :has() 而不是 JS —— 排队消息（order 20）一定在引用卡（order 30）之前，
+    // 所以「前面的兄弟里有 [data-queue-dock]」就说明两段要拼在一起。
+    // 只在 queue 存在时生效：单独存在时仍保留上圆角，否则顶部是突兀的直角。
+    assert.match(source, /:has\(> \[data-queue-dock\]\) ~ \* \.soul-quote-panel\{border-radius:0\}/,
+      '必须有「排队消息存在时取消引用卡上圆角」的规则（否则两者之间会露缝）')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

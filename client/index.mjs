@@ -1202,6 +1202,14 @@ window.__ModuleLoader__.load({
       '.soul-quote-panel{box-sizing:border-box;isolation:isolate;border-radius:var(--dsw-radius-lg) var(--dsw-radius-lg) 0 0;width:100%;padding:2px 0;position:relative;overflow:hidden}',
       '.soul-quote-panel::before{z-index:-1;border-radius:inherit;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);content:"";pointer-events:none;position:absolute;inset:0}',
       '.soul-quote-panel::after{border:.5px solid var(--dsw-alias-border-l1);border-bottom:none;border-radius:inherit;content:"";pointer-events:none;position:absolute;inset:0}',
+      // 排队消息存在时，取消引用卡的上圆角 —— 两段上圆角叠在一起，峰与峰之间会露缝。
+      //
+      // 判据用 :has() 而不是 JS：排队消息（order 20）一定排在引用卡（order 30）**之前**，
+      // 所以只要「前面那个兄弟里有 [data-queue-dock]」就说明两段要拼在一起。
+      //
+      // 只在 queue 存在时生效：单独存在时仍保留上圆角，否则顶部会是一个突兀的直角。
+      // 圆角去掉后 panel::after 的 border-radius:inherit 也会跟着变 0，边框不会错位。
+      ':has(> [data-queue-dock]) ~ * .soul-quote-panel{border-radius:0}',
       // 每条引用：照搬 QueueDock 的 .row（min-height 36 / 左右 12、5 / gap 10 / radius-md）
       // list：照搬宿主的 .F07MqG_list（max-height 180 + 纵向滚动），
       // 引用条数多时不会把输入区顶高。
