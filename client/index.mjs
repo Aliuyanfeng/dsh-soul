@@ -1165,6 +1165,9 @@ window.__ModuleLoader__.load({
       // 这正是我们要的：浮层按钮不受正文按钮档位约束，尺寸由浮层语境决定。
       // 引用原文 tooltip：hover 立即出现（原生 title 有约 1s 延迟且不可控）。
       // white-space:pre-wrap 让 .join("\n\n") 的换行真的生效。
+      // 队列项上的「含引用」标记：紧挨按钮区，用三级色不抢视线。
+      '.soul-queue-quote-mark{flex:none;color:var(--dsw-alias-label-tertiary);font:var(--dsw-font-xs-13);white-space:nowrap;margin-right:2px}',
+
       '.soul-quote-sent-tip{display:none;position:absolute;top:100%;left:0;z-index:1000;margin-top:6px;max-width:420px;padding:8px 10px;border:.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm);background:var(--dsw-specific-menu);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13);line-height:1.5;white-space:pre-wrap;word-break:break-word}',
       '.soul-quote-sent:hover .soul-quote-sent-tip{display:block}',
 
@@ -2147,6 +2150,8 @@ window.__ModuleLoader__.load({
       'quote.actionFloat': '引用这段',
       'quote.sentBadge': '{count} 个已选文本片段',
       'quote.sentItem': '引用{index}：{text}',
+      'quote.queueMark': '含引用',
+      'quote.queueMarkHint': '这条排队消息发出时会携带当前引用',
       'quote.actionHint': '选中回答里的一段文字后点此，作为上下文随下一轮请求送达模型',
       'quote.dockTitle': '引用（{count}）',
       'quote.clear': '清空',
@@ -2549,6 +2554,8 @@ window.__ModuleLoader__.load({
       'quote.actionFloat': 'Quote this',
       'quote.sentBadge': '{count} quoted passage(s)',
       'quote.sentItem': 'Quote {index}: {text}',
+      'quote.queueMark': 'with quote',
+      'quote.queueMarkHint': 'This queued message will carry the current quote when sent',
       'quote.actionHint': 'Select a passage in a reply, then click here to send it to the model as context with the next request',
       'quote.dockTitle': 'Quote ({count})',
       'quote.clear': 'Clear',
@@ -4815,6 +4822,88 @@ window.__ModuleLoader__.load({
         })
         quoteClear(sessionId)
       }, [phase, sessionId])
+
+      // ── 队列项上的「含引用」标记 ──
+      //
+      // 引用是**会话级**的：排队消息在发出时读取当前引用，所以只要引用还在，
+      // **每一条**排队消息都会带上它 —— 不存在"这条带、那条不带"。
+      // 标记的语义因此是「这条发出时会携带引用」，而不是「这条自己存了引用」。
+      //
+      // 为什么用 DOM 注入：队列项由宿主的 QueueDock 渲染，我们拿不到它的槽位。
+      // ⚠️ 脆弱点：依赖宿主的 hash 类名（F07MqG_row / F07MqG_actions）。
+      //    宿主改版若换前缀，标记会静默消失 —— 引用功能本身不受影响。
+      //
+      // ⚠️ 两个必须防的坑：
+      //   ① **自触发死循环**：sync() 会增删 DOM ⇒ 再次触发自己的 observer。
+      //      所以「已同步」时必须直接返回，不做任何写入。
+      //   ② **性能**：observer 挂在 document.body 上，长对话里 DOM 变动极频繁，
+      //      用 requestAnimationFrame 合并成每帧最多一次。
+      React.useEffect(() => {
+        if (state.quoteAsContext !== true) return undefined
+        if (sessionId === '') return undefined
+        if (typeof document === 'undefined') return undefined
+
+        const QUEUE_DOCK = '[data-queue-dock]'
+        const QUEUE_ROW = '[class*="F07MqG_row"]'
+        const QUEUE_ACTIONS = '[class*="F07MqG_actions"]'
+        const MARK = 'data-soul-queue-mark'
+
+        const sync = () => {
+          const dock = document.querySelector(QUEUE_DOCK)
+          if (dock === null) return
+          const rows = dock.querySelectorAll(QUEUE_ROW)
+          const marks = dock.querySelectorAll('[' + MARK + ']')
+          const wanted = quoteListOf(sessionId).length > 0
+
+          // 引用没了：移除已有标记（没有标记就什么都不做）
+          if (!wanted) {
+            if (marks.length === 0) return
+            for (const old of marks) {
+              if (old.parentElement !== null) old.parentElement.removeChild(old)
+            }
+            return
+          }
+          // 已经同步过 → 直接返回，**不写 DOM**（否则会触发自己，形成死循环）
+          if (marks.length === rows.length && rows.length > 0) return
+
+          for (const old of marks) {
+            if (old.parentElement !== null) old.parentElement.removeChild(old)
+          }
+          for (const row of rows) {
+            const actions = row.querySelector(QUEUE_ACTIONS)
+            // 拿不到按钮区就不标（宁可没有，也不要标到奇怪的位置）
+            if (actions === null || actions.parentElement === null) continue
+            const mark = document.createElement('span')
+            mark.className = 'soul-queue-quote-mark'
+            mark.setAttribute(MARK, '')
+            mark.textContent = t('quote.queueMark')
+            mark.title = t('quote.queueMarkHint')
+            actions.parentElement.insertBefore(mark, actions)
+          }
+        }
+
+        let raf = 0
+        const schedule = () => {
+          if (raf !== 0) return
+          if (typeof requestAnimationFrame !== 'function') {
+            sync()
+            return
+          }
+          raf = requestAnimationFrame(() => {
+            raf = 0
+            sync()
+          })
+        }
+
+        sync()
+        if (typeof MutationObserver !== 'function') return undefined
+        const observer = new MutationObserver(schedule)
+        observer.observe(document.body, { childList: true, subtree: true })
+        return () => {
+          observer.disconnect()
+          if (raf !== 0 && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf)
+        }
+      }, [state.quoteAsContext, sessionId, t])
 
       // ── 通道二：Enter（发送动作本身，最及时）──
       //

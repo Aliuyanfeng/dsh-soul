@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 93
+const EXPECTED_ASSERTIONS = 94
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5302,6 +5302,36 @@ function componentBody(text, name) {
     // 用 [data-queue-dock] ~ * 覆盖更宽：不论中间有几层包装都能命中。
     assert.match(source, /\[data-queue-dock\] ~ \* \.soul-quote-panel\{border-radius:0\}/,
       '必须有「排队消息存在时取消引用卡上圆角」的直接兄弟规则（否则两者之间会露缝）')
+  })
+
+  await check('C100 排队消息按钮区标出「含引用」（并防 observer 自触发死循环）', async () => {
+    // 用户要求：「排队消息 我希望在右侧按钮区域增加一个显示 是否包含引用消息」。
+    //
+    // 语义前提：引用是**会话级**的。排队消息在发出时读取当前引用，所以只要引用还在，
+    // **每一条**排队消息都会带上它 —— 不存在"这条带、那条不带"。
+    // 因此标记的语义是「这条发出时会携带引用」。
+    //
+    // 队列项由宿主的 QueueDock 渲染，拿不到槽位，只能 DOM 注入。
+    const body = componentBody(source, 'SoulQuoteFloating')
+    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+
+    assert.ok(body.includes('data-queue-dock'), '必须用 data-queue-dock 定位队列区')
+    assert.ok(body.includes('soul-queue-quote-mark'), '必须创建标记元素')
+    assert.ok(body.includes("insertBefore(mark, actions)"), '标记必须插到按钮区之前（右侧按钮区）')
+
+    // ★ 必须防自触发死循环：sync() 会增删 DOM ⇒ 再次触发自己的 observer。
+    // 少了「已同步就返回」，每次写入都会再触发一次，形成无限循环把页面卡死。
+    assert.ok(body.includes('marks.length === rows.length'),
+      '必须有幂等检查（否则 observer 自触发形成死循环，页面会卡死）')
+
+    // 必须有 rAF 合并：observer 挂在 document.body 上，长对话 DOM 变动极频繁
+    assert.match(body, /requestAnimationFrame\(\(\) => \{/, '必须用 rAF 合并频繁变更')
+
+    // 卸载要断开
+    assert.ok(body.includes('observer.disconnect()'), '卸载时必须断开 observer')
+
+    // 引用消失时要能撤掉标记（不是只增不减）
+    assert.match(body, /if \(!wanted\) \{/, '引用消失时必须进入清理分支')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
