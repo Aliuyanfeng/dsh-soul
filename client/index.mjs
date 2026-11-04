@@ -1171,24 +1171,26 @@ window.__ModuleLoader__.load({
       '.soul-quote-float:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover))}',
       '.soul-quote-float:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       // 浮层：与宿主的「目标 / 队列」同区，视觉上贴齐它们（细边框 + 圆角 + 模块底色）
-      // 宽度必须显式撑满：input.dock 的父容器是个 flex 列，若它的 align-items 是
-      // flex-start，子项就只占内容宽度 —— 视觉上引用卡比输入框窄一截（用户实测反馈）。
-      // box-sizing:border-box 不能省：本规则有 padding 与 1px 级别的边框，
-      // 用 content-box 会让 width:100% 再叠上 padding 而溢出。
-      // 宽度默认 100%（量不到输入框时兜底），组件会用 useLayoutEffect 量出
-      // 输入框卡片的真实宽度再覆盖成 px —— 它与输入框有 margin/max-width 差异，
-      // 纯 CSS 无法可靠对齐（详见组件内注释）。
-      '.soul-quote-dock{box-sizing:border-box;width:100%;max-width:100%;display:flex;flex-direction:column;gap:4px;margin:0 0 6px;padding:6px 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
-      '.soul-quote-dock-head{display:flex;align-items:center;gap:8px}',
-      '.soul-quote-dock-title{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
-      '.soul-quote-dock-clear{margin-left:auto;padding:0 4px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
-      '.soul-quote-dock-clear:hover{color:var(--dsw-alias-label-primary)}',
-      '.soul-quote-item{display:flex;align-items:flex-start;gap:6px}',
-      '.soul-quote-text{flex:1 1 auto;min-width:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);word-break:break-word}',
-      // 删除按钮是**方形图标按钮**（有固定 width）—— 按 C86 的判据会自动排除在档位审计之外，
+      // 引用浮层：观感对齐宿主的「排队消息」(queue dock) —— 两者在同一个区域上下相邻，
+      // 它用无边框 + radius-md + 模块底色 + 单行紧凑布局，我们就照这套来，
+      // 免得自己的组件在视觉上比宿主的重一档。
+      //
+      // 宽度：width:100% 只是兜底，真正对齐由组件的 useLayoutEffect 量输入框卡片后
+      // 写成 px（含居中偏移）。box-sizing:border-box 不能省，否则 100% 叠加 padding 会溢出。
+      '.soul-quote-dock{box-sizing:border-box;width:100%;max-width:100%;display:flex;flex-direction:column;gap:2px;margin:0 0 8px;padding:4px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-module-platform)}',
+      '.soul-quote-item{display:flex;align-items:center;gap:8px;min-width:0;padding:6px 8px;border-radius:var(--dsw-radius-sm)}',
+      '.soul-quote-item:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover))}',
+      '.soul-quote-icon{flex:none;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:20px}',
+      // 单行 + 省略号：与队列消息一致，长引用不撑高卡片。
+      // ⚠️ 这里不能只写 white-space:nowrap —— 必须同时有 overflow:hidden 与
+      // text-overflow:ellipsis，否则文字会直接溢出到卡片外而不是变省略号。
+      '.soul-quote-text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}',
+      // 方形图标按钮（有固定 width）—— C86 的档位审计按此判据自动排除，
       // 这正是「方形控件尺寸由图形需求决定」的正当用法。
-      '.soul-quote-remove{flex:none;width:18px;height:18px;padding:0;border:none;border-radius:var(--dsw-radius-xs);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:13px;line-height:1;cursor:pointer}',
-      '.soul-quote-remove:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.soul-quote-remove{flex:none;width:20px;height:20px;padding:0;border:none;border-radius:var(--dsw-radius-xs);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:14px;line-height:1;cursor:pointer}',
+      '.soul-quote-remove:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-label-primary)}',
+      '.soul-quote-clear-all{align-self:flex-start;margin:2px 4px 2px;padding:0;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      '.soul-quote-clear-all:hover{color:var(--dsw-alias-label-primary)}',
 
       // ── 会话覆盖维护 ──
       // 说明与状态行统一 12px / 1.6 行高（宿主帮助文字档位）
@@ -5007,26 +5009,31 @@ window.__ModuleLoader__.load({
       if (state.quoteAsContext !== true) return null
       if (quotes.length === 0) return null
 
+      // 结构参照宿主的「排队消息」(queue dock)：**单行一条**，图标 + 文字 + 右侧按钮，
+      // 没有标题行。之前我自己加了「引用（N）」标题 + 「清空」，视觉上比队列重一档，
+      // 与上下相邻的宿主组件不像一套东西（用户明确要求照队列的样式来）。
+      //
+      // 文字用 CSS 省略号截断（nowrap + ellipsis），不再按固定字符数切 ——
+      // 窗口宽窄不同，固定字数在窄屏会截不齐。
       return e('div', { className: 'soul-quote-dock', ref: dockRef },
-        e('div', { className: 'soul-quote-dock-head' },
-          e('span', { className: 'soul-quote-dock-title' },
-            t('quote.dockTitle', { count: String(quotes.length) })),
-          e('button', {
-            type: 'button',
-            className: 'soul-quote-dock-clear',
-            onClick: () => quoteClear(sessionId)
-          }, t('quote.clear'))),
         ...quotes.map((quote) => e('div', { className: 'soul-quote-item', key: quote.id },
-          e('span', { className: 'soul-quote-text' },
-            quote.text.length > QUOTE_PREVIEW_CHARS
-              ? quote.text.slice(0, QUOTE_PREVIEW_CHARS) + '…'
-              : quote.text),
+          e('span', { className: 'soul-quote-icon', 'aria-hidden': true }, '❝'),
+          e('span', { className: 'soul-quote-text' }, quote.text),
           e('button', {
             type: 'button',
             className: 'soul-quote-remove',
             'aria-label': t('quote.remove'),
+            title: t('quote.remove'),
             onClick: () => quoteRemove(sessionId, quote.id)
-          }, '×'))))
+          }, '×'))),
+        // 多条时才给「清空」—— 只有一条时右侧的 × 已经够了
+        quotes.length > 1
+          ? e('button', {
+              type: 'button',
+              className: 'soul-quote-clear-all',
+              onClick: () => quoteClear(sessionId)
+            }, t('quote.clear'))
+          : null)
     }
 
     function SoulOverview(props) {

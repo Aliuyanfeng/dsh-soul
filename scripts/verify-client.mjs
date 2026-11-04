@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 88
+const EXPECTED_ASSERTIONS = 89
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5067,6 +5067,44 @@ function componentBody(text, name) {
     assert.match(source, /const sentQuoteBuckets = new Map\(\)/, 'sentQuoteBuckets 必须有声明（否则运行时未定义）')
     assert.match(source, /function readSubmitPhase\(input\)/, 'readSubmitPhase 必须有声明')
     assert.match(source, /function isBusyPhase\(phase\)/, 'isBusyPhase 必须有声明')
+  })
+
+  await check('C94 引用浮层采用队列消息的单行样式（无标题行、单行省略、无边框）', async () => {
+    // 用户要求：「输入框上方显示引用的样式可以参考排队消息的样式」。
+    //
+    // 宿主的队列消息（queue dock）与引用浮层都在 conversation.input.dock 里、上下相邻，
+    // 它用的是：无边框 + radius-md + 模块底色 + 单行紧凑布局（图标 + 文字 + 右侧按钮）。
+    // 之前的引用卡自带「引用（N）」标题行 + 独立「清空」，比队列重一档，
+    // 放在一起不像一套东西。
+    const body = componentBody(source, 'SoulQuoteDock')
+    assert.ok(body !== '', '找不到 SoulQuoteDock 组件')
+
+    // ① 不得再有标题行（那是"比队列重一档"的来源）
+    assert.equal(/soul-quote-dock-title/.test(body), false, '不得再有「引用（N）」标题行')
+    assert.equal(/soul-quote-dock-head/.test(body), false, '不得再有标题行容器')
+    assert.equal(/soul-quote-dock-title/.test(source), false, '标题行样式应一并删除')
+
+    // ② 每条引用 = 一行：图标 + 文字 + 删除按钮
+    assert.match(body, /soul-quote-icon/, '每条引用应有前缀图标（对齐队列项的观感）')
+    assert.match(body, /soul-quote-remove/, '每条引用应有删除按钮')
+
+    // ③ 单行省略三件套缺一不可 —— 少一个文字就溢出而不是变省略号
+    const textAt = source.indexOf('.soul-quote-text{')
+    assert.ok(textAt > 0, '找不到 .soul-quote-text 规则')
+    const textCss = source.slice(textAt, source.indexOf('}', textAt) + 1)
+    assert.match(textCss, /overflow:hidden/, '必须有 overflow:hidden（否则省略号不生效）')
+    assert.match(textCss, /text-overflow:ellipsis/, '必须有 text-overflow:ellipsis')
+    assert.match(textCss, /white-space:nowrap/, '必须单行（nowrap）')
+
+    // ④ 无边框（队列项没有边框，有边框就比它重一档）
+    const dockAt = source.indexOf('.soul-quote-dock{')
+    const dockCss = source.slice(dockAt, source.indexOf('}', dockAt) + 1)
+    assert.equal(/border:/.test(dockCss), false, '不得有边框（队列项没有边框）')
+    assert.match(dockCss, /border-radius:var\(--dsw-radius-md\)/, '圆角用 radius-md（与队列项同档）')
+
+    // ⑤ 只在多条时才给「清空」—— 单条时右侧的 × 已足够
+    assert.match(body, /quotes\.length > 1/, '清空按钮只应在多条时出现')
+    assert.match(body, /soul-quote-clear-all/, '多条时应有清空入口')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
