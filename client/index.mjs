@@ -1157,11 +1157,17 @@ window.__ModuleLoader__.load({
       // 历史里「这条消息带了引用」的胶囊。不可点，所以不设 height ——
       // C86 的档位审计以「有 px 高度 + 字号 + pointer」判定按钮，这里刻意避开，
       // 因为它只是标注而非控件。
-      '.soul-quote-sent{box-sizing:border-box;display:block;width:fit-content;max-width:100%;padding:2px 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;cursor:default}',
+      // 胶囊：position:relative 供 tooltip 定位；cursor:help 提示「这里有说明」。
+      '.soul-quote-sent{position:relative;box-sizing:border-box;display:block;width:fit-content;max-width:100%;cursor:help;padding:2px 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;cursor:default}',
 
       // 浮动按钮：胶囊 + 阴影，像系统级浮层。
       // 注意它**没有边框** —— C86 的档位判据会把「无边框」认作文字链接而跳过，
       // 这正是我们要的：浮层按钮不受正文按钮档位约束，尺寸由浮层语境决定。
+      // 引用原文 tooltip：hover 立即出现（原生 title 有约 1s 延迟且不可控）。
+      // white-space:pre-wrap 让 .join("\n\n") 的换行真的生效。
+      '.soul-quote-sent-tip{display:none;position:absolute;top:100%;left:0;z-index:1000;margin-top:6px;max-width:420px;padding:8px 10px;border:.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm);background:var(--dsw-specific-menu);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13);line-height:1.5;white-space:pre-wrap;word-break:break-word}',
+      '.soul-quote-sent:hover .soul-quote-sent-tip{display:block}',
+
       '.soul-quote-float{position:fixed;z-index:2147483000;display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 14px;border:none;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.18);white-space:nowrap}',
       // ⚠️ hover **不能**写成 `background:interactive-bg-hover`：
       // 那会把不透明的 module-platform 底换成 5% 透明色 ⇒ 下层文字直接透出来，
@@ -4912,10 +4918,17 @@ window.__ModuleLoader__.load({
           badge.className = 'soul-quote-sent'
           badge.setAttribute(ATTR, String(sent.at))
           badge.textContent = t('quote.sentBadge', { count: String(sent.quotes.length) })
-          // hover 展示引用原文。用原生 title：零布局成本、不参与宿主的事件体系。
-          badge.title = sent.quotes
+          // hover 展示引用原文。
+          //
+          // ⚠️ 原来用的是原生 title —— 用户反馈「hover 没展示」。原生 title 有约 1 秒
+          //   延迟、样式不可控、长文本还可能被系统截断，很容易让人觉得"没有"。
+          //   改成自带的一个绝对定位子元素，hover 立即出现，且能保留换行。
+          const tip = document.createElement('div')
+          tip.className = 'soul-quote-sent-tip'
+          tip.textContent = sent.quotes
             .map((q, i) => t('quote.sentItem', { index: String(i + 1), text: q.text }))
             .join('\n\n')
+          badge.appendChild(tip)
           // 插到 userRow **内部**的第一个位置，而不是它的前面。
           //
           // userRow 是 flex column + align-items:flex-end，所以它的子项会**右对齐**，

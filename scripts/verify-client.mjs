@@ -5021,7 +5021,17 @@ function componentBody(text, name) {
     assert.ok(body.includes('rows[rows.length - 1]'), '必须挂到最新那条用户消息')
 
     // ③ hover 展示引用原文
-    assert.match(body, /badge\.title = sent\.quotes/, '必须把引用原文放进 title（hover 可见）')
+    // hover 展示原文：用自带 tooltip 子元素，**不用原生 title**。
+    // 用户反馈「hover 没展示」—— 原生 title 有约 1 秒延迟、样式不可控、长文本可能被截断。
+    assert.ok(body.includes('soul-quote-sent-tip'), '胶囊内必须有 tooltip 元素（承载引用原文）')
+    assert.ok(body.includes('tip.textContent = sent.quotes'), 'tooltip 内容必须来自引用原文')
+    // ★ 光有 className 赋值不够 —— 实测漏检过：删掉 appendChild 后，
+    // 「有 soul-quote-sent-tip 这个字符串」的断言照样通过，但 tooltip 根本没挂到 DOM。
+    assert.ok(body.includes('badge.appendChild(tip)'),
+      'tooltip 必须真的挂到胶囊上（只创建不挂载等于不存在）')
+    assert.equal(/badge\.title =/.test(body), false, '不得再用原生 title（有延迟、不可控、可能被截断）')
+    assert.match(source, /\.soul-quote-sent:hover \.soul-quote-sent-tip\{display:block\}/, 'hover 时必须显示 tooltip')
+    assert.match(source, /\.soul-quote-sent-tip\{[^}]*white-space:pre-wrap/, 'tooltip 必须保留换行（pre-wrap）')
 
     // ④ ★ 顺序：先快照、再清空 —— 反了就没内容可画
     const snapAt = body.indexOf('sentQuoteBuckets.set(sessionId')
