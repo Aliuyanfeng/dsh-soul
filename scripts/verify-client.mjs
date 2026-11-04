@@ -4970,13 +4970,15 @@ function componentBody(text, name) {
     assert.equal(/data-chat-turn/.test(componentBody(source, 'SoulQuoteDock')), false, 'Dock 不得再持有发送检测（会被卸载）')
 
     // ① 必须观察**消息列表**而不是输入框
-    assert.ok(body.includes("querySelector('[data-chat-turn]')"), '必须以回合节点定位消息列表')
+    // 用用户消息类名定位（.userRow 保留原名），不是 [data-chat-turn]（那是每节点的回合序号）
+    assert.ok(body.includes('USER_ROW'), '必须用 USER_ROW 常量定位用户消息')
+    assert.ok(body.includes('[class*="userRow"]'), 'USER_ROW 必须匹配 userRow 类名')
     assert.match(body, /new MutationObserver\(/, '必须用 MutationObserver')
     assert.ok(body.includes('observer.observe(list, { childList: true, subtree: true })'), '必须观察消息列表')
 
     // ② ★ 核心：只有回合数**增加**才清空
     //    删除会话、清空对话、手动删字都不会让回合数增加。
-    assert.match(body, /next > turnCount/, '只有回合数增加才算发送（不得用其他信号）')
+    assert.match(body, /next > userCount/, '只有用户消息数增加才算发送（不得用其他信号）')
 
     // ③ 禁止再用「草稿变空」那套错误信号
     assert.equal(/hadContentRef/.test(body), false, '不得再用「曾经有内容」那套草稿信号（手动删字会误清）')
@@ -5004,8 +5006,9 @@ function componentBody(text, name) {
     assert.match(body, /className = 'soul-quote-sent'/, '胶囊必须有独立类名')
 
     // ② 必须插到**回合最前面**（用户消息上方），不是追加到末尾
-    assert.match(body, /insertBefore\(badge, last\.firstChild\)/, '胶囊必须插到回合最前（用户消息上方）')
-    assert.match(body, /turns\[turns\.length - 1\]/, '必须挂到最新那条回合')
+    // 胶囊要插到**用户消息正上方**：parent.insertBefore(badge, last)，last 是 userRow
+    assert.ok(body.includes('parent.insertBefore(badge, last)'), '胶囊必须插到用户消息正上方')
+    assert.ok(body.includes('rows[rows.length - 1]'), '必须挂到最新那条用户消息')
 
     // ③ hover 展示引用原文
     assert.match(body, /badge\.title = sent\.quotes/, '必须把引用原文放进 title（hover 可见）')
@@ -5021,7 +5024,7 @@ function componentBody(text, name) {
     // 实测漏检过 —— 卸载时也有一处同样的清理代码，只查模式会让"删掉 paint 里的清理"
     // 这个变体照样通过，而那正是会叠出多个胶囊的 bug。
     const paintAt = body.indexOf('function paint()')
-    const insertAt = body.indexOf('last.insertBefore(badge')
+    const insertAt = body.indexOf('parent.insertBefore(badge, last)')
     const cleanAt = body.indexOf('removeChild(stale)')
     assert.ok(paintAt > 0 && insertAt > paintAt, '找不到 paint() 或插入点')
     assert.ok(cleanAt > paintAt && cleanAt < insertAt, '必须在本轮注入前清理旧胶囊（幂等），且在插入之前')

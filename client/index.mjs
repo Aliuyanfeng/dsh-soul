@@ -4724,9 +4724,9 @@ window.__ModuleLoader__.load({
       // 而「发送之后把胶囊画到历史里」这件事必须继续存在。本组件在 quotes 为空时
       // 仍挂着（只是返回 null），是更合适的宿主。
       //
-      // 发送信号：消息列表里多了一个回合（[data-chat-turn]）。手动删字不会新增回合。
+      // 发送信号：多了一条用户消息。手动删字不会新增用户消息。
       //
-      // ⚠️ 这是**脆弱实现**：依赖宿主的 [data-chat-turn] 这个 DOM 标识。
+      // ⚠️ 这是**脆弱实现**：依赖宿主的 .userRow 这个 CSS Module 类名（保留了原名）。
       //    宿主改版若换掉它，注入会静默失效（引用功能本身不受影响）。
       //    之所以还是选它：宿主没有提供「用户消息上方」的槽位（只有回合尾部的
       //    turnTail），而用户明确要胶囊在消息上方。
@@ -4762,27 +4762,41 @@ window.__ModuleLoader__.load({
         const ATTR = 'data-soul-quote-sent'
         let list = null
         let observer = null
-        let turnCount = -1
+        let userCount = -1
+
+        // ⚠️ 不能用 [data-chat-turn] 定位消息。
+        //
+        // 那是**每个流节点身上的回合序号**（渲染源码：data-chat-turn={turn}，
+        // 挂在 userRow / 助手消息 / 工具调用每一层上），不是回合容器。
+        // 早先用它当容器，「最后一个 [data-chat-turn]」拿到的其实是**助手消息**，
+        // 于是胶囊挂到了助手侧（用户实测反馈：「要在用户消息而不是助手消息」）。
+        //
+        // 正确标识是用户消息自身的类名。CSS Module 保留了原名：
+        // MessageItem.module.css 里是 .userRow，编译后形如 LOmM4q_userRow，
+        // 所以用 [class*="userRow"] 匹配是稳的。
+        const USER_ROW = '[class*="userRow"]'
 
         function findList() {
-          const first = document.querySelector('[data-chat-turn]')
-          return first === null ? null : first.parentElement
+          const row = document.querySelector(USER_ROW)
+          return row === null ? null : row.parentElement
         }
 
-        function countTurns() {
-          return list === null ? 0 : list.querySelectorAll('[data-chat-turn]').length
+        function countUsers() {
+          return typeof document === 'undefined' ? 0 : document.querySelectorAll(USER_ROW).length
         }
 
-        // 把胶囊画到**最新那条回合**的最前面（用户消息上方）
+        // 把胶囊画到**最新那条用户消息**的正上方
         function paint() {
           for (const stale of document.querySelectorAll('[' + ATTR + ']')) {
             if (stale.parentElement !== null) stale.parentElement.removeChild(stale)
           }
           const sent = sentQuoteBuckets.get(sessionId)
-          if (sent === undefined || list === null || list.isConnected === false) return
-          const turns = list.querySelectorAll('[data-chat-turn]')
-          if (turns.length === 0) return
-          const last = turns[turns.length - 1]
+          if (sent === undefined) return
+          const rows = document.querySelectorAll(USER_ROW)
+          if (rows.length === 0) return
+          const last = rows[rows.length - 1]
+          const parent = last.parentElement
+          if (parent === null) return
           const badge = document.createElement('div')
           badge.className = 'soul-quote-sent'
           badge.setAttribute(ATTR, String(sent.at))
@@ -4791,7 +4805,7 @@ window.__ModuleLoader__.load({
           badge.title = sent.quotes
             .map((q, i) => t('quote.sentItem', { index: String(i + 1), text: q.text }))
             .join('\n\n')
-          last.insertBefore(badge, last.firstChild)
+          parent.insertBefore(badge, last)
         }
 
         function onMutate() {
@@ -4800,9 +4814,9 @@ window.__ModuleLoader__.load({
             attach()
             return
           }
-          const next = countTurns()
+          const next = countUsers()
           // 只有**增加**才算「新消息发出去了」；删除/清空不会触发
-          if (turnCount >= 0 && next > turnCount) {
+          if (userCount >= 0 && next > userCount) {
             // 先快照当前引用，再清空 —— 顺序不能反，否则历史里没有内容可画
             const current = quoteListOf(sessionId)
             if (current.length > 0) {
@@ -4814,7 +4828,7 @@ window.__ModuleLoader__.load({
             }
             paint()
           }
-          turnCount = next
+          userCount = next
         }
 
         function attach() {
@@ -4822,7 +4836,7 @@ window.__ModuleLoader__.load({
           if (found === null) return
           if (observer !== null) observer.disconnect()
           list = found
-          turnCount = countTurns()
+          userCount = countUsers()
           observer = new MutationObserver(onMutate)
           observer.observe(list, { childList: true, subtree: true })
           paint()
