@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 84
+const EXPECTED_ASSERTIONS = 85
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4904,6 +4904,23 @@ function componentBody(text, name) {
 
     // 防呆：扫描逻辑失效时不能静默通过
     assert.ok(rules.size > 200, `css 规则解析异常（只拿到 ${rules.size} 条）`)
+  })
+
+  await check('C90 引用浮层必须撑满输入框宽度（flex 父容器下不能只占内容宽）', async () => {
+    // 用户实测反馈：「引用后在输入框上方显示宽度不对，保持和输入框宽度一致即可」。
+    //
+    // 成因：`conversation.input.dock` 的父容器是个 flex 列。若它的 align-items 是
+    // flex-start，子项就只占**内容宽度** —— 引用卡看起来比输入框窄一截。
+    // div 在 block 上下文里本来会撑满，所以这个问题**只在 flex 父容器下出现**，
+    // 靠肉眼在别的场景里验证不出来。
+    //
+    // 修法：显式 width:100% + box-sizing:border-box。
+    // box-sizing 不能省 —— 本规则有 padding 与边框，content-box 下 100% 会溢出。
+    const at = source.indexOf('.soul-quote-dock{')
+    assert.ok(at > 0, '找不到 .soul-quote-dock 规则')
+    const css = source.slice(at, source.indexOf('}', at) + 1)
+    assert.match(css, /width:100%/, '引用浮层必须显式 width:100%（flex 父容器下默认只占内容宽）')
+    assert.match(css, /box-sizing:border-box/, '必须有 box-sizing:border-box（否则 100% 叠加 padding 会溢出）')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

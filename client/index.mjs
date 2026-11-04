@@ -1170,7 +1170,11 @@ window.__ModuleLoader__.load({
       '.soul-quote-action:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
       '.soul-quote-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       // 浮层：与宿主的「目标 / 队列」同区，视觉上贴齐它们（细边框 + 圆角 + 模块底色）
-      '.soul-quote-dock{display:flex;flex-direction:column;gap:4px;margin:0 0 6px;padding:6px 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
+      // 宽度必须显式撑满：input.dock 的父容器是个 flex 列，若它的 align-items 是
+      // flex-start，子项就只占内容宽度 —— 视觉上引用卡比输入框窄一截（用户实测反馈）。
+      // box-sizing:border-box 不能省：本规则有 padding 与 1px 级别的边框，
+      // 用 content-box 会让 width:100% 再叠上 padding 而溢出。
+      '.soul-quote-dock{box-sizing:border-box;width:100%;display:flex;flex-direction:column;gap:4px;margin:0 0 6px;padding:6px 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
       '.soul-quote-dock-head{display:flex;align-items:center;gap:8px}',
       '.soul-quote-dock-title{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       '.soul-quote-dock-clear{margin-left:auto;padding:0 4px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
