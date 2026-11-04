@@ -4665,7 +4665,9 @@ window.__ModuleLoader__.load({
       const last = rows.length === 0 ? null : rows[rows.length - 1]
       if (last === null || typeof last.closest !== 'function') return false
       const node = last.closest('[data-chat-turn]')
-      if (node === null) return false
+      if (node === null) {
+        return false
+      }
       sent.turn = node.getAttribute('data-chat-turn')
       return true
     }
@@ -5125,6 +5127,18 @@ window.__ModuleLoader__.load({
                 target = row
                 break
               }
+            }
+          }
+          // 就地补回合：不再依赖回合通道是否触发。
+          //
+          // 用户实测「胶囊仍然跟着轮次移动」→ 说明 turn 一直是 null，每次都走了兜底。
+          // paint 通常由「消息列表发生变化」触发，此刻新消息已经在 DOM 里，
+          // 所以此刻取到的就是它自己的回合号。只补一次（补上后不再进这里）。
+          if ((sent.turn === null || sent.turn === undefined) && rows.length > 0) {
+            const lastRow = rows[rows.length - 1]
+            if (typeof lastRow.closest === 'function') {
+              const turnNode = lastRow.closest('[data-chat-turn]')
+              if (turnNode !== null) sent.turn = turnNode.getAttribute('data-chat-turn')
             }
           }
           if (target === null) {

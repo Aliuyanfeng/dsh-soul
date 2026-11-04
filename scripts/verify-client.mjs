@@ -5064,6 +5064,11 @@ function componentBody(text, name) {
     assert.ok(noTurnCount >= 2, `Enter 与相位通道都必须传 false（实际 ${noTurnCount} 处）`)
     assert.ok(body.includes('backfillSentTurn(sessionId)'),
       '回合通道必须补上 turn（那是唯一能拿到正确回合的时机）')
+
+    // ★ 绘制时就地补回合：不再依赖回合通道是否触发。
+    // 用户实测「胶囊仍然跟着轮次移动」→ turn 一直为空，每次都在走兜底。
+    assert.ok(body.includes('sent.turn = turnNode.getAttribute'),
+      'paint 必须在 turn 为空时就地补上（否则兜底到最后一条，胶囊会迁移）')
     assert.ok(helperAt > 0, '必须有 snapshotSentQuotes helper')
     const snapAt = source.indexOf('sentQuoteBuckets.set(sessionId', helperAt)
     const clearAt = source.indexOf('quoteClear(sessionId)', helperAt)
