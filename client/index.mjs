@@ -1174,7 +1174,10 @@ window.__ModuleLoader__.load({
       // flex-start，子项就只占内容宽度 —— 视觉上引用卡比输入框窄一截（用户实测反馈）。
       // box-sizing:border-box 不能省：本规则有 padding 与 1px 级别的边框，
       // 用 content-box 会让 width:100% 再叠上 padding 而溢出。
-      '.soul-quote-dock{box-sizing:border-box;width:100%;display:flex;flex-direction:column;gap:4px;margin:0 0 6px;padding:6px 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
+      // 宽度默认 100%（量不到输入框时兜底），组件会用 useLayoutEffect 量出
+      // 输入框卡片的真实宽度再覆盖成 px —— 它与输入框有 margin/max-width 差异，
+      // 纯 CSS 无法可靠对齐（详见组件内注释）。
+      '.soul-quote-dock{box-sizing:border-box;width:100%;max-width:100%;display:flex;flex-direction:column;gap:4px;margin:0 0 6px;padding:6px 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-module-platform)}',
       '.soul-quote-dock-head{display:flex;align-items:center;gap:8px}',
       '.soul-quote-dock-title{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       '.soul-quote-dock-clear{margin-left:auto;padding:0 4px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
@@ -4774,11 +4777,56 @@ window.__ModuleLoader__.load({
           .catch(() => {})
       }, [sessionId, quoteKey])
 
+      // 宽度对齐：不能靠 CSS 猜。
+      //
+      // 宿主把本槽位与输入框卡片渲染成 **composerStack 的兄弟节点**，所以 width:100%
+      // 理论上会一样宽 —— 但实测仍然不同宽，说明输入框卡片自身有 margin / max-width。
+      // 那个值写在宿主的 CSS Module 里（hash 类名），插件既不可读也不该硬编码。
+      //
+      // 做法：运行时量它的实际宽度，套到自己身上。量不到就退回 100%（不阻断渲染）。
+      const dockRef = React.useRef(null)
+      React.useLayoutEffect(() => {
+        const node = dockRef.current
+        if (node === null) return undefined
+        const stack = node.parentElement
+        if (stack === null) return undefined
+
+        const align = () => {
+          const current = dockRef.current
+          if (current === null) return
+          const parent = current.parentElement
+          if (parent === null) return
+          // 同级的另一个子项（含可编辑区）就是输入框卡片
+          let bar = null
+          for (const child of parent.children) {
+            if (child === current) continue
+            if (typeof child.querySelector === 'function' && child.querySelector('[contenteditable="true"]') !== null) {
+              bar = child
+              break
+            }
+          }
+          if (bar === null) {
+            current.style.width = ''
+            return
+          }
+          const width = bar.getBoundingClientRect().width
+          // 宽度为 0 说明还没布局好（或已隐藏），保留 100% 兜底
+          current.style.width = width > 0 ? width + 'px' : ''
+        }
+
+        align()
+        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return undefined
+        window.addEventListener('resize', align)
+        return () => {
+          window.removeEventListener('resize', align)
+        }
+      })
+
       if (sessionId === '') return null
       if (state.quoteAsContext !== true) return null
       if (quotes.length === 0) return null
 
-      return e('div', { className: 'soul-quote-dock' },
+      return e('div', { className: 'soul-quote-dock', ref: dockRef },
         e('div', { className: 'soul-quote-dock-head' },
           e('span', { className: 'soul-quote-dock-title' },
             t('quote.dockTitle', { count: String(quotes.length) })),

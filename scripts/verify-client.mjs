@@ -4919,8 +4919,21 @@ function componentBody(text, name) {
     const at = source.indexOf('.soul-quote-dock{')
     assert.ok(at > 0, '找不到 .soul-quote-dock 规则')
     const css = source.slice(at, source.indexOf('}', at) + 1)
-    assert.match(css, /width:100%/, '引用浮层必须显式 width:100%（flex 父容器下默认只占内容宽）')
+    assert.match(css, /width:100%/, '引用浮层必须有 width:100% 作为兜底')
     assert.match(css, /box-sizing:border-box/, '必须有 box-sizing:border-box（否则 100% 叠加 padding 会溢出）')
+
+    // ★ 但只靠 CSS 对齐不了：宿主的输入框卡片自身有 margin/max-width，
+    // 那个值写在它的 CSS Module 里（hash 类名），插件读不到也不该硬编码。
+    // 所以真实做法是**运行时量它的宽度**。
+    const dockBody = componentBody(source, 'SoulQuoteDock')
+    assert.ok(dockBody !== '', '找不到 SoulQuoteDock 组件')
+    assert.match(dockBody, /const dockRef = React\.useRef\(null\)/, '浮层必须有 ref（要量/设宽度）')
+    assert.match(dockBody, /React\.useLayoutEffect\(/, '必须在布局后测量对齐（useEffect 会闪一下）')
+    assert.match(dockBody, /querySelector\('\[contenteditable="true"\]'\)/, '必须以可编辑区定位输入框卡片')
+    assert.match(dockBody, /getBoundingClientRect\(\)\.width/, '必须量输入框卡片的真实宽度')
+    assert.match(dockBody, /width > 0 \? width \+ 'px' : ''/, '量不到宽度时必须降级回 100%（不能写 0px）')
+    assert.match(dockBody, /addEventListener\('resize'/, '窗口尺寸变化要重新对齐')
+    assert.match(dockBody, /removeEventListener\('resize'/, '卸载时必须移除 resize 监听')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
