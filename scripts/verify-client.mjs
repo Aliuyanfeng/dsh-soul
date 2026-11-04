@@ -5033,6 +5033,17 @@ function componentBody(text, name) {
     assert.match(source, /\.soul-quote-sent:hover \.soul-quote-sent-tip\{display:block\}/, 'hover 时必须显示 tooltip')
     assert.match(source, /\.soul-quote-sent-tip\{[^}]*white-space:pre-wrap/, 'tooltip 必须保留换行（pre-wrap）')
 
+    // 位置与深色兼容（用户要求：「内容展示在上方，并且兼容深色背景」）
+    const tipAt = source.indexOf('.soul-quote-sent-tip{')
+    assert.ok(tipAt > 0, '找不到 tooltip 规则')
+    const tipCss = source.slice(tipAt, source.indexOf('}', tipAt) + 1)
+    assert.match(tipCss, /bottom:100%/, 'tooltip 必须展示在胶囊**上方**（原来贴下方，容易与背景糊在一起）')
+    assert.match(tipCss, /backdrop-filter:var\(--dsw-menu-backdrop-filter\)/,
+      '必须有宿主的模糊底（半透明背景在深色主题下才不会糊）')
+    assert.match(tipCss, /background:var\(--dsw-specific-menu\)/,
+      '背景必须用主题变量（它自带深浅两套：#f8f9faf0 / #303136f0）')
+    assert.match(tipCss, /color:var\(--dsw-alias-label-primary\)/, '文字色必须用主题变量')
+
     // ④ ★ 顺序：先快照、再清空 —— 反了就没内容可画
     const snapAt = body.indexOf('sentQuoteBuckets.set(sessionId')
     const clearAt = body.indexOf('quoteClear(sessionId)')
