@@ -348,6 +348,17 @@ function loadClient(routes, options = {}) {
         IconAgentPresetOutlineRegular: 'ui-icon-persona'
       }
       // 白名单校验：访问未声明的名字一律返回 undefined（与真实宿主一致），
+      // 宿主真实存在的图标名白名单。
+      //
+      // 作用：让「用了宿主没有的图标名」在测试期就以友好错误暴露，
+      // 而不是等浏览器里拿到 undefined ⇒ React error #130 把整个区块崩掉。
+      //
+      // ⚠️ 之前这段代码引用了 ICON_WHITELIST 却**从未定义过它**，
+      //   只在访问未定义属性时才会触发 ⇒ ReferenceError（比它想报的错还难懂）。
+      //   因为平时只访问 shimmed 里已有的属性，这个坑一直没显形。
+      //   新增宿主图标时补进这个集合。
+      const ICON_WHITELIST = new Set(['IconAgentPresetOutlineRegular'])
+
       // 并大声报错 —— 让「用了宿主没有的图标名」在测试期就暴露，
       // 而不是等它在浏览器里把整个区块崩掉。
       return new Proxy(shimmed, {
