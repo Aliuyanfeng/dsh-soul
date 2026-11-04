@@ -1189,7 +1189,19 @@ window.__ModuleLoader__.load({
       // 负的 margin 是让 dock 与下方输入框卡片视觉上贴合（宿主原样如此）。
       '.soul-quote-dock{box-sizing:border-box;width:calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));max-width:calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));margin:0 auto calc(0px - var(--dsh-composer-stack-gap) - 3px);padding:0 var(--dsh-composer-dock-inset);flex:none}',
       // panel：与队列面板同款上圆角（它和输入框卡片是"上盖"关系）
-      '.soul-quote-panel{box-sizing:border-box;border-radius:var(--dsw-radius-lg) var(--dsw-radius-lg) 0 0;width:100%;padding:2px 0;position:relative;overflow:hidden}',
+      // panel 只负责"壳"：圆角、裁剪、层叠上下文。**背景与边框由伪元素画**。
+      //
+      // 这是宿主的做法（QueueDock.module.css）：
+      //   panel:before → z-index:-1 + inset:0 + border-radius:inherit → 背景
+      //   panel:after  → 同样的盒 + border，但 border-bottom:none
+      //
+      // 为什么不用 narrative 的 background/border 直接写在 panel 上：
+      //   背景在 :before 里才能真正垫在内容下面（配合 isolation:isolate 把
+      //   负 z-index 关在 panel 内）；边框在 :after 里画成覆盖层，
+      //   才能在**底边留空**，让这张卡看起来是从输入框卡片里"长"出来的。
+      '.soul-quote-panel{box-sizing:border-box;isolation:isolate;border-radius:var(--dsw-radius-lg) var(--dsw-radius-lg) 0 0;width:100%;padding:2px 0;position:relative;overflow:hidden}',
+      '.soul-quote-panel::before{z-index:-1;border-radius:inherit;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);content:"";pointer-events:none;position:absolute;inset:0}',
+      '.soul-quote-panel::after{border:.5px solid var(--dsw-alias-border-l1);border-bottom:none;border-radius:inherit;content:"";pointer-events:none;position:absolute;inset:0}',
       // 每条引用：照搬 QueueDock 的 .row（min-height 36 / 左右 12、5 / gap 10 / radius-md）
       // list：照搬宿主的 .F07MqG_list（max-height 180 + 纵向滚动），
       // 引用条数多时不会把输入区顶高。

@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 92
+const EXPECTED_ASSERTIONS = 93
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5205,6 +5205,48 @@ function componentBody(text, name) {
     const listCss = source.slice(listCssAt, source.indexOf('}', listCssAt) + 1)
     assert.match(listCss, /max-height:180px/, 'list 的 max-height 必须与队列同值（180px）')
     assert.match(listCss, /overflow-y:auto/, 'list 必须可滚动（与队列一致）')
+  })
+
+  await check('C98 引用卡的背景与边框由伪元素画（与队列一致，底边留空）', async () => {
+    // 用户报：「没有 border 和背景色 和宿主排队消息不统一」。
+    //
+    // 查证：宿主的背景与边框**都不写在 panel 本体上**，而在两个伪元素里 ——
+    //
+    //   .F07MqG_panel:before { z-index:-1; inset:0; border-radius:inherit;
+    //                          background: var(--dsw-specific-menu);
+    //                          backdrop-filter: var(--dsw-menu-backdrop-filter) }
+    //   .F07MqG_panel:after  { inset:0; border-radius:inherit;
+    //                          border:.5px solid var(--dsw-alias-border-l1);
+    //                          border-bottom:none }
+    //
+    // 为什么这样做：
+    //   · 背景放在 :before 并配 isolation:isolate，负 z-index 被关在 panel 内，
+    //     才能真正垫在内容下面；
+    //   · 边框放在 :after 并**去掉底边**，卡片看起来才是从输入框卡片"长"出来的，
+    //     而不是一张独立的悬浮卡。
+
+    const panelAt = source.indexOf('.soul-quote-panel{')
+    assert.ok(panelAt > 0, '找不到 .soul-quote-panel')
+    const panelCss = source.slice(panelAt, source.indexOf('}', panelAt) + 1)
+    assert.match(panelCss, /isolation:isolate/, 'panel 必须有 isolation:isolate（把负 z-index 关在本层）')
+    assert.match(panelCss, /overflow:hidden/, 'panel 必须有 overflow:hidden（裁剪悬停高亮）')
+
+    // 背景
+    const beforeAt = source.indexOf('.soul-quote-panel::before{')
+    assert.ok(beforeAt > 0, '必须有 ::before 承载背景')
+    const beforeCss = source.slice(beforeAt, source.indexOf('}', beforeAt) + 1)
+    assert.match(beforeCss, /background:var\(--dsw-specific-menu\)/, '背景色必须与队列同源（--dsw-specific-menu）')
+    assert.match(beforeCss, /z-index:-1/, '背景层必须在内容之下')
+    assert.match(beforeCss, /inset:0/, '背景层必须铺满 panel')
+    assert.match(beforeCss, /border-radius:inherit/, '背景层必须继承圆角（否则会露出直角）')
+
+    // 边框
+    const afterAt = source.indexOf('.soul-quote-panel::after{')
+    assert.ok(afterAt > 0, '必须有 ::after 承载边框')
+    const afterCss = source.slice(afterAt, source.indexOf('}', afterAt) + 1)
+    assert.match(afterCss, /border:\.5px solid var\(--dsw-alias-border-l1\)/, '边框必须与队列同款（.5px border-l1）')
+    assert.match(afterCss, /border-bottom:none/, '底边必须无边框（与输入框卡片接合，否则会看到一条横线）')
+    assert.match(afterCss, /border-radius:inherit/, '边框层必须继承圆角')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
