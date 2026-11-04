@@ -4935,6 +4935,11 @@ function componentBody(text, name) {
     assert.match(dockBody, /React\.useLayoutEffect\(/, '必须在布局后测量对齐（useEffect 会闪一下）')
     assert.match(dockBody, /querySelector\('\[contenteditable="true"\]'\)/, '必须以可编辑区定位输入框卡片')
     assert.match(dockBody, /getBoundingClientRect\(\)\.width/, '必须量输入框卡片的真实宽度')
+
+    // ★ 必须**往上爬**找容器，不能只看 parentElement。
+    // 实测栽过：槽位渲染会在组件外面套一层 wrapper，那层子元素只有我自己，
+    // 永远找不到输入框 ⇒ 退回 100% ⇒ 宽度依旧不一致（用户报了两次）。
+    assert.match(dockBody, /while \(level !== null/, '必须往上爬找同时容纳我与输入框的容器')
     assert.match(dockBody, /width > 0 \? width \+ 'px' : ''/, '量不到宽度时必须降级回 100%（不能写 0px）')
     assert.match(dockBody, /addEventListener\('resize'/, '窗口尺寸变化要重新对齐')
     assert.match(dockBody, /removeEventListener\('resize'/, '卸载时必须移除 resize 监听')

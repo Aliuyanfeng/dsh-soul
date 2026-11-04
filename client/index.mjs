@@ -4904,19 +4904,35 @@ window.__ModuleLoader__.load({
         const stack = node.parentElement
         if (stack === null) return undefined
 
+        // 往上爬，找「同时包含我和输入框卡片」的那一层容器。
+        //
+        // ⚠️ 不能只看 parentElement：槽位渲染会在我的组件外面套一层 wrapper，
+        //    那一层的子元素**只有我自己**，于是永远找不到输入框 → 退回 100% →
+        //    宽度依旧对不上（用户实测反馈过两次，第二次就是这个原因）。
+        //    真正同时容纳两者的容器在更上面（渲染源码里叫 composerStack）。
+        //
+        // 限制爬升层数：再多就是在整个页面里乱找了，容易量到别的会话的输入框。
+        const MAX_LEVELS = 6
         const align = () => {
           const current = dockRef.current
           if (current === null) return
-          const parent = current.parentElement
-          if (parent === null) return
-          // 同级的另一个子项（含可编辑区）就是输入框卡片
+          if (typeof document === 'undefined') return
+          let level = current.parentElement
           let bar = null
-          for (const child of parent.children) {
-            if (child === current) continue
-            if (typeof child.querySelector === 'function' && child.querySelector('[contenteditable="true"]') !== null) {
-              bar = child
-              break
+          let climbed = 0
+          while (level !== null && level !== document.body && climbed < MAX_LEVELS) {
+            for (const child of level.children) {
+              // 跳过我自己所在的那一支
+              if (child === current || child.contains(current)) continue
+              if (typeof child.querySelector !== 'function') continue
+              if (child.querySelector('[contenteditable="true"]') !== null) {
+                bar = child
+                break
+              }
             }
+            if (bar !== null) break
+            level = level.parentElement
+            climbed += 1
           }
           if (bar === null) {
             current.style.width = ''
