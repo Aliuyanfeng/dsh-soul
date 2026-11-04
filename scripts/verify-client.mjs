@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 82
+const EXPECTED_ASSERTIONS = 83
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4802,6 +4802,46 @@ function componentBody(text, name) {
     // ⑥ 两端 sessionId 必须**同样归一化** —— 形式不一致会「存了但取不到」，静默失配
     assert.match(host, /function quoteKeyOf\(raw\)/, '宿主必须归一化 sessionId')
     assert.match(host, /replace\(\/\^session-\/, ''\)/, '宿主必须剥掉 session- 前缀')
+  })
+
+  await check('C88 浮动引用按钮：portal 到 body、避开输入框内选区、坐标失效即隐藏', async () => {
+    // 用户要的是「选中一段 → 选区上方浮出一个按钮」（像 ChatGPT 的选择浮层）。
+    // 行内按钮是「总是可见」，浮动按钮是「贴着选区」—— 后者更直觉，但坑也多。
+    const body = componentBody(source, 'SoulQuoteFloating')
+    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+
+    // ① 必须 portal 到 document.body。
+    //    直接渲染在组件树里时，任何带 transform 的祖先都会把 position:fixed 变成
+    //    「相对该祖先定位」，按钮会飘到错误位置 —— 这类问题在自己机器上可能复现不出来。
+    assert.match(source, /const reactDom = require\('react-dom'\)/, '必须 require react-dom')
+    assert.match(source, /createPortal = reactDom\.createPortal/, '必须取到 createPortal')
+    assert.match(body, /createPortal\(/, '浮动按钮必须经 createPortal 渲染')
+    assert.match(body, /document\.body/, '必须以 document.body 为 portal 容器')
+
+    // ② 取不到 createPortal 时必须降级，不能让整个插件崩
+    assert.match(source, /catch \{[^}]*createPortal = null/, 'require 失败必须降级为 null')
+    assert.match(body, /typeof createPortal === 'function'/, '启用条件必须检查 createPortal 可用')
+
+    // ③ 监听选区变化（这是「选中即出现」的唯一触发源）
+    assert.match(body, /document\.addEventListener\('selectionchange'/, '必须监听 selectionchange')
+    assert.match(body, /getBoundingClientRect\(\)/, '必须用选区矩形定位')
+
+    // ④ 输入框内的选区不算引用 —— 那里是「写」，不是「引」
+    assert.match(body, /closest\('\[contenteditable="true"\]'\)/, '必须排除输入框内的选区')
+
+    // ⑤ 顶部空间不足要放到选区下方，否则按钮跑到视口外
+    assert.match(body, /rect\.top - height - 8 < 4 \? rect\.bottom \+ 8/, '顶部放不下时必须改放到下方')
+
+    // ⑥ 滚动/缩放让旧坐标失效，必须隐藏而不是硬跟
+    assert.match(body, /addEventListener\('scroll', hide, true\)/, '滚动时必须隐藏（坐标已过时）')
+    assert.match(body, /removeEventListener\('selectionchange'/, '卸载时必须移除监听（否则泄漏）')
+
+    // ⑦ 同行内按钮：按下不能让选区塌陷
+    assert.match(body, /onMouseDown: \(ev\) => ev\.preventDefault\(\)/, '浮动按钮也必须防选区塌陷')
+
+    // ⑧ 必须注册到会话作用域的槽位，且不影响已有的光轨注册（同为 list 槽位可共存）
+    assert.match(source, /id: 'soul-quote-float'/, '必须有独立注册 id')
+    assert.match(source, /id: 'soul-trail'/, '光轨注册必须仍在（同一 list 槽位共存）')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

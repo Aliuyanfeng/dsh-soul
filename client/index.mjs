@@ -28,6 +28,19 @@ window.__ModuleLoader__.load({
     const exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
+    // react-dom 的 createPortal：浮动按钮必须挂到 document.body ——
+    // 如果挂在组件树里，任何一个带 transform 的祖先都会把 position:fixed 变成
+    // 「相对该祖先定位」，按钮就会飘到错误的位置。宿主插件的 DropOverlay 也是这么做的。
+    //
+    // require 失败不能让插件崩：降级为「不提供浮动按钮」，行内按钮仍然可用。
+    let createPortal = null
+    try {
+      const reactDom = require('react-dom')
+      if (reactDom && typeof reactDom.createPortal === 'function') createPortal = reactDom.createPortal
+    } catch {
+      createPortal = null
+    }
+
     // react/jsx-runtime：官方 client bundle 使用 jsx/jsxs/Fragment。
     // 我们用一个小包装 e() 让 children 写法保持直观，同时符合 jsx-runtime 约定。
     const { jsx: h, jsxs: hs, Fragment } = require('react/jsx-runtime')
@@ -1141,6 +1154,12 @@ window.__ModuleLoader__.load({
       // ── 引用作为上下文 ──
       // 动作行按钮：走宿主 sm 档（28 / 12 / 18 / radius-sm / border-l3），
       // 与插件里其它按钮同规格 —— C86 的档位审计会自动检查它。
+      // 浮动按钮：胶囊 + 阴影，像系统级浮层。
+      // 注意它**没有边框** —— C86 的档位判据会把「无边框」认作文字链接而跳过，
+      // 这正是我们要的：浮层按钮不受正文按钮档位约束，尺寸由浮层语境决定。
+      '.soul-quote-float{position:fixed;z-index:2147483000;display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 14px;border:none;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.18);white-space:nowrap}',
+      '.soul-quote-float:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.soul-quote-float:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       '.soul-quote-action{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
       '.soul-quote-action:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
       '.soul-quote-action:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
@@ -2056,6 +2075,7 @@ window.__ModuleLoader__.load({
       'field.quoteAsContext': '引用作为上下文',
       'hint.quoteAsContext': '开启后，可在回答里选中一段文字并点「引用」，它作为上下文随下一轮请求送达模型 —— 不进你的消息正文，也不写进对话历史。',
       'quote.action': '引用',
+      'quote.actionFloat': '引用这段',
       'quote.actionHint': '选中回答里的一段文字后点此，作为上下文随下一轮请求送达模型',
       'quote.selectFirst': '先选中一段文字',
       'quote.tooMany': '引用已达上限',
@@ -2458,6 +2478,7 @@ window.__ModuleLoader__.load({
       'field.quoteAsContext': 'Quote as context',
       'hint.quoteAsContext': 'When on, select a passage in a reply and click "Quote" — it is sent to the model as context with the next request, without entering your message or the chat history.',
       'quote.action': 'Quote',
+      'quote.actionFloat': 'Quote this',
       'quote.actionHint': 'Select a passage in a reply, then click here to send it to the model as context with the next request',
       'quote.selectFirst': 'Select some text first',
       'quote.tooMany': 'Quote limit reached',
@@ -4558,6 +4579,116 @@ window.__ModuleLoader__.load({
       const selection = window.getSelection()
       if (selection === null) return ''
       return String(selection.toString() || '')
+    }
+
+    // ── 浮动按钮：选中一段文字后在选区上方浮现 ──
+    //
+    // 与行内按钮的分工：行内按钮「总是可见、点哪条引用哪条」，浮动按钮
+    // 「选中才出现、贴着选区」—— 后者更接近用户的直觉（选中了就是要对它做点什么）。
+    //
+    // 三个必须处理的边界：
+    //   ① 输入框内的选区不算 —— 那里是「写」，不是「引」；
+    //   ② 顶部空间不足时把按钮放到选区下方，否则会跑到视口外；
+    //   ③ 滚动 / 改变窗口大小时直接隐藏 —— 位置会过时，跟着算反而会飘。
+    function SoulQuoteFloating(props) {
+      const { useSoulController } = props
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const state = useSoulController((s) => s)
+      const sessionId = typeof props.sessionId === 'string' && props.sessionId !== '' ? props.sessionId : ''
+      const [pos, setPos] = React.useState(null)
+      const enabled = state.quoteAsContext === true && sessionId !== '' && typeof createPortal === 'function'
+
+      React.useEffect(() => {
+        if (!enabled) {
+          setPos(null)
+          return undefined
+        }
+        if (typeof document === 'undefined' || typeof window === 'undefined') return undefined
+
+        let raf = 0
+        const measure = () => {
+          const selection = typeof window.getSelection === 'function' ? window.getSelection() : null
+          if (selection === null || selection.isCollapsed === true || selection.rangeCount === 0) {
+            setPos(null)
+            return
+          }
+          const text = String(selection.toString() || '').trim()
+          if (text === '') {
+            setPos(null)
+            return
+          }
+          // ① 输入框里的选区不算引用
+          const anchor = selection.anchorNode
+          const element = anchor === null || anchor === undefined
+            ? null
+            : (anchor.nodeType === 1 ? anchor : anchor.parentElement)
+          if (element !== null && typeof element.closest === 'function') {
+            const editable = element.closest('[contenteditable="true"]')
+            if (editable !== null) {
+              setPos(null)
+              return
+            }
+          }
+          const range = selection.getRangeAt(0)
+          const rect = range.getBoundingClientRect()
+          if (rect.width <= 0 && rect.height <= 0) {
+            setPos(null)
+            return
+          }
+          const width = 84
+          const height = 32
+          // ② 上方放不下就放到下方
+          const top = rect.top - height - 8 < 4 ? rect.bottom + 8 : rect.top - height - 8
+          const maxLeft = (window.innerWidth || 1024) - width - 8
+          const left = Math.max(8, Math.min(maxLeft, rect.left + rect.width / 2 - width / 2))
+          setPos({ top, left })
+        }
+
+        const onSelectionChange = () => {
+          if (raf !== 0) return
+          raf = requestAnimationFrame(() => {
+            raf = 0
+            measure()
+          })
+        }
+        // ③ 滚动/缩放让旧坐标失效，直接隐藏
+        const hide = () => {
+          setPos(null)
+        }
+
+        document.addEventListener('selectionchange', onSelectionChange)
+        window.addEventListener('scroll', hide, true)
+        window.addEventListener('resize', hide)
+        return () => {
+          if (raf !== 0 && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf)
+          document.removeEventListener('selectionchange', onSelectionChange)
+          window.removeEventListener('scroll', hide, true)
+          window.removeEventListener('resize', hide)
+        }
+      }, [enabled, sessionId])
+
+      if (pos === null || !enabled) return null
+
+      const onQuote = () => {
+        const selection = typeof window.getSelection === 'function' ? window.getSelection() : null
+        const text = selection === null ? '' : String(selection.toString() || '')
+        quoteAdd(sessionId, text)
+        if (selection !== null && typeof selection.removeAllRanges === 'function') selection.removeAllRanges()
+        setPos(null)
+      }
+
+      return createPortal(
+        e('button', {
+          type: 'button',
+          className: 'soul-quote-float',
+          style: { top: pos.top + 'px', left: pos.left + 'px' },
+          // 同行内按钮：按下时不能让选区塌陷，否则拿不到那段话
+          onMouseDown: (ev) => ev.preventDefault(),
+          onClick: onQuote,
+          title: t('quote.actionHint')
+        }, t('quote.actionFloat')),
+        document.body
+      )
     }
 
     // ── 按钮：挂在每条助手消息的动作行 ──
@@ -7961,6 +8092,22 @@ window.__ModuleLoader__.load({
       // 输入框光轨：注册到输入框卡片内部的 overlay 槽位。
       // 组件不渲染可见内容——它按会话运行态在最近的输入框卡片上挂载/隐藏 SVG 环；
       // 同一份 soulController store 保证与设置页的开关、颜色实时一致。
+      // 浮动引用按钮：挂在输入框 overlay 上（每个会话一个实例），
+      // 组件本身 portal 到 document.body，所以不妨碍光轨、也不受输入框裁剪。
+      ctx.slots.inject('conversation.input.overlay', () => ctx.slots.register({
+        name: 'conversation.input.overlay',
+        id: 'soul-quote-float',
+        order: 60,
+        locale: NS,
+        inject: (sessionId) => ({
+          hooks: {
+            soulController: controller.store
+          },
+          controller,
+          sessionId: typeof sessionId === 'string' && sessionId !== '' ? sessionId : null
+        })
+      }, SoulQuoteFloating))
+
       ctx.slots.inject('conversation.input.overlay', () => ctx.slots.register({
         name: 'conversation.input.overlay',
         id: 'soul-trail',
