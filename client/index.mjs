@@ -1157,7 +1157,7 @@ window.__ModuleLoader__.load({
       // 历史里「这条消息带了引用」的胶囊。不可点，所以不设 height ——
       // C86 的档位审计以「有 px 高度 + 字号 + pointer」判定按钮，这里刻意避开，
       // 因为它只是标注而非控件。
-      '.soul-quote-sent{display:block;width:fit-content;max-width:100%;margin:0 0 6px;padding:2px 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;cursor:default}',
+      '.soul-quote-sent{box-sizing:border-box;display:block;width:fit-content;max-width:100%;padding:2px 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;cursor:default}',
 
       // 浮动按钮：胶囊 + 阴影，像系统级浮层。
       // 注意它**没有边框** —— C86 的档位判据会把「无边框」认作文字链接而跳过，
@@ -4896,8 +4896,7 @@ window.__ModuleLoader__.load({
           const rows = document.querySelectorAll(USER_ROW)
           if (rows.length === 0) return
           const last = rows[rows.length - 1]
-          const parent = last.parentElement
-          if (parent === null) return
+          if (last === null || last === undefined) return
           const badge = document.createElement('div')
           badge.className = 'soul-quote-sent'
           badge.setAttribute(ATTR, String(sent.at))
@@ -4906,7 +4905,15 @@ window.__ModuleLoader__.load({
           badge.title = sent.quotes
             .map((q, i) => t('quote.sentItem', { index: String(i + 1), text: q.text }))
             .join('\n\n')
-          parent.insertBefore(badge, last)
+          // 插到 userRow **内部**的第一个位置，而不是它的前面。
+          //
+          // userRow 是 flex column + align-items:flex-end，所以它的子项会**右对齐**，
+          // 与用户消息气泡同侧。插在它外面（列表层）则会继承列表的默认左对齐 ——
+          // 用户截图里胶囊孤零零挂在左边，就是这个原因。
+          //
+          // 放在内部还有个好处：userRow 的 gap:6px 会自动给出胶囊与消息之间的间距，
+          // 不必我再手写 margin。
+          last.insertBefore(badge, last.firstChild)
         }
 
         function onMutate() {

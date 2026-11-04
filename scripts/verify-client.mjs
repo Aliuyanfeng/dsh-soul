@@ -5011,7 +5011,13 @@ function componentBody(text, name) {
 
     // ② 必须插到**回合最前面**（用户消息上方），不是追加到末尾
     // 胶囊要插到**用户消息正上方**：parent.insertBefore(badge, last)，last 是 userRow
-    assert.ok(body.includes('parent.insertBefore(badge, last)'), '胶囊必须插到用户消息正上方')
+    // 胶囊必须插到 userRow **内部**的第一个位置：
+    // userRow 是 flex column + align-items:flex-end，内部子项会右对齐、与消息气泡同侧；
+    // 插在外面（列表层）会左对齐 —— 用户截图里胶囊孤零零挂在左边的就是这个。
+    assert.ok(body.includes('last.insertBefore(badge, last.firstChild)'),
+      '胶囊必须插到用户消息内部（继承其右对齐），才能落在消息正上方')
+    assert.equal(/parent\.insertBefore\(badge/.test(body), false,
+      '不得插在消息外面（会被列表左对齐）')
     assert.ok(body.includes('rows[rows.length - 1]'), '必须挂到最新那条用户消息')
 
     // ③ hover 展示引用原文
@@ -5028,7 +5034,7 @@ function componentBody(text, name) {
     // 实测漏检过 —— 卸载时也有一处同样的清理代码，只查模式会让"删掉 paint 里的清理"
     // 这个变体照样通过，而那正是会叠出多个胶囊的 bug。
     const paintAt = body.indexOf('function paint()')
-    const insertAt = body.indexOf('parent.insertBefore(badge, last)')
+    const insertAt = body.indexOf('last.insertBefore(badge, last.firstChild)')
     const cleanAt = body.indexOf('removeChild(stale)')
     assert.ok(paintAt > 0 && insertAt > paintAt, '找不到 paint() 或插入点')
     assert.ok(cleanAt > paintAt && cleanAt < insertAt, '必须在本轮注入前清理旧胶囊（幂等），且在插入之前')
