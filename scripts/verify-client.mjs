@@ -4947,7 +4947,12 @@ function componentBody(text, name) {
     // ④ 宽度与左偏移都要复制（卡片居中）
     assert.match(body, /targetRect\.width/, '必须量卡片真实宽度')
     // 同理：只查 `style.marginLeft` 出现，把它赋成空串也照样通过。
-    assert.match(body, /style\.marginLeft = offset > 0 \? offset \+ 'px'/, '必须复制**真实**左偏移（不能赋空串）')
+    // ⚠️ 但不能**无条件**复制偏移：输入框卡片并不总是居中，
+    // 之前无条件设 offset 导致本不居中的布局被往右推了一大截（用户截图证实）。
+    assert.match(body, /const centered = leftGap > 0 && Math\.abs\(leftGap - rightGap\) <= 8/,
+      '必须先判断卡片是否居中（左右留白大致相等）')
+    assert.match(body, /style\.marginLeft = centered \? leftGap \+ 'px' : ''/,
+      '只有居中时才复制左偏移，否则必须清空')
 
     // ⑤ 量不到时降级，不得写 0px（会让浮层消失）
     assert.match(body, /targetRect\.width <= 0/, '量不到宽度时必须降级')

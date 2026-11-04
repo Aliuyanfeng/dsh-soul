@@ -4992,9 +4992,18 @@ window.__ModuleLoader__.load({
             return
           }
           current.style.width = targetRect.width + 'px'
-          // 卡片居中时，把同样的左侧偏移抄过来，视觉上才真的对齐
-          const offset = targetRect.left - stackRect.left
-          current.style.marginLeft = offset > 0 ? offset + 'px' : ''
+          // 只有卡片**真的居中**时才复制左偏移。
+          //
+          // ⚠️ 之前是无条件设 offset = targetRect.left - stackRect.left，
+          // 结果本不居中的输入框卡片也让我们往右推了 350px 左右（用户截图：
+          // 引用卡左边一大片留白、右边贴边）。
+          //
+          // 判据：左右留白大致相等才是居中。"大致"给 8px 容差，
+          // 亚像素与边框取整都会带来一两像素的差。
+          const leftGap = targetRect.left - stackRect.left
+          const rightGap = stackRect.right - targetRect.right
+          const centered = leftGap > 0 && Math.abs(leftGap - rightGap) <= 8
+          current.style.marginLeft = centered ? leftGap + 'px' : ''
         }
 
         align()
