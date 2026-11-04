@@ -4620,13 +4620,18 @@ window.__ModuleLoader__.load({
      *
      * 回合标识取自宿主的 data-chat-turn —— 它挂在消息流节点上，是该轮次的稳定编号。
      *
+     * @param recordTurn 是否在快照时一并记录所属回合。
+     *   **Enter 通道必须传 false** —— 那一刻新消息还没渲染进 DOM，
+     *   此刻取到的是**上一条**消息的 turn；用旧 turn 去找目标必然落空（胶囊不显示）。
+     *   正确的 turn 由回合通道在消息出现后补上（见 backfillSentTurn）。
+     *
      * @returns 是否真的快照了（没有引用时返回 false）
      */
-    function snapshotSentQuotes(sessionId) {
+    function snapshotSentQuotes(sessionId, recordTurn) {
       const current = quoteListOf(sessionId)
       if (current.length === 0) return false
       let turn = null
-      if (typeof document !== 'undefined') {
+      if (recordTurn !== false && typeof document !== 'undefined') {
         const rows = document.querySelectorAll('[class*="userRow"]')
         const last = rows.length === 0 ? null : rows[rows.length - 1]
         if (last !== null && typeof last.closest === 'function') {
@@ -4640,6 +4645,28 @@ window.__ModuleLoader__.load({
         turn
       })
       quoteClear(sessionId)
+      return true
+    }
+
+    /**
+     * 给「已经快照但还没记下回合」的引用补上 turn。
+     *
+     * Enter 通道先于消息渲染触发，那时无法知道新消息属于哪一轮；回合通道在消息
+     * 出现之后触发，是唯一能拿到正确 turn 的时机。
+     *
+     * @returns 是否补上了
+     */
+    function backfillSentTurn(sessionId) {
+      const sent = sentQuoteBuckets.get(sessionId)
+      if (sent === undefined) return false
+      if (sent.turn !== null && sent.turn !== undefined) return false
+      if (typeof document === 'undefined') return false
+      const rows = document.querySelectorAll('[class*="userRow"]')
+      const last = rows.length === 0 ? null : rows[rows.length - 1]
+      if (last === null || typeof last.closest !== 'function') return false
+      const node = last.closest('[data-chat-turn]')
+      if (node === null) return false
+      sent.turn = node.getAttribute('data-chat-turn')
       return true
     }
 
@@ -4871,7 +4898,7 @@ window.__ModuleLoader__.load({
         phaseRef.current = phase
         if (phase === null || previous === null) return
         if (!isBusyPhase(previous) || phase !== 'plain') return
-        snapshotSentQuotes(sessionId)
+        snapshotSentQuotes(sessionId, false)
       }, [phase, sessionId])
 
       // ── 队列项上的「含引用」标记 ──
@@ -5008,7 +5035,8 @@ window.__ModuleLoader__.load({
           if (target === null || target === undefined) return
           if (typeof target.closest !== "function") return
           if (target.closest('[contenteditable="true"]') === null) return
-          snapshotSentQuotes(sessionId)
+          // 不记 turn：这一刻新消息还没渲染，取到的会是上一条的回合
+          snapshotSentQuotes(sessionId, false)
         }
 
         // 捕获阶段：即使宿主的编辑器中转/停掉冒泡也能听到
@@ -5160,7 +5188,13 @@ window.__ModuleLoader__.load({
           // 删除会话 / 清空对话都不会同时满足这两条。
           if (userCount >= 0 && next > userCount && textNow !== '' && textNow !== lastUserText) {
             // 先快照当前引用，再清空 —— 顺序不能反，否则历史里没有内容可画
-            snapshotSentQuotes(sessionId)
+            if (quoteListOf(sessionId).length > 0) {
+              // 走的是「点发送按钮」而不是 Enter：此时消息已经在 DOM 里，turn 可直接记录
+              snapshotSentQuotes(sessionId, true)
+            } else {
+              // Enter 已经快照过（引用层已空），这里补上正确的 turn
+              backfillSentTurn(sessionId)
+            }
             paint()
           }
           userCount = next

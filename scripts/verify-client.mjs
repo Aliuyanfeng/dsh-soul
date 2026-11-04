@@ -5055,7 +5055,15 @@ function componentBody(text, name) {
 
     // ④ ★ 顺序：先快照、再清空 —— 反了就没内容可画
     // 快照+清空已提取成模块级 helper（三个通道共用），所以要查 source 而不是组件体
-    const helperAt = source.indexOf('function snapshotSentQuotes(sessionId)')
+    const helperAt = source.indexOf('function snapshotSentQuotes(sessionId, recordTurn)')
+    // Enter / 相位通道必须传 false —— 消息还没渲染，此刻取到的是上一条的 turn，
+    // 用旧 turn 找目标必然落空（用户实测：引用后发送，胶囊完全不出现）。
+    // ★ 必须**分别计数**：Enter 与相位两个通道都要传 false。
+    // 只查一次 includes 会被另一处掩盖 —— 实测漏检过（把 Enter 改成 true 照样通过）。
+    const noTurnCount = (body.match(/snapshotSentQuotes\(sessionId, false\)/g) || []).length
+    assert.ok(noTurnCount >= 2, `Enter 与相位通道都必须传 false（实际 ${noTurnCount} 处）`)
+    assert.ok(body.includes('backfillSentTurn(sessionId)'),
+      '回合通道必须补上 turn（那是唯一能拿到正确回合的时机）')
     assert.ok(helperAt > 0, '必须有 snapshotSentQuotes helper')
     const snapAt = source.indexOf('sentQuoteBuckets.set(sessionId', helperAt)
     const clearAt = source.indexOf('quoteClear(sessionId)', helperAt)
@@ -5192,7 +5200,7 @@ function componentBody(text, name) {
     // ⑤ 与 DOM 通道同一套动作：先快照再清空（顺序保证历史里有内容可画）
     const enterAt = body.indexOf('const onKeyDown = (ev) => {')
     // 三处通道现在共用 snapshotSentQuotes（它内部先快照再清空）
-    const enterCallAt = body.indexOf('snapshotSentQuotes(sessionId)', enterAt)
+    const enterCallAt = body.indexOf('snapshotSentQuotes(sessionId', enterAt)
     assert.ok(enterCallAt > enterAt, 'Enter 通道必须调用快照 helper')
 
     // ⑥ 卸载时必须解绑（否则会泄漏，且会话切走后仍会动作）
