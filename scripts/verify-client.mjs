@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 91
+const EXPECTED_ASSERTIONS = 92
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5171,6 +5171,40 @@ function componentBody(text, name) {
     // 反向：不能只靠 userRow（那正是这个 bug 的成因）
     const firstQuery = findBody.slice(findBody.indexOf('{'), findBody.indexOf('USER_ROW'))
     assert.ok(firstQuery.includes('FLOW_SLOT'), '第一次查询必须是 flow 容器，不能先查 userRow')
+  })
+
+  await check('C97 引用卡与队列消息结构同构（dock > panel > list > row）', async () => {
+    // 用户要求：「检查输入框上方引用消息和排队消息样式是否统一」。
+    //
+    // 查证结果：**数值都抄对了**（宽度 calc、margin 负值、padding、min-height 36、
+    // radius-md、font-xs-13、28×28 按钮），但**结构少了两层** ——
+    // 我只渲染 dock > item，宿主是 dock > panel > list > row。
+    //
+    // 后果很具体：
+    //   · panel 承载 radius-lg 上圆角 + overflow:hidden；缺了它，
+    //     卡片顶部没有弧、悬停高亮会溢出到圆角之外；
+    //   · list 承载 max-height:180px + overflow-y:auto；缺了它，
+    //     引用一多就把输入区无限顶高。
+    //
+    // 这正是「样式不统一」的真实原因：不是数值不同，是**层级不同**。
+    const body = componentBody(source, 'SoulQuoteDock')
+    assert.ok(body !== '', '找不到 SoulQuoteDock 组件')
+
+    assert.match(body, /className: 'soul-quote-panel'/, '必须有 panel 层（承载上圆角与 overflow:hidden）')
+    assert.match(body, /className: 'soul-quote-list'/, '必须有 list 层（承载 max-height 与滚动）')
+
+    // 层级顺序必须与宿主一致
+    const panelAt = body.indexOf("'soul-quote-panel'")
+    const listAt = body.indexOf("'soul-quote-list'")
+    const itemAt = body.indexOf("'soul-quote-item'")
+    assert.ok(panelAt > 0 && listAt > panelAt && itemAt > listAt, '层级顺序必须是 panel > list > item')
+
+    // list 的约束值要和队列一致（抄自 .F07MqG_list）
+    const listCssAt = source.indexOf('.soul-quote-list{')
+    assert.ok(listCssAt > 0, '找不到 .soul-quote-list 规则')
+    const listCss = source.slice(listCssAt, source.indexOf('}', listCssAt) + 1)
+    assert.match(listCss, /max-height:180px/, 'list 的 max-height 必须与队列同值（180px）')
+    assert.match(listCss, /overflow-y:auto/, 'list 必须可滚动（与队列一致）')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

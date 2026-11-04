@@ -1191,6 +1191,9 @@ window.__ModuleLoader__.load({
       // panel：与队列面板同款上圆角（它和输入框卡片是"上盖"关系）
       '.soul-quote-panel{box-sizing:border-box;border-radius:var(--dsw-radius-lg) var(--dsw-radius-lg) 0 0;width:100%;padding:2px 0;position:relative;overflow:hidden}',
       // 每条引用：照搬 QueueDock 的 .row（min-height 36 / 左右 12、5 / gap 10 / radius-md）
+      // list：照搬宿主的 .F07MqG_list（max-height 180 + 纵向滚动），
+      // 引用条数多时不会把输入区顶高。
+      '.soul-quote-list{max-height:180px;margin:0;padding:0;list-style:none;overflow-y:auto;--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
       '.soul-quote-item{box-sizing:border-box;border-radius:var(--dsw-radius-md);align-items:center;gap:10px;width:100%;min-height:36px;padding:4px 5px 4px 12px;display:flex}',
       '.soul-quote-item:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover))}',
       // 前缀图标：与队列的 .lead 一致（icon-only 的 grid 居中）
@@ -4998,24 +5001,33 @@ window.__ModuleLoader__.load({
       // 文字用 CSS 省略号截断（nowrap + ellipsis），不再按固定字符数切 ——
       // 窗口宽窄不同，固定字数在窄屏会截不齐。
       return e('div', { className: 'soul-quote-dock' },
-        ...quotes.map((quote) => e('div', { className: 'soul-quote-item', key: quote.id },
-          e('span', { className: 'soul-quote-icon', 'aria-hidden': true }, '❝'),
-          e('span', { className: 'soul-quote-text' }, quote.text),
-          e('button', {
-            type: 'button',
-            className: 'soul-quote-remove',
-            'aria-label': t('quote.remove'),
-            title: t('quote.remove'),
-            onClick: () => quoteRemove(sessionId, quote.id)
-          }, '×'))),
-        // 多条时才给「清空」—— 只有一条时右侧的 × 已经够了
-        quotes.length > 1
-          ? e('button', {
-              type: 'button',
-              className: 'soul-quote-clear-all',
-              onClick: () => quoteClear(sessionId)
-            }, t('quote.clear'))
-          : null)
+        // 结构与宿主的队列消息**一一对应**：dock > panel > list > row。
+        //
+        // 少了 panel 这一层，panel 的 radius-lg 上圆角与 overflow:hidden 就没有
+        // 承载者 —— 悬停高亮会溢出到圆角之外，卡片顶部也没有那道弧。
+        // 少了 list 这一层，就没有 max-height 与滚动，引用多了会无限撑高。
+        // 这正是「和排队消息样式不统一」的真实原因：不是数值不同，是**层级不同**。
+        e('div', { className: 'soul-quote-panel' },
+          e('div', { className: 'soul-quote-list' },
+            ...quotes.map((quote) => e('div', { className: 'soul-quote-item', key: quote.id },
+              e('span', { className: 'soul-quote-icon', 'aria-hidden': true }, '❝'),
+              e('span', { className: 'soul-quote-text' }, quote.text),
+              e('button', {
+                type: 'button',
+                className: 'soul-quote-remove',
+                'aria-label': t('quote.remove'),
+                title: t('quote.remove'),
+                onClick: () => quoteRemove(sessionId, quote.id)
+              }, '×')))),
+          // 多条时才给「清空」—— 只有一条时右侧的 × 已经够了
+          quotes.length > 1
+            ? e('button', {
+                type: 'button',
+                className: 'soul-quote-clear-all',
+                onClick: () => quoteClear(sessionId)
+              }, t('quote.clear'))
+            : null)
+      )
     }
 
     function SoulOverview(props) {
