@@ -40,9 +40,9 @@ import {
 const EXPECTED_ASSERTIONS = 23
 
 let passed = 0
-function check(name, fn) {
+async function check(name, fn) {
   try {
-    fn()
+    await fn()
   } catch (error) {
     error.message = `【${name}】${error.message}`
     error.stack = `【${name}】${error.stack}`
@@ -56,7 +56,7 @@ const DAY = 24 * 3600 * 1000
 
 // ==================== 键与文件名 ====================
 
-check('sessionId 必须是非空短字符串，且不能是路径', () => {
+await check('sessionId 必须是非空短字符串，且不能是路径', () => {
   assert.equal(isSessionId('session-abc'), true)
   assert.equal(isSessionId(''), false)
   assert.equal(isSessionId('   '), false)
@@ -69,7 +69,7 @@ check('sessionId 必须是非空短字符串，且不能是路径', () => {
   assert.equal(isSessionId('x'.repeat(MAX_SESSION_ID_LENGTH + 1)), false)
 })
 
-check('文件名是定长哈希，且不泄漏原始 id', () => {
+await check('文件名是定长哈希，且不泄漏原始 id', () => {
   const id = 'session-very-secret-id-123'
   const name = sessionFileName(id)
   assert.equal(name.length, FILE_HASH_LENGTH + '.json'.length)
@@ -80,7 +80,7 @@ check('文件名是定长哈希，且不泄漏原始 id', () => {
   assert.notEqual(sessionFileName(id + 'x'), name)
 })
 
-check('sidecar 目录与配置同级', () => {
+await check('sidecar 目录与配置同级', () => {
   assert.equal(
     sessionScopeDirFor('/home/u/.dsh/soul-config.json'),
     join('/home/u/.dsh', SESSION_DIR_NAME)
@@ -93,7 +93,7 @@ check('sidecar 目录与配置同级', () => {
 
 // ==================== 覆盖项校验 ====================
 
-check('覆盖项只保留白名单字段，包封字段被丢弃', () => {
+await check('覆盖项只保留白名单字段，包封字段被丢弃', () => {
   const { override, dropped } = sanitizeSessionOverride({
     style: 'humorous',
     replyLength: 'concise',
@@ -123,7 +123,7 @@ check('覆盖项只保留白名单字段，包封字段被丢弃', () => {
   }
 })
 
-check('空覆盖 / 非对象归一成 null', () => {
+await check('空覆盖 / 非对象归一成 null', () => {
   assert.equal(sanitizeSessionOverride({}).override, null)
   assert.equal(sanitizeSessionOverride(null).override, null)
   assert.equal(sanitizeSessionOverride('x').override, null)
@@ -131,7 +131,7 @@ check('空覆盖 / 非对象归一成 null', () => {
   assert.equal(sanitizeSessionOverride({ enabled: true }).override, null, '只有包封字段时等于没有覆盖')
 })
 
-check('白名单与包封字段不重叠', () => {
+await check('白名单与包封字段不重叠', () => {
   for (const field of SESSION_ENVELOPE_ONLY_FIELDS) {
     assert.equal(
       SESSION_OVERRIDE_FIELDS.includes(field),
@@ -143,7 +143,7 @@ check('白名单与包封字段不重叠', () => {
 
 // ==================== 文档解析 ====================
 
-check('新建 doc 含版本、原始 id 与时间戳', () => {
+await check('新建 doc 含版本、原始 id 与时间戳', () => {
   const now = Date.parse('2026-10-19T06:00:00Z')
   const doc = createSessionScopeDoc('session-a', { style: 'casual' }, now)
   assert.equal(doc.schemaVersion, SESSION_SCOPE_VERSION)
@@ -153,7 +153,7 @@ check('新建 doc 含版本、原始 id 与时间戳', () => {
   assert.equal(doc.updatedAt, doc.createdAt)
 })
 
-check('解析：版本不认识 / sessionId 不符 / 形状不对都给出 failure 且不产出 override', () => {
+await check('解析：版本不认识 / sessionId 不符 / 形状不对都给出 failure 且不产出 override', () => {
   const good = {
     schemaVersion: SESSION_SCOPE_VERSION,
     sessionId: 'session-a',
@@ -175,7 +175,7 @@ check('解析：版本不认识 / sessionId 不符 / 形状不对都给出 failu
   assert.equal(parseSessionScopeDoc([], 'a').override, null)
 })
 
-check('解析：孤儿标记的形状校验（坏时间按未标记处理）', () => {
+await check('解析：孤儿标记的形状校验（坏时间按未标记处理）', () => {
   const base = {
     schemaVersion: SESSION_SCOPE_VERSION,
     sessionId: 'session-a',
@@ -194,7 +194,7 @@ check('解析：孤儿标记的形状校验（坏时间按未标记处理）', (
 
 // ==================== 回收状态机（核心）====================
 
-check('状态机：会话存在 → keep（无标记）/ clear-mark（有标记）', () => {
+await check('状态机：会话存在 → keep（无标记）/ clear-mark（有标记）', () => {
   const now = Date.now()
   assert.equal(decideSessionScopeFate({ orphan: null, presentOnDisk: true, scanComplete: true, now }).action, 'keep')
   const withMark = { firstSeenAt: new Date(now - 40 * DAY).toISOString() }
@@ -203,7 +203,7 @@ check('状态机：会话存在 → keep（无标记）/ clear-mark（有标记�
   assert.equal(cleared.orphan, null)
 })
 
-check('★ 状态机：扫描不完整时永不标记、永不回收', () => {
+await check('★ 状态机：扫描不完整时永不标记、永不回收', () => {
   const now = Date.now()
   // 即便已有超龄标记，扫描不完整也只能 keep —— 「没看到」不等于「不存在」
   const old = { firstSeenAt: new Date(now - 100 * DAY).toISOString() }
@@ -217,7 +217,7 @@ check('★ 状态机：扫描不完整时永不标记、永不回收', () => {
   )
 })
 
-check('状态机：首次缺席 → mark，不删除', () => {
+await check('状态机：首次缺席 → mark，不删除', () => {
   const now = Date.now()
   const r = decideSessionScopeFate({ orphan: null, presentOnDisk: false, scanComplete: true, now })
   assert.equal(r.action, 'mark')
@@ -225,7 +225,7 @@ check('状态机：首次缺席 → mark，不删除', () => {
   assert.equal(r.orphan.firstSeenAt, r.orphan.lastScannedAt)
 })
 
-check('状态机：宽限期内 → keep，并刷新 lastScannedAt', () => {
+await check('状态机：宽限期内 → keep，并刷新 lastScannedAt', () => {
   const now = Date.now()
   const first = new Date(now - 10 * DAY).toISOString()
   const r = decideSessionScopeFate({
@@ -239,7 +239,7 @@ check('状态机：宽限期内 → keep，并刷新 lastScannedAt', () => {
   assert.ok(Date.parse(r.orphan.lastScannedAt) >= now - 1000, 'lastScannedAt 应被刷新')
 })
 
-check('状态机：满宽限期且扫描完整 → collect', () => {
+await check('状态机：满宽限期且扫描完整 → collect', () => {
   const now = Date.now()
   const r = decideSessionScopeFate({
     orphan: { firstSeenAt: new Date(now - 31 * DAY).toISOString() },
@@ -250,7 +250,7 @@ check('状态机：满宽限期且扫描完整 → collect', () => {
   assert.equal(r.action, 'collect')
 })
 
-check('状态机：边界 —— 恰好 30 天当天可回收，差一天不可', () => {
+await check('状态机：边界 —— 恰好 30 天当天可回收，差一天不可', () => {
   const now = Date.now()
   const exact = decideSessionScopeFate({
     orphan: { firstSeenAt: new Date(now - ORPHAN_GRACE_MS).toISOString() },
@@ -268,7 +268,7 @@ check('状态机：边界 —— 恰好 30 天当天可回收，差一天不可'
   assert.equal(shy.action, 'keep', '差一天不可回收')
 })
 
-check('状态机：标记时间损坏 → 重新计时而不是立刻回收', () => {
+await check('状态机：标记时间损坏 → 重新计时而不是立刻回收', () => {
   const now = Date.now()
   const r = decideSessionScopeFate({
     orphan: { firstSeenAt: 'garbage' },
@@ -281,7 +281,7 @@ check('状态机：标记时间损坏 → 重新计时而不是立刻回收', ()
 
 // ==================== 文件读写（真实文件系统）====================
 
-check('读写往返：写进去能读出来，override 一致', async () => {
+await check('读写往返：写进去能读出来，override 一致', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'soul-session-scope-'))
   try {
     const configPath = join(dir, 'soul-config.json')
@@ -304,7 +304,7 @@ check('读写往返：写进去能读出来，override 一致', async () => {
   }
 })
 
-check('读不存在的 sidecar：exists=false 且不报错（首次使用就是没有覆盖）', async () => {
+await check('读不存在的 sidecar：exists=false 且不报错（首次使用就是没有覆盖）', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'soul-session-scope-'))
   try {
     const filePath = sessionScopePathFor(join(dir, 'soul-config.json'), 'never-existed')
@@ -317,7 +317,7 @@ check('读不存在的 sidecar：exists=false 且不报错（首次使用就是�
   }
 })
 
-check('损坏的 sidecar：如实报 failure，不静默当空覆盖', async () => {
+await check('损坏的 sidecar：如实报 failure，不静默当空覆盖', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'soul-session-scope-'))
   try {
     const configPath = join(dir, 'soul-config.json')
@@ -339,7 +339,7 @@ check('损坏的 sidecar：如实报 failure，不静默当空覆盖', async () 
   }
 })
 
-check('隔离：quarantine 把文件改名，原路径不再存在', async () => {
+await check('隔离：quarantine 把文件改名，原路径不再存在', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'soul-session-scope-'))
   try {
     const configPath = join(dir, 'soul-config.json')
@@ -360,7 +360,7 @@ check('隔离：quarantine 把文件改名，原路径不再存在', async () =>
   }
 })
 
-check('listSessionScopes：目录不存在返回空数组，只收 .json', async () => {
+await check('listSessionScopes：目录不存在返回空数组，只收 .json', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'soul-session-scope-'))
   try {
     const missing = join(dir, 'nope')
@@ -378,7 +378,7 @@ check('listSessionScopes：目录不存在返回空数组，只收 .json', async
 
 // ==================== 模块边界 ====================
 
-check('纯函数层不依赖宿主；且不把 agents.list 当删除证据', async () => {
+await check('纯函数层不依赖宿主；且不把 agents.list 当删除证据', async () => {
   const { readFileSync } = await import('node:fs')
   const source = readFileSync(new URL('../lib/session-scope.mjs', import.meta.url), 'utf8')
   const code = source.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
@@ -393,7 +393,7 @@ check('纯函数层不依赖宿主；且不把 agents.list 当删除证据', asy
 
 })
 
-check('sidecar 记下用户实际点选的预设名（不靠字段反查）', () => {
+await check('sidecar 记下用户实际点选的预设名（不靠字段反查）', () => {
   // 背景：覆盖项只存字段，而「当前生效的是哪个预设」若靠字段反查，
   // 两个预设声明相同字段时结果取决于**名称排序** —— 实测用户自建
   // 「游戏策划与开发专家」与内置「自驱型协作者」字段一致时，

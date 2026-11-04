@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 164
+const EXPECTED_ASSERTIONS = 165
 
 let passed = 0
 const failures = []
@@ -4844,7 +4844,7 @@ check('「N 个会话」必须与列表口径一致（不得用注册表原始�
   assert.ok(listedAt > 0 && countAt > listedAt, '统计必须排在会话列表算好之后')
 })
 
-  await check('C99 scripts/ 目录不得残留临时脚本（防误提交）', async () => {
+  check('C99 scripts/ 目录不得残留临时脚本（防误提交）', () => {
     // 这个坑已经踩了三次：wire-quote2.cjs、dom1.cjs、rm1.cjs 都被 `git add -A`
     // 顺手提交过。都是「一次性改文件的脚本，跑完忘了删」。
     //
@@ -4861,6 +4861,26 @@ check('「N 个会话」必须与列表口径一致（不得用注册表原始�
       `scripts/ 出现非 .mjs 文件（多为跑完忘删的一次性脚本）：${offenders.join(", ")}`
       + " —— 用完即删，提交前看一眼 scripts/ 目录。")
   })
+  check('C100 引用端点支持 GET 自查（直接读宿主侧 pending）', () => {
+    // 「排队消息有没有把引用带走」这件事，靠看模型回答来判断并不可靠 ——
+    // 模型可能收到了引用却没有提，于是看起来像"没带"。
+    // 直接读宿主侧状态才是确定判据，所以给这个端点留了 GET 自查入口。
+    // ★ 必须**限定在这个端点块内**断言。
+    // 实测漏检过：其他端点也有 req.method === 'GET'，用全文匹配时
+    // 把 quotes 的 GET 分支删掉（改成 if (false)）照样通过。
+    const quotesAt = indexSource.indexOf("path: '/api/soul/quotes'")
+    assert.ok(quotesAt > 0, '找不到 quotes 端点')
+    // 块必须止于**下一个端点**，不能给固定长度 —— 实测 2600 字符会把下一个
+    // （同样是 GET 的）端点也框进来，导致删掉 quotes 的 GET 分支照样通过。
+    const nextAt = indexSource.indexOf('wsCtx.webServer.register', quotesAt)
+    const block = indexSource.slice(quotesAt, nextAt > quotesAt ? nextAt : quotesAt + 2600)
+    assert.ok(block.includes("req.method === 'GET'"), '引用端点必须支持 GET')
+    assert.ok(block.includes('pending.push({'), 'GET 必须返回 pending 列表')
+    assert.ok(block.includes('count: quotes.length'), '必须带条数')
+    assert.ok(block.includes('preview: quotes.map'), '必须带摘要（不返回引用全文）')
+    assert.ok(block.includes('sessionId: key.slice(0, 8)'), 'sessionId 必须脱敏（只给前缀）')
+  })
+
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 
 console.log(`\n全部通过：${passed} 项检查`)

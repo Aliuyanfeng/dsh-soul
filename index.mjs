@@ -1294,6 +1294,24 @@ function registerRoutes(ctx) {
           res.writeHead(status, { 'content-type': 'application/json' })
           res.end(JSON.stringify(body))
         }
+        // GET：查询当前挂在宿主侧的引用（自查用）。
+        //
+        // 为什么需要它：「排队消息有没有把引用带走」这件事，靠看模型回答来判断并不可靠 ——
+        // 模型可能收到了却没提。直接读宿主侧的状态才是确定的判据。
+        //
+        // 只返回摘要（每条引用取前 80 字符），不返回全文，避免把长文灌进日志。
+        if (req.method === 'GET') {
+          const pending = []
+          for (const [key, quotes] of quotePending) {
+            pending.push({
+              sessionId: key.slice(0, 8),
+              count: quotes.length,
+              preview: quotes.map((q) => q.text.slice(0, 80))
+            })
+          }
+          send(200, { ok: true, pending, total: pending.length })
+          return
+        }
         if (req.method !== 'POST') {
           send(405, { ok: false, error: 'Method not allowed' })
           return
