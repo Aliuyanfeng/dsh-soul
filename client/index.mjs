@@ -4639,10 +4639,22 @@ window.__ModuleLoader__.load({
           if (node !== null) turn = node.getAttribute('data-chat-turn')
         }
       }
+      // 同时记下它当前在列表里的**索引**。
+      //
+      // 为什么要索引：实测日志显示 userRow 的祖先里根本没有 data-chat-turn
+      // （「backfill: userRow 没有 data-chat-turn 祖先」），turn 永远是 null，
+      // 于是每次都走兜底、胶囊跟着轮次跑。
+      //
+      // 索引在这个场景里是稳定的：新消息总是**追加在末尾**，已有消息的索引不变。
+      let index = -1
+      if (typeof document !== 'undefined') {
+        index = document.querySelectorAll('[class*="userRow"]').length - 1
+      }
       sentQuoteBuckets.set(sessionId, {
         quotes: current.map((q) => ({ text: q.text })),
         at: Date.now(),
-        turn
+        turn,
+        index
       })
       quoteClear(sessionId)
       return true
@@ -5141,6 +5153,13 @@ window.__ModuleLoader__.load({
               if (turnNode !== null) sent.turn = turnNode.getAttribute('data-chat-turn')
             }
           }
+          // turn 拿不到就用索引（实测 turn 一直为空）。
+          if (target === null && sent.index !== undefined && sent.index >= 0) {
+            if (rows[sent.index] !== undefined && rows[sent.index] !== null) {
+              target = rows[sent.index]
+            }
+          }
+
           if (target === null) {
             // 拿不到回合时兜底：退回最后一条。
             //
