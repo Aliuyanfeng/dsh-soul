@@ -5079,43 +5079,49 @@ function componentBody(text, name) {
     assert.match(source, /function isBusyPhase\(phase\)/, 'isBusyPhase 必须有声明')
   })
 
-  await check('C94 引用浮层采用队列消息的单行样式（无标题行、单行省略、无边框）', async () => {
+  await check('C94 引用浮层采用队列消息的样式（无标题行、文字自然换行、row 无 hover）', async () => {
     // 用户要求：「输入框上方显示引用的样式可以参考排队消息的样式」。
     //
-    // 宿主的队列消息（queue dock）与引用浮层都在 conversation.input.dock 里、上下相邻，
-    // 它用的是：无边框 + radius-md + 模块底色 + 单行紧凑布局（图标 + 文字 + 右侧按钮）。
-    // 之前的引用卡自带「引用（N）」标题行 + 独立「清空」，比队列重一档，
-    // 放在一起不像一套东西。
+    // 宿主的队列消息（queue dock）与引用浮层都在 conversation.input.dock 里、上下相邻。
+    // 它用的是：无边框 + radius-md + 模块底色 + 紧凑行布局。
+    //
+    // 二次核对时又发现两处没对齐：
+    //   ① 宿主的 .preview **没有** nowrap/ellipsis/overflow —— 它的文字自然换行，
+    //      高度由 list 的 max-height:180px + overflow-y:auto 兜住；
+    //   ② 宿主的 .row **没有** hover 态。
+    // 这两条都是我额外加的，反而制造了不一致，已去掉。
     const body = componentBody(source, 'SoulQuoteDock')
     assert.ok(body !== '', '找不到 SoulQuoteDock 组件')
 
-    // ① 不得再有标题行（那是"比队列重一档"的来源）
+    // ① 不得再有标题行
     assert.equal(/soul-quote-dock-title/.test(body), false, '不得再有「引用（N）」标题行')
     assert.equal(/soul-quote-dock-head/.test(body), false, '不得再有标题行容器')
-    assert.equal(/soul-quote-dock-title/.test(source), false, '标题行样式应一并删除')
 
     // ② 每条引用 = 一行：图标 + 文字 + 删除按钮
     assert.match(body, /soul-quote-icon/, '每条引用应有前缀图标（对齐队列项的观感）')
     assert.match(body, /soul-quote-remove/, '每条引用应有删除按钮')
 
-    // ③ 单行省略三件套缺一不可 —— 少一个文字就溢出而不是变省略号
+    // ③ ★ 文字不得强制单行 —— 宿主的 preview 允许换行
     const textAt = source.indexOf('.soul-quote-text{')
     assert.ok(textAt > 0, '找不到 .soul-quote-text 规则')
     const textCss = source.slice(textAt, source.indexOf('}', textAt) + 1)
-    assert.match(textCss, /overflow:hidden/, '必须有 overflow:hidden（否则省略号不生效）')
-    assert.match(textCss, /text-overflow:ellipsis/, '必须有 text-overflow:ellipsis')
-    assert.match(textCss, /white-space:nowrap/, '必须单行（nowrap）')
+    assert.equal(/white-space:nowrap/.test(textCss), false, '不得强制单行（宿主 preview 允许换行）')
+    assert.equal(/text-overflow:ellipsis/.test(textCss), false, '不得用省略号截断（宿主靠 list 滚动而非截断）')
+    assert.equal(/overflow:hidden/.test(textCss), false, '不得用 overflow:hidden 裁剪（同上）')
+    assert.match(textCss, /font:var\(--dsw-font-xs-13\)/, '字体档必须与队列 preview 一致')
+    assert.match(textCss, /label-primary-dimmed/, '文字色必须与队列 preview 一致')
 
-    // ④ 无边框 + 圆角与队列同档：
-    //    dock 本身没有圆角/边框（它是容器）；panel 用 radius-lg（上圆角）；row 用 radius-md。
-    //    这是宿主 QueueDock.module.css 的真实分层，不是我自己拼的。
+    // ④ 无边框（队列项没有边框）+ 圆角分层
     const dockAt = source.indexOf('.soul-quote-dock{')
     const dockCss = source.slice(dockAt, source.indexOf('}', dockAt) + 1)
     assert.equal(/border:/.test(dockCss), false, 'dock 不得有边框（队列也没有）')
     assert.match(source, /\.soul-quote-panel\{[^}]*border-radius:var\(--dsw-radius-lg\)/, '面板上圆角用 radius-lg（与队列面板同款）')
     assert.match(source, /\.soul-quote-item\{[^}]*border-radius:var\(--dsw-radius-md\)/, '每项圆角用 radius-md（与队列行同款）')
 
-    // ⑤ 只在多条时才给「清空」—— 单条时右侧的 × 已足够
+    // ⑤ row 不得有 hover 背景（宿主 .row 没有）
+    assert.equal(/\.soul-quote-item:hover/.test(source), false, 'row 不得加 hover 背景（宿主 .row 没有 hover 态）')
+
+    // ⑥ 只在多条时才给「清空」—— 单条时右侧的 × 已足够
     assert.match(body, /quotes\.length > 1/, '清空按钮只应在多条时出现')
     assert.match(body, /soul-quote-clear-all/, '多条时应有清空入口')
   })

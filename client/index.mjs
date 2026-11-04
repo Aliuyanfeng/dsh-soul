@@ -1215,12 +1215,16 @@ window.__ModuleLoader__.load({
       // 引用条数多时不会把输入区顶高。
       '.soul-quote-list{max-height:180px;margin:0;padding:0;list-style:none;overflow-y:auto;--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
       '.soul-quote-item{box-sizing:border-box;border-radius:var(--dsw-radius-md);align-items:center;gap:10px;width:100%;min-height:36px;padding:4px 5px 4px 12px;display:flex}',
-      '.soul-quote-item:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover))}',
       // 前缀图标：与队列的 .lead 一致（icon-only 的 grid 居中）
       '.soul-quote-icon{color:var(--dsw-alias-label-tertiary);flex:none;display:grid;place-items:center;font-size:16px;line-height:1}',
       // 文字：与队列的 .preview 同字体档（--dsw-font-xs-13）+ 同色（label-primary-dimmed）。
       // 单行省略三件套仍然要齐（overflow/text-overflow/nowrap）。
-      '.soul-quote-text{min-width:0;flex:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:var(--dsw-font-xs-13);font-family:Inter, var(--dsw-font-family);color:var(--dsw-alias-label-primary-dimmed)}',
+      // 文字：**与宿主的 .F07MqG_preview 完全一致**，不做单行截断。
+      //
+      // 之前我加了 overflow:hidden + ellipsis + nowrap 三件套，但宿主的 preview
+      // 三个属性一个都没有 —— 它的文字是**自然换行**的，高度由 list 的
+      // max-height:180px + overflow-y:auto 兜住。我强行截成单行反而不一致。
+      '.soul-quote-text{min-width:0;flex:auto;font:var(--dsw-font-xs-13);font-family:Inter, var(--dsw-font-family);color:var(--dsw-alias-label-primary-dimmed)}',
       // 删除按钮：照搬队列的 .action（28×28 / 胶囊 / grid 居中 / 无边框）
       '.soul-quote-remove{corner-shape:round;width:28px;height:28px;padding:0;border:none;border-radius:999px;background:none;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:14px;line-height:1;cursor:pointer;flex:none;display:grid;place-items:center}',
       '.soul-quote-remove:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-label-primary)}',
