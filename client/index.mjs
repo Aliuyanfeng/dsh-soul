@@ -4822,6 +4822,46 @@ window.__ModuleLoader__.load({
         }
       })
 
+      // 发送完成后自动清空引用。
+      //
+      // 信号：输入框内容 **从有变空**。宿主发出去之后会清空草稿 —— 这是最直接的外部
+      // 表现，不必去读宿主的草稿状态（那是内部 API，跨版本不稳）。
+      //
+      // ★ 为什么必须记「曾经有内容」：引用本身可以在草稿为空时添加（选中一段直接引用，
+      //   此时输入框是空的）。若只看「当前是否为空」，刚加的引用会被自己立刻清掉。
+      //
+      // 已知局限（有意的取舍）：若用户**只引用、一个字不输**就发送，草稿从未非空
+      // ⇒ 检测不到，引用会留到下一轮。宁可少清一次，也不要误清刚加的引用。
+      const hadContentRef = React.useRef(false)
+      React.useEffect(() => {
+        if (sessionId === '') return undefined
+        if (quotes.length === 0) return undefined
+        if (typeof MutationObserver !== 'function') return undefined
+        const dock = dockRef.current
+        const stack = dock === null || dock === undefined ? null : dock.parentElement
+        if (stack === null) return undefined
+        const editable = stack.querySelector('[contenteditable="true"]')
+        if (editable === null) return undefined
+
+        const readText = () => String(editable.textContent || '').trim()
+        // 挂上观察器时先取一次基线：如果此刻已有内容，后续「变空」才算发送
+        hadContentRef.current = readText() !== ''
+
+        const check = () => {
+          if (readText() !== '') {
+            hadContentRef.current = true
+            return
+          }
+          if (!hadContentRef.current) return
+          hadContentRef.current = false
+          quoteClear(sessionId)
+        }
+
+        const observer = new MutationObserver(check)
+        observer.observe(editable, { childList: true, characterData: true, subtree: true })
+        return () => observer.disconnect()
+      }, [sessionId, quotes.length])
+
       if (sessionId === '') return null
       if (state.quoteAsContext !== true) return null
       if (quotes.length === 0) return null

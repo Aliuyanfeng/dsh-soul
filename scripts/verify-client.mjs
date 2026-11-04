@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 85
+const EXPECTED_ASSERTIONS = 86
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4934,6 +4934,40 @@ function componentBody(text, name) {
     assert.match(dockBody, /width > 0 \? width \+ 'px' : ''/, '量不到宽度时必须降级回 100%（不能写 0px）')
     assert.match(dockBody, /addEventListener\('resize'/, '窗口尺寸变化要重新对齐')
     assert.match(dockBody, /removeEventListener\('resize'/, '卸载时必须移除 resize 监听')
+  })
+
+  await check('C91 发送完成后自动清空引用（且不得误清刚加的引用）', async () => {
+    // 用户要求：发完消息，输入框上方的引用自动消失。
+    //
+    // 信号选的是「输入框内容**从有变空**」—— 宿主发出去后会清空草稿，这是最直接的
+    // 外部表现，不必去读宿主的草稿状态（内部 API，跨版本不稳）。
+    //
+    // ★ 这里最容易写错的地方：只判断「当前为空」就清。
+    //   引用可以在草稿为空时添加（选中一段直接引用，输入框本来就是空的），
+    //   那样刚加的引用会被自己立刻清掉 —— 功能看起来完全没生效。
+    //   所以必须先记「曾经有内容」。
+    const body = componentBody(source, 'SoulQuoteDock')
+    assert.ok(body !== '', '找不到 SoulQuoteDock 组件')
+
+    // ① 必须监听输入框内容变化
+    assert.match(body, /new MutationObserver\(/, '必须用 MutationObserver 监听输入框')
+    assert.match(body, /observer\.observe\(editable/, '必须观察输入框节点')
+    assert.match(body, /childList: true, characterData: true, subtree: true/, '必须覆盖文本节点变化')
+
+    // ② 必须记「曾经有内容」—— 否则会误清刚加的引用
+    assert.match(body, /const hadContentRef = React\.useRef\(false\)/, '必须有「曾经有内容」的记录')
+    assert.match(body, /hadContentRef\.current = readText\(\) !== ''/, '挂观察器时必须先取基线')
+    assert.match(body, /if \(!hadContentRef\.current\) return/, '内容为空但从未有过内容时不得清空')
+
+    // ③ 变空时才清
+    assert.match(body, /quoteClear\(sessionId\)/, '必须调用 quoteClear')
+
+    // ④ 环境不支持时降级，并且卸载时断开（否则泄漏观察器）
+    assert.match(body, /typeof MutationObserver !== 'function'\) return undefined/, 'MutationObserver 不可用时要降级')
+    assert.match(body, /observer\.disconnect\(\)/, '卸载时必须 disconnect')
+
+    // ⑤ 没有引用时不该挂观察器（省开销，也避免无意义地跑 clear）
+    assert.match(body, /quotes\.length === 0\) return undefined/, '没有引用时不必挂观察器')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
