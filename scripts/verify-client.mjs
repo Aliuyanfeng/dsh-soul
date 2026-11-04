@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 83
+const EXPECTED_ASSERTIONS = 84
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4842,6 +4842,68 @@ function componentBody(text, name) {
     // ⑧ 必须注册到会话作用域的槽位，且不影响已有的光轨注册（同为 list 槽位可共存）
     assert.match(source, /id: 'soul-quote-float'/, '必须有独立注册 id')
     assert.match(source, /id: 'soul-trail'/, '光轨注册必须仍在（同一 list 槽位共存）')
+  })
+
+  await check('C89 不透明底的元素，hover 不得换成半透明色（否则下层内容透出来）', async () => {
+    // 用户实测反馈：「hover 引用这段按钮，层级貌似就低了，文字覆盖了他」。
+    //   真因不是 z-index，而是 ——
+    //     基础: background = module-platform（**不透明**）
+    //     hover: background = interactive-bg-hover（**5% 透明**）
+    //   换成半透明后，下层文字直接透上来，视觉上就是「被文字盖住」。
+    //
+    // 正确做法：保留 background-color，只叠一层 background-image ——
+    // background-image 不重置 background-color，底仍不透明。
+    //
+    // 这条做**自动扫描**而不是点名：写断言时顺手一查就发现卡牌翻页按钮
+    // （.soul-persona-navbtn）也有同一问题 —— 它下面通常是纯色，肉眼根本看不出来。
+
+    const cssStart = source.indexOf('const css = [')
+    const cssEnd = source.indexOf('].join', cssStart)
+    assert.ok(cssStart > 0 && cssEnd > cssStart, '找不到 css 数组')
+    const rules = new Map()
+    for (const line of source.slice(cssStart, cssEnd).split('\n')) {
+      const m = /^\s*'((?:[^'\\]|\\.)*)',?\s*$/.exec(line)
+      if (!m) continue
+      const text = m[1].replace(/\\'/g, "'").replace(/\\\\/g, '\\')
+      if (!text.includes('{')) continue
+      const brace = text.indexOf('{')
+      if (brace < 0) continue
+      rules.set(text.slice(0, brace), text.slice(brace + 1, text.lastIndexOf('}')))
+    }
+
+    const get = (body, prop) => {
+      const m = new RegExp('(?:^|;)' + prop + ':([^;}]+)').exec(body)
+      return m ? m[1].trim() : ''
+    }
+    // interactive-bg-* 系列都是半透明的（实测 hover#2631480f / active#2631481a）
+    const TRANSLUCENT = /interactive-bg-hover|interactive-bg-active/
+    const TRANSPARENT_BASE = /^(transparent|none|rgba\(0,\s*0,\s*0,\s*0\))$/
+
+    const offenders = []
+    for (const [selector, body] of rules) {
+      if (!/^\.soul-[\w-]+$/.test(selector)) continue
+      const hoverBody = rules.get(selector + ':hover') || rules.get(selector + ':hover:not(:disabled)')
+      if (hoverBody === undefined) continue
+      const baseBg = get(body, 'background')
+      const hoverBg = get(hoverBody, 'background')
+      if (hoverBg === '') continue          // hover 没用 background 简写（可能是 background-image，正确）
+      if (!TRANSLUCENT.test(hoverBg)) continue
+      if (baseBg === '' || TRANSPARENT_BASE.test(baseBg)) continue   // 本来就是透的，没问题
+      if (TRANSLUCENT.test(baseBg)) continue                          // 底本就半透明，换另一个半透明说得过去
+      offenders.push({ selector, baseBg, hoverBg })
+    }
+
+    assert.equal(
+      offenders.length,
+      0,
+      '以下元素的基础背景不透明，hover 却换成了半透明色（下层内容会透出来，\n'
+        + '看起来像「层级变低被文字盖住」）：\n'
+        + offenders.map((o) => `  ${o.selector}\n    基础: ${o.baseBg}\n    hover: ${o.hoverBg}`).join('\n')
+        + '\n修法：hover 保留 background-color，只写 background-image:linear-gradient(<半透明色>,<半透明色>)'
+    )
+
+    // 防呆：扫描逻辑失效时不能静默通过
+    assert.ok(rules.size > 200, `css 规则解析异常（只拿到 ${rules.size} 条）`)
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

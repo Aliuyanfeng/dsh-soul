@@ -1158,7 +1158,12 @@ window.__ModuleLoader__.load({
       // 注意它**没有边框** —— C86 的档位判据会把「无边框」认作文字链接而跳过，
       // 这正是我们要的：浮层按钮不受正文按钮档位约束，尺寸由浮层语境决定。
       '.soul-quote-float{position:fixed;z-index:2147483000;display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 14px;border:none;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.18);white-space:nowrap}',
-      '.soul-quote-float:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      // ⚠️ hover **不能**写成 `background:interactive-bg-hover`：
+      // 那会把不透明的 module-platform 底换成 5% 透明色 ⇒ 下层文字直接透出来，
+      // 看起来就像「按钮层级变低、被文字盖住」（用户实测反馈）。
+      // 正确做法：保留 background-color，只叠一层 background-image ——
+      // `background-image` 不重置 `background-color`，底仍是不透明的。
+      '.soul-quote-float:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover))}',
       '.soul-quote-float:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       '.soul-quote-action{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
       '.soul-quote-action:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
@@ -1360,7 +1365,9 @@ window.__ModuleLoader__.load({
       // 位置指示与翻页：竖版卡牌一次只见一张，这三处是对该损失的补偿
       '.soul-persona-nav{display:flex;align-items:center;justify-content:center;gap:12px}',
       '.soul-persona-navbtn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-settings-card-fill);color:var(--dsw-alias-label-secondary);font:inherit;font-size:16px;line-height:1;cursor:pointer;transition:background-color .15s ease,color .15s ease}',
-      '.soul-persona-navbtn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      // 同一个坑：基础底 settings-card-fill 不透明，hover 换成半透明色会透出下层。
+      // 这个症状比浮动按钮隐蔽 —— 按钮下面往往是纯色背景，肉眼看不出来。
+      '.soul-persona-navbtn:hover:not(:disabled){background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-label-primary)}',
       '.soul-persona-navbtn:disabled{cursor:default;opacity:.3}',
       '.soul-persona-navbtn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.soul-persona-dots{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;justify-content:center}',
