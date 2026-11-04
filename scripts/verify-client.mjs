@@ -4949,10 +4949,20 @@ function componentBody(text, name) {
     // 同理：只查 `style.marginLeft` 出现，把它赋成空串也照样通过。
     // ⚠️ 但不能**无条件**复制偏移：输入框卡片并不总是居中，
     // 之前无条件设 offset 导致本不居中的布局被往右推了一大截（用户截图证实）。
-    assert.match(body, /const centered = leftGap > 0 && Math\.abs\(leftGap - rightGap\) <= 8/,
-      '必须先判断卡片是否居中（左右留白大致相等）')
-    assert.match(body, /style\.marginLeft = centered \? leftGap \+ 'px' : ''/,
-      '只有居中时才复制左偏移，否则必须清空')
+    // 左偏移必须以**自身**为基准：先清零、量出此刻左边缘、再算与目标的差值。
+    // 用祖先做基准两次都错了（一次偏右、一次偏左）—— 因为「基准是谁」本身不可靠。
+    assert.match(body, /const baseLeft = current\.getBoundingClientRect\(\)\.left/,
+      '必须以自身为基准量左边缘（不能拿祖先的 left 相减）')
+    assert.match(body, /const delta = targetRect\.left - baseLeft/,
+      '偏移量必须是与目标位置的差值')
+    assert.match(body, /style\.marginLeft = delta > 0 \? Math\.round\(delta\) \+ 'px' : ''/,
+      '必须按差值设置偏移')
+    // 顺序：先清零偏移（否则量到的是上一次的结果）→ 设宽度（会重排）→ 量基准
+    const clearAt2 = body.indexOf("current.style.marginLeft = ''")
+    const widthAt2 = body.indexOf('current.style.width = targetRect.width')
+    const baseAt2 = body.indexOf('const baseLeft =')
+    assert.ok(clearAt2 > 0 && widthAt2 > clearAt2 && baseAt2 > widthAt2,
+      '必须先清零偏移、再设宽度、最后量基准（顺序反了会量到上一次的结果）')
 
     // ⑤ 量不到时降级，不得写 0px（会让浮层消失）
     assert.match(body, /targetRect\.width <= 0/, '量不到宽度时必须降级')

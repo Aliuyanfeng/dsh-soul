@@ -4991,19 +4991,22 @@ window.__ModuleLoader__.load({
             current.style.marginLeft = ''
             return
           }
+          // 左偏移：以**自身**为基准，而不是以某个祖先为基准。
+          //
+          // 走过两次弯路：
+          //   · 无条件用 (targetRect.left - stackRect.left) —— 复现出「往右偏一大截」；
+          //   · 加「必须居中才偏移」的判断 —— 复现出「往左偏」（卡片其实不居中，判断挡掉了）。
+          //
+          // 两次都在猜「基准是谁」。其实根本不用猜：
+          // 先把自己的偏移清零、量出此刻的左边缘，再算它和目标之间差多少 —— 这个差值
+          // 就是唯一正确的 marginLeft，与父容器怎么布局无关。
+          //
+          // 顺序要紧：先设宽度（会重排），再量基准，最后设偏移。
+          current.style.marginLeft = ''
           current.style.width = targetRect.width + 'px'
-          // 只有卡片**真的居中**时才复制左偏移。
-          //
-          // ⚠️ 之前是无条件设 offset = targetRect.left - stackRect.left，
-          // 结果本不居中的输入框卡片也让我们往右推了 350px 左右（用户截图：
-          // 引用卡左边一大片留白、右边贴边）。
-          //
-          // 判据：左右留白大致相等才是居中。"大致"给 8px 容差，
-          // 亚像素与边框取整都会带来一两像素的差。
-          const leftGap = targetRect.left - stackRect.left
-          const rightGap = stackRect.right - targetRect.right
-          const centered = leftGap > 0 && Math.abs(leftGap - rightGap) <= 8
-          current.style.marginLeft = centered ? leftGap + 'px' : ''
+          const baseLeft = current.getBoundingClientRect().left
+          const delta = targetRect.left - baseLeft
+          current.style.marginLeft = delta > 0 ? Math.round(delta) + 'px' : ''
         }
 
         align()
