@@ -4611,6 +4611,31 @@ window.__ModuleLoader__.load({
       return null
     }
 
+    /**
+     * 队列项数量变化时，是否该让引用失效。
+     *
+     * 用户要求：「引用只属于我按发送的那条消息，排队消息不该带」。
+     *
+     * 引用是宿主侧会话级状态，systemPrompt.context 每次请求都会读 —— 只要它还在，
+     * 排队消息（conversation.steer 注入）就会读到。客户端唯一能插手的位置，是在
+     * 排队消息真正发出**之前**让它失效。
+     *
+     * 本条规则：队列项数量**减少**就失效。发出与删除都会让数量减少；两种情况引用
+     * 都该作废 —— 它本来就是给「我正在写的那条消息」配的，不属于队列里任何一条。
+     *
+     * 做成纯函数是为了能被离线测试直接跑（DOM 桩太弱，跑不了真实 DOM 路径）。
+     *
+     * @param prevCount  上一次观察到的队列项数量；-1 表示还没有基线
+     * @param nextCount  本次观察到的数量
+     * @param quoteCount 当前引用条数
+     * @returns 是否需要清空引用
+     */
+    function shouldClearQuotesOnQueueChange(prevCount, nextCount, quoteCount) {
+      if (prevCount < 0) return false
+      if (nextCount >= prevCount) return false
+      return quoteCount > 0
+    }
+
     // 提交进行中的阶段。离开它们回到 plain ⇒ 这一轮发送结束了。
     function isBusyPhase(phase) {
       return phase === 'submitting' || phase === 'adjudicating' || phase === 'claimed'
@@ -4866,8 +4891,8 @@ window.__ModuleLoader__.load({
           // （发出与删除都会让数量减少；两种情况引用都该失效 ——
           //   它本来就是给「我正在写的那条消息」配的，不属于队列里的任何一条）。
           const now = dock === null ? 0 : dock.querySelectorAll(QUEUE_ROW).length
-          if (queueCount >= 0 && now < queueCount) {
-            if (quoteListOf(sessionId).length > 0) quoteClear(sessionId)
+          if (shouldClearQuotesOnQueueChange(queueCount, now, quoteListOf(sessionId).length)) {
+            quoteClear(sessionId)
           }
           queueCount = now
 

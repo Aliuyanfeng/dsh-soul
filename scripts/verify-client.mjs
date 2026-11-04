@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 94
+const EXPECTED_ASSERTIONS = 95
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5337,10 +5337,34 @@ function componentBody(text, name) {
     // 引用是宿主侧会话级状态，context 每次请求都读 —— 只要它还在，排队消息（steer）
     // 就会读到。唯一能让它不被带走的地方，是在排队消息发出前让引用失效：
     // 盯住队列项数量，一旦减少就清空。
-    assert.ok(body.includes('now < queueCount'),
-      '队列项减少时必须让引用失效（否则排队消息会把它带走）')
-    assert.match(body, /quoteListOf\(sessionId\)\.length > 0\) quoteClear\(sessionId\)/,
-      '队列减少时必须调用 quoteClear（且只在有引用时才调）')
+    // 判断逻辑已提成纯函数（便于离线做行为测试，见 C101）：
+    // DOM 桩没有 querySelector，跑不了真实路径，只能把「该不该清」抽出来。
+    assert.ok(body.includes('shouldClearQuotesOnQueueChange(queueCount, now'),
+      '队列减少时必须调用 shouldClearQuotesOnQueueChange 判断')
+    assert.ok(body.includes('quoteClear(sessionId)'),
+      '判断为真时必须调用 quoteClear')
+  })
+
+  await check('C101 排队消息减少时引用失效（纯函数行为测试）', async () => {
+    // 这是**行为测试**：从源码里取出纯函数并真正执行，对每种输入给期望值。
+    // 不是文本断言 —— 文本断言只能证明"代码里写了这行"，证明不了逻辑对。
+    //
+    // 能被这样测，是因为把「该不该清引用」从 DOM 路径里提了出来：
+    // 现有 DOM 桩没有 querySelector，跑不了真实的队列路径。
+    const fnStart = source.indexOf('function shouldClearQuotesOnQueueChange')
+    assert.ok(fnStart > 0, '找不到 shouldClearQuotesOnQueueChange')
+    const fnEnd = source.indexOf('\n    }', fnStart) + 6
+    const fnSrc = source.slice(fnStart, fnEnd)
+    assert.ok(fnSrc.includes('return quoteCount > 0'), '纯函数体不完整')
+    const fn = new Function(fnSrc + '\nreturn shouldClearQuotesOnQueueChange')()
+
+    assert.equal(fn(-1, 0, 1), false, '首次没有基线 → 不动作')
+    assert.equal(fn(0, 0, 1), false, '数量没变 → 不动作')
+    assert.equal(fn(0, 1, 1), false, '数量增加 → 不动作')
+    assert.equal(fn(1, 0, 1), true, '减少且有引用 → 清空')
+    assert.equal(fn(2, 1, 1), true, '减少一条且有引用 → 清空')
+    assert.equal(fn(3, 1, 2), true, '一次减少多条且有引用 → 清空')
+    assert.equal(fn(1, 0, 0), false, '减少但无引用 → 不动作')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
