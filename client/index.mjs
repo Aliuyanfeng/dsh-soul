@@ -5127,6 +5127,20 @@ window.__ModuleLoader__.load({
               }
             }
           }
+          if (target === null) {
+            // 拿不到回合时兜底：退回最后一条。
+            //
+            // 用户报过「引用一段文字，胶囊没显示」——如果宿主的 userRow 没有
+            // data-chat-turn 祖先（我假设它有，但没法离线验证），精确匹配必然落空，
+            // 而「找不到就不画」会把结果变成完全不显示。
+            //
+            // 权衡：位置可能不完美（有轮次迁移的风险），但**能看见**优先。
+            // 只有「确实拿到了 turn、只是那一条已经不在了」才放弃 —— 那种情况
+            // 画到别处是明确的错误。
+            if (sent.turn === null || sent.turn === undefined) {
+              target = rows[rows.length - 1]
+            }
+          }
           if (target === null) return
           const badge = document.createElement('div')
           badge.className = 'soul-quote-sent'
