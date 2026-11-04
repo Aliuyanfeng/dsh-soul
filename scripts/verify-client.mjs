@@ -4910,41 +4910,48 @@ function componentBody(text, name) {
     assert.ok(rules.size > 200, `css 规则解析异常（只拿到 ${rules.size} 条）`)
   })
 
-  await check('C90 引用浮层必须撑满输入框宽度（flex 父容器下不能只占内容宽）', async () => {
-    // 用户实测反馈：「引用后在输入框上方显示宽度不对，保持和输入框宽度一致即可」。
+  await check('C90 引用浮层必须对齐输入框卡片（宽度 + 居中偏移）', async () => {
+    // 用户连报三次「宽度不一致」，每次的原因都不同，值得把踩坑链记下来：
+    //   ① 只加 width:100% —— 撑满的是 dock 容器，与输入框无关；
+    //   ② 只量 parentElement 的兄弟 —— 槽位渲染套了 wrapper，那层只有我自己，
+    //      永远找不到输入框，退回 100%；
+    //   ③ 爬到「同时含两者的容器」后量 **InputBar 外层** —— 它是全宽的，
+    //      而可见的输入框卡片是它内部一个**居中 + max-width** 的子元素，
+    //      于是我的卡占满整宽、输入框居中，左右各留一大片（用户截图证实）。
     //
-    // 成因：`conversation.input.dock` 的父容器是个 flex 列。若它的 align-items 是
-    // flex-start，子项就只占**内容宽度** —— 引用卡看起来比输入框窄一截。
-    // div 在 block 上下文里本来会撑满，所以这个问题**只在 flex 父容器下出现**，
-    // 靠肉眼在别的场景里验证不出来。
-    //
-    // 修法：显式 width:100% + box-sizing:border-box。
-    // box-sizing 不能省 —— 本规则有 padding 与边框，content-box 下 100% 会溢出。
-    const at = source.indexOf('.soul-quote-dock{')
-    assert.ok(at > 0, '找不到 .soul-quote-dock 规则')
-    const css = source.slice(at, source.indexOf('}', at) + 1)
+    // 现在：先爬栈找到 composerStack，再在里面用**样式特征**（有背景 + 圆角非零）
+    // 找出最内层的输入框卡片，复制它的宽度**和左偏移**（卡片居中，只对宽度不够）。
+    const body = componentBody(source, 'SoulQuoteDock')
+    assert.ok(body !== '', '找不到 SoulQuoteDock 组件')
+
+    // ① 必须有 width:100% 兜底（JS 量不到时退回）
+    const cssAt = source.indexOf('.soul-quote-dock{')
+    assert.ok(cssAt > 0, '找不到 .soul-quote-dock 规则')
+    const css = source.slice(cssAt, source.indexOf('}', cssAt) + 1)
     assert.match(css, /width:100%/, '引用浮层必须有 width:100% 作为兜底')
     assert.match(css, /box-sizing:border-box/, '必须有 box-sizing:border-box（否则 100% 叠加 padding 会溢出）')
 
-    // ★ 但只靠 CSS 对齐不了：宿主的输入框卡片自身有 margin/max-width，
-    // 那个值写在它的 CSS Module 里（hash 类名），插件读不到也不该硬编码。
-    // 所以真实做法是**运行时量它的宽度**。
-    const dockBody = componentBody(source, 'SoulQuoteDock')
-    assert.ok(dockBody !== '', '找不到 SoulQuoteDock 组件')
-    assert.match(dockBody, /const dockRef = React\.useRef\(null\)/, '浮层必须有 ref（要量/设宽度）')
-    assert.match(dockBody, /React\.useLayoutEffect\(/, '必须在布局后测量对齐（useEffect 会闪一下）')
-    assert.match(dockBody, /querySelector\('\[contenteditable="true"\]'\)/, '必须以可编辑区定位输入框卡片')
-    assert.match(dockBody, /getBoundingClientRect\(\)\.width/, '必须量输入框卡片的真实宽度')
+    // ② 必须往上爬找容器（不能只看 parentElement）
+    assert.match(body, /function findStack\(/, '必须有 findStack')
+    assert.match(body, /while \(level !== null/, '必须往上爬找同时容纳我与输入框的容器')
 
-    // ★ 必须**往上爬**找容器，不能只看 parentElement。
-    // 实测栽过：槽位渲染会在组件外面套一层 wrapper，那层子元素只有我自己，
-    // 永远找不到输入框 ⇒ 退回 100% ⇒ 宽度依旧不一致（用户报了两次）。
-    assert.match(dockBody, /while \(level !== null/, '必须往上爬找同时容纳我与输入框的容器')
-    assert.match(dockBody, /width > 0 \? width \+ 'px' : ''/, '量不到宽度时必须降级回 100%（不能写 0px）')
-    assert.match(dockBody, /addEventListener\('resize'/, '窗口尺寸变化要重新对齐')
-    assert.match(dockBody, /removeEventListener\('resize'/, '卸载时必须移除 resize 监听')
+    // ③ 必须量的是**卡片**而不是外层容器 —— 用样式特征而非类名（类名是 hash）
+    // ★ 光有函数不够，必须真的**被调用并把结果用作测量目标**。
+    // 实测漏检过：把调用改成 `const card = null` 时，只查"函数存在"的断言照样通过。
+    assert.match(body, /function findCard\(/, '必须有 findCard')
+    assert.match(body, /const card = findCard\(/, '必须调用 findCard 定位卡片（不能只定义不用）')
+    assert.match(body, /getComputedStyle/, '必须用计算样式判断是不是卡片')
+    assert.match(body, /style\.backgroundColor/, '必须看背景色')
+    assert.match(body, /style\.borderRadius/, '必须看圆角')
+
+    // ④ 宽度与左偏移都要复制（卡片居中）
+    assert.match(body, /targetRect\.width/, '必须量卡片真实宽度')
+    // 同理：只查 `style.marginLeft` 出现，把它赋成空串也照样通过。
+    assert.match(body, /style\.marginLeft = offset > 0 \? offset \+ 'px'/, '必须复制**真实**左偏移（不能赋空串）')
+
+    // ⑤ 量不到时降级，不得写 0px（会让浮层消失）
+    assert.match(body, /targetRect\.width <= 0/, '量不到宽度时必须降级')
   })
-
   await check('C91 发送完成后自动清空引用（用「新回合出现」而非「草稿变空」）', async () => {
     // 用户要求：发完消息，输入框上方的引用自动消失。
     //

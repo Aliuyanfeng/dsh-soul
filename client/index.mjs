@@ -4904,43 +4904,81 @@ window.__ModuleLoader__.load({
         const stack = node.parentElement
         if (stack === null) return undefined
 
-        // 往上爬，找「同时包含我和输入框卡片」的那一层容器。
+        // 对齐输入框卡片：宽度 + 左边距都要跟。
         //
-        // ⚠️ 不能只看 parentElement：槽位渲染会在我的组件外面套一层 wrapper，
-        //    那一层的子元素**只有我自己**，于是永远找不到输入框 → 退回 100% →
-        //    宽度依旧对不上（用户实测反馈过两次，第二次就是这个原因）。
-        //    真正同时容纳两者的容器在更上面（渲染源码里叫 composerStack）。
+        // 三次踩坑的完整经过：
+        //   ① 只加 width:100% —— 只撑满 dock 容器，与输入框无关；
+        //   ② 只量 parentElement 的兄弟 —— 槽位渲染套了一层 wrapper，那层里只有我自己，
+        //      永远找不到输入框，退回 100%；
+        //   ③ 往上爬到了「同时含两者的容器」，但量的是 **InputBar 的外层**（全宽），
+        //      而真正可见的输入框卡片是它内部一个**居中、有 max-width** 的子元素
+        //      —— 结果我的卡占满整宽，输入框却居中，左右各留一大片（用户截图证实）。
         //
-        // 限制爬升层数：再多就是在整个页面里乱找了，容易量到别的会话的输入框。
+        // 所以现在两步：
+        //   a. 先爬到 composerStack（同时含我与输入框的那层）；
+        //   b. 再在里面找「含可编辑区、且有背景色 + 圆角」的最内层元素 = 输入框卡片。
+        //      用样式特征而不是类名：类名是 CSS Module 的 hash，不可依赖。
+        //
+        // 卡片是居中的，所以除了宽度还要复制它的左偏移；否则宽度对了、位置还是歪的。
         const MAX_LEVELS = 6
+
+        function findStack(current) {
+          let level = current.parentElement
+          let climbed = 0
+          while (level !== null && level !== document.body && climbed < MAX_LEVELS) {
+            for (const child of level.children) {
+              if (child === current || child.contains(current)) continue
+              if (typeof child.querySelector !== 'function') continue
+              if (child.querySelector('[contenteditable="true"]') !== null) return child
+            }
+            level = level.parentElement
+            climbed += 1
+          }
+          return null
+        }
+
+        // 输入框卡片：从可编辑区往上找第一个「有背景色且圆角非零」的祖先。
+        function findCard(editable, stack) {
+          if (editable === null) return null
+          if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return null
+          let el = editable
+          while (el !== null && el !== stack) {
+            const style = window.getComputedStyle(el)
+            if (style !== null) {
+              const bg = style.backgroundColor
+              const radius = style.borderRadius
+              const hasBackground = typeof bg === 'string' && bg !== '' && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)'
+              const hasRadius = typeof radius === 'string' && radius !== '' && radius !== '0px'
+              if (hasBackground && hasRadius) return el
+            }
+            el = el.parentElement
+          }
+          return null
+        }
+
         const align = () => {
           const current = dockRef.current
           if (current === null) return
           if (typeof document === 'undefined') return
-          let level = current.parentElement
-          let bar = null
-          let climbed = 0
-          while (level !== null && level !== document.body && climbed < MAX_LEVELS) {
-            for (const child of level.children) {
-              // 跳过我自己所在的那一支
-              if (child === current || child.contains(current)) continue
-              if (typeof child.querySelector !== 'function') continue
-              if (child.querySelector('[contenteditable="true"]') !== null) {
-                bar = child
-                break
-              }
-            }
-            if (bar !== null) break
-            level = level.parentElement
-            climbed += 1
-          }
-          if (bar === null) {
+          const stack = findStack(current)
+          if (stack === null) {
             current.style.width = ''
+            current.style.marginLeft = ''
             return
           }
-          const width = bar.getBoundingClientRect().width
-          // 宽度为 0 说明还没布局好（或已隐藏），保留 100% 兜底
-          current.style.width = width > 0 ? width + 'px' : ''
+          const card = findCard(stack.querySelector('[contenteditable="true"]'), stack)
+          const target = card === null ? stack : card
+          const targetRect = target.getBoundingClientRect()
+          const stackRect = stack.getBoundingClientRect()
+          if (targetRect.width <= 0) {
+            current.style.width = ''
+            current.style.marginLeft = ''
+            return
+          }
+          current.style.width = targetRect.width + 'px'
+          // 卡片居中时，把同样的左侧偏移抄过来，视觉上才真的对齐
+          const offset = targetRect.left - stackRect.left
+          current.style.marginLeft = offset > 0 ? offset + 'px' : ''
         }
 
         align()
