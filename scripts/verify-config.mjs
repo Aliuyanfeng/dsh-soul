@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 163
+const EXPECTED_ASSERTIONS = 164
 
 let passed = 0
 const failures = []
@@ -4844,6 +4844,23 @@ check('「N 个会话」必须与列表口径一致（不得用注册表原始�
   assert.ok(listedAt > 0 && countAt > listedAt, '统计必须排在会话列表算好之后')
 })
 
+  await check('C99 scripts/ 目录不得残留临时脚本（防误提交）', async () => {
+    // 这个坑已经踩了三次：wire-quote2.cjs、dom1.cjs、rm1.cjs 都被 `git add -A`
+    // 顺手提交过。都是「一次性改文件的脚本，跑完忘了删」。
+    //
+    // 与其靠「下次记得」，不如让每次 verify 都替我看着 —— 只要目录里出现非 .mjs
+    // 的文件就失败。合法文件只有两类：verify-*.mjs（回归脚本）与 lib/（夹具子目录）。
+    const entries = readdirSync(new URL('./', import.meta.url), { withFileTypes: true })
+    const offenders = []
+    for (const entry of entries) {
+      if (entry.isDirectory()) continue
+      if (entry.name.endsWith('.mjs')) continue
+      offenders.push(entry.name)
+    }
+    assert.equal(offenders.length, 0,
+      `scripts/ 出现非 .mjs 文件（多为跑完忘删的一次性脚本）：${offenders.join(", ")}`
+      + " —— 用完即删，提交前看一眼 scripts/ 目录。")
+  })
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 
 console.log(`\n全部通过：${passed} 项检查`)
