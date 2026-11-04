@@ -1171,25 +1171,38 @@ window.__ModuleLoader__.load({
       '.soul-quote-float:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover))}',
       '.soul-quote-float:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       // 浮层：与宿主的「目标 / 队列」同区，视觉上贴齐它们（细边框 + 圆角 + 模块底色）
-      // 引用浮层：观感对齐宿主的「排队消息」(queue dock) —— 两者在同一个区域上下相邻，
-      // 它用无边框 + radius-md + 模块底色 + 单行紧凑布局，我们就照这套来，
-      // 免得自己的组件在视觉上比宿主的重一档。
+      // 引用浮层：**直接照搬宿主队列消息 (QueueDock) 的度量**，不是"照着看起来像"那样仿。
       //
-      // 宽度：width:100% 只是兜底，真正对齐由组件的 useLayoutEffect 量输入框卡片后
-      // 写成 px（含居中偏移）。box-sizing:border-box 不能省，否则 100% 叠加 padding 会溢出。
-      '.soul-quote-dock{box-sizing:border-box;width:100%;max-width:100%;display:flex;flex-direction:column;gap:2px;margin:0 0 8px;padding:4px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-module-platform)}',
-      '.soul-quote-item{display:flex;align-items:center;gap:8px;min-width:0;padding:6px 8px;border-radius:var(--dsw-radius-sm)}',
+      // 关键发现：宿主的对齐根本不是 JS 测量，而是三个 CSS 变量 ——
+      //
+      //   width:      calc(100% - side-clearance*2 - dock-inset*2)
+      //   max-width:  calc(composer-card-max-width - dock-inset*2)
+      //   margin:     0 auto calc(0px - stack-gap - 3px)
+      //   padding:    0 dock-inset
+      //
+      // （来源：dsh-client-ui-conversation 的 QueueDock.module.css，hash 前缀 F07MqG_）
+      //
+      // 这解释了为什么我前六版用 JS 量 getBoundingClientRect 都不稳：
+      // 宿主的宽度是**布局算出来的**，可以随窗口自适应、无需监听 resize；
+      // 而 JS 方案永远在追一个"已经过了时"的数字。
+      //
+      // 负的 margin 是让 dock 与下方输入框卡片视觉上贴合（宿主原样如此）。
+      '.soul-quote-dock{box-sizing:border-box;width:calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));max-width:calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));margin:0 auto calc(0px - var(--dsh-composer-stack-gap) - 3px);padding:0 var(--dsh-composer-dock-inset);flex:none}',
+      // panel：与队列面板同款上圆角（它和输入框卡片是"上盖"关系）
+      '.soul-quote-panel{box-sizing:border-box;border-radius:var(--dsw-radius-lg) var(--dsw-radius-lg) 0 0;width:100%;padding:2px 0;position:relative;overflow:hidden}',
+      // 每条引用：照搬 QueueDock 的 .row（min-height 36 / 左右 12、5 / gap 10 / radius-md）
+      '.soul-quote-item{box-sizing:border-box;border-radius:var(--dsw-radius-md);align-items:center;gap:10px;width:100%;min-height:36px;padding:4px 5px 4px 12px;display:flex}',
       '.soul-quote-item:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover))}',
-      '.soul-quote-icon{flex:none;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:20px}',
-      // 单行 + 省略号：与队列消息一致，长引用不撑高卡片。
-      // ⚠️ 这里不能只写 white-space:nowrap —— 必须同时有 overflow:hidden 与
-      // text-overflow:ellipsis，否则文字会直接溢出到卡片外而不是变省略号。
-      '.soul-quote-text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}',
-      // 方形图标按钮（有固定 width）—— C86 的档位审计按此判据自动排除，
-      // 这正是「方形控件尺寸由图形需求决定」的正当用法。
-      '.soul-quote-remove{flex:none;width:20px;height:20px;padding:0;border:none;border-radius:var(--dsw-radius-xs);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:14px;line-height:1;cursor:pointer}',
+      // 前缀图标：与队列的 .lead 一致（icon-only 的 grid 居中）
+      '.soul-quote-icon{color:var(--dsw-alias-label-tertiary);flex:none;display:grid;place-items:center;font-size:12px;line-height:1}',
+      // 文字：与队列的 .preview 同字体档（--dsw-font-xs-13）+ 同色（label-primary-dimmed）。
+      // 单行省略三件套仍然要齐（overflow/text-overflow/nowrap）。
+      '.soul-quote-text{min-width:0;flex:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:var(--dsw-font-xs-13);font-family:Inter, var(--dsw-font-family);color:var(--dsw-alias-label-primary-dimmed)}',
+      // 删除按钮：照搬队列的 .action（28×28 / 胶囊 / grid 居中 / 无边框）
+      '.soul-quote-remove{corner-shape:round;width:28px;height:28px;padding:0;border:none;border-radius:999px;background:none;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:14px;line-height:1;cursor:pointer;flex:none;display:grid;place-items:center}',
       '.soul-quote-remove:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-label-primary)}',
-      '.soul-quote-clear-all{align-self:flex-start;margin:2px 4px 2px;padding:0;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;line-height:18px;cursor:pointer}',
+      // 「清空」：队列里没有对应控件，按同一个文字档 + 三级色处理，不喧宾夺主
+      '.soul-quote-clear-all{align-self:flex-start;margin:0 12px 4px;padding:0;border:none;background:none;color:var(--dsw-alias-label-tertiary);font:var(--dsw-font-xs-13);cursor:pointer}',
       '.soul-quote-clear-all:hover{color:var(--dsw-alias-label-primary)}',
 
       // ── 会话覆盖维护 ──
@@ -4956,136 +4969,6 @@ window.__ModuleLoader__.load({
           .catch(() => {})
       }, [sessionId, quoteKey])
 
-      // 宽度对齐：不能靠 CSS 猜。
-      //
-      // 宿主把本槽位与输入框卡片渲染成 **composerStack 的兄弟节点**，所以 width:100%
-      // 理论上会一样宽 —— 但实测仍然不同宽，说明输入框卡片自身有 margin / max-width。
-      // 那个值写在宿主的 CSS Module 里（hash 类名），插件既不可读也不该硬编码。
-      //
-      // 做法：运行时量它的实际宽度，套到自己身上。量不到就退回 100%（不阻断渲染）。
-      const dockRef = React.useRef(null)
-      React.useLayoutEffect(() => {
-        const node = dockRef.current
-        if (node === null) return undefined
-        const stack = node.parentElement
-        if (stack === null) return undefined
-
-        // 对齐输入框卡片：宽度 + 左边距都要跟。
-        //
-        // 三次踩坑的完整经过：
-        //   ① 只加 width:100% —— 只撑满 dock 容器，与输入框无关；
-        //   ② 只量 parentElement 的兄弟 —— 槽位渲染套了一层 wrapper，那层里只有我自己，
-        //      永远找不到输入框，退回 100%；
-        //   ③ 往上爬到了「同时含两者的容器」，但量的是 **InputBar 的外层**（全宽），
-        //      而真正可见的输入框卡片是它内部一个**居中、有 max-width** 的子元素
-        //      —— 结果我的卡占满整宽，输入框却居中，左右各留一大片（用户截图证实）。
-        //
-        // 所以现在两步：
-        //   a. 先爬到 composerStack（同时含我与输入框的那层）；
-        //   b. 再在里面找「含可编辑区、且有背景色 + 圆角」的最内层元素 = 输入框卡片。
-        //      用样式特征而不是类名：类名是 CSS Module 的 hash，不可依赖。
-        //
-        // 卡片是居中的，所以除了宽度还要复制它的左偏移；否则宽度对了、位置还是歪的。
-        const MAX_LEVELS = 6
-
-        function findStack(current) {
-          let level = current.parentElement
-          let climbed = 0
-          while (level !== null && level !== document.body && climbed < MAX_LEVELS) {
-            for (const child of level.children) {
-              if (child === current || child.contains(current)) continue
-              if (typeof child.querySelector !== 'function') continue
-              if (child.querySelector('[contenteditable="true"]') !== null) return child
-            }
-            level = level.parentElement
-            climbed += 1
-          }
-          return null
-        }
-
-        // 输入框卡片：从可编辑区往上找第一个「有背景色且圆角非零」的祖先。
-        function findCard(editable, stack) {
-          if (editable === null) return null
-          if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return null
-          let el = editable
-          while (el !== null && el !== stack) {
-            const style = window.getComputedStyle(el)
-            if (style !== null) {
-              const bg = style.backgroundColor
-              const radius = style.borderRadius
-              const hasBackground = typeof bg === 'string' && bg !== '' && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)'
-              const hasRadius = typeof radius === 'string' && radius !== '' && radius !== '0px'
-              if (hasBackground && hasRadius) return el
-            }
-            el = el.parentElement
-          }
-          return null
-        }
-
-        const align = () => {
-          const current = dockRef.current
-          if (current === null) return
-          if (typeof document === 'undefined') return
-          const stack = findStack(current)
-          if (stack === null) {
-            current.style.width = ''
-            current.style.marginLeft = ''
-            return
-          }
-          const card = findCard(stack.querySelector('[contenteditable="true"]'), stack)
-          const target = card === null ? stack : card
-          const targetRect = target.getBoundingClientRect()
-          const stackRect = stack.getBoundingClientRect()
-          if (targetRect.width <= 0) {
-            current.style.width = ''
-            current.style.marginLeft = ''
-            return
-          }
-          // 左偏移：以**自身**为基准，而不是以某个祖先为基准。
-          //
-          // 走过两次弯路：
-          //   · 无条件用 (targetRect.left - stackRect.left) —— 复现出「往右偏一大截」；
-          //   · 加「必须居中才偏移」的判断 —— 复现出「往左偏」（卡片其实不居中，判断挡掉了）。
-          //
-          // 两次都在猜「基准是谁」。其实根本不用猜：
-          // 先把自己的偏移清零、量出此刻的左边缘，再算它和目标之间差多少 —— 这个差值
-          // 就是唯一正确的 marginLeft，与父容器怎么布局无关。
-          //
-          // 顺序要紧：先设宽度（会重排），再量基准，最后设偏移。
-          current.style.marginLeft = ''
-          current.style.width = targetRect.width + 'px'
-          const baseLeft = current.getBoundingClientRect().left
-          const delta = targetRect.left - baseLeft
-          current.style.marginLeft = delta > 0 ? Math.round(delta) + 'px' : ''
-        }
-
-        align()
-        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return undefined
-
-        // resize 必须**推迟一帧**再量。
-        //
-        // 现象：缩放窗口后宽度短暂不对，敲一个字又恢复正常。
-        // 原因：window 的 resize 事件在宿主重新布局**之前**就触发了，
-        //      此刻 getBoundingClientRect() 拿到的是旧宽度；
-        //      而输入文字会让本组件重渲染，useLayoutEffect（无依赖）再跑一次 align，
-        //      那时布局已经稳定 —— 所以「一打字就正常」。
-        //
-        // 推到下一帧就能等到宿主的布局结果，不用去猜它的更新时机。
-        const scheduleAlign = () => {
-          if (typeof requestAnimationFrame === 'function') {
-            requestAnimationFrame(() => {
-              align()
-            })
-            return
-          }
-          align()
-        }
-        window.addEventListener('resize', scheduleAlign)
-        return () => {
-          window.removeEventListener('resize', scheduleAlign)
-        }
-      })
-
       if (sessionId === '') return null
       if (state.quoteAsContext !== true) return null
       if (quotes.length === 0) return null
@@ -5096,7 +4979,7 @@ window.__ModuleLoader__.load({
       //
       // 文字用 CSS 省略号截断（nowrap + ellipsis），不再按固定字符数切 ——
       // 窗口宽窄不同，固定字数在窄屏会截不齐。
-      return e('div', { className: 'soul-quote-dock', ref: dockRef },
+      return e('div', { className: 'soul-quote-dock' },
         ...quotes.map((quote) => e('div', { className: 'soul-quote-item', key: quote.id },
           e('span', { className: 'soul-quote-icon', 'aria-hidden': true }, '❝'),
           e('span', { className: 'soul-quote-text' }, quote.text),

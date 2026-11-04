@@ -4910,71 +4910,40 @@ function componentBody(text, name) {
     assert.ok(rules.size > 200, `css 规则解析异常（只拿到 ${rules.size} 条）`)
   })
 
-  await check('C90 引用浮层必须对齐输入框卡片（宽度 + 居中偏移）', async () => {
-    // 用户连报三次「宽度不一致」，每次的原因都不同，值得把踩坑链记下来：
-    //   ① 只加 width:100% —— 撑满的是 dock 容器，与输入框无关；
-    //   ② 只量 parentElement 的兄弟 —— 槽位渲染套了 wrapper，那层只有我自己，
-    //      永远找不到输入框，退回 100%；
-    //   ③ 爬到「同时含两者的容器」后量 **InputBar 外层** —— 它是全宽的，
-    //      而可见的输入框卡片是它内部一个**居中 + max-width** 的子元素，
-    //      于是我的卡占满整宽、输入框居中，左右各留一大片（用户截图证实）。
+  await check('C90 引用浮层宽度照搬宿主 CSS 变量（不用 JS 测量）', async () => {
+    // 这条宽度对齐我返工了六次，全部方向都错在同一个地方：**用 JS 量像素**。
     //
-    // 现在：先爬栈找到 composerStack，再在里面用**样式特征**（有背景 + 圆角非零）
-    // 找出最内层的输入框卡片，复制它的宽度**和左偏移**（卡片居中，只对宽度不够）。
+    //   ① width:100% —— 撑满的是 dock 容器
+    //   ② 量 parentElement 的兄弟 —— slot wrapper 挡住了
+    //   ③ 爬到容器量 —— 量到 InputBar 外层（全宽）
+    //   ④ 顺手把位置也调了 —— 位置本不该动
+    //   ⑤ 加「居中才偏移」—— 判断把正常偏移挡掉了
+    //   ⑥ 以自身为基准 —— 终于能对齐，但缩放时仍要等重算
+    //
+    // 查了宿主的 QueueDock.module.css 才明白：**它根本不量**。宽度是 CSS 变量算的 ——
+    //
+    //   width:     calc(100% - side-clearance*2 - dock-inset*2)
+    //   max-width: calc(composer-card-max-width - dock-inset*2)
+    //   margin:    0 auto calc(0px - stack-gap - 3px)
+    //   padding:   0 dock-inset
+    //
+    // 布局自己会算，窗口变了自己会adapt，不需要监听任何事件。
+    const dockAt = source.indexOf('.soul-quote-dock{')
+    assert.ok(dockAt > 0, '找不到 .soul-quote-dock 规则')
+    const dockCss = source.slice(dockAt, source.indexOf('}', dockAt) + 1)
+
+    assert.match(dockCss, /--dsh-composer-side-clearance/, '宽度必须用宿主的 side-clearance 变量')
+    assert.match(dockCss, /--dsh-composer-dock-inset/, '必须用 dock-inset 变量')
+    assert.match(dockCss, /--dsh-composer-card-max-width/, 'max-width 必须用宿主卡片宽度变量')
+    assert.match(dockCss, /margin:0 auto/, '必须居中（与队列同款）')
+    assert.match(dockCss, /padding:0 var\(--dsh-composer-dock-inset\)/, 'padding 必须用 dock-inset')
+
+    // ★ 不得再退回 JS 测量 —— 那是在追一个永远过时的数字
     const body = componentBody(source, 'SoulQuoteDock')
     assert.ok(body !== '', '找不到 SoulQuoteDock 组件')
-
-    // ① 必须有 width:100% 兜底（JS 量不到时退回）
-    const cssAt = source.indexOf('.soul-quote-dock{')
-    assert.ok(cssAt > 0, '找不到 .soul-quote-dock 规则')
-    const css = source.slice(cssAt, source.indexOf('}', cssAt) + 1)
-    assert.match(css, /width:100%/, '引用浮层必须有 width:100% 作为兜底')
-    assert.match(css, /box-sizing:border-box/, '必须有 box-sizing:border-box（否则 100% 叠加 padding 会溢出）')
-
-    // ② 必须往上爬找容器（不能只看 parentElement）
-    assert.match(body, /function findStack\(/, '必须有 findStack')
-    assert.match(body, /while \(level !== null/, '必须往上爬找同时容纳我与输入框的容器')
-
-    // ③ 必须量的是**卡片**而不是外层容器 —— 用样式特征而非类名（类名是 hash）
-    // ★ 光有函数不够，必须真的**被调用并把结果用作测量目标**。
-    // 实测漏检过：把调用改成 `const card = null` 时，只查"函数存在"的断言照样通过。
-    assert.match(body, /function findCard\(/, '必须有 findCard')
-    assert.match(body, /const card = findCard\(/, '必须调用 findCard 定位卡片（不能只定义不用）')
-    assert.match(body, /getComputedStyle/, '必须用计算样式判断是不是卡片')
-    assert.match(body, /style\.backgroundColor/, '必须看背景色')
-    assert.match(body, /style\.borderRadius/, '必须看圆角')
-
-    // ④ 宽度与左偏移都要复制（卡片居中）
-    assert.match(body, /targetRect\.width/, '必须量卡片真实宽度')
-    // 同理：只查 `style.marginLeft` 出现，把它赋成空串也照样通过。
-    // ⚠️ 但不能**无条件**复制偏移：输入框卡片并不总是居中，
-    // 之前无条件设 offset 导致本不居中的布局被往右推了一大截（用户截图证实）。
-    // 左偏移必须以**自身**为基准：先清零、量出此刻左边缘、再算与目标的差值。
-    // 用祖先做基准两次都错了（一次偏右、一次偏左）—— 因为「基准是谁」本身不可靠。
-    assert.match(body, /const baseLeft = current\.getBoundingClientRect\(\)\.left/,
-      '必须以自身为基准量左边缘（不能拿祖先的 left 相减）')
-    assert.match(body, /const delta = targetRect\.left - baseLeft/,
-      '偏移量必须是与目标位置的差值')
-    assert.match(body, /style\.marginLeft = delta > 0 \? Math\.round\(delta\) \+ 'px' : ''/,
-      '必须按差值设置偏移')
-    // 顺序：先清零偏移（否则量到的是上一次的结果）→ 设宽度（会重排）→ 量基准
-    const clearAt2 = body.indexOf("current.style.marginLeft = ''")
-    const widthAt2 = body.indexOf('current.style.width = targetRect.width')
-    const baseAt2 = body.indexOf('const baseLeft =')
-    assert.ok(clearAt2 > 0 && widthAt2 > clearAt2 && baseAt2 > widthAt2,
-      '必须先清零偏移、再设宽度、最后量基准（顺序反了会量到上一次的结果）')
-
-    // ⑥ resize 必须**推迟一帧**再量。
-    // 现象：缩放窗口后宽度短暂不对、敲一个字又正常。
-    // 原因：window 的 resize 在宿主重新布局**之前**触发，此刻量到的是旧宽度；
-    //      而输入会让本组件重渲染，useLayoutEffect（无依赖）再跑一次 align，
-    //      那时布局已稳定 —— 所以「一打字就正常」。
-    assert.match(body, /const scheduleAlign = \(\) => \{/, '必须有 scheduleAlign')
-    assert.match(body, /requestAnimationFrame\(\(\) => \{/, 'resize 必须推迟一帧再量（否则量到布局前的旧宽度）')
-    assert.ok(body.includes("addEventListener('resize', scheduleAlign)"), 'resize 必须绑定 scheduleAlign')
-
-    // ⑤ 量不到时降级，不得写 0px（会让浮层消失）
-    assert.match(body, /targetRect\.width <= 0/, '量不到宽度时必须降级')
+    assert.equal(/getBoundingClientRect/.test(body), false, '不得用 JS 量宽度（宿主用 CSS 变量）')
+    assert.equal(/useLayoutEffect/.test(body), false, '不得用 useLayoutEffect 测宽度')
+    assert.equal(/addEventListener\(.resize./.test(body), false, '不必监听 resize（CSS 自适应）')
   })
   await check('C91 发送完成后自动清空引用（用「新回合出现」而非「草稿变空」）', async () => {
     // 用户要求：发完消息，输入框上方的引用自动消失。
@@ -5120,11 +5089,14 @@ function componentBody(text, name) {
     assert.match(textCss, /text-overflow:ellipsis/, '必须有 text-overflow:ellipsis')
     assert.match(textCss, /white-space:nowrap/, '必须单行（nowrap）')
 
-    // ④ 无边框（队列项没有边框，有边框就比它重一档）
+    // ④ 无边框 + 圆角与队列同档：
+    //    dock 本身没有圆角/边框（它是容器）；panel 用 radius-lg（上圆角）；row 用 radius-md。
+    //    这是宿主 QueueDock.module.css 的真实分层，不是我自己拼的。
     const dockAt = source.indexOf('.soul-quote-dock{')
     const dockCss = source.slice(dockAt, source.indexOf('}', dockAt) + 1)
-    assert.equal(/border:/.test(dockCss), false, '不得有边框（队列项没有边框）')
-    assert.match(dockCss, /border-radius:var\(--dsw-radius-md\)/, '圆角用 radius-md（与队列项同档）')
+    assert.equal(/border:/.test(dockCss), false, 'dock 不得有边框（队列也没有）')
+    assert.match(source, /\.soul-quote-panel\{[^}]*border-radius:var\(--dsw-radius-lg\)/, '面板上圆角用 radius-lg（与队列面板同款）')
+    assert.match(source, /\.soul-quote-item\{[^}]*border-radius:var\(--dsw-radius-md\)/, '每项圆角用 radius-md（与队列行同款）')
 
     // ⑤ 只在多条时才给「清空」—— 单条时右侧的 × 已足够
     assert.match(body, /quotes\.length > 1/, '清空按钮只应在多条时出现')
