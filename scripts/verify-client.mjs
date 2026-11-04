@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 95
+const EXPECTED_ASSERTIONS = 96
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5365,6 +5365,32 @@ function componentBody(text, name) {
     assert.equal(fn(2, 1, 1), true, '减少一条且有引用 → 清空')
     assert.equal(fn(3, 1, 2), true, '一次减少多条且有引用 → 清空')
     assert.equal(fn(1, 0, 0), false, '减少但无引用 → 不动作')
+  })
+
+  await check('C102 引用不会被渲染抖动误清（回合看内容、队列看 dock 在不在）', async () => {
+    // 用户报：「你在回复过程中，我引用了一段，然后不知道怎么了 引用的就消失了」
+    //
+    // 这是**误清**，比「排队消息带走引用」严重得多 —— 它破坏基本功能。
+    //
+    // 根因：两条清空通道都只看"数量变化"，而数量会抖：
+    //   ① 回合通道数 [class*="userRow"] —— assistant 流式回复期间 React 会重渲染
+    //      消息列表，节点被移除再重建，瞬时出现 1 → 0 → 1，`next > userCount`
+    //      对 0 → 1 这一段成立 ⇒ 误判成"刚发出了新消息" ⇒ 引用被清；
+    //   ② 队列通道在 dock 为 null 时把数量当 0 —— 重渲染期间 dock 会短暂消失，
+    //      于是被当成"队列被发走了"。
+    const body = componentBody(source, 'SoulQuoteFloating')
+    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+
+    // ① 回合通道：数量增加还不够，必须**内容也变**
+    assert.ok(body.includes('textNow !== lastUserText'),
+      '回合通道必须比较最后一条用户消息的文本（否则渲染抖动会误清引用）')
+    assert.ok(body.includes('lastRow.textContent'), '必须读取最后一条用户消息的文本')
+    assert.ok(body.includes("let lastUserText = ''"), '必须维护文本快照')
+
+    // ② 队列通道：dock 不在时**不更新基线**
+    assert.match(body, /if \(dock !== null\) \{/, '队列通道必须在 dock 存在时才判断数量')
+    assert.equal(/const now = dock === null \? 0 :/.test(body), false,
+      '不得在 dock 为 null 时把数量当 0（重渲染期 dock 会短暂消失）')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

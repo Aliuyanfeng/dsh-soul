@@ -4890,11 +4890,16 @@ window.__ModuleLoader__.load({
           // 就让引用失效。做法：盯住队列项数量，一旦减少就清空引用
           // （发出与删除都会让数量减少；两种情况引用都该失效 ——
           //   它本来就是给「我正在写的那条消息」配的，不属于队列里的任何一条）。
-          const now = dock === null ? 0 : dock.querySelectorAll(QUEUE_ROW).length
-          if (shouldClearQuotesOnQueueChange(queueCount, now, quoteListOf(sessionId).length)) {
-            quoteClear(sessionId)
+          // dock 不在（队列区没渲染）时**不更新基线**：
+          // 它在重渲染期间可能短暂消失，若把这一刻当成 0，就会误判成"队列被发走了"。
+          // 真的清空队列时 dock 会一直在（只是空列表），能正常走到下面的判断。
+          if (dock !== null) {
+            const now = dock.querySelectorAll(QUEUE_ROW).length
+            if (shouldClearQuotesOnQueueChange(queueCount, now, quoteListOf(sessionId).length)) {
+              quoteClear(sessionId)
+            }
+            queueCount = now
           }
-          queueCount = now
 
           if (dock === null) return
           const rows = dock.querySelectorAll(QUEUE_ROW)
@@ -5003,6 +5008,15 @@ window.__ModuleLoader__.load({
         let list = null
         let observer = null
         let userCount = -1
+        // 最后一条用户消息的文本快照。
+        //
+        // 只数数量会在**渲染抖动**时误判：assistant 流式回复期间 React 会重渲染消息列表，
+        // userRow 节点可能被移除再重建，瞬时数量出现 1 → 0 → 1，
+        // 而 `next > userCount` 对 0 → 1 这一段是成立的 ⇒ 误判成"刚发出了新消息" ⇒
+        // 引用被凭空清掉（用户实测反馈：「回复过程中引用的就消失了」）。
+        //
+        // 所以再加一道：**内容也必须变**。抖动时内容不变，因此不会误清。
+        let lastUserText = ''
 
         // ⚠️ 不能用 [data-chat-turn] 定位消息。
         //
@@ -5087,8 +5101,14 @@ window.__ModuleLoader__.load({
             return
           }
           const next = countUsers()
-          // 只有**增加**才算「新消息发出去了」；删除/清空不会触发
-          if (userCount >= 0 && next > userCount) {
+          const rowsNow = document.querySelectorAll(USER_ROW)
+          const lastRow = rowsNow.length === 0 ? null : rowsNow[rowsNow.length - 1]
+          const textNow = lastRow === null ? '' : String(lastRow.textContent || '').slice(0, 200)
+          // 两个条件同时成立才算「新消息发出去了」：
+          //   ① 用户消息数量增加；
+          //   ② 最后一条的文本变了（排除渲染抖动造成的假增加）。
+          // 删除会话 / 清空对话都不会同时满足这两条。
+          if (userCount >= 0 && next > userCount && textNow !== '' && textNow !== lastUserText) {
             // 先快照当前引用，再清空 —— 顺序不能反，否则历史里没有内容可画
             const current = quoteListOf(sessionId)
             if (current.length > 0) {
@@ -5101,6 +5121,7 @@ window.__ModuleLoader__.load({
             paint()
           }
           userCount = next
+          lastUserText = textNow
         }
 
         function attach() {
