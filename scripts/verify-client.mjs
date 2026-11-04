@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 90
+const EXPECTED_ASSERTIONS = 91
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5143,6 +5143,34 @@ function componentBody(text, name) {
     // ⑥ 卸载时必须解绑（否则会泄漏，且会话切走后仍会动作）
     assert.ok(body.includes("document.removeEventListener('keydown', onKeyDown, true)"),
       '卸载时必须移除 keydown 监听')
+  })
+
+  await check('C96 消息列表用宿主 flow 槽位容器定位（空会话也要能挂观察器）', async () => {
+    // 用户报：「引用后发送，并没有在我发送的那个回合显示『引用文本片段』」
+    //
+    // 根因：findList() 靠「第一个 .userRow 的父级」找消息列表 ——
+    // 空会话里根本没有 userRow，返回 null ⇒ observer 从未挂上 ⇒
+    // paint() 只在 attach 那一刻跑过一次（那时还没有快照可画）⇒ 胶囊永远不出现。
+    //
+    // 锚点不是猜的，来自宿主源码：它自己的滚动定位用
+    //   ':scope > [data-slot="conversation.chat.flow"]'
+    // 查这一层。该容器**一直存在**，与有没有消息无关。
+    const body = componentBody(source, 'SoulQuoteFloating')
+    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+
+    assert.ok(body.includes('data-slot="conversation.chat.flow"'), '必须用宿主 flow 槽位容器定位消息列表')
+    assert.match(body, /const flow = document\.querySelector\(FLOW_SLOT\)/, 'findList 必须优先用 flow 容器')
+    assert.match(body, /if \(flow !== null\) return flow/, '找到 flow 容器就直接返回（不要退到 userRow）')
+
+    // userRow 仍作为兜底保留（万一 flow 容器还没渲染出来）
+    const findAt = body.indexOf('function findList()')
+    assert.ok(findAt > 0, '找不到 findList')
+    const findBody = body.slice(findAt, findAt + 600)
+    assert.match(findBody, /querySelector\(USER_ROW\)/, 'userRow 应作为兜底路径保留')
+
+    // 反向：不能只靠 userRow（那正是这个 bug 的成因）
+    const firstQuery = findBody.slice(findBody.indexOf('{'), findBody.indexOf('USER_ROW'))
+    assert.ok(firstQuery.includes('FLOW_SLOT'), '第一次查询必须是 flow 容器，不能先查 userRow')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

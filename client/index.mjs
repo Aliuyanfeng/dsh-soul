@@ -4840,8 +4840,21 @@ window.__ModuleLoader__.load({
         // MessageItem.module.css 里是 .userRow，编译后形如 LOmM4q_userRow，
         // 所以用 [class*="userRow"] 匹配是稳的。
         const USER_ROW = '[class*="userRow"]'
+        // 宿主消息列表的槽位容器。它**一直存在**（哪怕还没有任何消息），
+        // 而 userRow 要等第一条用户消息渲染出来才有。
+        //
+        // ⚠️ 早先用「第一个 userRow 的父级」找列表 —— 空会话时返回 null，
+        //    observer 就再也挂不上，paint() 只在 attach 那一刻跑过（那时还没有
+        //    快照可画），于是**胶囊永远不出现**（用户实测反馈）。
+        //
+        // 这个锚点不是猜的：宿主自己的滚动逻辑就是用
+        // ':scope > [data-slot="conversation.chat.flow"]' 查这一层。
+        const FLOW_SLOT = '[data-slot="conversation.chat.flow"]'
 
         function findList() {
+          const flow = document.querySelector(FLOW_SLOT)
+          if (flow !== null) return flow
+          // 兜底：退回到「第一个用户消息的父级」
           const row = document.querySelector(USER_ROW)
           return row === null ? null : row.parentElement
         }
@@ -4876,6 +4889,11 @@ window.__ModuleLoader__.load({
         function onMutate() {
           // 消息列表被整体重建（切会话、清空对话）→ 重新挂载
           if (list !== null && list.isConnected === false) {
+            attach()
+            return
+          }
+          // 列表换了人（比如从兜底路径切到 flow 槽位）也要重挂
+          if (list !== null && list !== document.querySelector(FLOW_SLOT) && document.querySelector(FLOW_SLOT) !== null) {
             attach()
             return
           }
