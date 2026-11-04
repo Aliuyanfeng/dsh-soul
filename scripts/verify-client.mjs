@@ -5014,11 +5014,20 @@ function componentBody(text, name) {
     // 胶囊必须插到 userRow **内部**的第一个位置：
     // userRow 是 flex column + align-items:flex-end，内部子项会右对齐、与消息气泡同侧；
     // 插在外面（列表层）会左对齐 —— 用户截图里胶囊孤零零挂在左边的就是这个。
-    assert.ok(body.includes('last.insertBefore(badge, last.firstChild)'),
-      '胶囊必须插到用户消息内部（继承其右对齐），才能落在消息正上方')
-    assert.equal(/parent\.insertBefore\(badge/.test(body), false,
-      '不得插在消息外面（会被列表左对齐）')
-    assert.ok(body.includes('rows[rows.length - 1]'), '必须挂到最新那条用户消息')
+    // ★ 必须挂到「它所属的那一轮」，不能一律挂最后一条。
+    // 用户报：「第二轮对话发出去后，第一轮的引用提示变到第二轮消息上方了」——
+    // 补画时若总取最后一条，胶囊会随轮次迁移。
+    assert.ok(body.includes("row.closest('[data-chat-turn]')"),
+      '必须按 data-chat-turn 定位目标回合（否则胶囊会跑到别的轮次）')
+    assert.ok(body.includes('target.insertBefore(badge, target.firstChild)'),
+      '必须插到目标用户消息内部（继承其右对齐）')
+    assert.ok(body.includes('if (target === null) return'),
+      '找不到所属回合时必须放弃（宁可没有，也不要画错地方）')
+    assert.equal(/rows\[rows\.length - 1\]\s*\n\s*if \(last === null/.test(body), false,
+      '不得退回「最后一条」的旧写法')
+    // paint 必须**先按 turn 找目标**，不能直接取最后一条。
+    // （helper 里仍会用 rows[rows.length - 1] —— 那是持记录 turn 用的，合理）
+    assert.ok(body.includes('let target = null'), 'paint 必须先按回合找目标')
 
     // ③ hover 展示引用原文
     // hover 展示原文：用自带 tooltip 子元素，**不用原生 title**。
@@ -5045,17 +5054,19 @@ function componentBody(text, name) {
     assert.match(tipCss, /color:var\(--dsw-alias-label-primary\)/, '文字色必须用主题变量')
 
     // ④ ★ 顺序：先快照、再清空 —— 反了就没内容可画
-    const snapAt = body.indexOf('sentQuoteBuckets.set(sessionId')
-    const clearAt = body.indexOf('quoteClear(sessionId)')
-    assert.ok(snapAt > 0 && clearAt > 0, '必须同时有快照与清空')
-    assert.ok(snapAt < clearAt, '必须先快照再清空（否则历史里没有内容可注入）')
+    // 快照+清空已提取成模块级 helper（三个通道共用），所以要查 source 而不是组件体
+    const helperAt = source.indexOf('function snapshotSentQuotes(sessionId)')
+    assert.ok(helperAt > 0, '必须有 snapshotSentQuotes helper')
+    const snapAt = source.indexOf('sentQuoteBuckets.set(sessionId', helperAt)
+    const clearAt = source.indexOf('quoteClear(sessionId)', helperAt)
+    assert.ok(snapAt > helperAt && clearAt > snapAt, 'helper 里必须先快照再清空（否则历史里没有内容可注入）')
 
     // ⑤ 幂等 + 清理：重复注入会叠出多个胶囊；卸载必须移除
     // ★ 位置关系，不是"模式存在"：清理必须在 paint() 内、且在 insertBefore 之前。
     // 实测漏检过 —— 卸载时也有一处同样的清理代码，只查模式会让"删掉 paint 里的清理"
     // 这个变体照样通过，而那正是会叠出多个胶囊的 bug。
     const paintAt = body.indexOf('function paint()')
-    const insertAt = body.indexOf('last.insertBefore(badge, last.firstChild)')
+    const insertAt = body.indexOf('target.insertBefore(badge, target.firstChild)')
     const cleanAt = body.indexOf('removeChild(stale)')
     assert.ok(paintAt > 0 && insertAt > paintAt, '找不到 paint() 或插入点')
     assert.ok(cleanAt > paintAt && cleanAt < insertAt, '必须在本轮注入前清理旧胶囊（幂等），且在插入之前')
@@ -5180,9 +5191,9 @@ function componentBody(text, name) {
 
     // ⑤ 与 DOM 通道同一套动作：先快照再清空（顺序保证历史里有内容可画）
     const enterAt = body.indexOf('const onKeyDown = (ev) => {')
-    const snapAt2 = body.indexOf('sentQuoteBuckets.set(sessionId', enterAt)
-    const clearAt2 = body.indexOf('quoteClear(sessionId)', enterAt)
-    assert.ok(snapAt2 > enterAt && clearAt2 > snapAt2, 'Enter 通道也必须先快照再清空')
+    // 三处通道现在共用 snapshotSentQuotes（它内部先快照再清空）
+    const enterCallAt = body.indexOf('snapshotSentQuotes(sessionId)', enterAt)
+    assert.ok(enterCallAt > enterAt, 'Enter 通道必须调用快照 helper')
 
     // ⑥ 卸载时必须解绑（否则会泄漏，且会话切走后仍会动作）
     assert.ok(body.includes("document.removeEventListener('keydown', onKeyDown, true)"),

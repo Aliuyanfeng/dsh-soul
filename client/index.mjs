@@ -4612,6 +4612,38 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 把当前引用快照进 sentQuoteBuckets，然后清空。
+     *
+     * ★ 关键是**记录所属回合**（turn）。早先只存引用内容，paint 时一律挂到
+     * 「最后一条用户消息」——于是第二轮对话一开始，第一轮的胶囊被重渲染抹掉、
+     * 补画时挂到了第二轮消息上方（用户实测反馈）。
+     *
+     * 回合标识取自宿主的 data-chat-turn —— 它挂在消息流节点上，是该轮次的稳定编号。
+     *
+     * @returns 是否真的快照了（没有引用时返回 false）
+     */
+    function snapshotSentQuotes(sessionId) {
+      const current = quoteListOf(sessionId)
+      if (current.length === 0) return false
+      let turn = null
+      if (typeof document !== 'undefined') {
+        const rows = document.querySelectorAll('[class*="userRow"]')
+        const last = rows.length === 0 ? null : rows[rows.length - 1]
+        if (last !== null && typeof last.closest === 'function') {
+          const node = last.closest('[data-chat-turn]')
+          if (node !== null) turn = node.getAttribute('data-chat-turn')
+        }
+      }
+      sentQuoteBuckets.set(sessionId, {
+        quotes: current.map((q) => ({ text: q.text })),
+        at: Date.now(),
+        turn
+      })
+      quoteClear(sessionId)
+      return true
+    }
+
+    /**
      * 队列项数量变化时，是否该让引用失效。
      *
      * 用户要求：「引用只属于我按发送的那条消息，排队消息不该带」。
@@ -4839,13 +4871,7 @@ window.__ModuleLoader__.load({
         phaseRef.current = phase
         if (phase === null || previous === null) return
         if (!isBusyPhase(previous) || phase !== 'plain') return
-        const current = quoteListOf(sessionId)
-        if (current.length === 0) return
-        sentQuoteBuckets.set(sessionId, {
-          quotes: current.map((q) => ({ text: q.text })),
-          at: Date.now()
-        })
-        quoteClear(sessionId)
+        snapshotSentQuotes(sessionId)
       }, [phase, sessionId])
 
       // ── 队列项上的「含引用」标记 ──
@@ -4982,13 +5008,7 @@ window.__ModuleLoader__.load({
           if (target === null || target === undefined) return
           if (typeof target.closest !== "function") return
           if (target.closest('[contenteditable="true"]') === null) return
-          const current = quoteListOf(sessionId)
-          if (current.length === 0) return
-          sentQuoteBuckets.set(sessionId, {
-            quotes: current.map((q) => ({ text: q.text })),
-            at: Date.now()
-          })
-          quoteClear(sessionId)
+          snapshotSentQuotes(sessionId)
         }
 
         // 捕获阶段：即使宿主的编辑器中转/停掉冒泡也能听到
@@ -5061,8 +5081,25 @@ window.__ModuleLoader__.load({
           if (sent === undefined) return
           const rows = document.querySelectorAll(USER_ROW)
           if (rows.length === 0) return
-          const last = rows[rows.length - 1]
-          if (last === null || last === undefined) return
+
+          // 按记录的回合找目标，**不能**退回到"最后一条"。
+          //
+          // 用户报：「第二轮对话发出去后，第一轮的引用提示变到第二轮消息上方了」——
+          // 因为补画时一律挂到最后一条，胶囊会随轮次「迁移」。
+          // 找不到所属回合（比如那轮被删了）就干脆不画，也不要画错地方。
+          let target = null
+          if (sent.turn !== null && sent.turn !== undefined) {
+            for (const row of rows) {
+              if (typeof row.closest !== 'function') continue
+              const node = row.closest('[data-chat-turn]')
+              if (node === null) continue
+              if (node.getAttribute('data-chat-turn') === String(sent.turn)) {
+                target = row
+                break
+              }
+            }
+          }
+          if (target === null) return
           const badge = document.createElement('div')
           badge.className = 'soul-quote-sent'
           badge.setAttribute(ATTR, String(sent.at))
@@ -5086,7 +5123,7 @@ window.__ModuleLoader__.load({
           //
           // 放在内部还有个好处：userRow 的 gap:6px 会自动给出胶囊与消息之间的间距，
           // 不必我再手写 margin。
-          last.insertBefore(badge, last.firstChild)
+          target.insertBefore(badge, target.firstChild)
         }
 
         function onMutate() {
@@ -5123,14 +5160,7 @@ window.__ModuleLoader__.load({
           // 删除会话 / 清空对话都不会同时满足这两条。
           if (userCount >= 0 && next > userCount && textNow !== '' && textNow !== lastUserText) {
             // 先快照当前引用，再清空 —— 顺序不能反，否则历史里没有内容可画
-            const current = quoteListOf(sessionId)
-            if (current.length > 0) {
-              sentQuoteBuckets.set(sessionId, {
-                quotes: current.map((q) => ({ text: q.text })),
-                at: Date.now()
-              })
-              quoteClear(sessionId)
-            }
+            snapshotSentQuotes(sessionId)
             paint()
           }
           userCount = next
