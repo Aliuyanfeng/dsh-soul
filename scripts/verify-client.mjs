@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 96
+const EXPECTED_ASSERTIONS = 97
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5391,6 +5391,27 @@ function componentBody(text, name) {
     assert.match(body, /if \(dock !== null\) \{/, '队列通道必须在 dock 存在时才判断数量')
     assert.equal(/const now = dock === null \? 0 :/.test(body), false,
       '不得在 dock 为 null 时把数量当 0（重渲染期 dock 会短暂消失）')
+  })
+
+  await check('C103 历史胶囊被宿主重渲染抹掉后会补画', async () => {
+    // 用户报：「发送后消息上方确实有这个展示，但只存在了 1 秒就消失了」
+    //
+    // 根因：注入的节点**不在宿主的虚拟 DOM 里**。宿主重建 userRow 时不会保留它，
+    // 会连它一起丢掉 —— 1 秒后正好是流式回复开始、消息列表重渲染的时刻。
+    //
+    // 修法：observer 每次触发时检查「理应存在但找不到」就补画。
+    // 写成"补齐"而不是"每次重画"，避免插入后自己触发自己。
+    const body = componentBody(source, 'SoulQuoteFloating')
+    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+
+    const probeAt = body.indexOf("document.querySelector('[' + ATTR + ']') === null")
+    assert.ok(probeAt > 0, '必须检测 badge 是否被抹掉（否则丢了不会补）')
+    const paintAt = body.indexOf('paint()', probeAt)
+    assert.ok(paintAt > probeAt && paintAt - probeAt < 300, '检测到丢失后必须紧接着补画')
+
+    // 幂等：只有"理应存在"时才补，否则会插入后立即自己触发自己
+    const guardAt = body.indexOf('sentQuoteBuckets.get(sessionId) !== undefined', probeAt - 300)
+    assert.ok(guardAt > 0 && guardAt < probeAt, '补画前必须确认「本该有」')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

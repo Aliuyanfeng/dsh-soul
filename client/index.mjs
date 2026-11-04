@@ -5095,6 +5095,19 @@ window.__ModuleLoader__.load({
             attach()
             return
           }
+
+          // ── badge 被宿主的重渲染抹掉时补画 ──
+          //
+          // 我们注入的节点**不在宿主的虚拟 DOM 里**：宿主重建 userRow 时不会保留它，
+          // 会连它一起丢掉。用户观察到「发送后胶囊闪一下就没了」，正是这个原因 ——
+          // 插入成功后约 1 秒（流式回复开始、消息列表重渲染）就被抹掉了。
+          //
+          // 这里做的是「补齐」而不是「每次重画」：只有理应存在、但 DOM 里找不到时才补，
+          // 所以插入完成后不会自己触发自己（插入后查询结果非 null，条件不再成立）。
+          if (sentQuoteBuckets.get(sessionId) !== undefined
+              && document.querySelector('[' + ATTR + ']') === null) {
+            paint()
+          }
           // 列表换了人（比如从兜底路径切到 flow 槽位）也要重挂
           if (list !== null && list !== document.querySelector(FLOW_SLOT) && document.querySelector(FLOW_SLOT) !== null) {
             attach()
