@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 89
+const EXPECTED_ASSERTIONS = 90
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5129,6 +5129,48 @@ function componentBody(text, name) {
     // ⑤ 只在多条时才给「清空」—— 单条时右侧的 × 已足够
     assert.match(body, /quotes\.length > 1/, '清空按钮只应在多条时出现')
     assert.match(body, /soul-quote-clear-all/, '多条时应有清空入口')
+  })
+
+  await check('C95 按 Enter 发送时立即清空引用（并区分换行与输入法组合）', async () => {
+    // 用户报：「引用文字后，发送消息，输入框上方引用并没有立即消失」。
+    //
+    // 根因：当时只有 DOM 通道（等新回合渲染出来才清），而那要等宿主渲染完。
+    // 更及时的信号是**发送动作本身** —— 按 Enter。
+    //
+    // 顺带查清一件事：之前加的「宿主提交阶段」通道（readSubmitPhase）**从未生效**。
+    // conversation.input.overlay 的 renderSlot 传的是空 props（{}），根本没有 input；
+    // 而 input.dock 拿到的 input 是 useInput 的编辑器状态，也不是 submitPlane 的 phase。
+    // 保留它只是为了宿主将来真透出状态时有个现成接点，拿不到就退化为不动作。
+    const body = componentBody(source, 'SoulQuoteFloating')
+    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+
+    // ① 必须监听 Enter
+    assert.ok(body.includes("if (ev.key !== 'Enter') return"), '必须只响应 Enter 键')
+    assert.ok(body.includes("document.addEventListener('keydown', onKeyDown, true)"),
+      '必须在 document 上捕获阶段监听（宿主的编辑器可能停掉冒泡）')
+
+    // ② ★ 必须排除 Shift+Enter —— 那是换行，不是发送
+    //    少了这条，用户想换行时引用会被误清。
+    assert.ok(body.includes('if (ev.shiftKey === true) return'),
+      '必须排除 Shift+Enter（换行不是发送）')
+
+    // ③ ★★ 必须排除输入法组合态 —— 中文选字时按 Enter 是在确认候选词
+    //    少了这条，中文用户每选一次字就会把引用清掉一次。
+    assert.ok(body.includes('if (ev.isComposing === true) return'),
+      '必须排除输入法组合态（中文选字按 Enter 不是发送）')
+
+    // ④ 必须只响应可编辑区里的 Enter（别处按 Enter 与我们无关）
+    assert.ok(body.includes('target.closest('), '必须检查事件目标是否在可编辑区内')
+
+    // ⑤ 与 DOM 通道同一套动作：先快照再清空（顺序保证历史里有内容可画）
+    const enterAt = body.indexOf('const onKeyDown = (ev) => {')
+    const snapAt2 = body.indexOf('sentQuoteBuckets.set(sessionId', enterAt)
+    const clearAt2 = body.indexOf('quoteClear(sessionId)', enterAt)
+    assert.ok(snapAt2 > enterAt && clearAt2 > snapAt2, 'Enter 通道也必须先快照再清空')
+
+    // ⑥ 卸载时必须解绑（否则会泄漏，且会话切走后仍会动作）
+    assert.ok(body.includes("document.removeEventListener('keydown', onKeyDown, true)"),
+      '卸载时必须移除 keydown 监听')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

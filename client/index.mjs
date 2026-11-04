@@ -4732,7 +4732,15 @@ window.__ModuleLoader__.load({
       //    宿主改版若换掉它，注入会静默失效（引用功能本身不受影响）。
       //    之所以还是选它：宿主没有提供「用户消息上方」的槽位（只有回合尾部的
       //    turnTail），而用户明确要胶囊在消息上方。
-      // ── 通道一：宿主的提交阶段（更直接，但路径非公开）──
+      // ── 通道一：宿主的提交阶段（**经查证无效，保留仅为将来兼容**）──
+      //
+      // 后来核实：conversation.input.overlay 的 renderSlot 传的是空 props（{}），
+      // 根本没有 input 参数；而 input.dock 拿到的 input 是 useInput 的**编辑器状态**，
+      // 也不是 submitPlane 的 phase。所以这条通道现实中永远拿不到数据，
+      // readSubmitPhase 恒为 null。
+      //
+      // 保留不删的原因：宿主将来若真把 submit 状态透出来，这里是现成的接点；
+      // 拿不到也只是退化为不动作，成本为零。真正的即时性由下面的 Enter 通道提供。
       //
       // 比 DOM 观察更接近「发送」本身：阶段从 submitting/claimed 回到 plain
       // 就意味着这一轮提交结束了，与这条回合是否已经渲染无关。
@@ -4754,6 +4762,48 @@ window.__ModuleLoader__.load({
         })
         quoteClear(sessionId)
       }, [phase, sessionId])
+
+      // ── 通道二：Enter（发送动作本身，最及时）──
+      //
+      // 为什么需要它：DOM 通道要等新回合渲染出来才清，用户会觉得「没立即消失」。
+      // 而「按 Enter」就是发送意图本身 —— 宿主把 Enter 绑成发送（Shift+Enter 才是换行，
+      // 输入框的提示也印着 Cmd/Ctrl+Enter 是插话）。
+      //
+      // 三个必须排除的情况：
+      //   · shiftKey —— 换行，不是发送；
+      //   · isComposing —— 输入法还在组合（中文选字时按 Enter 是在确认候选）；
+      //   · 焦点不在可编辑区 —— 别处按 Enter 与我们无关。
+      //
+      // 与 DOM 通道动作相同（先快照再清空），所以两条通道都命中也不会出错。
+      React.useEffect(() => {
+        if (state.quoteAsContext !== true) return undefined
+        if (sessionId === '') return undefined
+        if (typeof document === 'undefined') return undefined
+        if (typeof document.addEventListener !== 'function') return undefined
+
+        const onKeyDown = (ev) => {
+          if (ev.key !== 'Enter') return
+          if (ev.shiftKey === true) return
+          if (ev.isComposing === true) return
+          const target = ev.target
+          if (target === null || target === undefined) return
+          if (typeof target.closest !== "function") return
+          if (target.closest('[contenteditable="true"]') === null) return
+          const current = quoteListOf(sessionId)
+          if (current.length === 0) return
+          sentQuoteBuckets.set(sessionId, {
+            quotes: current.map((q) => ({ text: q.text })),
+            at: Date.now()
+          })
+          quoteClear(sessionId)
+        }
+
+        // 捕获阶段：即使宿主的编辑器中转/停掉冒泡也能听到
+        document.addEventListener('keydown', onKeyDown, true)
+        return () => {
+          document.removeEventListener('keydown', onKeyDown, true)
+        }
+      }, [state.quoteAsContext, sessionId])
 
       React.useEffect(() => {
         if (state.quoteAsContext !== true) return undefined
