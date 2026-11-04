@@ -5286,8 +5286,12 @@ function componentBody(text, name) {
     // 判据用 :has() 而不是 JS —— 排队消息（order 20）一定在引用卡（order 30）之前，
     // 所以「前面的兄弟里有 [data-queue-dock]」就说明两段要拼在一起。
     // 只在 queue 存在时生效：单独存在时仍保留上圆角，否则顶部是突兀的直角。
-    assert.match(source, /:has\(> \[data-queue-dock\]\) ~ \* \.soul-quote-panel\{border-radius:0\}/,
-      '必须有「排队消息存在时取消引用卡上圆角」的规则（否则两者之间会露缝）')
+    // ⚠️ 必须用**直接兄弟**选择器，不能用 :has(> [data-queue-dock]) ~ * ——
+    // 后者要求队列与引用卡之间隔一层 wrapper，而实际渲染里两者是直接兄弟，
+    // 那条规则永远匹配不到（用户实测反馈「这个并没有生效」）。
+    // 用 [data-queue-dock] ~ * 覆盖更宽：不论中间有几层包装都能命中。
+    assert.match(source, /\[data-queue-dock\] ~ \* \.soul-quote-panel\{border-radius:0\}/,
+      '必须有「排队消息存在时取消引用卡上圆角」的直接兄弟规则（否则两者之间会露缝）')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

@@ -1204,12 +1204,19 @@ window.__ModuleLoader__.load({
       '.soul-quote-panel::after{border:.5px solid var(--dsw-alias-border-l1);border-bottom:none;border-radius:inherit;content:"";pointer-events:none;position:absolute;inset:0}',
       // 排队消息存在时，取消引用卡的上圆角 —— 两段上圆角叠在一起，峰与峰之间会露缝。
       //
-      // 判据用 :has() 而不是 JS：排队消息（order 20）一定排在引用卡（order 30）**之前**，
-      // 所以只要「前面那个兄弟里有 [data-queue-dock]」就说明两段要拼在一起。
+      // ⚠️ 第一版写的是 `:has(> [data-queue-dock]) ~ * .soul-quote-panel`，**没有生效**。
+      //   它要求「某个元素的直接子项里有 queue，且该元素是我的兄弟」—— 也就是
+      //   队列与引用卡之间**隔着一层包装元素**。而实际的槽位渲染里两者是**直接兄弟**
+      //   （同一父级下的两个子项），这条规则永远匹配不到。
+      //
+      // 现在用更宽的形式：[data-queue-dock] 之后**任意兄弟**（不论中间有几层包装）
+      // 里的 panel。这样无论宿主给不给槽位加 wrapper 都能命中。
+      //
+      // 只用兄弟关系、不用 :has()：`~` 是几十年的老特性，不受浏览器版本影响。
       //
       // 只在 queue 存在时生效：单独存在时仍保留上圆角，否则顶部会是一个突兀的直角。
       // 圆角去掉后 panel::after 的 border-radius:inherit 也会跟着变 0，边框不会错位。
-      ':has(> [data-queue-dock]) ~ * .soul-quote-panel{border-radius:0}',
+      '[data-queue-dock] ~ * .soul-quote-panel{border-radius:0}',
       // 每条引用：照搬 QueueDock 的 .row（min-height 36 / 左右 12、5 / gap 10 / radius-md）
       // list：照搬宿主的 .F07MqG_list（max-height 180 + 纵向滚动），
       // 引用条数多时不会把输入区顶高。
