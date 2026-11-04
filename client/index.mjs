@@ -1199,7 +1199,7 @@ window.__ModuleLoader__.load({
       //   背景在 :before 里才能真正垫在内容下面（配合 isolation:isolate 把
       //   负 z-index 关在 panel 内）；边框在 :after 里画成覆盖层，
       //   才能在**底边留空**，让这张卡看起来是从输入框卡片里"长"出来的。
-      '.soul-quote-panel{box-sizing:border-box;isolation:isolate;border-radius:var(--dsw-radius-lg) var(--dsw-radius-lg) 0 0;width:100%;padding:2px 0;position:relative;overflow:hidden}',
+      '.soul-quote-panel{isolation:isolate;border-radius:var(--dsw-radius-lg) var(--dsw-radius-lg) 0 0;width:100%;padding:2px 0;position:relative;overflow:hidden}',
       '.soul-quote-panel::before{z-index:-1;border-radius:inherit;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);content:"";pointer-events:none;position:absolute;inset:0}',
       '.soul-quote-panel::after{border:.5px solid var(--dsw-alias-border-l1);border-bottom:none;border-radius:inherit;content:"";pointer-events:none;position:absolute;inset:0}',
       // 排队消息存在时，取消引用卡的上圆角 —— 两段上圆角叠在一起，峰与峰之间会露缝。
@@ -1233,7 +1233,7 @@ window.__ModuleLoader__.load({
       // max-height:180px + overflow-y:auto 兜住。我强行截成单行反而不一致。
       '.soul-quote-text{min-width:0;flex:auto;font:var(--dsw-font-xs-13);font-family:Inter, var(--dsw-font-family);color:var(--dsw-alias-label-primary-dimmed)}',
       // 删除按钮：照搬队列的 .action（28×28 / 胶囊 / grid 居中 / 无边框）
-      '.soul-quote-remove{corner-shape:round;width:28px;height:28px;padding:0;border:none;border-radius:999px;background:none;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:14px;line-height:1;cursor:pointer;flex:none;display:grid;place-items:center}',
+      '.soul-quote-remove{corner-shape:round;width:28px;height:28px;padding:0;border:none;border-radius:999px;background:0 0;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:14px;line-height:1;cursor:pointer;flex:none;display:grid;place-items:center}',
       '.soul-quote-remove:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-label-primary)}',
       // 「清空」：队列里没有对应控件，按同一个文字档 + 三级色处理，不喧宾夺主
       '.soul-quote-clear-all{align-self:flex-start;margin:0 12px 4px;padding:0;border:none;background:none;color:var(--dsw-alias-label-tertiary);font:var(--dsw-font-xs-13);cursor:pointer}',
