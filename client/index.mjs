@@ -1209,7 +1209,7 @@ window.__ModuleLoader__.load({
       '.soul-quote-item{box-sizing:border-box;border-radius:var(--dsw-radius-md);align-items:center;gap:10px;width:100%;min-height:36px;padding:4px 5px 4px 12px;display:flex}',
       '.soul-quote-item:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover))}',
       // 前缀图标：与队列的 .lead 一致（icon-only 的 grid 居中）
-      '.soul-quote-icon{color:var(--dsw-alias-label-tertiary);flex:none;display:grid;place-items:center;font-size:12px;line-height:1}',
+      '.soul-quote-icon{color:var(--dsw-alias-label-tertiary);flex:none;display:grid;place-items:center;font-size:16px;line-height:1}',
       // 文字：与队列的 .preview 同字体档（--dsw-font-xs-13）+ 同色（label-primary-dimmed）。
       // 单行省略三件套仍然要齐（overflow/text-overflow/nowrap）。
       '.soul-quote-text{min-width:0;flex:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:var(--dsw-font-xs-13);font-family:Inter, var(--dsw-font-family);color:var(--dsw-alias-label-primary-dimmed)}',

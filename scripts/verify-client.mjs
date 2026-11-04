@@ -5218,7 +5218,7 @@ function componentBody(text, name) {
     assert.match(listCss, /overflow-y:auto/, 'list 必须可滚动（与队列一致）')
   })
 
-  await check('C98 引用卡的背景与边框由伪元素画（与队列一致，底边留空）', async () => {
+  await check('C98 引用卡视觉规格：背景边框走伪元素、底边留空、图标尺寸下限', async () => {
     // 用户报：「没有 border 和背景色 和宿主排队消息不统一」。
     //
     // 查证：宿主的背景与边框**都不写在 panel 本体上**，而在两个伪元素里 ——
@@ -5258,6 +5258,15 @@ function componentBody(text, name) {
     assert.match(afterCss, /border:\.5px solid var\(--dsw-alias-border-l1\)/, '边框必须与队列同款（.5px border-l1）')
     assert.match(afterCss, /border-bottom:none/, '底边必须无边框（与输入框卡片接合，否则会看到一条横线）')
     assert.match(afterCss, /border-radius:inherit/, '边框层必须继承圆角')
+
+    // 图标字号：用户反馈 12px「不太明显」，已调到 16px（SVG 图标的常见尺寸）。
+    // 写死下限而不是上限 —— 太小是问题，稍大一点反而更醒目。
+    const iconAt = source.indexOf('.soul-quote-icon{')
+    assert.ok(iconAt > 0, '找不到 .soul-quote-icon')
+    const iconCss = source.slice(iconAt, source.indexOf('}', iconAt) + 1)
+    const sizeMatch = /font-size:(\d+)px/.exec(iconCss)
+    assert.ok(sizeMatch !== null, '图标必须有明确的 font-size（不能靠继承）')
+    assert.ok(Number(sizeMatch[1]) >= 14, `图标字号至少 14px（当前 ${sizeMatch[1]}px —— 12px 时用户反馈「不太明显」）`)
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
