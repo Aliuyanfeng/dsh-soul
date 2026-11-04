@@ -1170,10 +1170,6 @@ window.__ModuleLoader__.load({
       // `background-image` 不重置 `background-color`，底仍是不透明的。
       '.soul-quote-float:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover),var(--dsw-alias-interactive-bg-hover))}',
       '.soul-quote-float:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
-      '.soul-quote-action{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
-      '.soul-quote-action:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
-      '.soul-quote-action:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}',
-      '.soul-quote-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       // 浮层：与宿主的「目标 / 队列」同区，视觉上贴齐它们（细边框 + 圆角 + 模块底色）
       // 宽度必须显式撑满：input.dock 的父容器是个 flex 列，若它的 align-items 是
       // flex-start，子项就只占内容宽度 —— 视觉上引用卡比输入框窄一截（用户实测反馈）。
@@ -2093,13 +2089,10 @@ window.__ModuleLoader__.load({
       'field.toolConfirm': '人设变更需确认',
       'field.quoteAsContext': '引用作为上下文',
       'hint.quoteAsContext': '开启后，可在回答里选中一段文字并点「引用」，它作为上下文随下一轮请求送达模型 —— 不进你的消息正文，也不写进对话历史。',
-      'quote.action': '引用',
       'quote.actionFloat': '引用这段',
       'quote.sentBadge': '{count} 个已选文本片段',
       'quote.sentItem': '引用{index}：{text}',
       'quote.actionHint': '选中回答里的一段文字后点此，作为上下文随下一轮请求送达模型',
-      'quote.selectFirst': '先选中一段文字',
-      'quote.tooMany': '引用已达上限',
       'quote.dockTitle': '引用（{count}）',
       'quote.clear': '清空',
       'quote.remove': '删除这条引用',
@@ -2498,13 +2491,10 @@ window.__ModuleLoader__.load({
       'field.toolConfirm': 'Require confirmation for persona changes',
       'field.quoteAsContext': 'Quote as context',
       'hint.quoteAsContext': 'When on, select a passage in a reply and click "Quote" — it is sent to the model as context with the next request, without entering your message or the chat history.',
-      'quote.action': 'Quote',
       'quote.actionFloat': 'Quote this',
       'quote.sentBadge': '{count} quoted passage(s)',
       'quote.sentItem': 'Quote {index}: {text}',
       'quote.actionHint': 'Select a passage in a reply, then click here to send it to the model as context with the next request',
-      'quote.selectFirst': 'Select some text first',
-      'quote.tooMany': 'Quote limit reached',
       'quote.dockTitle': 'Quote ({count})',
       'quote.clear': 'Clear',
       'quote.remove': 'Remove this quote',
@@ -4516,7 +4506,7 @@ window.__ModuleLoader__.load({
     // 由宿主经 systemPrompt.context 送达模型（**不进消息正文、不写进对话历史**）。
     //
     // 为什么引用层是**模块级 Map**：
-    //   它要在两个槽位之间共享（assistant-actions 的按钮、input.dock 的浮层），
+    //   它要在两个槽位之间共享（input.dock 的浮层、input.overlay 的浮动按钮），
     //   且组件重挂载 / 切会话都不能丢。组件 state 做不到跨槽位共享。
     //
     // 为什么要按 sessionId 分桶：多会话并行时，A 会话的引用绝不能出现在 B 会话的
@@ -4808,49 +4798,6 @@ window.__ModuleLoader__.load({
         }, t('quote.actionFloat')),
         document.body
       )
-    }
-
-    // ── 按钮：挂在每条助手消息的动作行 ──
-    function SoulQuoteAction(props) {
-      const { useSoulController } = props
-      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
-      const state = useSoulController((s) => s)
-      const sessionId = typeof props.sessionId === 'string' && props.sessionId !== '' ? props.sessionId : ''
-      const [notice, setNotice] = React.useState(null)
-
-      if (sessionId === '') return null
-      if (state.quoteAsContext !== true) return null
-
-      const onQuote = () => {
-        const result = quoteAdd(sessionId, currentSelectionText())
-        if (result.ok) {
-          // 引用成功后清掉选区：视觉上「这段已经被取走了」，
-          // 避免用户以为还要再点一次。
-          if (typeof window !== 'undefined' && window.getSelection) {
-            const selection = window.getSelection()
-            if (selection !== null && typeof selection.removeAllRanges === 'function') {
-              selection.removeAllRanges()
-            }
-          }
-          setNotice(null)
-          return
-        }
-        setNotice(result.reason === 'tooMany' ? t('quote.tooMany') : t('quote.selectFirst'))
-        if (typeof setTimeout === 'function') {
-          setTimeout(() => setNotice(null), 2400)
-        }
-      }
-
-      return e(Fragment, null,
-        e('button', {
-          type: 'button',
-          className: 'soul-quote-action',
-          // ★ 必须 preventDefault：按下按钮会先塌陷选区，那样「选中一段再点」
-          //   就永远拿不到那段话（这是原库记在同一处的坑）。
-          onMouseDown: (ev) => ev.preventDefault(),
-          onClick: onQuote,
-          title: t('quote.actionHint')
-        }, notice !== null ? notice : t('quote.action')))
     }
 
     // ── 浮层：挂在输入框上方（与「目标」「队列」同区） ──
@@ -8195,26 +8142,6 @@ window.__ModuleLoader__.load({
           sessionId: typeof sessionId === 'string' && sessionId !== '' ? sessionId : null
         })
       }, SoulSessionPersonaLabel))
-
-      // 引用作为上下文 —— 两个槽位分工：
-      //   · assistant-actions：每条助手消息的动作行放「引用」按钮（ownerProps 带 messageId，
-      //     本插件不依赖它，取选区就够）；
-      //   · input.dock：输入框上方的引用浮层，与宿主的「目标」(order 10)、「队列」(order 20) 同区。
-      // 两者都是 scope:'session'，inject 的位置参数就是 sessionId —— 引用层按它分桶，
-      // 保证 A 会话的引用不会出现在 B 会话的请求里。
-      ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
-        name: 'conversation.chat.assistant-actions',
-        id: 'soul-quote-action',
-        order: 30,
-        locale: NS,
-        inject: (sessionId) => ({
-          hooks: {
-            soulController: controller.store
-          },
-          controller,
-          sessionId: typeof sessionId === 'string' && sessionId !== '' ? sessionId : null
-        })
-      }, SoulQuoteAction))
 
       ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
         name: 'conversation.input.dock',

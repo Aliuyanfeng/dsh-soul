@@ -4774,10 +4774,14 @@ function componentBody(text, name) {
     assert.match(source, /window\.getSelection\(\)/, '必须从 window.getSelection() 取选区文本')
 
     // ③ 开关关闭时两个组件都不渲染（关掉只影响引用，人设照常）
-    const actionBody = componentBody(source, 'SoulQuoteAction')
+    //    行内「引用」按钮已移除（浮动按钮取代），这里查的是浮动按钮与浮层。
+    const floatBody = componentBody(source, 'SoulQuoteFloating')
     const dockBody = componentBody(source, 'SoulQuoteDock')
-    assert.ok(actionBody !== '' && dockBody !== '', '找不到引用相关组件')
-    assert.match(actionBody, /state\.quoteAsContext !== true\) return null/, '按钮必须受开关控制')
+    assert.ok(floatBody !== '' && dockBody !== '', '找不到引用相关组件')
+    // 浮动按钮不是直接 return null，而是先算出 enabled（含 createPortal 可用性），
+    // 再 if (pos === null || !enabled) return null —— 所以查的是 enabled 的来源。
+    assert.match(floatBody, /enabled = state\.quoteAsContext === true/, '浮动按钮必须受开关控制')
+    assert.match(floatBody, /!enabled\) return null/, '开关关闭时不得渲染')
     assert.match(dockBody, /state\.quoteAsContext !== true\) return null/, '浮层必须受开关控制')
 
     // ④ 引用要同步给宿主（否则送达侧永远拿到空）
