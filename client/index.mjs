@@ -4516,6 +4516,44 @@ window.__ModuleLoader__.load({
     const QUOTE_PREVIEW_CHARS = 60
     const quoteBuckets = new Map()
 
+    // 最近一次「已发送」的引用快照（按会话）。
+    //
+    // 为什么要快照：引用送达后当前引用会被清空，而历史里那条消息还要能显示
+    // 「它带了什么引用」。清空之前必须先留一份。
+    //
+    // 只保留**最近一次**：历史注入只挂到最新那条回合上，更早的不追溯 ——
+    // 追溯需要把引用与消息 id 持久化绑定，那是另一套成本。
+    const sentQuoteBuckets = new Map()
+
+    /**
+     * 读宿主的「提交阶段」。
+     *
+     * 宿主内部有一套 submitPlane 状态机：plain / adjudicating / submitting / claimed。
+     * 它经 SessionInputShell.state 发布，而 input.dock / input.overlay 的 props 里
+     * 带一个 input 对象（渲染处写着 `{ session, input: inputState }`）—— 那就是它。
+     *
+     * ⚠️ 但**确切字段路径不在公开契约里**（宿主没有为插件描述 state 的形状）。
+     * 所以这里依次试几个候选位置；都取不到就返回 null，由调用方退回 DOM 观察。
+     * 与其赌一个路径写死，不如把「可能在哪」都试一遍 —— 取不到也不至于崩。
+     */
+    function readSubmitPhase(input) {
+      if (input === null || typeof input !== 'object') return null
+      const candidates = [
+        input.phase,
+        input.submit === undefined || input.submit === null ? undefined : input.submit.phase,
+        input.submitState === undefined || input.submitState === null ? undefined : input.submitState.phase
+      ]
+      for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate !== '') return candidate
+      }
+      return null
+    }
+
+    // 提交进行中的阶段。离开它们回到 plain ⇒ 这一轮发送结束了。
+    function isBusyPhase(phase) {
+      return phase === 'submitting' || phase === 'adjudicating' || phase === 'claimed'
+    }
+
     function quoteBucketOf(sessionId) {
       const key = typeof sessionId === 'string' && sessionId !== '' ? sessionId : ''
       let bucket = quoteBuckets.get(key)
@@ -4692,6 +4730,29 @@ window.__ModuleLoader__.load({
       //    宿主改版若换掉它，注入会静默失效（引用功能本身不受影响）。
       //    之所以还是选它：宿主没有提供「用户消息上方」的槽位（只有回合尾部的
       //    turnTail），而用户明确要胶囊在消息上方。
+      // ── 通道一：宿主的提交阶段（更直接，但路径非公开）──
+      //
+      // 比 DOM 观察更接近「发送」本身：阶段从 submitting/claimed 回到 plain
+      // 就意味着这一轮提交结束了，与这条回合是否已经渲染无关。
+      //
+      // 取不到 phase 时本 effect 什么都不做 —— 交给下面的 DOM 观察兜底。
+      // 两条通道可能都触发，但两边的动作都是幂等的（清空和重画），不会出错。
+      const phase = readSubmitPhase(props.input)
+      const phaseRef = React.useRef(null)
+      React.useEffect(() => {
+        const previous = phaseRef.current
+        phaseRef.current = phase
+        if (phase === null || previous === null) return
+        if (!isBusyPhase(previous) || phase !== 'plain') return
+        const current = quoteListOf(sessionId)
+        if (current.length === 0) return
+        sentQuoteBuckets.set(sessionId, {
+          quotes: current.map((q) => ({ text: q.text })),
+          at: Date.now()
+        })
+        quoteClear(sessionId)
+      }, [phase, sessionId])
+
       React.useEffect(() => {
         if (state.quoteAsContext !== true) return undefined
         if (sessionId === '') return undefined

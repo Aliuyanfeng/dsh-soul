@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 87
+const EXPECTED_ASSERTIONS = 88
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5017,6 +5017,41 @@ function componentBody(text, name) {
 
     // ⑥ 列表重建时要能重新挂载（切会话/清空对话会让 list 脱离文档）
     assert.match(body, /list\.isConnected === false/, '列表脱离文档时必须重新挂载')
+  })
+
+  await check('C93 优先用宿主提交阶段判断发送，取不到才退回 DOM 观察', async () => {
+    // 用户质疑：「我觉得是可以监听到发送事件的吧？」
+    //
+    // 查证结果：宿主内部确有 submitPlane 状态机（plain / adjudicating / submitting / claimed），
+    // 经 SessionInputShell.state 发布，而 input.dock / input.overlay 的 props 里带一个
+    // input 对象就是它。但**确切字段路径不在公开契约里**，所以只能"试几个候选位置"。
+    //
+    // 因此实现是双通道：能读到 phase 就用它（更直接），读不到就退回 DOM 回合数观察。
+    const body = componentBody(source, 'SoulQuoteFloating')
+    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+
+    // ① 必须有 phase 读取工具，且覆盖多个候选路径（不赌单一字段名）
+    assert.match(source, /function readSubmitPhase\(input\)/, '必须有 readSubmitPhase')
+    assert.match(source, /input\.phase/, '必须尝试 input.phase')
+    assert.match(source, /input\.submit\.phase/, '必须尝试 input.submit.phase')
+    assert.match(source, /input\.submitState\.phase/, '必须尝试 input.submitState.phase')
+    assert.match(body, /readSubmitPhase\(props\.input\)/, '浮层必须从 props.input 读阶段')
+
+    // ② 判断必须是「离开 busy 阶段回到 plain」，不是「看到 plain 就清」
+    //    后者会在任何一次渲染都触发（plain 是常态）。
+    assert.match(source, /function isBusyPhase\(phase\)/, '必须有 isBusyPhase')
+    assert.match(source, /phase === 'submitting'/, 'busy 必须包含 submitting')
+    assert.match(body, /!isBusyPhase\(previous\) \|\| phase !== 'plain'\) return/, '必须是 busy → plain 的跳变才触发')
+
+    // ③ 降级：读不到 phase 时不得动作（交给 DOM 通道）
+    assert.match(body, /if \(phase === null \|\| previous === null\) return/, 'phase 缺失时必须放弃（不猜）')
+
+    // ④ ★ 使用了就必须有声明 ——
+    //    实测漏过：sentQuoteBuckets 的声明被误删，只剩使用处，node --check 查不出
+    //    未定义变量，测试也照样通过，直到运行时才 ReferenceError。
+    assert.match(source, /const sentQuoteBuckets = new Map\(\)/, 'sentQuoteBuckets 必须有声明（否则运行时未定义）')
+    assert.match(source, /function readSubmitPhase\(input\)/, 'readSubmitPhase 必须有声明')
+    assert.match(source, /function isBusyPhase\(phase\)/, 'isBusyPhase 必须有声明')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
