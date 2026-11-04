@@ -5011,9 +5011,28 @@ window.__ModuleLoader__.load({
 
         align()
         if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return undefined
-        window.addEventListener('resize', align)
+
+        // resize 必须**推迟一帧**再量。
+        //
+        // 现象：缩放窗口后宽度短暂不对，敲一个字又恢复正常。
+        // 原因：window 的 resize 事件在宿主重新布局**之前**就触发了，
+        //      此刻 getBoundingClientRect() 拿到的是旧宽度；
+        //      而输入文字会让本组件重渲染，useLayoutEffect（无依赖）再跑一次 align，
+        //      那时布局已经稳定 —— 所以「一打字就正常」。
+        //
+        // 推到下一帧就能等到宿主的布局结果，不用去猜它的更新时机。
+        const scheduleAlign = () => {
+          if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => {
+              align()
+            })
+            return
+          }
+          align()
+        }
+        window.addEventListener('resize', scheduleAlign)
         return () => {
-          window.removeEventListener('resize', align)
+          window.removeEventListener('resize', scheduleAlign)
         }
       })
 

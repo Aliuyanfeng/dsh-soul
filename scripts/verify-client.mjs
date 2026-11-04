@@ -4964,6 +4964,15 @@ function componentBody(text, name) {
     assert.ok(clearAt2 > 0 && widthAt2 > clearAt2 && baseAt2 > widthAt2,
       '必须先清零偏移、再设宽度、最后量基准（顺序反了会量到上一次的结果）')
 
+    // ⑥ resize 必须**推迟一帧**再量。
+    // 现象：缩放窗口后宽度短暂不对、敲一个字又正常。
+    // 原因：window 的 resize 在宿主重新布局**之前**触发，此刻量到的是旧宽度；
+    //      而输入会让本组件重渲染，useLayoutEffect（无依赖）再跑一次 align，
+    //      那时布局已稳定 —— 所以「一打字就正常」。
+    assert.match(body, /const scheduleAlign = \(\) => \{/, '必须有 scheduleAlign')
+    assert.match(body, /requestAnimationFrame\(\(\) => \{/, 'resize 必须推迟一帧再量（否则量到布局前的旧宽度）')
+    assert.ok(body.includes("addEventListener('resize', scheduleAlign)"), 'resize 必须绑定 scheduleAlign')
+
     // ⑤ 量不到时降级，不得写 0px（会让浮层消失）
     assert.match(body, /targetRect\.width <= 0/, '量不到宽度时必须降级')
   })
