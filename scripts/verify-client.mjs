@@ -5332,6 +5332,15 @@ function componentBody(text, name) {
 
     // 引用消失时要能撤掉标记（不是只增不减）
     assert.match(body, /if \(!wanted\) \{/, '引用消失时必须进入清理分支')
+
+    // ★ 用户要求：「引用只属于我按发送的那条消息，排队消息不该带」。
+    // 引用是宿主侧会话级状态，context 每次请求都读 —— 只要它还在，排队消息（steer）
+    // 就会读到。唯一能让它不被带走的地方，是在排队消息发出前让引用失效：
+    // 盯住队列项数量，一旦减少就清空。
+    assert.ok(body.includes('now < queueCount'),
+      '队列项减少时必须让引用失效（否则排队消息会把它带走）')
+    assert.match(body, /quoteListOf\(sessionId\)\.length > 0\) quoteClear\(sessionId\)/,
+      '队列减少时必须调用 quoteClear（且只在有引用时才调）')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

@@ -4848,8 +4848,29 @@ window.__ModuleLoader__.load({
         const QUEUE_ACTIONS = '[class*="F07MqG_actions"]'
         const MARK = 'data-soul-queue-mark'
 
+        // 队列项数量基线：用来发现「有排队消息消失」。
+        let queueCount = -1
+
         const sync = () => {
           const dock = document.querySelector(QUEUE_DOCK)
+
+          // ── 排队消息减少 ⇒ 引用立即失效 ──
+          //
+          // 用户要求：「引用只属于我按发送的那条消息，排队消息不该带」。
+          //
+          // 但引用是宿主侧会话级状态，systemPrompt.context **每次请求都会读**，
+          // 所以只要它还在，排队消息（steer 插话）就会读到它 —— 这是机制的必然。
+          //
+          // 唯一能让它「不被排队消息带走」的地方，是在排队消息真正发出**之前**
+          // 就让引用失效。做法：盯住队列项数量，一旦减少就清空引用
+          // （发出与删除都会让数量减少；两种情况引用都该失效 ——
+          //   它本来就是给「我正在写的那条消息」配的，不属于队列里的任何一条）。
+          const now = dock === null ? 0 : dock.querySelectorAll(QUEUE_ROW).length
+          if (queueCount >= 0 && now < queueCount) {
+            if (quoteListOf(sessionId).length > 0) quoteClear(sessionId)
+          }
+          queueCount = now
+
           if (dock === null) return
           const rows = dock.querySelectorAll(QUEUE_ROW)
           const marks = dock.querySelectorAll('[' + MARK + ']')
