@@ -5051,6 +5051,12 @@ function componentBody(text, name) {
       '必须有宿主的模糊底（半透明背景在深色主题下才不会糊）')
     assert.match(tipCss, /background:var\(--dsw-specific-menu\)/,
       '背景必须用主题变量（它自带深浅两套：#f8f9faf0 / #303136f0）')
+
+    // 宽度固定为输入框的一半（用户要求：「宽度自适应为输入框的一半就好了」），
+    // 否则长引用会把弹窗撑得很宽。用宿主的 --dsh-chat-content-width 来算。
+    assert.match(tipCss, /width:calc\(\(var\(--dsh-chat-content-width/,
+      'tooltip 宽度必须取输入框宽度的一半（否则长文本会撑破样式）')
+    assert.match(tipCss, /box-sizing:border-box/, '宽度必须含 padding（否则实际更宽）')
     assert.match(tipCss, /color:var\(--dsw-alias-label-primary\)/, '文字色必须用主题变量')
 
     // ④ ★ 顺序：先快照、再清空 —— 反了就没内容可画

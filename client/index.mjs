@@ -1168,7 +1168,7 @@ window.__ModuleLoader__.load({
       // 队列项上的「含引用」标记：紧挨按钮区，用三级色不抢视线。
       '.soul-queue-quote-mark{flex:none;color:var(--dsw-alias-label-tertiary);font:var(--dsw-font-xs-13);white-space:nowrap;margin-right:2px}',
 
-      '.soul-quote-sent-tip{display:none;position:absolute;bottom:100%;left:0;z-index:1000;margin-bottom:6px;max-width:420px;padding:8px 10px;border:.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm);background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13);line-height:1.5;white-space:pre-wrap;word-break:break-word}',
+      '.soul-quote-sent-tip{display:none;position:absolute;bottom:100%;left:0;z-index:1000;margin-bottom:6px;width:calc((var(--dsh-chat-content-width, 600px) + 32px) / 2);max-width:calc(100vw - 32px);box-sizing:border-box;padding:8px 10px;border:.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm);background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13);line-height:1.5;white-space:pre-wrap;word-break:break-word}',
       '.soul-quote-sent:hover .soul-quote-sent-tip{display:block}',
 
       '.soul-quote-float{position:fixed;z-index:2147483000;display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 14px;border:none;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.18);white-space:nowrap}',
