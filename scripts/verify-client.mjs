@@ -5076,6 +5076,16 @@ function componentBody(text, name) {
     // 把条件改成 if(false) 后，sent.index 仍在块内部，只查变量名照样通过。
     assert.ok(body.includes('if (target === null && sent.index !== undefined'),
       'paint 必须真的按索引定位（turn 拿不到时的退路）')
+
+    // ★ 用消息节点的唯一 key 做绑定（用户提的思路：引用跟着那条消息走）。
+    // 不用 data-chat-turn 的原因：源码里 turn 为空时 React 不渲染该属性，
+    // 而 data-chat-node-key 一定有值。
+    assert.ok(source.includes("closest('[data-chat-node-key]')"),
+      '必须用 data-chat-node-key 绑定消息（turn 属性可能根本没渲染）')
+    // ★ 必须查**定位条件本身**：只查变量名会被 if(false) 块内部的引用骗过
+    // （这个坑已经踩过两次了）。
+    assert.ok(body.includes('if (target === null && sent.nodeKey !== null'),
+      '必须真的按消息节点 key 定位')
     assert.ok(source.includes('index = document.querySelectorAll'), '快照时必须记录索引')
     assert.ok(helperAt > 0, '必须有 snapshotSentQuotes helper')
     const snapAt = source.indexOf('sentQuoteBuckets.set(sessionId', helperAt)

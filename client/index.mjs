@@ -4647,14 +4647,30 @@ window.__ModuleLoader__.load({
       //
       // 索引在这个场景里是稳定的：新消息总是**追加在末尾**，已有消息的索引不变。
       let index = -1
+      let nodeKey = null
       if (typeof document !== 'undefined') {
         index = document.querySelectorAll('[class*="userRow"]').length - 1
+        // 消息节点的唯一标识。
+        //
+        // 为什么不用 data-chat-turn：源码里是 `"data-chat-turn": turn`，
+        // 当 turn 为空时 React **根本不渲染这个属性**，closest 必然返回 null
+        // （用户日志：backfill: userRow 没有 data-chat-turn 祖先）。
+        //
+        // 而同一节点上的 `"data-chat-node-key": routedNode.key` 一定有值 ——
+        // 它就是这条消息的身份。把引用绑到它上面，渲染时按它找回来。
+        const lastRow = document.querySelectorAll('[class*="userRow"]')
+        const row = lastRow.length === 0 ? null : lastRow[lastRow.length - 1]
+        if (row !== null && typeof row.closest === 'function') {
+          const holder = row.closest('[data-chat-node-key]')
+          if (holder !== null) nodeKey = holder.getAttribute('data-chat-node-key')
+        }
       }
       sentQuoteBuckets.set(sessionId, {
         quotes: current.map((q) => ({ text: q.text })),
         at: Date.now(),
         turn,
-        index
+        index,
+        nodeKey
       })
       quoteClear(sessionId)
       return true
@@ -5153,6 +5169,19 @@ window.__ModuleLoader__.load({
               if (turnNode !== null) sent.turn = turnNode.getAttribute('data-chat-turn')
             }
           }
+          // 优先按消息节点的唯一 key 找回 —— 这是最可靠的定位。
+          if (target === null && sent.nodeKey !== null && sent.nodeKey !== undefined) {
+            for (const row of rows) {
+              if (typeof row.closest !== 'function') continue
+              const holder = row.closest('[data-chat-node-key]')
+              if (holder === null) continue
+              if (holder.getAttribute('data-chat-node-key') === String(sent.nodeKey)) {
+                target = row
+                break
+              }
+            }
+          }
+
           // turn 拿不到就用索引（实测 turn 一直为空）。
           if (target === null && sent.index !== undefined && sent.index >= 0) {
             if (rows[sent.index] !== undefined && rows[sent.index] !== null) {
