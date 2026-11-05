@@ -5103,10 +5103,17 @@ const badgeCss = source.slice(source.indexOf('.soul-quote-sent{'), source.indexO
     // bucket 是空的 → paint 直接 return → 胶囊完全不出现（用户实测反馈）。
     assert.ok(body.includes('pendingSent.has(sessionId) && bindPending(sessionId)'),
       'paint 必须兜底绑定 pending（不能只依赖 onMutate 的严格门槛）')
-    assert.ok(source.includes('rowsAtSnapshot'),
-      '绑定前必须校验消息数已增加（否则会绑到上一条旧消息）')
-    assert.ok(source.includes('anchor.index + 1 <= rowsAtSnapshot'),
-      '新消息没渲染出来时不得绑定')
+    // ★ 绑定必须按 lastKeyBefore 精确定位「快照前最后一条之后的第一条」，
+    // 不能无脑取当前最后一条 —— 渲染延迟期间若又发了消息，胶囊会跑到最新消息上
+    // （用户实测：「过一会才出现 现在出现在了最新消息上」）。
+    assert.ok(source.includes('lastKeyBefore'), '快照必须记下「引用前最后一条」的 nodeKey')
+    assert.ok(source.includes('targetKey'), '绑定必须算出精确的目标消息 key')
+    // ★ 必须校验「取到第一条新消息就停」，否则变异成「走到最后一条」照样通过 ——
+    // 那正是胶囊跑到最新消息上的 bug。
+    assert.ok(/targetKey = key\s*\n\s*break/.test(source),
+      '找到 lastKeyBefore 之后的第一条新消息必须立刻 break（不能取最后一条）')
+    assert.ok(source.includes('if (stillThere) return false'),
+      '新消息还没渲染时不得绑定（继续等）')
     assert.ok(body.includes('wanted.has(forKey)'),
       '清理时只能删「不属于任何已存条目」的旧胶囊（否则会删掉别的轮次的）')
 

@@ -4669,14 +4669,20 @@ window.__ModuleLoader__.load({
       const entry = { quotes: current.map((q) => ({ text: q.text })), at: Date.now() }
       if (recordAnchor === false) {
         // Enter 时刻消息还没渲染 → 先存 pending，等回合通道绑定。
-        // 记下快照时的消息数：bindPending 只在该数量**增加后**才绑，
-        // 否则会把引用绑到上一条旧消息上（用户实测过的迁移 bug）。
-        entry.rowsAtSnapshot = captureAnchor().index + 1
+        // 记下两样东西，供 bindPending **精确**定位「引用所属的那条消息」：
+        //   ① 快照前最后一条消息的 nodeKey（lastKeyBefore）
+        //   ② 快照时的消息数
+        // 之前只记消息数、绑定时无脑取「当前最后一条」——渲染有延迟时
+        // 会绑到后续新消息上，胶囊就跑到「最新消息」去了（用户实测反馈）。
+        const anchor = captureAnchor()
+        entry.rowsAtSnapshot = anchor.index + 1
+        entry.lastKeyBefore = anchor.nodeKey
         pendingSent.set(sessionId, entry)
       } else {
         const anchor = captureAnchor()
         if (anchor.nodeKey === null) {
           entry.rowsAtSnapshot = anchor.index + 1
+          entry.lastKeyBefore = anchor.nodeKey
           pendingSent.set(sessionId, entry)
         } else sentBucketOf(sessionId).set(anchor.nodeKey, entry)
       }
@@ -4695,15 +4701,50 @@ window.__ModuleLoader__.load({
     function bindPending(sessionId) {
       const pending = pendingSent.get(sessionId)
       if (pending === undefined) return false
-      const anchor = captureAnchor()
-      if (anchor.nodeKey === null) return false
-      // 新消息还没渲染出来就别绑：此刻 captureAnchor 拿到的是上一条消息。
-      // 只有消息数比快照时多，才说明「引用所属的那条」已经出现在 DOM 里。
-      const rowsAtSnapshot = pending.rowsAtSnapshot
-      if (typeof rowsAtSnapshot === 'number' && anchor.index + 1 <= rowsAtSnapshot) {
-        return false
+      if (typeof document === 'undefined') return false
+      const rows = document.querySelectorAll('[class*="userRow"]')
+      if (rows.length === 0) return false
+
+      // 精确找「引用所属的那条消息」：快照前最后一条之后**第一条**新消息。
+      // 不能无脑取当前最后一条 —— 渲染有延迟 / 期间又发了新消息时，
+      // 那样会把引用绑到最新消息上，胶囊就迁移了。
+      let targetKey = null
+      let passedBefore = false
+      for (const row of rows) {
+        if (typeof row.closest !== 'function') continue
+        const holder = row.closest('[data-chat-node-key]')
+        if (holder === null) continue
+        const key = holder.getAttribute('data-chat-node-key')
+        if (key === null) continue
+        // 找到快照前最后一条之后，第一条新出现的就是目标
+        if (!passedBefore) {
+          if (pending.lastKeyBefore === null || pending.lastKeyBefore === undefined || key === pending.lastKeyBefore) {
+            passedBefore = true
+          }
+          continue
+        }
+        targetKey = key
+        break
       }
-      sentBucketOf(sessionId).set(anchor.nodeKey, pending)
+
+      // 退化：如果 lastKeyBefore 已经不在当前 DOM（切会话等），
+      // 且消息数确实比快照时多，就用第一条「看起来是新的」——
+      // 但绝不无脑取最后一条。
+      if (targetKey === null && pending.lastKeyBefore !== null && pending.lastKeyBefore !== undefined) {
+        const stillThere = [...rows].some((r) => {
+          const h = typeof r.closest === 'function' ? r.closest('[data-chat-node-key]') : null
+          return h !== null && h.getAttribute('data-chat-node-key') === pending.lastKeyBefore
+        })
+        if (stillThere) return false // 新消息还没渲染，继续等
+        if (rows.length > 0) {
+          const first = rows[0]
+          const h = typeof first.closest === 'function' ? first.closest('[data-chat-node-key]') : null
+          if (h !== null) targetKey = h.getAttribute('data-chat-node-key')
+        }
+      }
+      if (targetKey === null) return false
+
+      sentBucketOf(sessionId).set(targetKey, pending)
       pendingSent.delete(sessionId)
       return true
     }
