@@ -77,6 +77,8 @@ window.__ModuleLoader__.load({
       // set_persona 确认模式（v0.5.0）
       requireToolConfirmation: false,
   quoteAsContext: true,
+      // 侧栏「人设总览」入口开关（Issue #3）：默认开，老用户行为不变
+      showOverviewInSidebar: true,
       // 输入框光轨（v0.6.0）：Agent 回复中时输入框边框的流光动效
       trailEnabled: true,
       trailColor: '#679EFE',
@@ -475,6 +477,7 @@ window.__ModuleLoader__.load({
         s.customInstructions = config.customInstructions
         s.requireToolConfirmation = config.requireToolConfirmation === true
     s.quoteAsContext = config.quoteAsContext === true
+        s.showOverviewInSidebar = config.showOverviewInSidebar !== false
         s.trailEnabled = config.trailEnabled !== false
         s.trailColor = config.trailColor || TRAIL_COLOR_FALLBACK
         s.trailSpeed = config.trailSpeed || 'slow'
@@ -2147,6 +2150,9 @@ window.__ModuleLoader__.load({
       'field.toolConfirm': '人设变更需确认',
       'field.quoteAsContext': '引用作为上下文',
       'hint.quoteAsContext': '开启后，可在回答里选中一段文字并点「引用」，它作为上下文随下一轮请求送达模型 —— 不进你的消息正文，也不写进对话历史。',
+      'field.showOverviewInSidebar': '在侧边栏显示人设总览',
+      'hint.showOverviewInSidebar': '关闭后侧栏不再占用这个图标位置；仍可从下面的「打开人设总览」按钮进入。',
+      'action.openOverview': '打开人设总览',
       'quote.actionFloat': '引用这段',
       'quote.sentBadge': '{count} 个已选文本片段',
       'quote.sentItem': '引用{index}：{text}',
@@ -2551,6 +2557,9 @@ window.__ModuleLoader__.load({
       'field.toolConfirm': 'Require confirmation for persona changes',
       'field.quoteAsContext': 'Quote as context',
       'hint.quoteAsContext': 'When on, select a passage in a reply and click "Quote" — it is sent to the model as context with the next request, without entering your message or the chat history.',
+      'field.showOverviewInSidebar': 'Show persona overview in sidebar',
+      'hint.showOverviewInSidebar': 'Off removes the sidebar icon so the space is freed; you can still open the overview with the button below.',
+      'action.openOverview': 'Open persona overview',
       'quote.actionFloat': 'Quote this',
       'quote.sentBadge': '{count} quoted passage(s)',
       'quote.sentItem': 'Quote {index}: {text}',
@@ -2797,7 +2806,7 @@ window.__ModuleLoader__.load({
     ]
 
     // 设置页表单驱动的字段（dirty 检测与保存载荷共用）。
-    const FORM_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+    const FORM_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
 
     // 由**别的界面**就地管理、因而不在这张表单里的配置字段：
     //   · `historyMaxEntries` —— 插件详情页的变更记录区块（改完即时落盘，不经保存按钮）；
@@ -2845,6 +2854,7 @@ window.__ModuleLoader__.load({
       customInstructions: 'field.instructions',
       requireToolConfirmation: 'field.toolConfirm',
       quoteAsContext: 'field.quoteAsContext',
+      showOverviewInSidebar: 'field.showOverviewInSidebar',
       trailEnabled: 'trail.enable',
       trailColor: 'trail.color',
       trailSpeed: 'trail.speed',
@@ -6576,7 +6586,7 @@ window.__ModuleLoader__.load({
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
 
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
@@ -6591,6 +6601,7 @@ window.__ModuleLoader__.load({
       const [localInstructions, setLocalInstructions] = React.useState(customInstructions)
       const [localToolConfirm, setLocalToolConfirm] = React.useState(requireToolConfirmation === true)
       const [localQuote, setLocalQuote] = React.useState(quoteAsContext === true)
+      const [localOverview, setLocalOverview] = React.useState(showOverviewInSidebar !== false)
       const [localTrailEnabled, setLocalTrailEnabled] = React.useState(trailEnabled === true)
       const [localTrailColor, setLocalTrailColor] = React.useState(trailColor || TRAIL_COLOR_FALLBACK)
       const [localTrailSpeed, setLocalTrailSpeed] = React.useState(trailSpeed || 'slow')
@@ -6711,9 +6722,9 @@ window.__ModuleLoader__.load({
       //
       // saving 期间仍然整体跳过：保存流程自身会带着响应回填（见 saveConfig →
       // applyConfig → 本 effect），中途再插一次写入只会造成闪烁。
-      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
-      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
-      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, quoteAsContext: quoteAsContext === true, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
+      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, quoteAsContext: quoteAsContext === true, showOverviewInSidebar: showOverviewInSidebar !== false, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
       const lastSyncRef = React.useRef(null)
       // 判断某字段是否被用户动过：与「上次同步的快照」比。没有快照（首帧）时
       // 一律视为未动过 —— 首帧本地值本来就来自 store，无从谈起「编辑过」。
@@ -6747,13 +6758,14 @@ window.__ModuleLoader__.load({
         setLocalInstructions(next.customInstructions)
         setLocalToolConfirm(next.requireToolConfirmation)
         setLocalQuote(next.quoteAsContext)
+        setLocalOverview(next.showOverviewInSidebar)
         setLocalTrailEnabled(next.trailEnabled)
         setLocalTrailColor(next.trailColor)
         setLocalTrailSpeed(next.trailSpeed)
         setLocalTrailWidth(next.trailWidth)
         // 依赖与 serverValues 的来源一致；localValues/sameValue 每次渲染都是新的，
         // 但只在「某字段真要写」时才 setState，故不会形成死循环。
-      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, trailEnabled, trailColor, trailSpeed, trailWidth])
+      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, trailEnabled, trailColor, trailSpeed, trailWidth])
 
       // toast 的消失交给宿主 Toast 组件自己（holdMs 后淡出并回调 onDone）。
       // 此前这里有个 2s 定时器 + 自绘 CSS 动画，两者时长必须手工对齐，
@@ -6768,8 +6780,8 @@ window.__ModuleLoader__.load({
       const sameValue = (a, b) => (typeof a === 'string' && typeof b === 'string'
         ? a.trim() === b.trim()
         : a === b)
-      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, trailEnabled, trailColor, trailSpeed, trailWidth }
-      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, trailEnabled, trailColor, trailSpeed, trailWidth }
+      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
       const dirty = FORM_FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
 
       // 宿主 savedNotice 语义：一旦用户开始新的编辑（dirty 变 true），
@@ -6944,6 +6956,7 @@ window.__ModuleLoader__.load({
             setLocalInstructions(customInstructions || '')
             setLocalToolConfirm(requireToolConfirmation === true)
                     setLocalQuote(quoteAsContext === true)
+                    setLocalOverview(showOverviewInSidebar !== false)
             setLocalTrailEnabled(trailEnabled)
             setLocalTrailColor(trailColor)
             setLocalTrailSpeed(trailSpeed)
@@ -6994,6 +7007,7 @@ window.__ModuleLoader__.load({
           setLocalInstructions(customInstructions || '')
           setLocalToolConfirm(requireToolConfirmation === true)
                     setLocalQuote(quoteAsContext === true)
+                    setLocalOverview(showOverviewInSidebar !== false)
           setLocalTrailEnabled(trailEnabled)
           setLocalTrailColor(trailColor)
           setLocalTrailSpeed(trailSpeed)
@@ -7674,6 +7688,30 @@ window.__ModuleLoader__.load({
               e(SoulHint, { text: t('hint.quoteAsContext') })
             ),
 
+            // Issue #3：侧栏「人设总览」入口开关。
+            // 关掉后侧栏图标被注销（位置真的释放），但 main 面板常驻，
+            // 所以下面这个按钮仍能把总览打开 —— 用户不会「关了就回不来」。
+            e('div', { className: 'soul-toggle' },
+              e('input', {
+                type: 'checkbox',
+                id: 'soul-showOverviewInSidebar',
+                checked: localOverview,
+                onChange: (ev) => setLocalOverview(ev.target.checked)
+              }),
+              e('label', { htmlFor: 'soul-showOverviewInSidebar' }, t('field.showOverviewInSidebar')),
+              e(SoulHint, { text: t('hint.showOverviewInSidebar') })
+            ),
+            e('button', {
+              type: 'button',
+              className: 'soul-ov-gc-btn',
+              onClick: () => {
+                const layout = layoutService.get()
+                if (layout && typeof layout.selectPanel === 'function') {
+                  layout.selectPanel(OVERVIEW_PANEL_ID)
+                }
+              }
+            }, t('action.openOverview')),
+
             e('div', { className: 'soul-group-title' }, t('trail.title')),
             e('div', { className: 'soul-toggle' },
               e('input', {
@@ -8331,6 +8369,9 @@ window.__ModuleLoader__.load({
       // 只注册 main 会留下一个没有入口的幽灵面板，只注册图标则点开无处可去
       // （0.9.0-ag 踩过：图标在、面板不在，点了保持当前选择，看起来像没反应）。
       ctx.slots.inject('sidebar.panellist', () => {
+        // main 面板**常驻**：即便侧栏图标被关掉，设置页的「打开人设总览」按钮
+        // 仍要靠 selectPanel(key) 打开它。若连面板一起注销，按钮会切到一个
+        // 未注册的 key（宿主「保持当前选择」，等于点了没反应）。
         const panel = ctx.slots.register({
           name: 'main',
           key: 'soul-persona-panel',
@@ -8343,7 +8384,15 @@ window.__ModuleLoader__.load({
           })
         }, SoulOverview)
 
-        const row = ctx.slots.register({
+        // Issue #3：侧栏图标行**按配置动态注册/注销**。
+        //
+        // 为什么必须真的注销而不是让图标组件 return null：宿主 sidebar.panellist
+        // 是 kind:'list'，宿主按**列表项 id** 生成侧栏按钮（renderSlot 的 only:id），
+        // 只要注册项在，按钮和它占的位置就在 —— 隐藏内容释放不了空间。
+        //
+        // 订阅 controller.store：设置页保存后配置回写，这里实时增删，无需重启。
+        let disposeRow = null
+        const registerRow = () => ctx.slots.register({
           name: 'sidebar.panellist',
           id: 'soul-persona-panel',
           order: 20,
@@ -8352,9 +8401,21 @@ window.__ModuleLoader__.load({
           inject: () => ({})
         }, SoulPanelIcon)
 
-        // 卸载时先退出该面板再拆 —— 否则主列停在一个已消失的 key 上。
+        const sync = () => {
+          const on = controller.store.getSnapshot().showOverviewInSidebar !== false
+          if (on && disposeRow === null) {
+            disposeRow = registerRow()
+          } else if (!on && disposeRow !== null) {
+            if (typeof disposeRow === 'function') disposeRow()
+            disposeRow = null
+          }
+        }
+        sync()
+        const off = controller.store.subscribe(sync)
+
         return () => {
-          if (typeof row === 'function') row()
+          off()
+          if (disposeRow !== null && typeof disposeRow === 'function') disposeRow()
           if (typeof panel === 'function') panel()
         }
       })
