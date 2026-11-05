@@ -4668,12 +4668,17 @@ window.__ModuleLoader__.load({
       if (current.length === 0) return false
       const entry = { quotes: current.map((q) => ({ text: q.text })), at: Date.now() }
       if (recordAnchor === false) {
-        // Enter 时刻消息还没渲染 → 先存 pending，等回合通道绑定
+        // Enter 时刻消息还没渲染 → 先存 pending，等回合通道绑定。
+        // 记下快照时的消息数：bindPending 只在该数量**增加后**才绑，
+        // 否则会把引用绑到上一条旧消息上（用户实测过的迁移 bug）。
+        entry.rowsAtSnapshot = captureAnchor().index + 1
         pendingSent.set(sessionId, entry)
       } else {
         const anchor = captureAnchor()
-        if (anchor.nodeKey === null) pendingSent.set(sessionId, entry)
-        else sentBucketOf(sessionId).set(anchor.nodeKey, entry)
+        if (anchor.nodeKey === null) {
+          entry.rowsAtSnapshot = anchor.index + 1
+          pendingSent.set(sessionId, entry)
+        } else sentBucketOf(sessionId).set(anchor.nodeKey, entry)
       }
       quoteClear(sessionId)
       return true
@@ -4692,6 +4697,12 @@ window.__ModuleLoader__.load({
       if (pending === undefined) return false
       const anchor = captureAnchor()
       if (anchor.nodeKey === null) return false
+      // 新消息还没渲染出来就别绑：此刻 captureAnchor 拿到的是上一条消息。
+      // 只有消息数比快照时多，才说明「引用所属的那条」已经出现在 DOM 里。
+      const rowsAtSnapshot = pending.rowsAtSnapshot
+      if (typeof rowsAtSnapshot === 'number' && anchor.index + 1 <= rowsAtSnapshot) {
+        return false
+      }
       sentBucketOf(sessionId).set(anchor.nodeKey, pending)
       pendingSent.delete(sessionId)
       return true
@@ -5129,6 +5140,16 @@ window.__ModuleLoader__.load({
 
         // 把胶囊画到**最新那条用户消息**的正上方
         function paint() {
+          // ★ 兜底绑定：Enter / 相位通道把引用存进 pendingSent 后就清空了引用层，
+          // 而原本只有 onMutate 的「数量增加 + 文本变化」分支会调 bindPending。
+          // 那个门槛太严（attach 时基线若已含新消息、或文本未变，就永不触发），
+          // 结果 pending 一直挂着、bucket 是空的 → paint 直接 return → 胶囊完全不出现。
+          // paint 每次都会跑（attach / 补画 / 回合通道），这里顺手把 pending 绑掉，
+          // 不再依赖 onMutate 的时机。
+          if (pendingSent.has(sessionId) && bindPending(sessionId)) {
+            // 绑定成功，下面的 bucket 就是最新的
+          }
+
           // 按消息分别绘制：每个 nodeKey 一条，互不覆盖。
           //
           // 之前每个会话只存一条，导致「新引用一出现，旧胶囊就被删掉」，
@@ -5203,9 +5224,21 @@ window.__ModuleLoader__.load({
           //
           // 这里做的是「补齐」而不是「每次重画」：只有理应存在、但 DOM 里找不到时才补，
           // 所以插入完成后不会自己触发自己（插入后查询结果非 null，条件不再成立）。
-          if (sentQuoteBuckets.get(sessionId) !== undefined
-              && document.querySelector('[' + ATTR + ']') === null) {
-            paint()
+          // 逐个条目检查是否缺失：不能只看「一个胶囊都没有」。
+          // 多条目下，只要还有别的胶囊在，被宿主重渲染抹掉的那一条就永远补不回来
+          // （用户反馈「新消息的胶囊过几秒就消失了」）。
+          const bucketNow = sentQuoteBuckets.get(sessionId)
+          if (bucketNow !== undefined && bucketNow.size > 0) {
+            const present = new Set()
+            for (const b of document.querySelectorAll('[' + FOR_ATTR + ']')) {
+              const forKey = b.getAttribute(FOR_ATTR)
+              if (forKey !== null) present.add(forKey)
+            }
+            let missing = false
+            for (const key of bucketNow.keys()) {
+              if (!present.has(key)) { missing = true; break }
+            }
+            if (missing) paint()
           }
           // 列表换了人（比如从兜底路径切到 flow 槽位）也要重挂
           if (list !== null && list !== document.querySelector(FLOW_SLOT) && document.querySelector(FLOW_SLOT) !== null) {

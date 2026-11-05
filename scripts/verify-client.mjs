@@ -5091,6 +5091,16 @@ function componentBody(text, name) {
     // ★ 每个 nodeKey 一条，互不覆盖（这正是「旧胶囊被新引用顶掉」的修法）。
     assert.ok(body.includes('for (const [nodeKey, entry] of bucket)'),
       '必须逐条绘制（每条消息一条引用记录，互不覆盖）')
+
+    // ★ paint 必须自己兜底绑定 pending：Enter/相位通道存完 pending 就清空了引用层，
+    // 而 onMutate 的「数量增加+文本变化」门槛太严，一旦不触发，pending 永远挂着、
+    // bucket 是空的 → paint 直接 return → 胶囊完全不出现（用户实测反馈）。
+    assert.ok(body.includes('pendingSent.has(sessionId) && bindPending(sessionId)'),
+      'paint 必须兜底绑定 pending（不能只依赖 onMutate 的严格门槛）')
+    assert.ok(source.includes('rowsAtSnapshot'),
+      '绑定前必须校验消息数已增加（否则会绑到上一条旧消息）')
+    assert.ok(source.includes('anchor.index + 1 <= rowsAtSnapshot'),
+      '新消息没渲染出来时不得绑定')
     assert.ok(body.includes('wanted.has(forKey)'),
       '清理时只能删「不属于任何已存条目」的旧胶囊（否则会删掉别的轮次的）')
 
@@ -5466,25 +5476,27 @@ function componentBody(text, name) {
   })
 
   await check('C103 历史胶囊被宿主重渲染抹掉后会补画', async () => {
-    // 用户报：「发送后消息上方确实有这个展示，但只存在了 1 秒就消失了」
-    //
-    // 根因：注入的节点**不在宿主的虚拟 DOM 里**。宿主重建 userRow 时不会保留它，
-    // 会连它一起丢掉 —— 1 秒后正好是流式回复开始、消息列表重渲染的时刻。
-    //
-    // 修法：observer 每次触发时检查「理应存在但找不到」就补画。
-    // 写成"补齐"而不是"每次重画"，避免插入后自己触发自己。
-    const body = componentBody(source, 'SoulQuoteFloating')
-    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+// 用户报：「发送后消息上方确实有这个展示，但只存在了 1 秒就消失了」
+//
+// 根因：注入的节点**不在宿主的虚拟 DOM 里**。宿主重建 userRow 时不会保留它，
+// 会连它一起丢掉 —— 1 秒后正好是流式回复开始、消息列表重渲染的时刻。
+//
+// ★ 改成多条目后必须是「按条目逐个检查缺失」，不能是「一个胶囊都没有」。
+// 只要还有别的胶囊在，被抹掉的那一条就永远补不回来 —— 这正是
+// 「新消息的胶囊过几秒就消失了」的成因。
+const body = componentBody(source, 'SoulQuoteFloating')
+assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
 
-    const probeAt = body.indexOf("document.querySelector('[' + ATTR + ']') === null")
-    assert.ok(probeAt > 0, '必须检测 badge 是否被抹掉（否则丢了不会补）')
-    const paintAt = body.indexOf('paint()', probeAt)
-    assert.ok(paintAt > probeAt && paintAt - probeAt < 300, '检测到丢失后必须紧接着补画')
-
-    // 幂等：只有"理应存在"时才补，否则会插入后立即自己触发自己
-    const guardAt = body.indexOf('sentQuoteBuckets.get(sessionId) !== undefined', probeAt - 300)
-    assert.ok(guardAt > 0 && guardAt < probeAt, '补画前必须确认「本该有」')
-  })
+const guardAt = body.indexOf('const bucketNow = sentQuoteBuckets.get(sessionId)')
+assert.ok(guardAt > 0, '补画前必须取出已存条目，逐条比对')
+const missingAt = body.indexOf('if (missing) paint()', guardAt)
+assert.ok(missingAt > guardAt, '发现任一条目缺失就必须补画')
+assert.ok(body.indexOf("document.querySelectorAll('[' + FOR_ATTR + ']')", guardAt) > guardAt,
+  '必须收集当前已存在的胶囊，按 nodeKey 逐个比对')
+assert.ok(body.indexOf('for (const key of bucketNow.keys())', guardAt) > guardAt,
+  '必须遍历所有已存条目（否则漏掉被抹掉的那一条）')
+assert.ok(missingAt - guardAt < 900, '缺失判断与补画必须紧邻（避免插入后自触发）')
+})
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 
