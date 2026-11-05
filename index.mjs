@@ -67,6 +67,13 @@ import {
   writeSessionScope
 } from './lib/session-scope.mjs'
 import {
+  bindQuotesToMessage,
+  messageIdOfNodeKey,
+  normalizeBindingDoc,
+  readQuoteBindings,
+  writeQuoteBindings
+} from './lib/quote-binding.mjs'
+import {
   MAX_WORKSPACE_SCOPES,
   WORKSPACE_PERSONA_REF,
   WORKSPACE_SCOPE_VERSION,
@@ -1248,6 +1255,25 @@ function cwdOfAgent(agent) {
 // 避免「引用明明存了、送达时却取不到」这种静默失配 —— 那类问题最难排查。
 const quotePending = new Map()
 
+// 「引用 → 消息」真绑定用的**最近引用快照**。
+//
+// 为什么必须另存一份：客户端一按发送就 `quoteClear` → POST 空数组 → quotePending 被删，
+// 而宿主的 `session/event` 是 post-commit 才发的，晚于清空。若只靠 quotePending，
+// 消息提交时已经读不到它带了什么引用。
+//
+// 生命周期：setQuotes(非空) 时写入 → session/event(user/message) 时消费并删除。
+// 它**不参与送达**（systemPrompt.context 仍只读 quotePending），所以多存一份没有副作用。
+const quoteSnapshot = new Map()
+
+// 「消息先到、引用快照晚到」的兜底。
+//
+// 客户端 saveQuotes 与用户按 Enter 几乎同时发生时，session/event(post-commit)
+// 可能先于 saveQuotes 到达宿主。那时 quoteSnapshot 还没有值，若直接放弃就永远
+// 不绑定了。这里记下「刚提交、还没配上引用的消息 id」，等快照到达再补绑。
+// 只保留最近一条，且带过期时间，避免旧 id 长期挂着。
+const awaitingSnapshot = new Map()   // key -> { messageId, at }
+const AWAIT_SNAPSHOT_MS = 10 * 1000
+
 const QUOTE_MAX_ITEMS = 20
 const QUOTE_MAX_CHARS = 4000
 const QUOTE_PROMPT_BUDGET = 8000
@@ -1268,8 +1294,24 @@ function setQuotes(rawSessionId, rawQuotes) {
     if (trimmed === '') continue
     cleaned.push({ text: trimmed.slice(0, QUOTE_MAX_CHARS) })
   }
-  if (cleaned.length === 0) quotePending.delete(key)
-  else quotePending.set(key, cleaned)
+  if (cleaned.length === 0) {
+    quotePending.delete(key)
+    // 空数组只清「待送达」，**不动快照**：快照要等消息真正提交（session/event）才消费。
+    // 否则用户改主意清空引用时，快照先没了，反而少画一个本该画的胶囊。
+  } else {
+    quotePending.set(key, cleaned)
+    const snap = { quotes: cleaned.map((q) => ({ text: q.text })), at: Date.now() }
+    quoteSnapshot.set(key, snap)
+
+    // 兜底补绑：消息先到、快照晚到时，把这次的引用补到那条消息上。
+    const awaiting = awaitingSnapshot.get(key)
+    if (awaiting !== undefined && Date.now() - awaiting.at <= AWAIT_SNAPSHOT_MS) {
+      awaitingSnapshot.delete(key)
+      // 用刚写入的快照补绑，随后清掉快照（它已被这次消息消费）。
+      quoteSnapshot.delete(key)
+      void persistBinding(key, awaiting.messageId, snap)
+    }
+  }
   return { ok: true, count: cleaned.length }
 }
 
@@ -1279,6 +1321,107 @@ function quotesOf(rawSessionId) {
 }
 
 // ==================== HTTP 路由 ====================
+
+
+// ==================== 引用 → 消息真绑定 ====================
+//
+// 目标：让「这条消息带了哪些引用」成为**显式、持久、按消息唯一 id** 的关联，
+// 而不是靠客户端在 DOM 渲染时机里猜（pending / 数量变化 / 文本变化…）。
+//
+// 契约依据（已查宿主源码，勿凭印象改）：
+//   · dsh-client-ui-conversation: messageDefinition.kind = "input-message"，
+//     match 返回 { id: String(event.data.id) } —— 节点 id 就是 user/message 的 data.id。
+//   · dsh-client-ui-chat: "data-chat-node-key": routedNode.key，实测形如
+//     `13:input-message<uuid>`；<uuid> === event.data.id。
+//   · dsh-client-ui-conversation: isAppendSurfaceEvent(event) =
+//     isSurfaceEvent(event) && event.surfaceOp === "append"，
+//     只有这样的 user/message 才会生成 DOM 上的 input-message 节点。
+//
+// 时序：客户端 setQuotes(非空) 写 quoteSnapshot → 用户发送 →
+// 宿主 append("user/message") 提交 → session/event(post-commit) 到达 →
+// 这里把快照绑到 event.data.id 并落盘。客户端随后按 node-key 查表绘制。
+// 把一份引用快照落盘绑定到某条消息 id。两处调用（事件直达 / 晚到补绑）共用。
+async function persistBinding(key, messageId, snapshot) {
+  try {
+    const { bindings } = await readQuoteBindings(configPath(), key)
+    const next = bindQuotesToMessage(bindings, String(messageId), snapshot.quotes, snapshot.at)
+    const capped = normalizeBindingDoc(
+      { version: 1, sessionId: key, bindings: next },
+      key
+    ).bindings
+    await writeQuoteBindings(configPath(), key, capped)
+  } catch (err) {
+    // 静默：绑定失败不该影响会话继续跑。
+  }
+}
+
+function registerQuoteBinding(ctx) {
+  ctx.on('session/event', (session, event) => {
+    // 只认「会渲染成 input-message 节点」的用户消息。
+    // runtime-context / steer 注入的 user/message 不生成该节点，绑了也画不出来，
+    // 还会把快照提前消费掉，导致真正那条消息没胶囊。
+    if (event === null || event === undefined) return
+    if (event.type !== 'user/message') return
+    if (event.surfaceOp !== 'append') return
+
+    const rawSessionId = session && (session.id !== undefined ? session.id : (session.header && session.header.id))
+    const key = quoteKeyOf(rawSessionId)
+    const messageId = event && event.data ? event.data.id : undefined
+    if (messageId === undefined || messageId === null || String(messageId) === '') return
+
+    const snapshot = quoteSnapshot.get(key)
+    if (snapshot === undefined) {
+      // 消息先到、引用快照还没到：记下这条消息，等 setQuotes 到达时补绑。
+      // 只保留最近一条，避免旧消息长期占位。
+      awaitingSnapshot.set(key, { messageId: String(messageId), at: Date.now() })
+      return
+    }
+
+    // 消费快照：只绑这一次，之后清掉，避免下一轮消息重复绑定同一批引用。
+    quoteSnapshot.delete(key)
+    awaitingSnapshot.delete(key)
+    // 异步落盘，不阻塞事件总线；失败只记不抛（sidecar 是增强，不能拖垮会话）。
+    void persistBinding(key, String(messageId), snapshot)
+  })
+
+  // 客户端按 sessionId 拉整张绑定表，自行与 DOM 的 node-key 比对。
+  // 返回全文（引用原文），因为 tooltip 需要展示；只对**本会话**返回。
+  ctx.inject(['webServer'], (wsCtx) => {
+    wsCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/soul/quotes/bound',
+      handler: async (req, res) => {
+        const send = (status, body) => {
+          res.writeHead(status, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(body))
+        }
+        if (req.method !== 'GET') {
+          send(405, { ok: false, error: 'Method not allowed' })
+          return
+        }
+        let sessionId = ''
+        try {
+          const url = new URL(req.url, 'http://localhost')
+          sessionId = url.searchParams.get('sessionId') || ''
+        } catch (err) {
+          send(400, { ok: false, error: 'bad url' })
+          return
+        }
+        const key = quoteKeyOf(sessionId)
+        if (key === '') {
+          send(400, { ok: false, error: '缺少 sessionId' })
+          return
+        }
+        try {
+          const { bindings } = await readQuoteBindings(configPath(), key)
+          send(200, { ok: true, bindings })
+        } catch (err) {
+          send(500, { ok: false, error: String((err && err.message) || err) })
+        }
+      }
+    })
+  })
+}
 
 function registerRoutes(ctx) {
   ctx.inject(['webServer'], (wsCtx) => {
@@ -4788,6 +4931,7 @@ export async function apply(ctx) {
   
   // 注册各模块
   registerRoutes(ctx)
+  registerQuoteBinding(ctx)
   registerPersonaRoutes(ctx)
   registerHistoryRoutes(ctx)
   registerBindingRoutes(ctx)

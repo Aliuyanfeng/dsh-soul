@@ -4578,176 +4578,12 @@ window.__ModuleLoader__.load({
     const QUOTE_PREVIEW_CHARS = 60
     const quoteBuckets = new Map()
 
-    // 最近一次「已发送」的引用快照（按会话）。
-    //
-    // 为什么要快照：引用送达后当前引用会被清空，而历史里那条消息还要能显示
-    // 「它带了什么引用」。清空之前必须先留一份。
-    //
-    // 只保留**最近一次**：历史注入只挂到最新那条回合上，更早的不追溯 ——
-    // 追溯需要把引用与消息 id 持久化绑定，那是另一套成本。
-    // sessionId -> Map<nodeKey, { quotes, at }>：**按消息分别保存**，互不覆盖
-    const sentQuoteBuckets = new Map()
-    // sessionId -> { quotes, at }：已快照但还没拿到消息 key（Enter 时刻消息还没渲染）
-    const pendingSent = new Map()
-    // 标记每个胶囊属于哪条消息
-    const FOR_ATTR = 'data-soul-quote-for'
+    // 历史胶囊的「引用 → 消息」关联由 **host 侧真绑定** 负责：
+    // index.mjs 订阅 session/event，把引用按 user/message 的 data.id 落盘；
+    // 客户端只按 DOM 的 data-chat-node-key 查表绘制（见下方 badge effect）。
+    // 旧版在这里维护 sentQuoteBuckets / pendingSent / snapshot / bindPending 等
+    // 一堆 DOM 时机推断，已全部删除 —— 那正是「时有时无」的根源。
 
-    function sentBucketOf(sessionId) {
-      let m = sentQuoteBuckets.get(sessionId)
-      if (m === undefined) {
-        m = new Map()
-        sentQuoteBuckets.set(sessionId, m)
-      }
-      return m
-    }
-
-    /**
-     * 读宿主的「提交阶段」。
-     *
-     * 宿主内部有一套 submitPlane 状态机：plain / adjudicating / submitting / claimed。
-     * 它经 SessionInputShell.state 发布，而 input.dock / input.overlay 的 props 里
-     * 带一个 input 对象（渲染处写着 `{ session, input: inputState }`）—— 那就是它。
-     *
-     * ⚠️ 但**确切字段路径不在公开契约里**（宿主没有为插件描述 state 的形状）。
-     * 所以这里依次试几个候选位置；都取不到就返回 null，由调用方退回 DOM 观察。
-     * 与其赌一个路径写死，不如把「可能在哪」都试一遍 —— 取不到也不至于崩。
-     */
-    function readSubmitPhase(input) {
-      if (input === null || typeof input !== 'object') return null
-      const candidates = [
-        input.phase,
-        input.submit === undefined || input.submit === null ? undefined : input.submit.phase,
-        input.submitState === undefined || input.submitState === null ? undefined : input.submitState.phase
-      ]
-      for (const candidate of candidates) {
-        if (typeof candidate === 'string' && candidate !== '') return candidate
-      }
-      return null
-    }
-
-    /**
-     * 把当前引用快照进 sentQuoteBuckets，然后清空。
-     *
-     * ★ 关键是**记录所属回合**（turn）。早先只存引用内容，paint 时一律挂到
-     * 「最后一条用户消息」——于是第二轮对话一开始，第一轮的胶囊被重渲染抹掉、
-     * 补画时挂到了第二轮消息上方（用户实测反馈）。
-     *
-     * 回合标识取自宿主的 data-chat-turn —— 它挂在消息流节点上，是该轮次的稳定编号。
-     *
-     * @param recordTurn 是否在快照时一并记录所属回合。
-     *   **Enter 通道必须传 false** —— 那一刻新消息还没渲染进 DOM，
-     *   此刻取到的是**上一条**消息的 turn；用旧 turn 去找目标必然落空（胶囊不显示）。
-     *   正确的 turn 由回合通道在消息出现后补上（见 backfillSentTurn）。
-     *
-     * @returns 是否真的快照了（没有引用时返回 false）
-     */
-    /**
-     * 读当前「最后一条用户消息」的定位锚点。
-     *
-     * 只有在新消息**已经渲染之后**调用才有意义，否则读到的是上一条。
-     */
-    function captureAnchor() {
-      const none = { turn: null, index: -1, nodeKey: null }
-      if (typeof document === 'undefined') return none
-      const rows = document.querySelectorAll('[class*="userRow"]')
-      if (rows.length === 0) return none
-      const last = rows[rows.length - 1]
-      let turn = null
-      let nodeKey = null
-      if (typeof last.closest === 'function') {
-        const tNode = last.closest('[data-chat-turn]')
-        if (tNode !== null) turn = tNode.getAttribute('data-chat-turn')
-        const kNode = last.closest('[data-chat-node-key]')
-        if (kNode !== null) nodeKey = kNode.getAttribute('data-chat-node-key')
-      }
-      return { turn, index: rows.length - 1, nodeKey }
-    }
-
-    function snapshotSentQuotes(sessionId, recordAnchor) {
-      const current = quoteListOf(sessionId)
-      if (current.length === 0) return false
-      const entry = { quotes: current.map((q) => ({ text: q.text })), at: Date.now() }
-      if (recordAnchor === false) {
-        // Enter 时刻消息还没渲染 → 先存 pending，等回合通道绑定。
-        // 记下两样东西，供 bindPending **精确**定位「引用所属的那条消息」：
-        //   ① 快照前最后一条消息的 nodeKey（lastKeyBefore）
-        //   ② 快照时的消息数
-        // 之前只记消息数、绑定时无脑取「当前最后一条」——渲染有延迟时
-        // 会绑到后续新消息上，胶囊就跑到「最新消息」去了（用户实测反馈）。
-        const anchor = captureAnchor()
-        entry.rowsAtSnapshot = anchor.index + 1
-        entry.lastKeyBefore = anchor.nodeKey
-        pendingSent.set(sessionId, entry)
-      } else {
-        const anchor = captureAnchor()
-        if (anchor.nodeKey === null) {
-          entry.rowsAtSnapshot = anchor.index + 1
-          entry.lastKeyBefore = anchor.nodeKey
-          pendingSent.set(sessionId, entry)
-        } else sentBucketOf(sessionId).set(anchor.nodeKey, entry)
-      }
-      quoteClear(sessionId)
-      return true
-    }
-
-    /**
-     * 给「已经快照但还没记下回合」的引用补上 turn。
-     *
-     * Enter 通道先于消息渲染触发，那时无法知道新消息属于哪一轮；回合通道在消息
-     * 出现之后触发，是唯一能拿到正确 turn 的时机。
-     *
-     * @returns 是否补上了
-     */
-    function bindPending(sessionId) {
-      const pending = pendingSent.get(sessionId)
-      if (pending === undefined) return false
-      if (typeof document === 'undefined') return false
-      const rows = document.querySelectorAll('[class*="userRow"]')
-      if (rows.length === 0) return false
-
-      // 精确找「引用所属的那条消息」：快照前最后一条之后**第一条**新消息。
-      // 不能无脑取当前最后一条 —— 渲染有延迟 / 期间又发了新消息时，
-      // 那样会把引用绑到最新消息上，胶囊就迁移了。
-      let targetKey = null
-      let passedBefore = false
-      for (const row of rows) {
-        if (typeof row.closest !== 'function') continue
-        const holder = row.closest('[data-chat-node-key]')
-        if (holder === null) continue
-        const key = holder.getAttribute('data-chat-node-key')
-        if (key === null) continue
-        // 找到快照前最后一条之后，第一条新出现的就是目标
-        if (!passedBefore) {
-          if (pending.lastKeyBefore === null || pending.lastKeyBefore === undefined || key === pending.lastKeyBefore) {
-            passedBefore = true
-          }
-          continue
-        }
-        targetKey = key
-        break
-      }
-
-      // 退化：如果 lastKeyBefore 已经不在当前 DOM（切会话等），
-      // 且消息数确实比快照时多，就用第一条「看起来是新的」——
-      // 但绝不无脑取最后一条。
-      if (targetKey === null && pending.lastKeyBefore !== null && pending.lastKeyBefore !== undefined) {
-        const stillThere = [...rows].some((r) => {
-          const h = typeof r.closest === 'function' ? r.closest('[data-chat-node-key]') : null
-          return h !== null && h.getAttribute('data-chat-node-key') === pending.lastKeyBefore
-        })
-        if (stillThere) return false // 新消息还没渲染，继续等
-        if (rows.length > 0) {
-          const first = rows[0]
-          const h = typeof first.closest === 'function' ? first.closest('[data-chat-node-key]') : null
-          if (h !== null) targetKey = h.getAttribute('data-chat-node-key')
-        }
-      }
-      if (targetKey === null) return false
-
-      sentBucketOf(sessionId).set(targetKey, pending)
-      pendingSent.delete(sessionId)
-      return true
-    }
 
     /**
      * 队列项数量变化时，是否该让引用失效。
@@ -4772,11 +4608,6 @@ window.__ModuleLoader__.load({
       if (prevCount < 0) return false
       if (nextCount >= prevCount) return false
       return quoteCount > 0
-    }
-
-    // 提交进行中的阶段。离开它们回到 plain ⇒ 这一轮发送结束了。
-    function isBusyPhase(phase) {
-      return phase === 'submitting' || phase === 'adjudicating' || phase === 'claimed'
     }
 
     function quoteBucketOf(sessionId) {
@@ -4955,30 +4786,10 @@ window.__ModuleLoader__.load({
       //    宿主改版若换掉它，注入会静默失效（引用功能本身不受影响）。
       //    之所以还是选它：宿主没有提供「用户消息上方」的槽位（只有回合尾部的
       //    turnTail），而用户明确要胶囊在消息上方。
-      // ── 通道一：宿主的提交阶段（**经查证无效，保留仅为将来兼容**）──
-      //
-      // 后来核实：conversation.input.overlay 的 renderSlot 传的是空 props（{}），
-      // 根本没有 input 参数；而 input.dock 拿到的 input 是 useInput 的**编辑器状态**，
-      // 也不是 submitPlane 的 phase。所以这条通道现实中永远拿不到数据，
-      // readSubmitPhase 恒为 null。
-      //
-      // 保留不删的原因：宿主将来若真把 submit 状态透出来，这里是现成的接点；
-      // 拿不到也只是退化为不动作，成本为零。真正的即时性由下面的 Enter 通道提供。
-      //
-      // 比 DOM 观察更接近「发送」本身：阶段从 submitting/claimed 回到 plain
-      // 就意味着这一轮提交结束了，与这条回合是否已经渲染无关。
-      //
-      // 取不到 phase 时本 effect 什么都不做 —— 交给下面的 DOM 观察兜底。
-      // 两条通道可能都触发，但两边的动作都是幂等的（清空和重画），不会出错。
-      const phase = readSubmitPhase(props.input)
-      const phaseRef = React.useRef(null)
-      React.useEffect(() => {
-        const previous = phaseRef.current
-        phaseRef.current = phase
-        if (phase === null || previous === null) return
-        if (!isBusyPhase(previous) || phase !== 'plain') return
-        snapshotSentQuotes(sessionId, false)
-      }, [phase, sessionId])
+      // 注：旧版这里有一条「读宿主提交阶段」的通道，但代码注释自己已核实
+      // conversation.input.overlay 传的是空 props，readSubmitPhase 恒为 null，
+      // 从未生效。重写时连它一起删掉 —— 发送只由 Enter 通道清空引用，
+      // 消息与引用的关联交给 host 的 session/event 真绑定，不再需要第二通道。
 
       // ── 队列项上的「含引用」标记 ──
       //
@@ -5114,8 +4925,10 @@ window.__ModuleLoader__.load({
           if (target === null || target === undefined) return
           if (typeof target.closest !== "function") return
           if (target.closest('[contenteditable="true"]') === null) return
-          // 不记 turn：这一刻新消息还没渲染，取到的会是上一条的回合
-          snapshotSentQuotes(sessionId, false)
+          // 发送即清空本地引用（同步给 host 的送达层）。
+          // 「这条消息带了哪些引用」由 host 侧 session/event 真绑定负责，
+          // 客户端不再做任何快照 / 推断。
+          quoteClear(sessionId)
         }
 
         // 捕获阶段：即使宿主的编辑器中转/停掉冒泡也能听到
@@ -5131,182 +4944,125 @@ window.__ModuleLoader__.load({
         if (typeof document === 'undefined') return undefined
         if (typeof MutationObserver !== 'function') return undefined
 
+        // ============================================================
+        // 历史胶囊：按「消息唯一 id」真绑定绘制
+        //
+        // 旧实现靠 DOM 观察 + 推断（pending / 数量变化 / 文本变化 /
+        // 快照前最后一条…）决定引用属于哪条消息，在桌面端反复出现
+        // 「不出现 / 迁移到最新消息 / 过几秒消失」。全部删除。
+        //
+        // 现在只有两步，没有任何推断：
+        //   ① host 侧 session/event 把引用绑定到 user/message 的 data.id 并落盘
+        //      （见 index.mjs registerQuoteBinding）；
+        //   ② 这里遍历 DOM 的 data-chat-node-key，提取出同一个 id 去查表，
+        //      命中就在这条消息上方画胶囊。
+        //
+        // 两端能对上的依据（已查宿主源码）：
+        //   messageDefinition.kind = "input-message" 的 match 返回
+        //   { id: String(event.data.id) }；data-chat-node-key 实测形如
+        //   13:input-message<uuid>，<uuid> === event.data.id。
+        // ============================================================
         const ATTR = 'data-soul-quote-sent'
-        let list = null
-        let observer = null
-        let userCount = -1
-        // 最后一条用户消息的文本快照。
-        //
-        // 只数数量会在**渲染抖动**时误判：assistant 流式回复期间 React 会重渲染消息列表，
-        // userRow 节点可能被移除再重建，瞬时数量出现 1 → 0 → 1，
-        // 而 `next > userCount` 对 0 → 1 这一段是成立的 ⇒ 误判成"刚发出了新消息" ⇒
-        // 引用被凭空清掉（用户实测反馈：「回复过程中引用的就消失了」）。
-        //
-        // 所以再加一道：**内容也必须变**。抖动时内容不变，因此不会误清。
-        let lastUserText = ''
-
-        // ⚠️ 不能用 [data-chat-turn] 定位消息。
-        //
-        // 那是**每个流节点身上的回合序号**（渲染源码：data-chat-turn={turn}，
-        // 挂在 userRow / 助手消息 / 工具调用每一层上），不是回合容器。
-        // 早先用它当容器，「最后一个 [data-chat-turn]」拿到的其实是**助手消息**，
-        // 于是胶囊挂到了助手侧（用户实测反馈：「要在用户消息而不是助手消息」）。
-        //
-        // 正确标识是用户消息自身的类名。CSS Module 保留了原名：
-        // MessageItem.module.css 里是 .userRow，编译后形如 LOmM4q_userRow，
-        // 所以用 [class*="userRow"] 匹配是稳的。
+        const FOR_ATTR = 'data-soul-quote-for'
         const USER_ROW = '[class*="userRow"]'
-        // 宿主消息列表的槽位容器。它**一直存在**（哪怕还没有任何消息），
-        // 而 userRow 要等第一条用户消息渲染出来才有。
-        //
-        // ⚠️ 早先用「第一个 userRow 的父级」找列表 —— 空会话时返回 null，
-        //    observer 就再也挂不上，paint() 只在 attach 那一刻跑过（那时还没有
-        //    快照可画），于是**胶囊永远不出现**（用户实测反馈）。
-        //
-        // 这个锚点不是猜的：宿主自己的滚动逻辑就是用
-        // ':scope > [data-slot="conversation.chat.flow"]' 查这一层。
         const FLOW_SLOT = '[data-slot="conversation.chat.flow"]'
 
-        function findList() {
-          const flow = document.querySelector(FLOW_SLOT)
-          if (flow !== null) return flow
-          // 兜底：退回到「第一个用户消息的父级」
-          const row = document.querySelector(USER_ROW)
-          return row === null ? null : row.parentElement
+        // 从 node-key 提取消息裸 id：13:input-message<uuid> → <uuid>
+        function messageIdOf(nodeKey) {
+          const raw = String(nodeKey === null || nodeKey === undefined ? '' : nodeKey)
+          const at = raw.lastIndexOf('input-message')
+          if (at < 0) return null
+          const id = raw.slice(at + 'input-message'.length)
+          return id === '' ? null : id
         }
 
-        function countUsers() {
-          return typeof document === 'undefined' ? 0 : document.querySelectorAll(USER_ROW).length
+        let bindings = {}          // 消息 id -> { quotes, at }
+        let observer = null
+        let list = null
+        let disposed = false
+
+        async function loadBindings() {
+          try {
+            const url = new URL('/api/soul/quotes/bound', hostBase())
+            url.searchParams.set('sessionId', sessionId)
+            const res = await fetch(url.toString())
+            if (!res.ok) return
+            const data = await res.json()
+            if (data && data.ok === true && data.bindings && typeof data.bindings === 'object') {
+              bindings = data.bindings
+            }
+          } catch (err) {
+            // 拉取失败保留上一次的绑定表，不清空 —— 宁可少刷新，不要瞬间全消失。
+          }
         }
 
-        // 把胶囊画到**最新那条用户消息**的正上方
         function paint() {
-          // ★ 兜底绑定：Enter / 相位通道把引用存进 pendingSent 后就清空了引用层，
-          // 而原本只有 onMutate 的「数量增加 + 文本变化」分支会调 bindPending。
-          // 那个门槛太严（attach 时基线若已含新消息、或文本未变，就永不触发），
-          // 结果 pending 一直挂着、bucket 是空的 → paint 直接 return → 胶囊完全不出现。
-          // paint 每次都会跑（attach / 补画 / 回合通道），这里顺手把 pending 绑掉，
-          // 不再依赖 onMutate 的时机。
-          if (pendingSent.has(sessionId) && bindPending(sessionId)) {
-            // 绑定成功，下面的 bucket 就是最新的
-          }
-
-          // 按消息分别绘制：每个 nodeKey 一条，互不覆盖。
-          //
-          // 之前每个会话只存一条，导致「新引用一出现，旧胶囊就被删掉」，
-          // 用户看到的现象是「上一条的胶囊挂到了新消息」+「新消息的胶囊几秒后消失」。
-          const bucket = sentQuoteBuckets.get(sessionId)
+          // 哪些消息理应有胶囊：只认绑定表里存在、且 DOM 里确实有对应消息的 id。
           const wanted = new Set()
-          if (bucket !== undefined) {
-            for (const key of bucket.keys()) wanted.add(key)
+          for (const row of document.querySelectorAll(USER_ROW)) {
+            if (typeof row.closest !== 'function') continue
+            const holder = row.closest('[data-chat-node-key]')
+            if (holder === null) continue
+            const id = messageIdOf(holder.getAttribute('data-chat-node-key'))
+            if (id !== null && Object.prototype.hasOwnProperty.call(bindings, id)) wanted.add(id)
           }
 
-          // 清理：只删「不属于任何已存条目」的旧胶囊
+          // 清理：删掉不属于任何「当前应有」条目的旧胶囊。
           for (const stale of document.querySelectorAll('[' + ATTR + ']')) {
-            const forKey = stale.getAttribute(FOR_ATTR)
-            if (forKey === null || !wanted.has(forKey)) {
+            const forId = stale.getAttribute(FOR_ATTR)
+            if (forId === null || !wanted.has(forId)) {
               if (stale.parentElement !== null) stale.parentElement.removeChild(stale)
             }
           }
 
-          if (bucket === undefined || bucket.size === 0) return
-          const rows = document.querySelectorAll(USER_ROW)
-          if (rows.length === 0) return
+          for (const row of document.querySelectorAll(USER_ROW)) {
+            if (typeof row.closest !== 'function') continue
+            const holder = row.closest('[data-chat-node-key]')
+            if (holder === null) continue
+            const id = messageIdOf(holder.getAttribute('data-chat-node-key'))
+            if (id === null) continue
+            const entry = bindings[id]
+            if (entry === undefined || !Array.isArray(entry.quotes) || entry.quotes.length === 0) continue
 
-          for (const [nodeKey, entry] of bucket) {
-            // 已经画过就跳过（避免重复插入）
+            // 这条消息已经画过就跳过（避免重复插入）
             let drawn = false
             for (const b of document.querySelectorAll('[' + FOR_ATTR + ']')) {
-              if (b.getAttribute(FOR_ATTR) === nodeKey) { drawn = true; break }
+              if (b.getAttribute(FOR_ATTR) === id) { drawn = true; break }
             }
             if (drawn) continue
 
-            // 按消息 key 找它自己的那条消息
-            let target = null
-            for (const row of rows) {
-              if (typeof row.closest !== 'function') continue
-              const holder = row.closest('[data-chat-node-key]')
-              if (holder === null) continue
-              if (holder.getAttribute('data-chat-node-key') === nodeKey) {
-                target = row
-                break
-              }
-            }
-            if (target === null) continue
-
             const badge = document.createElement('div')
             badge.className = 'soul-quote-sent'
-            badge.setAttribute(ATTR, String(entry.at))
-            badge.setAttribute(FOR_ATTR, nodeKey)
+            badge.setAttribute(ATTR, String(entry.at || 0))
+            badge.setAttribute(FOR_ATTR, id)
             badge.textContent = t('quote.sentBadge', { count: String(entry.quotes.length) })
             const tip = document.createElement('div')
             tip.className = 'soul-quote-sent-tip'
             tip.textContent = entry.quotes
-              .map((q, i) => t('quote.sentItem', { index: String(i + 1), text: q.text }))
+              .map((q, i) => t('quote.sentItem', { index: String(i + 1), text: String((q && q.text) || '') }))
               .join('\n\n')
             badge.appendChild(tip)
-            // 插到消息内部第一个位置 → 继承 align-items:flex-end，落在消息上方
-            target.insertBefore(badge, target.firstChild)
+            row.insertBefore(badge, row.firstChild)
           }
         }
 
-        function onMutate() {
-          // 消息列表被整体重建（切会话、清空对话）→ 重新挂载
-          if (list !== null && list.isConnected === false) {
-            attach()
-            return
-          }
+        // 绑定表是 host 侧在消息提交时写的，可能比 DOM 渲染晚一点点到达；
+        // 所以 observer 每次触发都先拉一次再画，而不是只在挂载时拉一次。
+        let refreshTimer = null
+        function refresh() {
+          if (refreshTimer !== null) clearTimeout(refreshTimer)
+          refreshTimer = setTimeout(() => {
+            refreshTimer = null
+            if (disposed) return
+            void loadBindings().then(paint)
+          }, 120)
+        }
 
-          // ── badge 被宿主的重渲染抹掉时补画 ──
-          //
-          // 我们注入的节点**不在宿主的虚拟 DOM 里**：宿主重建 userRow 时不会保留它，
-          // 会连它一起丢掉。用户观察到「发送后胶囊闪一下就没了」，正是这个原因 ——
-          // 插入成功后约 1 秒（流式回复开始、消息列表重渲染）就被抹掉了。
-          //
-          // 这里做的是「补齐」而不是「每次重画」：只有理应存在、但 DOM 里找不到时才补，
-          // 所以插入完成后不会自己触发自己（插入后查询结果非 null，条件不再成立）。
-          // 逐个条目检查是否缺失：不能只看「一个胶囊都没有」。
-          // 多条目下，只要还有别的胶囊在，被宿主重渲染抹掉的那一条就永远补不回来
-          // （用户反馈「新消息的胶囊过几秒就消失了」）。
-          const bucketNow = sentQuoteBuckets.get(sessionId)
-          if (bucketNow !== undefined && bucketNow.size > 0) {
-            const present = new Set()
-            for (const b of document.querySelectorAll('[' + FOR_ATTR + ']')) {
-              const forKey = b.getAttribute(FOR_ATTR)
-              if (forKey !== null) present.add(forKey)
-            }
-            let missing = false
-            for (const key of bucketNow.keys()) {
-              if (!present.has(key)) { missing = true; break }
-            }
-            if (missing) paint()
-          }
-          // 列表换了人（比如从兜底路径切到 flow 槽位）也要重挂
-          if (list !== null && list !== document.querySelector(FLOW_SLOT) && document.querySelector(FLOW_SLOT) !== null) {
-            attach()
-            return
-          }
-          const next = countUsers()
-          const rowsNow = document.querySelectorAll(USER_ROW)
-          const lastRow = rowsNow.length === 0 ? null : rowsNow[rowsNow.length - 1]
-          const textNow = lastRow === null ? '' : String(lastRow.textContent || '').slice(0, 200)
-          // 两个条件同时成立才算「新消息发出去了」：
-          //   ① 用户消息数量增加；
-          //   ② 最后一条的文本变了（排除渲染抖动造成的假增加）。
-          // 删除会话 / 清空对话都不会同时满足这两条。
-          if (userCount >= 0 && next > userCount && textNow !== '' && textNow !== lastUserText) {
-            // 先快照当前引用，再清空 —— 顺序不能反，否则历史里没有内容可画
-            if (quoteListOf(sessionId).length > 0) {
-              // 走的是「点发送按钮」而不是 Enter：此时消息已经在 DOM 里，turn 可直接记录
-              snapshotSentQuotes(sessionId, true)
-            } else {
-              // Enter 已经快照过（引用层已空），这里补上正确的 turn
-              bindPending(sessionId)
-            }
-            paint()
-          }
-          userCount = next
-          lastUserText = textNow
+        function findList() {
+          const flow = document.querySelector(FLOW_SLOT)
+          if (flow !== null) return flow
+          const row = document.querySelector(USER_ROW)
+          return row === null ? null : row.parentElement
         }
 
         function attach() {
@@ -5314,14 +5070,27 @@ window.__ModuleLoader__.load({
           if (found === null) return
           if (observer !== null) observer.disconnect()
           list = found
-          userCount = countUsers()
-          observer = new MutationObserver(onMutate)
+          observer = new MutationObserver(() => {
+            if (list !== null && list.isConnected === false) { attach(); return }
+            if (list !== null && list !== document.querySelector(FLOW_SLOT) && document.querySelector(FLOW_SLOT) !== null) {
+              attach(); return
+            }
+            refresh()
+          })
           observer.observe(list, { childList: true, subtree: true })
-          paint()
         }
 
+        // 首次：立刻拉一次画一遍；host 写盘稍慢时 observer 会再触发补齐。
+        void loadBindings().then(paint)
         attach()
+        // 兜底轮询：万一 observer 没触发（例如消息列表整体替换但容器未变），
+        // 每 2 秒拉一次，保证绑定表最终能反映到 DOM 上。
+        const poll = setInterval(refresh, 2000)
+
         return () => {
+          disposed = true
+          if (refreshTimer !== null) clearTimeout(refreshTimer)
+          clearInterval(poll)
           if (observer !== null) observer.disconnect()
           for (const stale of document.querySelectorAll('[' + ATTR + ']')) {
             if (stale.parentElement !== null) stale.parentElement.removeChild(stale)

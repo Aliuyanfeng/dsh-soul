@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 97
+const EXPECTED_ASSERTIONS = 98
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -4956,233 +4956,87 @@ function componentBody(text, name) {
     assert.equal(/useLayoutEffect/.test(body), false, '不得用 useLayoutEffect 测宽度')
     assert.equal(/addEventListener\(.resize./.test(body), false, '不必监听 resize（CSS 自适应）')
   })
-  await check('C91 发送完成后自动清空引用（用「新回合出现」而非「草稿变空」）', async () => {
-    // 用户要求：发完消息，输入框上方的引用自动消失。
-    //
-    // ⚠️ 第一版用「输入框内容从有变空」当信号 —— 用户当场指出这是错的：
-    //   输入一段话再**手动删光**，草稿同样变空 ⇒ 刚加的引用被误清。
-    //   而且「只引用不输入就发送」那种情况永远检测不到。
-    //   根因：草稿状态反映「输入区有没有字」，与「消息有没有发出去」无关。
-    //
-    // 现在的信号：消息列表里多了一个回合（[data-chat-turn]）——
-    //   它与「发送成功」语义等价，手动删字不会新增回合。
-    //
-    // 检测放在 SoulQuoteFloating 而不是 Dock：Dock 在没有引用时不渲染，
-    // 发送后引用被清空会把它卸载，而「发送之后把胶囊画到历史里」必须继续存在。
-    const body = componentBody(source, 'SoulQuoteFloating')
-    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
-    assert.equal(/data-chat-turn/.test(componentBody(source, 'SoulQuoteDock')), false, 'Dock 不得再持有发送检测（会被卸载）')
+await check('C91 发送后清空引用（引用→消息由 host 真绑定）', async () => {
+// 重写要点：客户端不再靠 DOM 数量/文本变化推断「发送」，
+// 只负责清空本地引用 + 同步空数组给 host；「这条消息带了什么引用」由
+// host 的 session/event 按消息 id 绑定（见 C104）。
+const body = componentBody(source, 'SoulQuoteFloating')
+assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+assert.match(body, /quoteClear\(sessionId\)/, 'Enter 发送时必须清空本地引用')
+// 不得再出现任何「推断发送」的旧机制
+assert.equal(/next > userCount/.test(source), false, '不得再靠消息数增加推断发送')
+assert.equal(/textNow !== lastUserText/.test(source), false, '不得再靠文本变化推断发送')
+assert.equal(/hadContentRef/.test(source), false, '不得再用草稿信号')
+assert.match(source, /saveQuotes\(sessionId, quotes/, '引用变更必须同步给 host')
+})
 
-    // ① 必须观察**消息列表**而不是输入框
-    // 用用户消息类名定位（.userRow 保留原名），不是 [data-chat-turn]（那是每节点的回合序号）
-    assert.ok(body.includes('USER_ROW'), '必须用 USER_ROW 常量定位用户消息')
-    assert.ok(body.includes('[class*="userRow"]'), 'USER_ROW 必须匹配 userRow 类名')
-    assert.match(body, /new MutationObserver\(/, '必须用 MutationObserver')
-    assert.ok(body.includes('observer.observe(list, { childList: true, subtree: true })'), '必须观察消息列表')
+await check('C92 历史胶囊按「消息唯一 id」真绑定绘制', async () => {
+const body = componentBody(source, 'SoulQuoteFloating')
+assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
 
-    // ② ★ 核心：只有回合数**增加**才清空
-    //    删除会话、清空对话、手动删字都不会让回合数增加。
-    assert.match(body, /next > userCount/, '只有用户消息数增加才算发送（不得用其他信号）')
+// ① 客户端从 host 拉绑定表，不再维护本地推断状态
+assert.match(body, /\/api\/soul\/quotes\/bound/, '必须从 host 拉取引用绑定表')
+assert.match(body, /fetch\(url\.toString\(\)\)/, '必须真的发请求取绑定表')
+assert.match(body, /data\.bindings/, '必须读取响应里的 bindings')
+// 旧推断状态一律不得再出现
+// 只查**代码行**：注释里提到旧名字是允许的（说明它为何被删）。
+const codeOnly = source.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n')
+for (const dead of ['pendingSent', 'bindPending', 'lastKeyBefore', 'snapshotSentQuotes',
+                    'sentQuoteBuckets', 'rowsAtSnapshot', 'next > userCount']) {
+  assert.equal(codeOnly.includes(dead), false, '不得残留旧推断机制：' + dead)
+}
 
-    // ③ 禁止再用「草稿变空」那套错误信号
-    assert.equal(/hadContentRef/.test(body), false, '不得再用「曾经有内容」那套草稿信号（手动删字会误清）')
+// ② 按 data-chat-node-key 提取消息裸 id，查表，命中才画
+assert.match(body, /lastIndexOf\('input-message'\)/, '必须从 node-key 提取消息 id')
+assert.match(body, /row\.closest\('\[data-chat-node-key\]'\)/, '必须按 data-chat-node-key 定位消息')
+assert.match(body, /Object\.prototype\.hasOwnProperty\.call\(bindings, id\)/, '必须按消息 id 查绑定表')
+assert.match(body, /bindings\[id\]/, '必须取出该消息的引用条目')
+assert.match(body, /row\.insertBefore\(badge, row\.firstChild\)/, '胶囊必须插到消息内部首位')
 
-    // ④ 失败方向安全：拿不到消息列表时不清空（宁多留，不误清）
-    assert.match(body, /if \(found === null\) return/, '拿不到消息列表时必须放弃（不猜）')
-    assert.match(body, /quoteClear\(sessionId\)/, '必须调用 quoteClear')
+// ③ 清理：只删「不属于当前应有条目」的旧胶囊
+assert.match(body, /wanted\.has\(forId\)/, '清理时必须按消息 id 比对')
+assert.match(body, /data-soul-quote-for/, '胶囊必须标记所属消息 id')
 
-    // ⑤ 环境不支持时降级
-    assert.match(body, /typeof MutationObserver !== 'function'\) return undefined/, 'MutationObserver 不可用时要降级')
-  })
+// ④ 重复插入保护 + observer 补画
+assert.match(body, /if \(drawn\) continue/, '已画过的消息不得重复插入')
+assert.match(body, /new MutationObserver\(/, '必须观察 DOM 以补画被宿主重渲染抹掉的胶囊')
+assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询，避免 observer 不触发时永远不画')
 
-  await check('C92 发送后把引用胶囊注入历史（方案 B：DOM 注入，脆弱实现）', async () => {
-    // 用户要的是「发送后，在用户消息上方显示一个「N 个已选文本片段」胶囊，hover 看原文」。
-    //
-    // 宿主没有「用户消息上方」的槽位（只有回合尾部的 turnTail），所以只能直接往
-    // 宿主的 DOM 里插节点。**这是脆弱实现**：依赖 [data-chat-turn] 这个标识，
-    // 宿主改版若换掉它，注入会静默失效（引用功能本身不受影响）。选它的理由是用户
-    // 明确要胶囊在消息上方，而官方槽位做不到。
-    const body = componentBody(source, 'SoulQuoteFloating')
-    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
-
-    // ① 必须用原生 DOM 造节点（不是 React）—— 目标是宿主的渲染树
-    assert.match(body, /document\.createElement\('div'\)/, '必须用 createElement 造胶囊')
-    assert.match(body, /className = 'soul-quote-sent'/, '胶囊必须有独立类名')
-
-    // ② 必须插到**回合最前面**（用户消息上方），不是追加到末尾
-    // 胶囊要插到**用户消息正上方**：parent.insertBefore(badge, last)，last 是 userRow
-    // 胶囊必须插到 userRow **内部**的第一个位置：
-    // userRow 是 flex column + align-items:flex-end，内部子项会右对齐、与消息气泡同侧；
-    // 插在外面（列表层）会左对齐 —— 用户截图里胶囊孤零零挂在左边的就是这个。
-    // ★ 必须挂到「它所属的那一轮」，不能一律挂最后一条。
-    // 用户报：「第二轮对话发出去后，第一轮的引用提示变到第二轮消息上方了」——
-    // 补画时若总取最后一条，胶囊会随轮次迁移。
-    assert.ok(body.includes("row.closest('[data-chat-node-key]')"),
-      '必须按消息节点 key 定位（data-chat-turn 在 userRow 祖先上可能根本没渲染）')
-    assert.ok(body.includes('target.insertBefore(badge, target.firstChild)'),
-      '必须插到目标用户消息内部（继承其右对齐）')
-    assert.ok(body.includes('if (target === null) continue'),
-      '找不到那条消息时必须跳过它（宁可没有，也不要画错地方）')
-    assert.equal(/rows\[rows\.length - 1\]\s*\n\s*if \(last === null/.test(body), false,
-      '不得退回「最后一条」的旧写法')
-    // paint 必须**先按 turn 找目标**，不能直接取最后一条。
-    // （helper 里仍会用 rows[rows.length - 1] —— 那是持记录 turn 用的，合理）
-    assert.ok(body.includes('let target = null'), 'paint 必须先按回合找目标')
-
-    // ③ hover 展示引用原文
-    // hover 展示原文：用自带 tooltip 子元素，**不用原生 title**。
-    // 用户反馈「hover 没展示」—— 原生 title 有约 1 秒延迟、样式不可控、长文本可能被截断。
-    assert.ok(body.includes('soul-quote-sent-tip'), '胶囊内必须有 tooltip 元素（承载引用原文）')
-    assert.ok(body.includes('tip.textContent = entry.quotes'), 'tooltip 内容必须来自引用原文')
-    // ★ 光有 className 赋值不够 —— 实测漏检过：删掉 appendChild 后，
-    // 「有 soul-quote-sent-tip 这个字符串」的断言照样通过，但 tooltip 根本没挂到 DOM。
-    assert.ok(body.includes('badge.appendChild(tip)'),
-      'tooltip 必须真的挂到胶囊上（只创建不挂载等于不存在）')
-    assert.equal(/badge\.title =/.test(body), false, '不得再用原生 title（有延迟、不可控、可能被截断）')
-    assert.match(source, /\.soul-quote-sent:hover \.soul-quote-sent-tip\{display:block\}/, 'hover 时必须显示 tooltip')
-    assert.match(source, /\.soul-quote-sent-tip\{[^}]*white-space:pre-wrap/, 'tooltip 必须保留换行（pre-wrap）')
-
-    // 位置与深色兼容（用户要求：「内容展示在上方，并且兼容深色背景」）
-    const tipAt = source.indexOf('.soul-quote-sent-tip{')
-    assert.ok(tipAt > 0, '找不到 tooltip 规则')
-    const tipCss = source.slice(tipAt, source.indexOf('}', tipAt) + 1)
+// ⑤ 样式契约（保持不变）
+assert.match(body, /document\.createElement\('div'\)/, '必须用 createElement 造胶囊')
+assert.match(body, /className = 'soul-quote-sent'/, '胶囊必须有独立类名')
+assert.match(body, /soul-quote-sent-tip/, '胶囊内必须有 tooltip 元素')
+assert.match(body, /badge\.appendChild\(tip\)/, 'tooltip 必须挂进胶囊')
+assert.equal(/badge\.title =/.test(body), false, '不得再用原生 title')
+assert.match(source, /\.soul-quote-sent:hover \.soul-quote-sent-tip\{display:block\}/, 'hover 必须显示 tooltip')
+assert.match(source, /\.soul-quote-sent-tip\{[^}]*white-space:pre-wrap/, 'tooltip 必须保留换行')
+const tipAt = source.indexOf('.soul-quote-sent-tip{')
+assert.ok(tipAt > 0, '找不到 tooltip 规则')
+const tipCss = source.slice(tipAt, source.indexOf('}', tipAt) + 1)
 const badgeCss = source.slice(source.indexOf('.soul-quote-sent{'), source.indexOf('}', source.indexOf('.soul-quote-sent{')) + 1)
-    assert.match(tipCss, /bottom:100%/, 'tooltip 必须展示在胶囊**上方**（原来贴下方，容易与背景糊在一起）')
-    assert.match(tipCss, /backdrop-filter:var\(--dsw-menu-backdrop-filter\)/,
-      '必须有宿主的模糊底（半透明背景在深色主题下才不会糊）')
-    assert.match(tipCss, /background:var\(--dsw-specific-menu\)/,
-      '背景必须用主题变量（它自带深浅两套：#f8f9faf0 / #303136f0）')
+assert.match(tipCss, /bottom:100%/, 'tooltip 必须在胶囊上方')
+assert.match(tipCss, /backdrop-filter:var\(--dsw-menu-backdrop-filter\)/, '背景模糊用主题变量')
+assert.match(tipCss, /background:var\(--dsw-specific-menu\)/, '背景用主题变量')
+assert.match(tipCss, /width:calc\(\(var\(--dsh-chat-content-width/, '宽度取输入框一半')
+assert.match(tipCss, /box-sizing:border-box/, '宽度含 padding')
+assert.match(tipCss, /right:0/, 'tooltip 贴右边缘')
+assert.match(tipCss, /color:var\(--dsw-alias-label-primary\)/, '文字色用主题变量')
+assert.match(badgeCss, /align-self:flex-end/, '胶囊右侧对齐')
+assert.match(badgeCss, /margin-left:auto/, '胶囊靠右')
+})
 
-    // 宽度固定为输入框的一半（用户要求：「宽度自适应为输入框的一半就好了」），
-    // 否则长引用会把弹窗撑得很宽。用宿主的 --dsh-chat-content-width 来算。
-    assert.match(tipCss, /width:calc\(\(var\(--dsh-chat-content-width/,
-      'tooltip 宽度必须取输入框宽度的一半（否则长文本会撑破样式）')
-    assert.match(tipCss, /box-sizing:border-box/, '宽度必须含 padding（否则实际更宽）')
-
-    // 用户要求「右侧对齐」：胶囊贴消息右边缘，tooltip 从右边缘向左展开。
-    assert.match(badgeCss, /align-self:flex-end/, '胶囊必须与消息右侧对齐')
-    assert.match(badgeCss, /margin-left:auto/, '胶囊必须靠右（flex 下推到右侧）')
-    assert.match(tipCss, /right:0/, 'tooltip 必须贴右边缘（宽度约为输入框一半，向左展开）')
-    assert.match(tipCss, /color:var\(--dsw-alias-label-primary\)/, '文字色必须用主题变量')
-
-    // ④ ★ 顺序：先快照、再清空 —— 反了就没内容可画
-    // 快照+清空已提取成模块级 helper（三个通道共用），所以要查 source 而不是组件体
-    const helperAt = source.indexOf('function snapshotSentQuotes(sessionId, recordAnchor)')
-    // Enter / 相位通道必须传 false —— 消息还没渲染，此刻取到的是上一条的 turn，
-    // 用旧 turn 找目标必然落空（用户实测：引用后发送，胶囊完全不出现）。
-    // ★ 必须**分别计数**：Enter 与相位两个通道都要传 false。
-    // 只查一次 includes 会被另一处掩盖 —— 实测漏检过（把 Enter 改成 true 照样通过）。
-    const noTurnCount = (body.match(/snapshotSentQuotes\(sessionId, false\)/g) || []).length
-    assert.ok(noTurnCount >= 2, `Enter 与相位通道都必须传 false（实际 ${noTurnCount} 处）`)
-    assert.ok(body.includes('bindPending(sessionId)'),
-      '回合通道必须把待绑定的引用绑到消息上（那是唯一能拿到正确消息 key 的时机）')
-
-    // ★ 绘制时就地补回合：不再依赖回合通道是否触发。
-    // 用户实测「胶囊仍然跟着轮次移动」→ turn 一直为空，每次都在走兜底。
-
-
-    // ★ 实测日志证明 userRow 的祖先里**没有** data-chat-turn（turn 永远为空），
-    // 所以必须另有一条不依赖该属性的定位路径：索引。
-    // ★ 必须查**定位条件本身**，不能只查变量名：实测漏检过 ——
-    // 把条件改成 if(false) 后，sent.index 仍在块内部，只查变量名照样通过。
-
-
-    // ★ 用消息节点的唯一 key 做绑定（用户提的思路：引用跟着那条消息走）。
-    // 不用 data-chat-turn 的原因：源码里 turn 为空时 React 不渲染该属性，
-    // 而 data-chat-node-key 一定有值。
-    assert.ok(source.includes("closest('[data-chat-node-key]')"),
-      '必须用 data-chat-node-key 绑定消息（turn 属性可能根本没渲染）')
-    // ★ 必须查**定位条件本身**：只查变量名会被 if(false) 块内部的引用骗过
-    // （这个坑已经踩过两次了）。
-    // ★ 每个 nodeKey 一条，互不覆盖（这正是「旧胶囊被新引用顶掉」的修法）。
-    assert.ok(body.includes('for (const [nodeKey, entry] of bucket)'),
-      '必须逐条绘制（每条消息一条引用记录，互不覆盖）')
-
-    // ★ paint 必须自己兜底绑定 pending：Enter/相位通道存完 pending 就清空了引用层，
-    // 而 onMutate 的「数量增加+文本变化」门槛太严，一旦不触发，pending 永远挂着、
-    // bucket 是空的 → paint 直接 return → 胶囊完全不出现（用户实测反馈）。
-    assert.ok(body.includes('pendingSent.has(sessionId) && bindPending(sessionId)'),
-      'paint 必须兜底绑定 pending（不能只依赖 onMutate 的严格门槛）')
-    // ★ 绑定必须按 lastKeyBefore 精确定位「快照前最后一条之后的第一条」，
-    // 不能无脑取当前最后一条 —— 渲染延迟期间若又发了消息，胶囊会跑到最新消息上
-    // （用户实测：「过一会才出现 现在出现在了最新消息上」）。
-    assert.ok(source.includes('lastKeyBefore'), '快照必须记下「引用前最后一条」的 nodeKey')
-    assert.ok(source.includes('targetKey'), '绑定必须算出精确的目标消息 key')
-    // ★ 必须校验「取到第一条新消息就停」，否则变异成「走到最后一条」照样通过 ——
-    // 那正是胶囊跑到最新消息上的 bug。
-    assert.ok(/targetKey = key\s*\n\s*break/.test(source),
-      '找到 lastKeyBefore 之后的第一条新消息必须立刻 break（不能取最后一条）')
-    assert.ok(source.includes('if (stillThere) return false'),
-      '新消息还没渲染时不得绑定（继续等）')
-    assert.ok(body.includes('wanted.has(forKey)'),
-      '清理时只能删「不属于任何已存条目」的旧胶囊（否则会删掉别的轮次的）')
-
-    // ★ Enter/相位通道必须**一个锚点都不记**（含 turn / index / nodeKey）。
-    // 之前只跳过 turn，index 和 nodeKey 照记 —— 那一刻新消息还没渲染，
-    // 记下的是上一条消息的 key，胶囊被画到上一条上（用户反馈「没出现在消息上方」）。
-    // ★ 查**三元分支本身**：captureAnchor 里也有一个同样的空对象字面量，
-    // 实测证明只查那个字面量会被它骗过（第四次「断言太宽」了）。
-    assert.ok(source.includes('function sentBucketOf('),
-      '必须按消息分别保存（每个 nodeKey 一条，互不覆盖）')
-    assert.ok(source.includes('const pendingSent = new Map()'),
-      'Enter 时刻消息还没渲染，必须先存 pending 再绑定')
-    assert.ok(source.includes('if (recordAnchor === false)'),
-      'Enter 通道必须走「不记锚点」分支（那一刻新消息还没渲染）')
-    assert.ok(source.includes('index: rows.length - 1'), '捕获锚点时必须记录索引')
-    assert.ok(helperAt > 0, '必须有 snapshotSentQuotes helper')
-    const snapAt = source.indexOf('sentBucketOf(sessionId).set', helperAt)
-    const clearAt = source.indexOf('quoteClear(sessionId)', helperAt)
-    assert.ok(snapAt > helperAt && clearAt > snapAt, 'helper 里必须先快照再清空（否则历史里没有内容可注入）')
-
-    // ⑤ 幂等 + 清理：重复注入会叠出多个胶囊；卸载必须移除
-    // ★ 位置关系，不是"模式存在"：清理必须在 paint() 内、且在 insertBefore 之前。
-    // 实测漏检过 —— 卸载时也有一处同样的清理代码，只查模式会让"删掉 paint 里的清理"
-    // 这个变体照样通过，而那正是会叠出多个胶囊的 bug。
-    const paintAt = body.indexOf('function paint()')
-    const insertAt = body.indexOf('target.insertBefore(badge, target.firstChild)')
-    const cleanAt = body.indexOf('removeChild(stale)')
-    assert.ok(paintAt > 0 && insertAt > paintAt, '找不到 paint() 或插入点')
-    assert.ok(cleanAt > paintAt && cleanAt < insertAt, '必须在本轮注入前清理旧胶囊（幂等），且在插入之前')
-    assert.match(body, /removeChild\(stale\)/, '卸载时必须移除注入的节点')
-
-    // ⑥ 列表重建时要能重新挂载（切会话/清空对话会让 list 脱离文档）
-    assert.match(body, /list\.isConnected === false/, '列表脱离文档时必须重新挂载')
-  })
-
-  await check('C93 优先用宿主提交阶段判断发送，取不到才退回 DOM 观察', async () => {
-    // 用户质疑：「我觉得是可以监听到发送事件的吧？」
-    //
-    // 查证结果：宿主内部确有 submitPlane 状态机（plain / adjudicating / submitting / claimed），
-    // 经 SessionInputShell.state 发布，而 input.dock / input.overlay 的 props 里带一个
-    // input 对象就是它。但**确切字段路径不在公开契约里**，所以只能"试几个候选位置"。
-    //
-    // 因此实现是双通道：能读到 phase 就用它（更直接），读不到就退回 DOM 回合数观察。
-    const body = componentBody(source, 'SoulQuoteFloating')
-    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
-
-    // ① 必须有 phase 读取工具，且覆盖多个候选路径（不赌单一字段名）
-    assert.match(source, /function readSubmitPhase\(input\)/, '必须有 readSubmitPhase')
-    assert.match(source, /input\.phase/, '必须尝试 input.phase')
-    assert.match(source, /input\.submit\.phase/, '必须尝试 input.submit.phase')
-    assert.match(source, /input\.submitState\.phase/, '必须尝试 input.submitState.phase')
-    assert.match(body, /readSubmitPhase\(props\.input\)/, '浮层必须从 props.input 读阶段')
-
-    // ② 判断必须是「离开 busy 阶段回到 plain」，不是「看到 plain 就清」
-    //    后者会在任何一次渲染都触发（plain 是常态）。
-    assert.match(source, /function isBusyPhase\(phase\)/, '必须有 isBusyPhase')
-    assert.match(source, /phase === 'submitting'/, 'busy 必须包含 submitting')
-    assert.match(body, /!isBusyPhase\(previous\) \|\| phase !== 'plain'\) return/, '必须是 busy → plain 的跳变才触发')
-
-    // ③ 降级：读不到 phase 时不得动作（交给 DOM 通道）
-    assert.match(body, /if \(phase === null \|\| previous === null\) return/, 'phase 缺失时必须放弃（不猜）')
-
-    // ④ ★ 使用了就必须有声明 ——
-    //    实测漏过：sentQuoteBuckets 的声明被误删，只剩使用处，node --check 查不出
-    //    未定义变量，测试也照样通过，直到运行时才 ReferenceError。
-    assert.match(source, /const sentQuoteBuckets = new Map\(\)/, 'sentQuoteBuckets 必须有声明（否则运行时未定义）')
-    assert.match(source, /function readSubmitPhase\(input\)/, 'readSubmitPhase 必须有声明')
-    assert.match(source, /function isBusyPhase\(phase\)/, 'isBusyPhase 必须有声明')
-  })
+await check('C93 不再依赖不可靠的「提交阶段」通道', async () => {
+// 旧版读 props.input 里的 submitPlane phase，但 conversation.input.overlay
+// 传的是空 props，readSubmitPhase 恒为 null，从未生效过。
+// 重写时连这条通道一起删：发送只由 Enter 清空引用，关联交给 host 真绑定。
+const codeOnly = source.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n')
+assert.equal(codeOnly.includes('readSubmitPhase'), false, '不得再调用恒为 null 的 readSubmitPhase')
+assert.equal(codeOnly.includes('isBusyPhase'), false, '不得再保留无用的 isBusyPhase')
+assert.equal(codeOnly.includes('phaseRef'), false, '不得再维护提交阶段 ref')
+const body = componentBody(source, 'SoulQuoteFloating')
+assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+assert.match(body, /quoteClear\(sessionId\)/, 'Enter 通道仍必须清空引用')
+})
 
   await check('C94 引用浮层采用队列消息的样式（无标题行、文字自然换行、row 无 hover）', async () => {
     // 用户要求：「输入框上方显示引用的样式可以参考排队消息的样式」。
@@ -5262,11 +5116,12 @@ const badgeCss = source.slice(source.indexOf('.soul-quote-sent{'), source.indexO
     // ④ 必须只响应可编辑区里的 Enter（别处按 Enter 与我们无关）
     assert.ok(body.includes('target.closest('), '必须检查事件目标是否在可编辑区内')
 
-    // ⑤ 与 DOM 通道同一套动作：先快照再清空（顺序保证历史里有内容可画）
+    // ⑤ 发送时清空本地引用；「这条消息带了什么引用」由 host 的
+    //    session/event 真绑定负责，客户端不再需要任何快照 helper。
     const enterAt = body.indexOf('const onKeyDown = (ev) => {')
-    // 三处通道现在共用 snapshotSentQuotes（它内部先快照再清空）
-    const enterCallAt = body.indexOf('snapshotSentQuotes(sessionId', enterAt)
-    assert.ok(enterCallAt > enterAt, 'Enter 通道必须调用快照 helper')
+    const enterCallAt = body.indexOf('quoteClear(sessionId)', enterAt)
+    assert.ok(enterCallAt > enterAt, 'Enter 通道必须清空本地引用')
+    assert.equal(body.includes('snapshotSentQuotes'), false, '不得再调用已删除的快照 helper')
 
     // ⑥ 卸载时必须解绑（否则会泄漏，且会话切走后仍会动作）
     assert.ok(body.includes("document.removeEventListener('keydown', onKeyDown, true)"),
@@ -5462,54 +5317,72 @@ const badgeCss = source.slice(source.indexOf('.soul-quote-sent{'), source.indexO
     assert.equal(fn(1, 0, 0), false, '减少但无引用 → 不动作')
   })
 
-  await check('C102 引用不会被渲染抖动误清（回合看内容、队列看 dock 在不在）', async () => {
-    // 用户报：「你在回复过程中，我引用了一段，然后不知道怎么了 引用的就消失了」
-    //
-    // 这是**误清**，比「排队消息带走引用」严重得多 —— 它破坏基本功能。
-    //
-    // 根因：两条清空通道都只看"数量变化"，而数量会抖：
-    //   ① 回合通道数 [class*="userRow"] —— assistant 流式回复期间 React 会重渲染
-    //      消息列表，节点被移除再重建，瞬时出现 1 → 0 → 1，`next > userCount`
-    //      对 0 → 1 这一段成立 ⇒ 误判成"刚发出了新消息" ⇒ 引用被清；
-    //   ② 队列通道在 dock 为 null 时把数量当 0 —— 重渲染期间 dock 会短暂消失，
-    //      于是被当成"队列被发走了"。
-    const body = componentBody(source, 'SoulQuoteFloating')
-    assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
-
-    // ① 回合通道：数量增加还不够，必须**内容也变**
-    assert.ok(body.includes('textNow !== lastUserText'),
-      '回合通道必须比较最后一条用户消息的文本（否则渲染抖动会误清引用）')
-    assert.ok(body.includes('lastRow.textContent'), '必须读取最后一条用户消息的文本')
-    assert.ok(body.includes("let lastUserText = ''"), '必须维护文本快照')
-
-    // ② 队列通道：dock 不在时**不更新基线**
-    assert.match(body, /if \(dock !== null\) \{/, '队列通道必须在 dock 存在时才判断数量')
-    assert.equal(/const now = dock === null \? 0 :/.test(body), false,
-      '不得在 dock 为 null 时把数量当 0（重渲染期 dock 会短暂消失）')
-  })
-
-  await check('C103 历史胶囊被宿主重渲染抹掉后会补画', async () => {
-// 用户报：「发送后消息上方确实有这个展示，但只存在了 1 秒就消失了」
+await check('C102 渲染抖动不再可能误清引用（不再靠 DOM 变化判断发送）', async () => {
+// 旧版用「消息数增加 + 最后一条文本变化」判断发送，流式回复期间 React 重渲染
+// 会制造 1→0→1 的假增加，于是引用被凭空清掉，需要一堆抖动防护。
 //
-// 根因：注入的节点**不在宿主的虚拟 DOM 里**。宿主重建 userRow 时不会保留它，
-// 会连它一起丢掉 —— 1 秒后正好是流式回复开始、消息列表重渲染的时刻。
-//
-// ★ 改成多条目后必须是「按条目逐个检查缺失」，不能是「一个胶囊都没有」。
-// 只要还有别的胶囊在，被抹掉的那一条就永远补不回来 —— 这正是
-// 「新消息的胶囊过几秒就消失了」的成因。
+// 重写后：清空只发生在用户**真的按 Enter** 时（keydown 捕获阶段），
+// DOM 变化只用于补画胶囊、绝不触发清空 ⇒ 抖动问题从根上不存在。
+const codeOnly = source.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n')
 const body = componentBody(source, 'SoulQuoteFloating')
 assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
-
-const guardAt = body.indexOf('const bucketNow = sentQuoteBuckets.get(sessionId)')
-assert.ok(guardAt > 0, '补画前必须取出已存条目，逐条比对')
-const missingAt = body.indexOf('if (missing) paint()', guardAt)
-assert.ok(missingAt > guardAt, '发现任一条目缺失就必须补画')
-assert.ok(body.indexOf("document.querySelectorAll('[' + FOR_ATTR + ']')", guardAt) > guardAt,
-  '必须收集当前已存在的胶囊，按 nodeKey 逐个比对')
-assert.ok(body.indexOf('for (const key of bucketNow.keys())', guardAt) > guardAt,
-  '必须遍历所有已存条目（否则漏掉被抹掉的那一条）')
-assert.ok(missingAt - guardAt < 900, '缺失判断与补画必须紧邻（避免插入后自触发）')
+assert.equal(codeOnly.includes('lastUserText'), false, '不得再维护「最后一条文本」快照')
+assert.equal(codeOnly.includes('textNow'), false, '不得再用文本变化推断发送')
+assert.equal(codeOnly.includes('userCount'), false, '不得再用消息数基线推断发送')
+// 清空入口唯一：Enter 的 keydown
+const clearCount = (codeOnly.match(/quoteClear\(sessionId\)/g) || []).length
+assert.ok(clearCount >= 1, '必须保留清空引用的入口')
+assert.match(codeOnly, /addEventListener\('keydown', onKeyDown, true\)/, '清空必须由真实按键触发')
 })
+
+await check('C103 胶囊被宿主重渲染抹掉后会补画', async () => {
+const body = componentBody(source, 'SoulQuoteFloating')
+assert.ok(body !== '', '找不到 SoulQuoteFloating 组件')
+// 新架构：paint() 每次都按「绑定表 ∩ 当前 DOM」重新计算 wanted，
+// observer + 轮询驱动，天然支持逐条补画，不再有「只看一个胶囊都没有」的守卫。
+assert.match(body, /const wanted = new Set\(\)/, '必须每次重算应有的胶囊集合')
+assert.match(body, /for \(const row of document\.querySelectorAll\(USER_ROW\)\)/, '必须遍历所有消息逐条比对')
+assert.match(body, /if \(drawn\) continue/, '已存在的不得重复画')
+assert.match(body, /new MutationObserver\(/, 'DOM 变化必须触发补画')
+assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
+})
+
+  await check('C104 host 侧按 session/event 把引用真绑定到消息 id', async () => {
+    const host = readFileSync(new URL('../index.mjs', import.meta.url), 'utf8')
+    const hostCode = host.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n')
+
+    // ① 订阅 session/event，且只认会生成 input-message 节点的用户消息
+    assert.match(hostCode, /ctx\.on\('session\/event'/, '必须订阅 session/event')
+    assert.match(hostCode, /event\.type !== 'user\/message'\) return/, '只处理 user/message')
+    assert.match(hostCode, /event\.surfaceOp !== 'append'\) return/,
+      '必须过滤 surfaceOp=append（否则绑到不产生 DOM 节点的注入消息）')
+
+    // ② 用 event.data.id 作绑定键（与 DOM node-key 尾段一致）
+    assert.match(hostCode, /event\.data\.id/, '必须取 user/message 的 data.id')
+    assert.match(hostCode, /quoteSnapshot/, '必须有独立快照')
+    assert.match(hostCode, /bindQuotesToMessage\(/, '必须调用绑定纯函数')
+    assert.match(hostCode, /writeQuoteBindings\(/, '必须落盘')
+
+    // ③ 快照与送达层解耦
+    assert.match(hostCode, /quoteSnapshot\.set\(/, 'setQuotes 必须写快照')
+    assert.match(hostCode, /quoteSnapshot\.delete\(key\)/, '消费快照后必须删除')
+
+    // ④ 查询端点与注册
+    assert.match(hostCode, /\/api\/soul\/quotes\/bound/, '必须提供绑定表查询端点')
+    assert.match(hostCode, /registerQuoteBinding\(ctx\)/, 'apply 里必须注册')
+
+    // ⑤ 纯函数层
+    const lib = readFileSync(new URL('../lib/quote-binding.mjs', import.meta.url), 'utf8')
+    assert.match(lib, /lastIndexOf\('input-message'\)/, '必须能从 node-key 提取消息 id')
+    assert.match(lib, /createHash\('sha256'\)/, 'sidecar 文件名必须哈希')
+
+    // ⑥ 时序兜底：消息先到、引用快照晚到时必须能补绑
+    //    （saveQuotes 与按 Enter 几乎同时，post-commit 事件可能先到）
+    assert.match(hostCode, /awaitingSnapshot\.set\(/, '消息先到时必须记下待补绑的 id')
+    assert.match(hostCode, /persistBinding\(key, awaiting\.messageId, snap\)/, '快照晚到时必须补绑')
+    assert.match(hostCode, /AWAIT_SNAPSHOT_MS/, '待补绑必须有过期时间，避免旧 id 长期挂着')
+  })
+
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 
