@@ -4585,7 +4585,21 @@ window.__ModuleLoader__.load({
     //
     // 只保留**最近一次**：历史注入只挂到最新那条回合上，更早的不追溯 ——
     // 追溯需要把引用与消息 id 持久化绑定，那是另一套成本。
+    // sessionId -> Map<nodeKey, { quotes, at }>：**按消息分别保存**，互不覆盖
     const sentQuoteBuckets = new Map()
+    // sessionId -> { quotes, at }：已快照但还没拿到消息 key（Enter 时刻消息还没渲染）
+    const pendingSent = new Map()
+    // 标记每个胶囊属于哪条消息
+    const FOR_ATTR = 'data-soul-quote-for'
+
+    function sentBucketOf(sessionId) {
+      let m = sentQuoteBuckets.get(sessionId)
+      if (m === undefined) {
+        m = new Map()
+        sentQuoteBuckets.set(sessionId, m)
+      }
+      return m
+    }
 
     /**
      * 读宿主的「提交阶段」。
@@ -4652,31 +4666,15 @@ window.__ModuleLoader__.load({
     function snapshotSentQuotes(sessionId, recordAnchor) {
       const current = quoteListOf(sessionId)
       if (current.length === 0) return false
-      // ★ recordAnchor === false 时**一个锚点都不记**。
-      //
-      // 之前只跳过 turn，index / nodeKey 照记 —— 但 Enter 那一刻新消息还没渲染，
-      // 于是记下的是**上一条消息**的 key，胶囊被画到上一条上
-      // （用户反馈：「胶囊没有出现在消息上方」）。
-      const anchor = recordAnchor === false
-        ? { turn: null, index: -1, nodeKey: null }
-        : captureAnchor()
-      const turn = anchor.turn
-      const index = anchor.index
-      const nodeKey = anchor.nodeKey
-      // 同时记下它当前在列表里的**索引**。
-      //
-      // 为什么要索引：实测日志显示 userRow 的祖先里根本没有 data-chat-turn
-      // （「backfill: userRow 没有 data-chat-turn 祖先」），turn 永远是 null，
-      // 于是每次都走兜底、胶囊跟着轮次跑。
-      //
-      // 索引在这个场景里是稳定的：新消息总是**追加在末尾**，已有消息的索引不变。
-      sentQuoteBuckets.set(sessionId, {
-        quotes: current.map((q) => ({ text: q.text })),
-        at: Date.now(),
-        turn,
-        index,
-        nodeKey
-      })
+      const entry = { quotes: current.map((q) => ({ text: q.text })), at: Date.now() }
+      if (recordAnchor === false) {
+        // Enter 时刻消息还没渲染 → 先存 pending，等回合通道绑定
+        pendingSent.set(sessionId, entry)
+      } else {
+        const anchor = captureAnchor()
+        if (anchor.nodeKey === null) pendingSent.set(sessionId, entry)
+        else sentBucketOf(sessionId).set(anchor.nodeKey, entry)
+      }
       quoteClear(sessionId)
       return true
     }
@@ -4689,16 +4687,13 @@ window.__ModuleLoader__.load({
      *
      * @returns 是否补上了
      */
-    function backfillSentTurn(sessionId) {
-      const sent = sentQuoteBuckets.get(sessionId)
-      if (sent === undefined) return false
-      // 已经有 nodeKey 就不用补（它是最可靠的锚点）
-      if (sent.nodeKey !== null && sent.nodeKey !== undefined) return false
+    function bindPending(sessionId) {
+      const pending = pendingSent.get(sessionId)
+      if (pending === undefined) return false
       const anchor = captureAnchor()
-      if (anchor.index < 0) return false
-      sent.turn = anchor.turn
-      sent.index = anchor.index
-      sent.nodeKey = anchor.nodeKey
+      if (anchor.nodeKey === null) return false
+      sentBucketOf(sessionId).set(anchor.nodeKey, pending)
+      pendingSent.delete(sessionId)
       return true
     }
 
@@ -5134,102 +5129,63 @@ window.__ModuleLoader__.load({
 
         // 把胶囊画到**最新那条用户消息**的正上方
         function paint() {
-          for (const stale of document.querySelectorAll('[' + ATTR + ']')) {
-            if (stale.parentElement !== null) stale.parentElement.removeChild(stale)
+          // 按消息分别绘制：每个 nodeKey 一条，互不覆盖。
+          //
+          // 之前每个会话只存一条，导致「新引用一出现，旧胶囊就被删掉」，
+          // 用户看到的现象是「上一条的胶囊挂到了新消息」+「新消息的胶囊几秒后消失」。
+          const bucket = sentQuoteBuckets.get(sessionId)
+          const wanted = new Set()
+          if (bucket !== undefined) {
+            for (const key of bucket.keys()) wanted.add(key)
           }
-          const sent = sentQuoteBuckets.get(sessionId)
-          if (sent === undefined) return
+
+          // 清理：只删「不属于任何已存条目」的旧胶囊
+          for (const stale of document.querySelectorAll('[' + ATTR + ']')) {
+            const forKey = stale.getAttribute(FOR_ATTR)
+            if (forKey === null || !wanted.has(forKey)) {
+              if (stale.parentElement !== null) stale.parentElement.removeChild(stale)
+            }
+          }
+
+          if (bucket === undefined || bucket.size === 0) return
           const rows = document.querySelectorAll(USER_ROW)
           if (rows.length === 0) return
 
-          // 按记录的回合找目标，**不能**退回到"最后一条"。
-          //
-          // 用户报：「第二轮对话发出去后，第一轮的引用提示变到第二轮消息上方了」——
-          // 因为补画时一律挂到最后一条，胶囊会随轮次「迁移」。
-          // 找不到所属回合（比如那轮被删了）就干脆不画，也不要画错地方。
-          let target = null
-          if (sent.turn !== null && sent.turn !== undefined) {
-            for (const row of rows) {
-              if (typeof row.closest !== 'function') continue
-              const node = row.closest('[data-chat-turn]')
-              if (node === null) continue
-              if (node.getAttribute('data-chat-turn') === String(sent.turn)) {
-                target = row
-                break
-              }
+          for (const [nodeKey, entry] of bucket) {
+            // 已经画过就跳过（避免重复插入）
+            let drawn = false
+            for (const b of document.querySelectorAll('[' + FOR_ATTR + ']')) {
+              if (b.getAttribute(FOR_ATTR) === nodeKey) { drawn = true; break }
             }
-          }
-          // 就地补回合：不再依赖回合通道是否触发。
-          //
-          // 用户实测「胶囊仍然跟着轮次移动」→ 说明 turn 一直是 null，每次都走了兜底。
-          // paint 通常由「消息列表发生变化」触发，此刻新消息已经在 DOM 里，
-          // 所以此刻取到的就是它自己的回合号。只补一次（补上后不再进这里）。
-          if ((sent.turn === null || sent.turn === undefined) && rows.length > 0) {
-            const lastRow = rows[rows.length - 1]
-            if (typeof lastRow.closest === 'function') {
-              const turnNode = lastRow.closest('[data-chat-turn]')
-              if (turnNode !== null) sent.turn = turnNode.getAttribute('data-chat-turn')
-            }
-          }
-          // 优先按消息节点的唯一 key 找回 —— 这是最可靠的定位。
-          if (target === null && sent.nodeKey !== null && sent.nodeKey !== undefined) {
+            if (drawn) continue
+
+            // 按消息 key 找它自己的那条消息
+            let target = null
             for (const row of rows) {
               if (typeof row.closest !== 'function') continue
               const holder = row.closest('[data-chat-node-key]')
               if (holder === null) continue
-              if (holder.getAttribute('data-chat-node-key') === String(sent.nodeKey)) {
+              if (holder.getAttribute('data-chat-node-key') === nodeKey) {
                 target = row
                 break
               }
             }
-          }
+            if (target === null) continue
 
-          // turn 拿不到就用索引（实测 turn 一直为空）。
-          if (target === null && sent.index !== undefined && sent.index >= 0) {
-            if (rows[sent.index] !== undefined && rows[sent.index] !== null) {
-              target = rows[sent.index]
-            }
+            const badge = document.createElement('div')
+            badge.className = 'soul-quote-sent'
+            badge.setAttribute(ATTR, String(entry.at))
+            badge.setAttribute(FOR_ATTR, nodeKey)
+            badge.textContent = t('quote.sentBadge', { count: String(entry.quotes.length) })
+            const tip = document.createElement('div')
+            tip.className = 'soul-quote-sent-tip'
+            tip.textContent = entry.quotes
+              .map((q, i) => t('quote.sentItem', { index: String(i + 1), text: q.text }))
+              .join('\n\n')
+            badge.appendChild(tip)
+            // 插到消息内部第一个位置 → 继承 align-items:flex-end，落在消息上方
+            target.insertBefore(badge, target.firstChild)
           }
-
-          if (target === null) {
-            // 拿不到回合时兜底：退回最后一条。
-            //
-            // 用户报过「引用一段文字，胶囊没显示」——如果宿主的 userRow 没有
-            // data-chat-turn 祖先（我假设它有，但没法离线验证），精确匹配必然落空，
-            // 而「找不到就不画」会把结果变成完全不显示。
-            //
-            // 权衡：位置可能不完美（有轮次迁移的风险），但**能看见**优先。
-            // 只有「确实拿到了 turn、只是那一条已经不在了」才放弃 —— 那种情况
-            // 画到别处是明确的错误。
-            if (sent.turn === null || sent.turn === undefined) {
-              target = rows[rows.length - 1]
-            }
-          }
-          if (target === null) return
-          const badge = document.createElement('div')
-          badge.className = 'soul-quote-sent'
-          badge.setAttribute(ATTR, String(sent.at))
-          badge.textContent = t('quote.sentBadge', { count: String(sent.quotes.length) })
-          // hover 展示引用原文。
-          //
-          // ⚠️ 原来用的是原生 title —— 用户反馈「hover 没展示」。原生 title 有约 1 秒
-          //   延迟、样式不可控、长文本还可能被系统截断，很容易让人觉得"没有"。
-          //   改成自带的一个绝对定位子元素，hover 立即出现，且能保留换行。
-          const tip = document.createElement('div')
-          tip.className = 'soul-quote-sent-tip'
-          tip.textContent = sent.quotes
-            .map((q, i) => t('quote.sentItem', { index: String(i + 1), text: q.text }))
-            .join('\n\n')
-          badge.appendChild(tip)
-          // 插到 userRow **内部**的第一个位置，而不是它的前面。
-          //
-          // userRow 是 flex column + align-items:flex-end，所以它的子项会**右对齐**，
-          // 与用户消息气泡同侧。插在它外面（列表层）则会继承列表的默认左对齐 ——
-          // 用户截图里胶囊孤零零挂在左边，就是这个原因。
-          //
-          // 放在内部还有个好处：userRow 的 gap:6px 会自动给出胶囊与消息之间的间距，
-          // 不必我再手写 margin。
-          target.insertBefore(badge, target.firstChild)
         }
 
         function onMutate() {
@@ -5271,7 +5227,7 @@ window.__ModuleLoader__.load({
               snapshotSentQuotes(sessionId, true)
             } else {
               // Enter 已经快照过（引用层已空），这里补上正确的 turn
-              backfillSentTurn(sessionId)
+              bindPending(sessionId)
             }
             paint()
           }

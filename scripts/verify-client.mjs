@@ -5017,12 +5017,12 @@ function componentBody(text, name) {
     // ★ 必须挂到「它所属的那一轮」，不能一律挂最后一条。
     // 用户报：「第二轮对话发出去后，第一轮的引用提示变到第二轮消息上方了」——
     // 补画时若总取最后一条，胶囊会随轮次迁移。
-    assert.ok(body.includes("row.closest('[data-chat-turn]')"),
-      '必须按 data-chat-turn 定位目标回合（否则胶囊会跑到别的轮次）')
+    assert.ok(body.includes("row.closest('[data-chat-node-key]')"),
+      '必须按消息节点 key 定位（data-chat-turn 在 userRow 祖先上可能根本没渲染）')
     assert.ok(body.includes('target.insertBefore(badge, target.firstChild)'),
       '必须插到目标用户消息内部（继承其右对齐）')
-    assert.ok(body.includes('if (target === null) return'),
-      '找不到所属回合时必须放弃（宁可没有，也不要画错地方）')
+    assert.ok(body.includes('if (target === null) continue'),
+      '找不到那条消息时必须跳过它（宁可没有，也不要画错地方）')
     assert.equal(/rows\[rows\.length - 1\]\s*\n\s*if \(last === null/.test(body), false,
       '不得退回「最后一条」的旧写法')
     // paint 必须**先按 turn 找目标**，不能直接取最后一条。
@@ -5033,7 +5033,7 @@ function componentBody(text, name) {
     // hover 展示原文：用自带 tooltip 子元素，**不用原生 title**。
     // 用户反馈「hover 没展示」—— 原生 title 有约 1 秒延迟、样式不可控、长文本可能被截断。
     assert.ok(body.includes('soul-quote-sent-tip'), '胶囊内必须有 tooltip 元素（承载引用原文）')
-    assert.ok(body.includes('tip.textContent = sent.quotes'), 'tooltip 内容必须来自引用原文')
+    assert.ok(body.includes('tip.textContent = entry.quotes'), 'tooltip 内容必须来自引用原文')
     // ★ 光有 className 赋值不够 —— 实测漏检过：删掉 appendChild 后，
     // 「有 soul-quote-sent-tip 这个字符串」的断言照样通过，但 tooltip 根本没挂到 DOM。
     assert.ok(body.includes('badge.appendChild(tip)'),
@@ -5068,20 +5068,18 @@ function componentBody(text, name) {
     // 只查一次 includes 会被另一处掩盖 —— 实测漏检过（把 Enter 改成 true 照样通过）。
     const noTurnCount = (body.match(/snapshotSentQuotes\(sessionId, false\)/g) || []).length
     assert.ok(noTurnCount >= 2, `Enter 与相位通道都必须传 false（实际 ${noTurnCount} 处）`)
-    assert.ok(body.includes('backfillSentTurn(sessionId)'),
-      '回合通道必须补上 turn（那是唯一能拿到正确回合的时机）')
+    assert.ok(body.includes('bindPending(sessionId)'),
+      '回合通道必须把待绑定的引用绑到消息上（那是唯一能拿到正确消息 key 的时机）')
 
     // ★ 绘制时就地补回合：不再依赖回合通道是否触发。
     // 用户实测「胶囊仍然跟着轮次移动」→ turn 一直为空，每次都在走兜底。
-    assert.ok(body.includes('sent.turn = turnNode.getAttribute'),
-      'paint 必须在 turn 为空时就地补上（否则兜底到最后一条，胶囊会迁移）')
+
 
     // ★ 实测日志证明 userRow 的祖先里**没有** data-chat-turn（turn 永远为空），
     // 所以必须另有一条不依赖该属性的定位路径：索引。
     // ★ 必须查**定位条件本身**，不能只查变量名：实测漏检过 ——
     // 把条件改成 if(false) 后，sent.index 仍在块内部，只查变量名照样通过。
-    assert.ok(body.includes('if (target === null && sent.index !== undefined'),
-      'paint 必须真的按索引定位（turn 拿不到时的退路）')
+
 
     // ★ 用消息节点的唯一 key 做绑定（用户提的思路：引用跟着那条消息走）。
     // 不用 data-chat-turn 的原因：源码里 turn 为空时 React 不渲染该属性，
@@ -5090,19 +5088,26 @@ function componentBody(text, name) {
       '必须用 data-chat-node-key 绑定消息（turn 属性可能根本没渲染）')
     // ★ 必须查**定位条件本身**：只查变量名会被 if(false) 块内部的引用骗过
     // （这个坑已经踩过两次了）。
-    assert.ok(body.includes('if (target === null && sent.nodeKey !== null'),
-      '必须真的按消息节点 key 定位')
+    // ★ 每个 nodeKey 一条，互不覆盖（这正是「旧胶囊被新引用顶掉」的修法）。
+    assert.ok(body.includes('for (const [nodeKey, entry] of bucket)'),
+      '必须逐条绘制（每条消息一条引用记录，互不覆盖）')
+    assert.ok(body.includes('wanted.has(forKey)'),
+      '清理时只能删「不属于任何已存条目」的旧胶囊（否则会删掉别的轮次的）')
 
     // ★ Enter/相位通道必须**一个锚点都不记**（含 turn / index / nodeKey）。
     // 之前只跳过 turn，index 和 nodeKey 照记 —— 那一刻新消息还没渲染，
     // 记下的是上一条消息的 key，胶囊被画到上一条上（用户反馈「没出现在消息上方」）。
     // ★ 查**三元分支本身**：captureAnchor 里也有一个同样的空对象字面量，
     // 实测证明只查那个字面量会被它骗过（第四次「断言太宽」了）。
-    assert.ok(source.includes('const anchor = recordAnchor === false'),
+    assert.ok(source.includes('function sentBucketOf('),
+      '必须按消息分别保存（每个 nodeKey 一条，互不覆盖）')
+    assert.ok(source.includes('const pendingSent = new Map()'),
+      'Enter 时刻消息还没渲染，必须先存 pending 再绑定')
+    assert.ok(source.includes('if (recordAnchor === false)'),
       'Enter 通道必须走「不记锚点」分支（那一刻新消息还没渲染）')
     assert.ok(source.includes('index: rows.length - 1'), '捕获锚点时必须记录索引')
     assert.ok(helperAt > 0, '必须有 snapshotSentQuotes helper')
-    const snapAt = source.indexOf('sentQuoteBuckets.set(sessionId', helperAt)
+    const snapAt = source.indexOf('sentBucketOf(sessionId).set', helperAt)
     const clearAt = source.indexOf('quoteClear(sessionId)', helperAt)
     assert.ok(snapAt > helperAt && clearAt > snapAt, 'helper 里必须先快照再清空（否则历史里没有内容可注入）')
 
