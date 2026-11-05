@@ -5055,7 +5055,7 @@ function componentBody(text, name) {
 
     // ④ ★ 顺序：先快照、再清空 —— 反了就没内容可画
     // 快照+清空已提取成模块级 helper（三个通道共用），所以要查 source 而不是组件体
-    const helperAt = source.indexOf('function snapshotSentQuotes(sessionId, recordTurn)')
+    const helperAt = source.indexOf('function snapshotSentQuotes(sessionId, recordAnchor)')
     // Enter / 相位通道必须传 false —— 消息还没渲染，此刻取到的是上一条的 turn，
     // 用旧 turn 找目标必然落空（用户实测：引用后发送，胶囊完全不出现）。
     // ★ 必须**分别计数**：Enter 与相位两个通道都要传 false。
@@ -5086,7 +5086,15 @@ function componentBody(text, name) {
     // （这个坑已经踩过两次了）。
     assert.ok(body.includes('if (target === null && sent.nodeKey !== null'),
       '必须真的按消息节点 key 定位')
-    assert.ok(source.includes('index = document.querySelectorAll'), '快照时必须记录索引')
+
+    // ★ Enter/相位通道必须**一个锚点都不记**（含 turn / index / nodeKey）。
+    // 之前只跳过 turn，index 和 nodeKey 照记 —— 那一刻新消息还没渲染，
+    // 记下的是上一条消息的 key，胶囊被画到上一条上（用户反馈「没出现在消息上方」）。
+    // ★ 查**三元分支本身**：captureAnchor 里也有一个同样的空对象字面量，
+    // 实测证明只查那个字面量会被它骗过（第四次「断言太宽」了）。
+    assert.ok(source.includes('const anchor = recordAnchor === false'),
+      'Enter 通道必须走「不记锚点」分支（那一刻新消息还没渲染）')
+    assert.ok(source.includes('index: rows.length - 1'), '捕获锚点时必须记录索引')
     assert.ok(helperAt > 0, '必须有 snapshotSentQuotes helper')
     const snapAt = source.indexOf('sentQuoteBuckets.set(sessionId', helperAt)
     const clearAt = source.indexOf('quoteClear(sessionId)', helperAt)

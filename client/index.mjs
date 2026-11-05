@@ -4627,18 +4627,42 @@ window.__ModuleLoader__.load({
      *
      * @returns 是否真的快照了（没有引用时返回 false）
      */
-    function snapshotSentQuotes(sessionId, recordTurn) {
+    /**
+     * 读当前「最后一条用户消息」的定位锚点。
+     *
+     * 只有在新消息**已经渲染之后**调用才有意义，否则读到的是上一条。
+     */
+    function captureAnchor() {
+      const none = { turn: null, index: -1, nodeKey: null }
+      if (typeof document === 'undefined') return none
+      const rows = document.querySelectorAll('[class*="userRow"]')
+      if (rows.length === 0) return none
+      const last = rows[rows.length - 1]
+      let turn = null
+      let nodeKey = null
+      if (typeof last.closest === 'function') {
+        const tNode = last.closest('[data-chat-turn]')
+        if (tNode !== null) turn = tNode.getAttribute('data-chat-turn')
+        const kNode = last.closest('[data-chat-node-key]')
+        if (kNode !== null) nodeKey = kNode.getAttribute('data-chat-node-key')
+      }
+      return { turn, index: rows.length - 1, nodeKey }
+    }
+
+    function snapshotSentQuotes(sessionId, recordAnchor) {
       const current = quoteListOf(sessionId)
       if (current.length === 0) return false
-      let turn = null
-      if (recordTurn !== false && typeof document !== 'undefined') {
-        const rows = document.querySelectorAll('[class*="userRow"]')
-        const last = rows.length === 0 ? null : rows[rows.length - 1]
-        if (last !== null && typeof last.closest === 'function') {
-          const node = last.closest('[data-chat-turn]')
-          if (node !== null) turn = node.getAttribute('data-chat-turn')
-        }
-      }
+      // ★ recordAnchor === false 时**一个锚点都不记**。
+      //
+      // 之前只跳过 turn，index / nodeKey 照记 —— 但 Enter 那一刻新消息还没渲染，
+      // 于是记下的是**上一条消息**的 key，胶囊被画到上一条上
+      // （用户反馈：「胶囊没有出现在消息上方」）。
+      const anchor = recordAnchor === false
+        ? { turn: null, index: -1, nodeKey: null }
+        : captureAnchor()
+      const turn = anchor.turn
+      const index = anchor.index
+      const nodeKey = anchor.nodeKey
       // 同时记下它当前在列表里的**索引**。
       //
       // 为什么要索引：实测日志显示 userRow 的祖先里根本没有 data-chat-turn
@@ -4646,25 +4670,6 @@ window.__ModuleLoader__.load({
       // 于是每次都走兜底、胶囊跟着轮次跑。
       //
       // 索引在这个场景里是稳定的：新消息总是**追加在末尾**，已有消息的索引不变。
-      let index = -1
-      let nodeKey = null
-      if (typeof document !== 'undefined') {
-        index = document.querySelectorAll('[class*="userRow"]').length - 1
-        // 消息节点的唯一标识。
-        //
-        // 为什么不用 data-chat-turn：源码里是 `"data-chat-turn": turn`，
-        // 当 turn 为空时 React **根本不渲染这个属性**，closest 必然返回 null
-        // （用户日志：backfill: userRow 没有 data-chat-turn 祖先）。
-        //
-        // 而同一节点上的 `"data-chat-node-key": routedNode.key` 一定有值 ——
-        // 它就是这条消息的身份。把引用绑到它上面，渲染时按它找回来。
-        const lastRow = document.querySelectorAll('[class*="userRow"]')
-        const row = lastRow.length === 0 ? null : lastRow[lastRow.length - 1]
-        if (row !== null && typeof row.closest === 'function') {
-          const holder = row.closest('[data-chat-node-key]')
-          if (holder !== null) nodeKey = holder.getAttribute('data-chat-node-key')
-        }
-      }
       sentQuoteBuckets.set(sessionId, {
         quotes: current.map((q) => ({ text: q.text })),
         at: Date.now(),
@@ -4687,16 +4692,13 @@ window.__ModuleLoader__.load({
     function backfillSentTurn(sessionId) {
       const sent = sentQuoteBuckets.get(sessionId)
       if (sent === undefined) return false
-      if (sent.turn !== null && sent.turn !== undefined) return false
-      if (typeof document === 'undefined') return false
-      const rows = document.querySelectorAll('[class*="userRow"]')
-      const last = rows.length === 0 ? null : rows[rows.length - 1]
-      if (last === null || typeof last.closest !== 'function') return false
-      const node = last.closest('[data-chat-turn]')
-      if (node === null) {
-        return false
-      }
-      sent.turn = node.getAttribute('data-chat-turn')
+      // 已经有 nodeKey 就不用补（它是最可靠的锚点）
+      if (sent.nodeKey !== null && sent.nodeKey !== undefined) return false
+      const anchor = captureAnchor()
+      if (anchor.index < 0) return false
+      sent.turn = anchor.turn
+      sent.index = anchor.index
+      sent.nodeKey = anchor.nodeKey
       return true
     }
 
