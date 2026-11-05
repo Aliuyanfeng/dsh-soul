@@ -5090,6 +5090,26 @@ window.__ModuleLoader__.load({
         if (typeof document === 'undefined') return undefined
         if (typeof MutationObserver !== 'function') return undefined
 
+        // ── 临时诊断角标：只显示，不改任何逻辑。定位「胶囊不出现」断点用 ──
+        // 刷新后看页面右下角。①没出现=effect没跑；②出现但数字不涨=快照没生成；
+        // ③涨了但仍无胶囊=绘制被挡。确认后删掉这段。
+        const showProbe = () => {
+          let p = document.getElementById('soul-probe')
+          if (p === null) {
+            p = document.createElement('div')
+            p.id = 'soul-probe'
+            p.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:999999;background:#000;color:#0f0;font:12px monospace;padding:4px 8px;border-radius:4px;pointer-events:none'
+            if (document.body !== null) document.body.appendChild(p)
+          }
+          const b = sentQuoteBuckets.get(sessionId)
+          const n = b === undefined ? 0 : b.size
+          const pend = pendingSent.has(sessionId) ? 1 : 0
+          const rows = document.querySelectorAll('[class*="userRow"]').length
+          p.textContent = '[soul] effect✓ msgs=' + rows + ' saved=' + n + ' pending=' + pend + ' badges=' + document.querySelectorAll('[data-soul-quote-sent]').length
+        }
+        showProbe()
+        const probeTimer = setInterval(showProbe, 1000)
+
         const ATTR = 'data-soul-quote-sent'
         let list = null
         let observer = null
@@ -5281,6 +5301,9 @@ window.__ModuleLoader__.load({
 
         attach()
         return () => {
+          clearInterval(probeTimer)
+          const p = document.getElementById('soul-probe')
+          if (p !== null && p.parentElement !== null) p.parentElement.removeChild(p)
           if (observer !== null) observer.disconnect()
           for (const stale of document.querySelectorAll('[' + ATTR + ']')) {
             if (stale.parentElement !== null) stale.parentElement.removeChild(stale)
