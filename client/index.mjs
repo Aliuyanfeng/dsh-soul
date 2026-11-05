@@ -1158,7 +1158,7 @@ window.__ModuleLoader__.load({
       // C86 的档位审计以「有 px 高度 + 字号 + pointer」判定按钮，这里刻意避开，
       // 因为它只是标注而非控件。
       // 胶囊：position:relative 供 tooltip 定位；cursor:help 提示「这里有说明」。
-      '.soul-quote-sent{position:relative;box-sizing:border-box;display:block;width:fit-content;max-width:100%;cursor:help;padding:2px 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;cursor:default}',
+      '.soul-quote-sent{position:relative;align-self:flex-end;margin-left:auto;box-sizing:border-box;display:block;width:fit-content;max-width:100%;cursor:help;padding:2px 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;cursor:default}',
 
       // 浮动按钮：胶囊 + 阴影，像系统级浮层。
       // 注意它**没有边框** —— C86 的档位判据会把「无边框」认作文字链接而跳过，
@@ -1168,7 +1168,7 @@ window.__ModuleLoader__.load({
       // 队列项上的「含引用」标记：紧挨按钮区，用三级色不抢视线。
       '.soul-queue-quote-mark{flex:none;color:var(--dsw-alias-label-tertiary);font:var(--dsw-font-xs-13);white-space:nowrap;margin-right:2px}',
 
-      '.soul-quote-sent-tip{display:none;position:absolute;bottom:100%;left:0;z-index:1000;margin-bottom:6px;width:calc((var(--dsh-chat-content-width, 600px) + 32px) / 2);max-width:calc(100vw - 32px);box-sizing:border-box;padding:8px 10px;border:.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm);background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13);line-height:1.5;white-space:pre-wrap;word-break:break-word}',
+      '.soul-quote-sent-tip{display:none;position:absolute;bottom:100%;right:0;z-index:1000;margin-bottom:6px;width:calc((var(--dsh-chat-content-width, 600px) + 32px) / 2);max-width:calc(100vw - 32px);box-sizing:border-box;padding:8px 10px;border:.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm);background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13);line-height:1.5;white-space:pre-wrap;word-break:break-word}',
       '.soul-quote-sent:hover .soul-quote-sent-tip{display:block}',
 
       '.soul-quote-float{position:fixed;z-index:2147483000;display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 14px;border:none;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.18);white-space:nowrap}',
@@ -5090,26 +5090,6 @@ window.__ModuleLoader__.load({
         if (typeof document === 'undefined') return undefined
         if (typeof MutationObserver !== 'function') return undefined
 
-        // ── 临时诊断角标：只显示，不改任何逻辑。定位「胶囊不出现」断点用 ──
-        // 刷新后看页面右下角。①没出现=effect没跑；②出现但数字不涨=快照没生成；
-        // ③涨了但仍无胶囊=绘制被挡。确认后删掉这段。
-        const showProbe = () => {
-          let p = document.getElementById('soul-probe')
-          if (p === null) {
-            p = document.createElement('div')
-            p.id = 'soul-probe'
-            p.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:999999;background:#000;color:#0f0;font:12px monospace;padding:4px 8px;border-radius:4px;pointer-events:none'
-            if (document.body !== null) document.body.appendChild(p)
-          }
-          const b = sentQuoteBuckets.get(sessionId)
-          const n = b === undefined ? 0 : b.size
-          const pend = pendingSent.has(sessionId) ? 1 : 0
-          const rows = document.querySelectorAll('[class*="userRow"]').length
-          p.textContent = '[soul] effect✓ msgs=' + rows + ' saved=' + n + ' pending=' + pend + ' badges=' + document.querySelectorAll('[data-soul-quote-sent]').length
-        }
-        showProbe()
-        const probeTimer = setInterval(showProbe, 1000)
-
         const ATTR = 'data-soul-quote-sent'
         let list = null
         let observer = null
@@ -5301,9 +5281,6 @@ window.__ModuleLoader__.load({
 
         attach()
         return () => {
-          clearInterval(probeTimer)
-          const p = document.getElementById('soul-probe')
-          if (p !== null && p.parentElement !== null) p.parentElement.removeChild(p)
           if (observer !== null) observer.disconnect()
           for (const stale of document.querySelectorAll('[' + ATTR + ']')) {
             if (stale.parentElement !== null) stale.parentElement.removeChild(stale)

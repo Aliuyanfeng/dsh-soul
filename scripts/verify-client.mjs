@@ -5046,6 +5046,7 @@ function componentBody(text, name) {
     const tipAt = source.indexOf('.soul-quote-sent-tip{')
     assert.ok(tipAt > 0, '找不到 tooltip 规则')
     const tipCss = source.slice(tipAt, source.indexOf('}', tipAt) + 1)
+const badgeCss = source.slice(source.indexOf('.soul-quote-sent{'), source.indexOf('}', source.indexOf('.soul-quote-sent{')) + 1)
     assert.match(tipCss, /bottom:100%/, 'tooltip 必须展示在胶囊**上方**（原来贴下方，容易与背景糊在一起）')
     assert.match(tipCss, /backdrop-filter:var\(--dsw-menu-backdrop-filter\)/,
       '必须有宿主的模糊底（半透明背景在深色主题下才不会糊）')
@@ -5057,6 +5058,11 @@ function componentBody(text, name) {
     assert.match(tipCss, /width:calc\(\(var\(--dsh-chat-content-width/,
       'tooltip 宽度必须取输入框宽度的一半（否则长文本会撑破样式）')
     assert.match(tipCss, /box-sizing:border-box/, '宽度必须含 padding（否则实际更宽）')
+
+    // 用户要求「右侧对齐」：胶囊贴消息右边缘，tooltip 从右边缘向左展开。
+    assert.match(badgeCss, /align-self:flex-end/, '胶囊必须与消息右侧对齐')
+    assert.match(badgeCss, /margin-left:auto/, '胶囊必须靠右（flex 下推到右侧）')
+    assert.match(tipCss, /right:0/, 'tooltip 必须贴右边缘（宽度约为输入框一半，向左展开）')
     assert.match(tipCss, /color:var\(--dsw-alias-label-primary\)/, '文字色必须用主题变量')
 
     // ④ ★ 顺序：先快照、再清空 —— 反了就没内容可画
