@@ -3686,14 +3686,9 @@ window.__ModuleLoader__.load({
           title: isEffective ? `${name}（${t('session.chipInUse')}）` : name
         },
           e('div', { className: 'soul-persona-art' },
-            e('img', {
-              className: 'soul-persona-art-img',
-              src: new URL(`/api/soul/persona-art/${encodeURIComponent(name)}`, hostBase()).href,
-              alt: '',
-              loading: 'lazy',
-              decoding: 'async',
-              draggable: 'false',
-              onError: (ev) => { ev.target.style.display = 'none' }
+            e(PersonaArt, {
+              name,
+              className: 'soul-persona-art-img'
             }),
             // 遮罩与压图文字**已移除**（0.9.0-l）：右侧详情已完整展示人设名、
             // 六个维度与自定义指令全文，卡上再叠一层渐变遮罩 + 文字只是重复，
@@ -4685,6 +4680,82 @@ window.__ModuleLoader__.load({
       return new URL(`/api/soul/persona-art/${encodeURIComponent(name)}`, hostBase()).href
     }
 
+    // -------------------------------------------------------------------------
+    // 人设插画：必须经 fetch 取回再转 blob URL，**不能直接给 <img src>**
+    // -------------------------------------------------------------------------
+    //
+    // 现象：设置页 / 会话卡牌 / 总览里的插画全都不显示（只剩渐变底）。
+    // 根因（实测宿主的 webServer）：
+    //   GET /api/soul/persona-art/<名> → 401
+    //   {"error":{"message":"missing or invalid Authorization bearer",...}}
+    //
+    // 宿主要求 `Authorization: Bearer`；而 `<img src>` 是浏览器原生请求，
+    // **无法携带自定义请求头**，于是必然 401 → onError 把图隐藏。
+    // JS 的 `fetch` 则能过 —— 宿主的 `globalThis.fetch` 被包装过（转发到正确通道
+    // 并补上认证），所以「先 fetch 成 Blob，再 createObjectURL」是唯一可靠的加载方式。
+    //
+    // 缓存：同一个人设会在多处渲染（设置页卡片 / 会话卡牌 / 总览当前生效），
+    // 模块级 Map 缓存 Promise，避免同一张图重复下载与重复解码。
+    // 失败也缓存（缓存的是异常），否则每次渲染都会重试一遍 401。
+    const artBlobCache = new Map()
+
+    function personaArtSrc(name) {
+      const url = personaArtUrl(name)
+      let pending = artBlobCache.get(url)
+      if (pending === undefined) {
+        pending = (async () => {
+          const res = await fetch(url)
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          return URL.createObjectURL(await res.blob())
+        })()
+        artBlobCache.set(url, pending)
+      }
+      return pending
+    }
+
+    /**
+     * 人设插画。加载中是空的（由容器渐变底兜住），失败时渲染 fallback。
+     *
+     * 单独成组件是因为要 useXxx —— 它被渲染在 .map() 回调里，
+     * hook 不能直接写在回调内。
+     */
+    /** 总览「当前生效」插画缺图时的兜底图标（面具轮廓）。 */
+    function soulMaskIcon(size) {
+      return e('span', { className: 'soul-ov-art-fallback' },
+        e('svg', {
+          viewBox: '0 0 16 16', width: size, height: size, fill: 'none',
+          stroke: 'currentColor', strokeWidth: 1.4,
+          strokeLinecap: 'round', strokeLinejoin: 'round'
+        }, SOUL_MASK_PATHS.map((d, i) => e('path', { key: i, d }))))
+    }
+
+    function PersonaArt(props) {
+      const { name, className, fallback } = props
+      const [src, setSrc] = React.useState(null)
+      const [failed, setFailed] = React.useState(false)
+      React.useEffect(() => {
+        if (typeof name !== 'string' || name === '') { setSrc(null); setFailed(true); return }
+        let alive = true
+        setFailed(false)
+        personaArtSrc(name).then(
+          (url) => { if (alive) setSrc(url) },
+          () => { if (alive) { setSrc(null); setFailed(true) } }
+        )
+        return () => { alive = false }
+      }, [name])
+      if (src !== null) {
+        return e('img', {
+          className,
+          src,
+          alt: '',
+          loading: 'lazy',
+          decoding: 'async',
+          draggable: 'false'
+        })
+      }
+      return failed && fallback !== undefined ? fallback : null
+    }
+
     /** 每个工作区在总览里最多列出多少条会话（其余折叠成一行计数）。 */
     const SESSIONS_PER_WS = 20
 
@@ -5466,8 +5537,6 @@ window.__ModuleLoader__.load({
       // 用户手动展开/收起过的工作区（workspaceId → 是否展开）。
       // 与「自动展开」分开存：自动展开每次渲染算得出来，用户的点击必须能压过它。
       const [toggles, setToggles] = React.useState({})
-      // 插画加载失败的名字（回退到面具）
-      const [artBroken, setArtBroken] = React.useState({})
 
       // 宿主 pluginNavigation 可能晚于本包装载：订阅它，到了再让按钮出现。
       const [canJump, setCanJump] = React.useState(() => hostNavigation.get() !== null)
@@ -5943,7 +6012,6 @@ window.__ModuleLoader__.load({
         const meta = name && state.personas && state.personas[name]
           ? personaRowMetaOf(state.personas[name], t)
           : ''
-        const broken = name !== null && artBroken[name] === true
         return e('div', { className: 'soul-ov-card' },
           e('div', { className: 'soul-ov-card-head' },
             e('h3', {}, t('ov.current')),
@@ -5979,21 +6047,10 @@ window.__ModuleLoader__.load({
               e('span', { className: 'soul-ov-picker-error' }, switchError)),
           e('div', { className: 'soul-ov-current' },
             e('div', { className: 'soul-ov-art' },
-              name !== null && !broken
-                ? e('img', {
-                    src: personaArtUrl(name),
-                    alt: '',
-                    loading: 'lazy',
-                    decoding: 'async',
-                    draggable: 'false',
-                    onError: () => setArtBroken((prev) => ({ ...prev, [name]: true }))
-                  })
-                : e('span', { className: 'soul-ov-art-fallback' },
-                    e('svg', {
-                      viewBox: '0 0 16 16', width: 28, height: 28, fill: 'none',
-                      stroke: 'currentColor', strokeWidth: 1.4,
-                      strokeLinecap: 'round', strokeLinejoin: 'round'
-                    }, SOUL_MASK_PATHS.map((d, i) => e('path', { key: i, d }))))),
+              e(PersonaArt, {
+                name: name === null ? '' : name,
+                fallback: soulMaskIcon(28)
+              })),
             e('div', { className: 'soul-ov-cur-body' },
               e('div', { className: 'soul-ov-cur-name' },
                 name === null ? t('ov.customName') : name,
@@ -7544,14 +7601,9 @@ window.__ModuleLoader__.load({
                           // 允许用户上传本地图片作插画是后续版本功能。
                           // 仍留 onError 兜底隐藏：路由不可用时退化为渐变底而非破图。
                           e('div', { className: 'soul-persona-art' },
-                            e('img', {
-                              className: 'soul-persona-art-img',
-                              src: new URL(`/api/soul/persona-art/${encodeURIComponent(name)}`, hostBase()).href,
-                              alt: '',
-                              loading: 'lazy',
-                              decoding: 'async',
-                              draggable: 'false',
-                              onError: (ev) => { ev.target.style.display = 'none' }
+                            e(PersonaArt, {
+                              name,
+                              className: 'soul-persona-art-img'
                             }),
                             // 渐变遮罩：让压在图上的名称/摘要有足够对比度
                             e('div', { className: 'soul-persona-art-veil', 'aria-hidden': true }),

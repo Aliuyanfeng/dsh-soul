@@ -1472,24 +1472,37 @@ check('人设插画：宿主路由存在、只服务内置人设名、缺图回�
   )
 })
 
-check('人设插画：客户端对所有卡片都渲染 img（不再限定内置）', () => {
-  // 此前渲染是 `builtin && e('img', ...)` —— 自建预设完全不出图。
-  // 本版统一出图；若哪天又被加上条件，自建卡会退回空白渐变底。
-  const artIdx = clientSource.indexOf("'soul-persona-art' }")
-  assert.ok(artIdx > 0, '找不到插画区渲染处')
-  const artSlice = clientSource.slice(artIdx, artIdx + 900)
+check('人设插画：所有卡片都出图，且必须经 fetch 取回（不得直连 <img src>）', () => {
+  // 0.11.x 的真实故障：插画全部不显示，只剩渐变底。
+  // 根因：桌面宿主的 webServer 要求 `Authorization: Bearer`，而 `<img src>` 是
+  // 浏览器原生请求、**带不了自定义请求头** ⇒ 401 ⇒ onError 把图隐藏。
+  // 宿主的 `globalThis.fetch` 被包装过（会补认证 / 转发到正确通道），所以必须
+  // 走「fetch -> Blob -> createObjectURL」。
+  //
+  // 这条断言的重点不是「有没有 img」，而是**不许再把路由直连给 img**。
+  assert.match(clientSource, /function PersonaArt\(props\)/, '缺少 PersonaArt 组件')
+  assert.match(clientSource, /await fetch\(url\)/, 'PersonaArt 必须用 fetch 取图（img 直连会 401）')
+  assert.match(clientSource, /URL\.createObjectURL/, '必须转成 objectURL 再交给 img')
+  // objectURL 有意不 revoke：它被模块级缓存共享给多处渲染（同一个人设可能同时
+  // 出现在设置页与会话卡牌），revoke 会让另一处正在挂载的 img 变成破图。
+  // 这里断言缓存存在，而不是断言 revoke —— 断言必须与实现一致。
+  assert.match(clientSource, /const artBlobCache = new Map\(\)/, '应有模块级缓存（同图多处渲染只下载一次）')
+
+  // 核心约束：任何 <img src> 都不得直连 persona-art 路由
   assert.equal(
-    /builtin && e\('img', \{[\s\S]{0,60}className: 'soul-persona-art-img'/.test(artSlice),
+    /e\('img', \{[\s\S]{0,240}?persona-art\//.test(clientSource),
     false,
-    '不得再用 builtin 条件限制出图（自建预设也要显示默认贴图）'
+    '不得把 persona-art 路由直接交给 <img src>（无认证头 => 401 => 图不显示）'
   )
-  assert.match(
-    artSlice,
-    /e\('img', \{[\s\S]{0,80}className: 'soul-persona-art-img'/,
-    '所有卡片都应渲染插画 img'
+  assert.equal(
+    /src: new URL\(`\/api\/soul\/persona-art/.test(clientSource),
+    false,
+    '不得在 <img> 的 src 里直接拼 persona-art URL'
   )
-  // onError 兜底仍须保留（路由不可用时退化为渐变底而非破图）
-  assert.match(artSlice, /onError:/, '插画应保留 onError 兜底隐藏')
+
+  // 三处渲染（设置页卡片 / 会话卡牌 / 总览）都必须走 PersonaArt
+  const uses = (clientSource.match(/e\(PersonaArt, \{/g) || []).length
+  assert.ok(uses >= 2, `设置页与会话卡牌都应使用 PersonaArt，实际 ${uses} 处`)
 })
 
 check('人设插画：自建预设走专用默认贴图，且名字不参与路径拼接', () => {
@@ -1650,20 +1663,23 @@ check('人设插画：竖版卡牌（插画为主视觉），自定义预设用�
   const eff = cssBlock.match(/\.soul-persona-eff\{([^}]*)\}/)?.[1] ?? ''
   assert.ok(eff !== '', '找不到效果栏规则 .soul-persona-eff')
   assert.match(eff, /-webkit-line-clamp/, '效果栏应限制行数（卡面空间有限）')
-  // 客户端侧：只给内置人设渲染 img，且带 onError 兜底与懒加载
+  // 客户端侧：所有卡片都出图，统一走 PersonaArt（fetch -> objectURL）
   assert.match(
     clientSource,
-    // 所有卡片都出图：内置走按名查找的插画，自建走宿主返回的专用默认贴图。
-    // （此前只在 builtin 时才渲染 img —— 本版改为统一出图，仅样式调整。）
-    /e\('img', \{[\s\S]{0,80}className: 'soul-persona-art-img'/,
+    /e\(PersonaArt, \{[\s\S]{0,120}className: 'soul-persona-art-img'/,
     '所有预设都应渲染插画（自建预设由宿主返回专用默认贴图）'
+  )
+  assert.equal(
+    /builtin && e\(PersonaArt/.test(clientSource),
+    false,
+    '不得用 builtin 条件限制出图（自建预设也要显示默认贴图）'
   )
   assert.match(
     clientSource,
     /\/api\/soul\/persona-art\/\$\{encodeURIComponent\(name\)\}/,
     '插画 URL 应对人设名做 encodeURIComponent'
   )
-  assert.match(clientSource, /onError: \(ev\) => \{ ev\.target\.style\.display = 'none' \}/, 'img 需要 onError 兜底（路由不可用时不显示破图）')
+  // onError 兜底改由 PersonaArt 的 failed 状态承担（不再操作 style.display）
   assert.match(clientSource, /loading: 'lazy'/, '插画应懒加载（打开设置页时不必一次请求全部图）')
   // 效果栏文本来源：优先 customInstructions（人格差异的主要载体）
   assert.match(clientSource, /const personaEffectText = /, '缺少效果栏文本函数')

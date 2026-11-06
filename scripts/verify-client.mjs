@@ -231,6 +231,8 @@ const realTimers = {
 }
 let timerQueue = []
 let fetchCalls = []
+// 哪些人设的插画应当加载失败（用例按需填充，验证「取图失败 -> 回退面具」）
+let artFailures = new Set()
 
 const installFakeTimers = () => {
   // 客户端有三处定时器，全部与断言直接相关，必须接管：
@@ -307,6 +309,14 @@ function loadClient(routes, options = {}) {
   globalThis.requestAnimationFrame = (fn) => drainTick(() => fn(0))
   globalThis.cancelAnimationFrame = () => {}
   globalThis.getComputedStyle = () => ({ position: 'absolute', getPropertyValue: () => '' })
+  // objectURL 桩：真实浏览器把 Blob 变成可给 <img> 的 URL；这里给一个可识别前缀，
+  // 断言就能区分「已转成 objectURL」与「直接用了路由 URL」（后者在桌面版会 401）。
+  let objectUrlSeq = 0
+  globalThis.URL.createObjectURL = (blob) => {
+    objectUrlSeq += 1
+    return `blob:mock/${objectUrlSeq}-${blob && blob.size !== undefined ? blob.size : 0}`
+  }
+  globalThis.URL.revokeObjectURL = () => {}
   globalThis.fetch = async (input, init = {}) => {
     const url = new URL(String(input))
     const method = (init.method || 'GET').toUpperCase()
@@ -320,6 +330,23 @@ function loadClient(routes, options = {}) {
       body: init.body ? JSON.parse(init.body) : null
     }
     fetchCalls.push(call)
+
+    // 人设插画走 prefix 路由（路径里带人设名），不在精确 routes 表里。
+    // 宿主真实环境返回二进制图片；这里给一个可识别的假 Blob ——
+    // 断言要能验证「确实经 fetch 取了图、并转成了 objectURL」，
+    // 而不是只看到 <img>（<img src> 直连在桌面版必然 401，见 verify-config）。
+    if (url.pathname.startsWith('/api/soul/persona-art/')) {
+      const artName = decodeURIComponent(url.pathname.slice('/api/soul/persona-art/'.length))
+      if (artFailures.has(artName)) {
+        return { ok: false, status: 401, json: async () => ({ ok: false, error: 'unauthorized' }) }
+      }
+      return {
+        ok: true,
+        status: 200,
+        blob: async () => ({ size: 2048, type: 'image/webp', name: artName })
+      }
+    }
+
     const handler = routes[url.pathname]
     const body = handler ? handler(call) : { ok: false, error: `no route: ${url.pathname}` }
     if (body === false) return { ok: false, status: 500, json: async () => ({ ok: false, error: 'boom' }) }
@@ -464,6 +491,7 @@ function loadClient(routes, options = {}) {
 async function boot(configPayload = {}, personaPayload = null, options = {}) {
   fetchCalls = []
   timerQueue = []
+  artFailures = new Set()
   const routes = {
     '/api/soul/config': (call) => (call.method === 'GET'
       ? { ok: true, config: { ...CONFIG }, ...configPayload }
@@ -3658,9 +3686,34 @@ assert.equal(rowNow(), undefined, '关闭开关后侧栏图标必须被注销')
     const arts = findAllByClass(tree, 'soul-ov-art')
     assert.equal(arts.length, 1, '应有一个插画容器')
     const img = findAll(arts[0], (n) => n.type === 'img')[0]
-    assert.ok(img, '有插画时不应直接退化成面具：先在 img 上试')
-    assert.ok(/\/api\/soul\/persona-art\//.test(img.props.src), `插画地址应指向 persona-art，实际 ${img.props.src}`)
-    assert.ok(/资深架构师/.test(decodeURIComponent(img.props.src)), '插画地址应带人设名（决定显示哪张图）')
+    assert.ok(img, '有插画时不应直接退化成面具：应经 fetch 取图后渲染 img')
+
+    // 关键：src 必须是 objectURL（fetch 取回后的 Blob），**不能**是路由直连。
+    // 路由直连给 <img src> 在桌面版带不上 Authorization 头 ⇒ 401 ⇒ 图被隐藏，
+    // 这正是「插画怎么不显示了呢」的成因。
+    assert.ok(/^blob:/.test(img.props.src), `插画应使用 fetch 转换后的 objectURL，实际 ${img.props.src}`)
+
+    // 且必须真的按人设名请求过插画路由（不是拿了个空图就渲染）
+    const artCall = fetchCalls.find((c) => c.path.startsWith('/api/soul/persona-art/'))
+    assert.ok(artCall, '应请求过 persona-art 路由')
+    assert.ok(/资深架构师/.test(decodeURIComponent(artCall.path)), '请求应带当前人设名（决定显示哪张图）')
+
+    // 失败路径：取图 401 时必须回退面具（而不是留白或破图）
+    const brokenWorld = await boot()
+    artFailures.add('资深架构师')  // 必须在 boot 之后：boot 会重置这份集合
+    stubOverview(brokenWorld, { globalPersona: '资深架构师' })
+    const brokenTree = await mountOverview(brokenWorld, brokenWorld.dicts.zh)
+    const brokenArt = findAllByClass(brokenTree, 'soul-ov-art')[0]
+    assert.ok(brokenArt, '失败时插画容器仍应在')
+    assert.equal(
+      findAll(brokenArt, (n) => n.type === 'img').length,
+      0,
+      '取图失败时不应渲染 img（否则是破图）'
+    )
+    assert.ok(
+      findAllByClass(brokenArt, 'soul-ov-art-fallback').length >= 1,
+      '取图失败时应回退到面具图标'
+    )
   })
 
   await check('C60 工作区按最近活跃倒序，没有时间的排最后（不当作 0）', async () => {
