@@ -1376,12 +1376,21 @@ async function persistBinding(key, messageId, snapshot) {
 
 function registerQuoteBinding(ctx) {
   ctx.on('session/event', (session, event) => {
-    // 只认「会渲染成 input-message 节点」的用户消息。
-    // runtime-context / steer 注入的 user/message 不生成该节点，绑了也画不出来，
-    // 还会把快照提前消费掉，导致真正那条消息没胶囊。
+    // 只认「用户真正发出的消息」。
+    //
+    // ★ 宿主每轮还会 append 一条 runtime-context 消息（就是我们的引用上下文本体，
+    //   source.kind = "runtime-context"），它同样是 user/message + surfaceOp=append
+    //   且带 data.id。若不过滤，它会**先于**用户消息触发本回调、把 quoteSnapshot
+    //   消费掉，绑到一个不渲染成 input-message 节点的 id 上 —— 客户端按
+    //   `input-message<uuid>` 找不到目标，胶囊就不画了（用户实测反馈）。
+    //
+    // 宿主自己也是靠 source.kind 区分的：createUserMessage({ source: {kind:"user"} })，
+    // messageDefinition.start 里对 source.kind !== "user" 走的是另一条渲染路径。
     if (event === null || event === undefined) return
     if (event.type !== 'user/message') return
     if (event.surfaceOp !== 'append') return
+    const source = event.data && event.data.source
+    if (source === undefined || source === null || source.kind !== 'user') return
 
     const rawSessionId = session && (session.id !== undefined ? session.id : (session.header && session.header.id))
     const key = quoteKeyOf(rawSessionId)

@@ -14,7 +14,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { assertCount } from './lib/skip-report.mjs'
 
-const EXPECTED_ASSERTIONS = 7
+const EXPECTED_ASSERTIONS = 8
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG = resolve(HERE, '..')
 
@@ -79,9 +79,12 @@ const Q2 = '第二轮的新引用'
 const quoteCtx = contexts.find((c) => c.name === 'soul:quotes')
 const fake = { agent: { session: { id: SID } } }
 const text = () => quoteCtx.text(fake)
-const emitMessage = (id) => {
+const emitMessage = (id, sourceKind = 'user') => {
   for (const fn of eventHandlers) {
-    fn({ id: SID, header: { id: SID } }, { type: 'user/message', surfaceOp: 'append', data: { id } })
+    fn(
+      { id: SID, header: { id: SID } },
+      { type: 'user/message', surfaceOp: 'append', data: { id, source: { kind: sourceKind } } }
+    )
   }
 }
 
@@ -103,8 +106,17 @@ check('模型请求重试时引用仍在', () => {
   assert.match(text(), new RegExp(Q1))
 })
 
-emitMessage('msg-uuid-1')
-check('★ 消息提交后下一轮（无新引用）text() 为空，不重复送达', () => {
+// ★ 宿主每轮会先 append 一条 runtime-context 消息（我们的引用上下文本体），
+// 它也是 user/message + append + 带 id，但 source.kind = "runtime-context"。
+// 它**绝不能**消费 quoteSnapshot —— 否则快照被绑到不渲染成 input-message 节点的
+// id 上，客户端找不到目标，胶囊就消失（用户实测反馈）。
+emitMessage('ctx-uuid-0', 'runtime-context')
+check('★ runtime-context 消息不得消费引用快照', () => {
+  assert.match(text(), new RegExp(Q1), '上下文消息后引用仍应在，供真正的用户消息绑定')
+})
+
+emitMessage('msg-uuid-1', 'user')
+check('★ 真正的用户消息提交后，下一轮 text() 为空，不重复送达', () => {
   assert.equal(text(), '')
 })
 
