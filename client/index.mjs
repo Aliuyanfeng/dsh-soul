@@ -946,8 +946,15 @@ window.__ModuleLoader__.load({
       // head 层随之删除 —— 触发器恢复成 section 的直接子元素，无需 flex 包裹。
       '.soul-accordion-body{padding:14px;border-top:.5px solid var(--dsw-alias-settings-card-stroke);background:transparent}',
       '.soul-field select:focus,.soul-field textarea:focus,.soul-field input[type=text]:focus{outline:none;border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 25%, transparent)}',
-      '.soul-toggle{display:flex;align-items:center;gap:8px;margin-bottom:14px}',
-      '.soul-toggle label{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}',
+      // 开关行：对照宿主的 DeveloperToolsRow（设置 → 通用设置 的偏好行）
+      //   · justify-content:space-between + align-items:center + gap:24px + padding:16px 0
+      //   · 行底 .5px 分隔线；最后一行的分隔线由 :last-child 去掉（宿主由
+      //     GeneralSection 的 [data-slot] > :last-child 规则做同样的事）
+      '.soul-toggle{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:16px 0;border-bottom:.5px solid var(--dsw-alias-border-l2)}',
+      '.soul-toggle:last-child{border-bottom:none}',
+      '.soul-toggle-text{min-width:0}',
+      '.soul-toggle label.soul-toggle-title{display:block;margin:0;font-size:14px;line-height:20px;color:var(--dsw-alias-label-primary);cursor:pointer}',
+      '.soul-toggle-desc{margin-top:4px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       // ── 开关（switch）形态 ──
       //
       // 用户要求：「设置页个性化 所有 checkbox 改用 switch 和宿主样式统一」。
@@ -2969,10 +2976,19 @@ window.__ModuleLoader__.load({
             checked: on,
             onChange: (ev) => onChange(ev.target.checked)
           })
+      // 布局对齐宿主「设置 → 通用设置」的偏好行（用户指的那个开关）：
+      //   左侧两行 —— 标题 14/20 + 描述 12/18 次要色；右侧控件；行底 .5px 分隔线。
+      // 宿主原规则（DeveloperToolsRow.module.css）：
+      //   .row{border-bottom:.5px solid border-l2;justify-content:space-between;
+      //        align-items:center;gap:24px;padding:16px 0;display:flex}
+      //   .title{font-size:14px;line-height:20px}
+      //   .description{color:label-secondary;margin-top:4px;font-size:12px;line-height:18px}
       return e('div', { className: 'soul-toggle' },
-        control,
-        e('label', { htmlFor: id }, labelText),
-        hint === undefined ? null : e(SoulHint, { text: hint })
+        e('div', { className: 'soul-toggle-text' },
+          e('label', { className: 'soul-toggle-title', htmlFor: id }, labelText),
+          hint === undefined ? null : e('div', { className: 'soul-toggle-desc' }, hint)
+        ),
+        control
       )
     }
 

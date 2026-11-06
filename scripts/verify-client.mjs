@@ -5449,6 +5449,11 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const switches = findAll(tree, (n) => n.type === 'ui-switch')
     assert.ok(switches.length >= 1, '设置页应至少渲染一个宿主 Switch')
 
+    // 布局：必须是「左文字列 + 右控件」两列结构（对齐宿主设置页的行）
+    const textCols = findAll(tree, (n) => n.props && n.props.className === 'soul-toggle-text')
+    assert.ok(textCols.length >= 1, '开关必须有 .soul-toggle-text 文字列')
+    assert.match(source, /className: 'soul-toggle-title'/, '标题必须有独立类名（14px 标题层级）')
+
     // 源码层面：5 个功能开关必须都走 SoulSwitch（别漏掉某个还用原生 checkbox）
     const soulSwitchUses = (source.match(/e\(SoulSwitch, \{/g) || []).length
     assert.equal(soulSwitchUses, 5, `应有 5 处使用 SoulSwitch，实际 ${soulSwitchUses}`)

@@ -1205,6 +1205,23 @@ check('设置页开关改用 switch 形态，且颜色全部取宿主 token', ()
   // ⑤ 键盘可达 + 尊重「减少动态效果」
   assert.match(cssBlock, /:focus-visible\{outline:2px solid var\(--dsw-alias-brand-primary\)/, '必须保留 focus-visible 焦点环')
   assert.match(cssBlock, /prefers-reduced-motion:reduce[^}]*\.soul-toggle input/, '必须尊重 prefers-reduced-motion')
+
+  // ⑥ 行布局对齐宿主「设置 → 通用设置」的偏好行（用户指的那个开关）：
+  //    左侧两行文字、右侧控件、行底 .5px 分隔线。
+  //    宿主原规则（DeveloperToolsRow.module.css）：
+  //      .row{border-bottom:.5px solid border-l2;justify-content:space-between;
+  //           align-items:center;gap:24px;padding:16px 0;display:flex}
+  assert.match(cssBlock, /\.soul-toggle\{[^}]*justify-content:space-between/, '开关行必须左右分布（左文字右控件）')
+  assert.match(cssBlock, /\.soul-toggle\{[^}]*align-items:center/, '开关行必须垂直居中')
+  assert.match(cssBlock, /\.soul-toggle\{[^}]*gap:24px/, '开关行间距应为 24px（照宿主）')
+  assert.match(cssBlock, /\.soul-toggle\{[^}]*padding:16px 0/, '开关行上下内边距应为 16px（照宿主）')
+  assert.match(cssBlock, /\.soul-toggle\{[^}]*border-bottom:\.5px solid var\(--dsw-alias-border-l2\)/, '开关行必须有 .5px 分隔线')
+  assert.match(cssBlock, /\.soul-toggle:last-child\{border-bottom:none\}/, '最后一行不得有分隔线（宿主同款）')
+
+  // ⑦ 标题 14/20 + 描述 12/18 次要色（逐属性对齐宿主 .title / .description）
+  assert.match(cssBlock, /\.soul-toggle label\.soul-toggle-title\{[^}]*font-size:14px[^}]*line-height:20px/, '标题应为 14px / 行高 20px')
+  assert.match(cssBlock, /\.soul-toggle-desc\{[^}]*margin-top:4px[^}]*font-size:12px[^}]*line-height:18px/, '描述应为 12px / 行高 18px / 上边距 4px')
+  assert.match(cssBlock, /\.soul-toggle-desc\{[^}]*color:var\(--dsw-alias-label-secondary\)/, '描述必须用次要文字色')
 })
 
 check('设置页样式对齐宿主栏目：无外层盒子，分组用卡片', () => {
