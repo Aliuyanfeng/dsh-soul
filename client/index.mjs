@@ -3060,6 +3060,16 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // 插件详情页区块（plugins.detail.section）的共同判据。
+    // 宿主的这个槽位对**所有**插件详情页都渲染，不过滤就会在别人的页面里冒出来；
+    // bundle 形态才有 pkg.name（item / row 形态没有，一律不渲染）。
+    //
+    // 为什么提成了函数而不是四处内联：同一个判据在三种位置都要用（渲染守卫 +
+    // effect 内部），内联写两遍迟早会漂移。
+    function isOwnPluginDetailPage(subject) {
+      return !!(subject && subject.kind === 'bundle' && subject.pkg && subject.pkg.name === 'dsh-soul')
+    }
+
     // —— 变更记录（0.8.0 → 0.8.1 双入口改造）——
     //
     // 0.8.1 起主入口是**插件详情页**（plugins.detail.section 槽位）：
@@ -3074,9 +3084,10 @@ window.__ModuleLoader__.load({
       const { useSoulController, controller } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const subject = props.subject || null
-      // 只服务自己的详情页。bundle 形态才有 pkg.name（item/row 形态没有，
-      // 一律不渲染 —— 它们是另一个层级的页面）。
-      if (!subject || subject.kind !== 'bundle' || !subject.pkg || subject.pkg.name !== 'dsh-soul') return null
+      // 只服务自己的详情页；判据在这里算成常量，**渲染守卫在所有 hook 之后**（见文件内
+      // isOwnPluginDetailPage 的注释），effect 用同一个判据自查 —— 否则挪到 hook 之后
+      // 就等于在别人的插件详情页里也去拉变更记录。
+      const onOwnDetailPage = isOwnPluginDetailPage(subject)
 
       const state = useSoulController((state) => state)
       const { history, historyWarning, historyMax, historyError, historyMaxEntries } = state
@@ -3217,10 +3228,19 @@ window.__ModuleLoader__.load({
       }
 
       // 挂载即拉取：详情页本来就是「专门来看记录」才打开的页面。
+      //
+      // ⚠️ 判据必须同时进 deps：守卫下移到 hook 之后，本 effect 在**别人的**详情页也会
+      // 注册。只判不声明依赖的话，从别的插件详情页切到本页时 deps 没变 ⇒ effect 不再跑
+      // ⇒ 变更记录永远空白（C24 实测抓到这个形态）。
       React.useEffect(() => {
+        if (!onOwnDetailPage) return
         if (!controller.canRefresh()) return
         void controller.loadHistory()
-      }, [controller])
+      }, [controller, onOwnDetailPage])
+
+      // 渲染守卫：必须位于上面所有 hook 之后（条件调用 hook 会让 subject 变化那次
+      // 渲染的 hook 数量对不上，React 报 Rules of Hooks 违例、整块内容不再出现）。
+      if (!onOwnDetailPage) return null
 
       // —— 渲染辅助（与 0.8.0-d 同源，搬成组件内局部函数）——
       const historySummary = historyError
@@ -3988,8 +4008,9 @@ window.__ModuleLoader__.load({
       const { controller, useSoulController } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const subject = props.subject || null
-      // 只服务自己的详情页（与变更记录同一判据）。
-      if (!subject || subject.kind !== 'bundle' || !subject.pkg || subject.pkg.name !== 'dsh-soul') return null
+      // 只服务自己的详情页（与变更记录同一判据）。判据在此算成常量，渲染守卫排在
+      // 所有 hook 之后；拉取用的 effect 用同一判据自查，否则会在别人的详情页发请求。
+      const onOwnDetailPage = isOwnPluginDetailPage(subject)
 
       const state = useSoulController((state) => state)
       const [view, setView] = React.useState(null)
@@ -4015,9 +4036,10 @@ window.__ModuleLoader__.load({
       }
 
       React.useEffect(() => {
+        if (!onOwnDetailPage) return
         void reload()
         // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [])
+      }, [onOwnDetailPage])
 
       // 解绑的二次确认 5 秒后复位（同设置页的 armed 态）
       React.useEffect(() => {
@@ -4025,6 +4047,9 @@ window.__ModuleLoader__.load({
         const timer = setTimeout(() => setPendingUnbind(null), 5000)
         return () => clearTimeout(timer)
       }, [pendingUnbind])
+
+      // 渲染守卫：必须位于上面所有 hook 之后（见 SoulHistorySection 同一处注释）。
+      if (!onOwnDetailPage) return null
 
       const personaNames = state.personas
         ? Object.keys(state.personas).sort((a, b) => {
@@ -4208,7 +4233,7 @@ window.__ModuleLoader__.load({
     function SoulOverviewEntry(props) {
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const subject = props.subject || null
-      if (!subject || subject.kind !== 'bundle' || !subject.pkg || subject.pkg.name !== 'dsh-soul') return null
+      if (!isOwnPluginDetailPage(subject)) return null
 
       return e('section', { className: 'soul-detail-overview', 'data-soul-overview-entry': 'true' },
         e('div', { className: 'soul-detail-overview-head' },
@@ -4232,7 +4257,7 @@ window.__ModuleLoader__.load({
       const { controller } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const subject = props.subject || null
-      if (!subject || subject.kind !== 'bundle' || !subject.pkg || subject.pkg.name !== 'dsh-soul') return null
+      const onOwnDetailPage = isOwnPluginDetailPage(subject)
 
       const [plan, setPlan] = React.useState(null)
       const [error, setError] = React.useState(null)
@@ -4240,6 +4265,9 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(false)
       // 已预览、待确认（null = 还没预览过）
       const [armedCount, setArmedCount] = React.useState(null)
+
+      // 渲染守卫：必须位于上面所有 hook 之后（见 SoulHistorySection 同一处注释）。
+      if (!onOwnDetailPage) return null
 
       const scan = async () => {
         if (busy) return
@@ -6414,16 +6442,23 @@ window.__ModuleLoader__.load({
       const { useSoulController, controller } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      // 设置页关掉「显示快捷开关」时整个按钮不渲染。
-      // 这里 early return 是安全的：conversation.input.dock 是普通渲染槽位，
-      // 返回 null 就是什么都不画，不会像 sidebar.panellist 那样留一个空位
-      // （那个槽位由宿主按注册 id 生成按钮，必须注销才腾得出位置）。
-      if (state.showQuickToggle === false) return null
-      const enabled = state.enabled === true
-      const busy = state.saving === true
       // 保存失败的本地标记：失败时 store.error 会带上原因，但按钮本身此前毫无反馈
       // （enabled 没变 ⇒ 外观与文案都不变），用户视角是「点了没反应」。
       const [failed, setFailed] = React.useState(false)
+      // 设置页关掉「显示快捷开关」时整个按钮不渲染。
+      // 这里 early return 是安全的：conversation.input.left 是普通渲染槽位，
+      // 返回 null 就是什么都不画，不会像 sidebar.panellist 那样留一个空位
+      // （那个槽位由宿主按注册 id 生成按钮，必须注销才腾得出位置）。
+      //
+      // ⚠️ 位置本身是行为的一部分，必须在**所有 hook 之后**：
+      // 原先写在 useState(failed) 之前，「隐藏」那次渲染只调用 1 个 hook、
+      // 「显示」那次调用 2 个。宿主让这个槽位**常驻挂载**（只靠 store 订阅重渲染），
+      // 于是重新打开时报 React 的 Rules of Hooks 违例（Rendered more hooks than
+      // during the previous render）并被错误边界吞掉 —— 实测症状正是
+      // 「关掉能生效、再打开按钮再也不出现」，只能刷新页面才恢复。
+      if (state.showQuickToggle === false) return null
+      const enabled = state.enabled === true
+      const busy = state.saving === true
       const failureText = failed ? (state.error || t('quick.toggleFailed')) : null
 
       const toggle = async () => {

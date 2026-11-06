@@ -111,8 +111,13 @@ check('「打开人设总览」入口在插件详情页（用户要求从设置�
   assert.match(clientCode, /name: 'plugins\.detail\.section'[\s\S]{0,160}soul-detail-overview|soul-detail-overview[\s\S]{0,160}plugins\.detail\.section/, '必须走 plugins.detail.section 槽位')
 
   // 详情页槽位对所有插件详情页都渲染 —— 必须按 subject.pkg.name 过滤，
-  // 否则会跑到别的插件详情页里
-  assert.match(clientCode, /function SoulOverviewEntry[\s\S]{0,600}subject\.pkg\.name !== 'dsh-soul'/, '必须过滤 subject，只服务本插件详情页')
+  // 否则会跑到别的插件详情页里。
+  //
+  // 判据自 0.11.0 起收进共享的 isOwnPluginDetailPage：同一个判据在四个详情页区块的
+  // 「渲染守卫」和「effect 自查」两处都要用，散着写四份迟早漂移。所以分两步钉：
+  // ① 入口确实调了判据；② 判据本身按 pkg.name 判定（防止被判据改名架空）。
+  assert.match(clientCode, /function SoulOverviewEntry[\s\S]{0,600}isOwnPluginDetailPage\(subject\)/, '必须过滤 subject，只服务本插件详情页')
+  assert.match(clientCode, /function isOwnPluginDetailPage[\s\S]{0,200}pkg\.name === 'dsh-soul'/, '共享判据必须按 pkg.name 判定')
 })
 
 check('设置页不再放「打开人设总览」按钮（已迁到详情页）', () => {

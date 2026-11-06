@@ -5567,6 +5567,38 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 设置页必须能改它，且字段名与配置键一致
     assert.match(source, /id: 'soul-showQuickToggle'/, '设置页缺少对应开关')
     assert.match(source, /onChange: setLocalQuickToggle/, '开关必须接到本地表单状态')
+
+    // ⚠️ 下面这段是为「关掉能生效、再打开按钮再也不出现」（用户实测）加的。
+    //
+    // 根因：守卫 `if (state.showQuickToggle === false) return null` 原先夹在
+    // useSoulController 与 useState(failed) **之间**。快捷开关由宿主常驻挂载
+    // （靠 store 订阅重渲染，不是重新 mount），于是「隐藏」那次渲染比「显示」
+    // 那次少调用一个 hook ⇒ 真实 React 在重新打开时报 Rules of Hooks 违例
+    // （Rendered more hooks than during the previous render），错误被宿主边界吞掉，
+    // 按钮从此不出现，只能刷新页面。
+    //
+    // 本文件的 React 垫片不校验 hook 数量（见文件头），所以上面「关掉后不渲染」
+    // 那条断言对此**完全无感**——它每次都 boot 一棵全新的树，永远只走单方向。
+    // 这里两头都钉：① 同一棵已挂载的树做 off → on；② 静态检查守卫之后不得再有 hook。
+    const flipWorld = await boot()
+    const shownFirst = await flipWorld.runtime.settle(quickToggleElement(flipWorld))
+    assert.equal(findAllByClass(shownFirst, 'soul-quick-toggle').length, 1, '初始应渲染快捷开关')
+
+    flipWorld.controller.store.update((s) => { s.showQuickToggle = false })
+    const hidden = await flipWorld.runtime.settle(quickToggleElement(flipWorld))
+    assert.equal(findAllByClass(hidden, 'soul-quick-toggle').length, 0, '同一棵树上关闭后不应渲染')
+
+    flipWorld.controller.store.update((s) => { s.showQuickToggle = true })
+    const restored = await flipWorld.runtime.settle(quickToggleElement(flipWorld))
+    assert.equal(
+      findAllByClass(restored, 'soul-quick-toggle').length,
+      1,
+      '重新打开后按钮必须回来（off→on 走的是同一棵已挂载的树，hook 数量必须恒定）'
+    )
+    // ⚠️ 上面这条在**本垫片下抓不到**该违例（实测：把守卫挪回 useState 之前，
+    // 三条断言全绿 —— 垫片的槽位不够时就地新建，从不比较数量）。
+    // 真正钉住这条规则的是 C109 的静态检查，不要因为它通过了就删掉这里的行为断言：
+    // 两边管的是不同的东西，这里守的是「重新打开要能复现按钮」这个用户可见结果。
   })
 
   await check('C108 分组命名不再叫「Agent 工具」（这一组多数不是工具）', async () => {
