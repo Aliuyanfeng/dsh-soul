@@ -61,7 +61,7 @@ window.__ModuleLoader__.load({
     // -------------------------------------------------------------------------
 
     const NS = 'soul'
-    const VERSION = '0.10.0'
+    const VERSION = '0.11.0'
     const INITIAL = {
       enabled: true,
       nickname: '',
