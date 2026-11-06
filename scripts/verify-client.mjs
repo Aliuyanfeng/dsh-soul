@@ -414,7 +414,16 @@ function loadClient(routes, options = {}) {
     },
     slots: {
       inject: (_name, cb) => cb(),
-      register: (options, component) => { captured.sections.push({ options, component }) }
+      // 返回真实语义的注销函数：从 captured.sections 移除自己。
+      // 之前只 push 不返回，导致「按配置动态注销」根本测不出来（C58 实测漏检）。
+      register: (options, component) => {
+        const entry = { options, component }
+        captured.sections.push(entry)
+        return () => {
+          const i = captured.sections.indexOf(entry)
+          if (i >= 0) captured.sections.splice(i, 1)
+        }
+      }
     }
   }
   module.apply(ctx)
@@ -3610,17 +3619,30 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
     return await world.runtime.settle(overviewElement(world, t))
   }
 
-  await check('C58 「Soul 人设总览」：main 面板与侧栏图标 key/id 必须一致，且入口默认注册', async () => {
-    const world = await boot()
-    const panel = world.captured.sections.find((s) => s.options && s.options.name === 'main')
-    const row = world.captured.sections.find((s) => s.options && s.options.name === 'sidebar.panellist')
-    assert.ok(panel, 'main 面板未注册：侧栏点了会切到不存在的面板（保持当前选择，看起来像点了没反应）')
-    assert.ok(row, 'sidebar.panellist 图标未注册：入口应默认开启')
-    assert.equal(panel.options.key, row.options.id, 'main 的 key 必须等于 panellist 的 id —— 宿主按 key 找面板，不等就是死链')
-    assert.equal(panel.options.key, 'soul-persona-panel')
-    assert.equal(row.options.order, 20, '入口 order 应为 20（排在宿主导航之后、不与它们抢位）')
-    assert.equal(row.options.label(), world.dicts.zh['nav.panelLabel'], '入口名应为「Soul 人设总览」')
-  })
+await check('C58 「Soul 人设总览」：main 面板常驻；侧栏图标按配置动态增删', async () => {
+const world = await boot()
+const panel = world.captured.sections.find((s) => s.options && s.options.name === 'main')
+const rowNow = () => world.captured.sections.find((s) => s.options && s.options.name === 'sidebar.panellist')
+
+// main 面板必须常驻：即便侧栏图标关掉，设置页「打开人设总览」仍要能 selectPanel 打开它。
+assert.ok(panel, 'main 面板未注册：备用按钮点了会切到不存在的面板（看起来像没反应）')
+assert.equal(panel.options.key, 'soul-persona-panel')
+
+// Issue #3：默认 false ⇒ 首帧不应有侧栏图标（不强制占用位置）。
+assert.equal(rowNow(), undefined, '默认关闭时侧栏图标不应注册')
+
+// 打开开关 → store 更新 → sync 注册图标行。
+world.controller.store.update((s) => { s.showOverviewInSidebar = true })
+const row = rowNow()
+assert.ok(row, '打开开关后侧栏图标应被注册')
+assert.equal(panel.options.key, row.options.id, 'main 的 key 必须等于 panellist 的 id —— 宿主按 key 找面板')
+assert.equal(row.options.order, 20, '入口 order 应为 20（排在宿主导航之后、不与它们抢位）')
+assert.equal(row.options.label(), world.dicts.zh['nav.panelLabel'], '入口名应为「Soul 人设总览」')
+
+// 再关掉 → 图标行被注销（位置真的释放，不是隐藏）。
+world.controller.store.update((s) => { s.showOverviewInSidebar = false })
+assert.equal(rowNow(), undefined, '关闭开关后侧栏图标必须被注销')
+})
 
   await check('C59 总览「当前生效」：显示人设名与插画（插画优先，缺失才回退面具）', async () => {
     const world = await boot()

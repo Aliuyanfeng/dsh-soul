@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { assertCount } from './lib/skip-report.mjs'
 import { DEFAULT_CONFIG, sanitizeConfig, migrateConfig } from '../lib/config.mjs'
 
-const EXPECTED_ASSERTIONS = 14
+const EXPECTED_ASSERTIONS = 15
 let passed = 0
 const check = (name, fn) => {
   passed++
@@ -22,8 +22,8 @@ const stripComments = (s) => s.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.t
 const clientCode = stripComments(client)
 
 // ── ① 配置层 ──
-check('DEFAULT_CONFIG 含 showOverviewInSidebar，默认 true', () => {
-  assert.equal(DEFAULT_CONFIG.showOverviewInSidebar, true)
+check('DEFAULT_CONFIG 含 showOverviewInSidebar，默认 false（不强制占侧栏）', () => {
+  assert.equal(DEFAULT_CONFIG.showOverviewInSidebar, false)
 })
 check('sanitizeConfig 接受布尔值', () => {
   assert.deepEqual(sanitizeConfig({ showOverviewInSidebar: false }).patch, { showOverviewInSidebar: false })
@@ -34,9 +34,15 @@ check('sanitizeConfig 拒绝非布尔并报错', () => {
   assert.ok(r.errors.showOverviewInSidebar)
   assert.equal('showOverviewInSidebar' in r.patch, false)
 })
-check('migrateConfig 对脏数据回退默认 true（别把入口弄丢）', () => {
-  assert.equal(migrateConfig({ showOverviewInSidebar: 'garbage' }).showOverviewInSidebar, true)
-  assert.equal(migrateConfig({}).showOverviewInSidebar, true)
+check('migrateConfig 对脏数据/缺失回退默认 false', () => {
+  assert.equal(migrateConfig({ showOverviewInSidebar: 'garbage' }).showOverviewInSidebar, false)
+  assert.equal(migrateConfig({}).showOverviewInSidebar, false)
+})
+check('★ 全部读取点必须用严格 === true（默认 false 时 !== false 会把缺失误判为开）', () => {
+  assert.equal(/showOverviewInSidebar !== false/.test(clientCode), false,
+    '残留宽松判定：配置缺失时会被当成"开启"')
+  const strict = (clientCode.match(/showOverviewInSidebar === true/g) || []).length
+  assert.ok(strict >= 5, `严格判定应覆盖全部读取点，实际 ${strict} 处`)
 })
 
 // ── ② 字段全集对账：DEFAULT_CONFIG ↔ client FIELD_KEYS ──
@@ -65,7 +71,7 @@ check('设置页 savedMap / localMap / serverValues 三处都含该字段', () =
   }
 })
 check('applyConfig 把服务端值归一化进 store', () => {
-  assert.match(clientCode, /s\.showOverviewInSidebar = config\.showOverviewInSidebar !== false/)
+  assert.match(clientCode, /s\.showOverviewInSidebar = config\.showOverviewInSidebar === true/)
 })
 
 // ── ③ 侧栏动态注册（核心） ──
@@ -77,7 +83,7 @@ check('main 面板必须常驻（否则关闭后备用按钮打不开）', () =>
 })
 check('图标行必须按配置 register / 注销', () => {
   assert.match(clientCode, /controller\.store\.subscribe\(sync\)/, '必须订阅配置变化')
-  assert.match(clientCode, /showOverviewInSidebar !== false/, '必须读开关值')
+  assert.match(clientCode, /showOverviewInSidebar === true/, '必须读开关值（严格判定）')
   assert.match(clientCode, /disposeRow = registerRow\(\)/, '开启时要注册')
   // ★ 限定在 sync() 函数体内、且必须在 !on 分支里真的调用注销。
   // 只查任意 `disposeRow()` 会被 unmount cleanup 里那次骗过（实测漏检）。

@@ -77,8 +77,8 @@ window.__ModuleLoader__.load({
       // set_persona 确认模式（v0.5.0）
       requireToolConfirmation: false,
   quoteAsContext: true,
-      // 侧栏「人设总览」入口开关（Issue #3）：默认开，老用户行为不变
-      showOverviewInSidebar: true,
+      // 侧栏「人设总览」入口开关（Issue #3）：默认关，不强制占用侧栏位置
+      showOverviewInSidebar: false,
       // 输入框光轨（v0.6.0）：Agent 回复中时输入框边框的流光动效
       trailEnabled: true,
       trailColor: '#679EFE',
@@ -477,7 +477,7 @@ window.__ModuleLoader__.load({
         s.customInstructions = config.customInstructions
         s.requireToolConfirmation = config.requireToolConfirmation === true
     s.quoteAsContext = config.quoteAsContext === true
-        s.showOverviewInSidebar = config.showOverviewInSidebar !== false
+        s.showOverviewInSidebar = config.showOverviewInSidebar === true
         s.trailEnabled = config.trailEnabled !== false
         s.trailColor = config.trailColor || TRAIL_COLOR_FALLBACK
         s.trailSpeed = config.trailSpeed || 'slow'
@@ -2151,7 +2151,7 @@ window.__ModuleLoader__.load({
       'field.quoteAsContext': '引用作为上下文',
       'hint.quoteAsContext': '开启后，可在回答里选中一段文字并点「引用」，它作为上下文随下一轮请求送达模型 —— 不进你的消息正文，也不写进对话历史。',
       'field.showOverviewInSidebar': '在侧边栏显示人设总览',
-      'hint.showOverviewInSidebar': '关闭后侧栏不再占用这个图标位置；仍可从下面的「打开人设总览」按钮进入。',
+      'hint.showOverviewInSidebar': '默认关闭，不占用侧栏位置；打开后侧栏才会出现图标。无论开关状态，都可用下面的按钮进入总览。',
       'action.openOverview': '打开人设总览',
       'quote.actionFloat': '引用这段',
       'quote.sentBadge': '{count} 个已选文本片段',
@@ -2558,7 +2558,7 @@ window.__ModuleLoader__.load({
       'field.quoteAsContext': 'Quote as context',
       'hint.quoteAsContext': 'When on, select a passage in a reply and click "Quote" — it is sent to the model as context with the next request, without entering your message or the chat history.',
       'field.showOverviewInSidebar': 'Show persona overview in sidebar',
-      'hint.showOverviewInSidebar': 'Off removes the sidebar icon so the space is freed; you can still open the overview with the button below.',
+      'hint.showOverviewInSidebar': 'Off by default so the sidebar stays uncluttered; turning it on adds the icon. The button below opens the overview either way.',
       'action.openOverview': 'Open persona overview',
       'quote.actionFloat': 'Quote this',
       'quote.sentBadge': '{count} quoted passage(s)',
@@ -6601,7 +6601,7 @@ window.__ModuleLoader__.load({
       const [localInstructions, setLocalInstructions] = React.useState(customInstructions)
       const [localToolConfirm, setLocalToolConfirm] = React.useState(requireToolConfirmation === true)
       const [localQuote, setLocalQuote] = React.useState(quoteAsContext === true)
-      const [localOverview, setLocalOverview] = React.useState(showOverviewInSidebar !== false)
+      const [localOverview, setLocalOverview] = React.useState(showOverviewInSidebar === true)
       const [localTrailEnabled, setLocalTrailEnabled] = React.useState(trailEnabled === true)
       const [localTrailColor, setLocalTrailColor] = React.useState(trailColor || TRAIL_COLOR_FALLBACK)
       const [localTrailSpeed, setLocalTrailSpeed] = React.useState(trailSpeed || 'slow')
@@ -6724,7 +6724,7 @@ window.__ModuleLoader__.load({
       // applyConfig → 本 effect），中途再插一次写入只会造成闪烁。
       const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
       const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
-      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, quoteAsContext: quoteAsContext === true, showOverviewInSidebar: showOverviewInSidebar !== false, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
+      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, quoteAsContext: quoteAsContext === true, showOverviewInSidebar: showOverviewInSidebar === true, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
       const lastSyncRef = React.useRef(null)
       // 判断某字段是否被用户动过：与「上次同步的快照」比。没有快照（首帧）时
       // 一律视为未动过 —— 首帧本地值本来就来自 store，无从谈起「编辑过」。
@@ -6956,7 +6956,7 @@ window.__ModuleLoader__.load({
             setLocalInstructions(customInstructions || '')
             setLocalToolConfirm(requireToolConfirmation === true)
                     setLocalQuote(quoteAsContext === true)
-                    setLocalOverview(showOverviewInSidebar !== false)
+                    setLocalOverview(showOverviewInSidebar === true)
             setLocalTrailEnabled(trailEnabled)
             setLocalTrailColor(trailColor)
             setLocalTrailSpeed(trailSpeed)
@@ -7007,7 +7007,7 @@ window.__ModuleLoader__.load({
           setLocalInstructions(customInstructions || '')
           setLocalToolConfirm(requireToolConfirmation === true)
                     setLocalQuote(quoteAsContext === true)
-                    setLocalOverview(showOverviewInSidebar !== false)
+                    setLocalOverview(showOverviewInSidebar === true)
           setLocalTrailEnabled(trailEnabled)
           setLocalTrailColor(trailColor)
           setLocalTrailSpeed(trailSpeed)
@@ -8402,7 +8402,7 @@ window.__ModuleLoader__.load({
         }, SoulPanelIcon)
 
         const sync = () => {
-          const on = controller.store.getSnapshot().showOverviewInSidebar !== false
+          const on = controller.store.getSnapshot().showOverviewInSidebar === true
           if (on && disposeRow === null) {
             disposeRow = registerRow()
           } else if (!on && disposeRow !== null) {
