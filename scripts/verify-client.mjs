@@ -23,10 +23,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { setImmediate as drainTick } from 'node:timers'
 import { assertCount } from './lib/skip-report.mjs'
+import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 102
+const EXPECTED_ASSERTIONS = 103
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5613,6 +5614,28 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.notEqual(world.dicts.en['group.tool'], 'Agent tools', '英文分组名不应再叫「Agent tools」')
     assert.ok(String(world.dicts.zh['group.tool'] || '').length > 0, '分组名不得为空')
     assert.ok(String(world.dicts.en['group.tool'] || '').length > 0, '分组名不得为空（英文）')
+  })
+
+  await check('C109 全客户端零 Rules of Hooks 违例（守卫 return 不得夹在 hook 之间）', async () => {
+    // 为什么单独成一项、而且是**全文件扫描**而不是逐组件断言：
+    // 「先判断要不要渲染、再声明状态」是本能写法，一处修好不代表下一处不会写成这样。
+    //
+    // 症状（用户实测，v0.11.0）：设置页关掉「显示输入框快捷开关」→ 保存 → 按钮确实没了；
+    // 再打开 → **按钮不再出现**，只能刷新页面。根因是守卫 return 夹在 useSoulController
+    // 与 useState 之间：宿主让槽位组件常驻挂载、只靠 store 订阅重渲染，于是「隐藏」那次
+    // 比「显示」那次少调用一个 hook，真实 React 报 Rendered more hooks than during the
+    // previous render，异常被宿主错误边界吞掉 ⇒ 内容永远回不来。
+    //
+    // 同族违例当时共 4 处：SoulQuickToggle（用户报的）+ SoulHistorySection /
+    // SoulWorkspaces / SoulSessions（判据是 props.subject，挂载期不变所以没暴露）。
+    const violations = findHookOrderViolations(source)
+    assert.deepEqual(
+      violations,
+      [],
+      `组件体顶层的守卫 return 之后仍有 hook 调用：\n${
+        violations.map((v) => `  ${v.fn}: 守卫 L${v.guardLine} -> hook L${v.hookLine}: ${v.hook}`).join('\n')
+      }`
+    )
   })
 
 
