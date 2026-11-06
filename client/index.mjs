@@ -948,6 +948,21 @@ window.__ModuleLoader__.load({
       '.soul-field select:focus,.soul-field textarea:focus,.soul-field input[type=text]:focus{outline:none;border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 25%, transparent)}',
       '.soul-toggle{display:flex;align-items:center;gap:8px;margin-bottom:14px}',
       '.soul-toggle label{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}',
+      // ── 开关（switch）形态 ──
+      //
+      // 用户要求：「设置页个性化 所有 checkbox 改用 switch 和宿主样式统一」。
+      // 做法是**只重绘原生 input[type=checkbox]**（appearance:none），不改 JSX：
+      //   · 无障碍语义不变 —— 仍是 checkbox，键盘 / 读屏 / 表单序列化全部照旧；
+      //   · 一处 CSS 覆盖全部开关，不会漏掉某个漏改的 JSX；
+      //   · 颜色全部取宿主 token（Theme 的 listTokens 已核对存在），深浅主题自动跟随。
+      // 尺寸 36×20，圆点 16px、内边距 1.5px ⇒ 打开时右移 16px 正好贴右边缘。
+      '.soul-toggle input[type="checkbox"]{appearance:none;-webkit-appearance:none;box-sizing:border-box;flex:none;width:36px;height:20px;margin:0;border:.5px solid var(--dsw-alias-border-l2);border-radius:999px;background:color-mix(in srgb, var(--dsw-alias-label-secondary) 22%, transparent);position:relative;cursor:pointer;transition:background-color .15s ease,border-color .15s ease}',
+      '.soul-toggle input[type="checkbox"]::after{content:"";position:absolute;top:1.5px;left:1.5px;box-sizing:border-box;width:16px;height:16px;border:.5px solid var(--dsw-alias-border-l2);border-radius:50%;background:var(--dsw-alias-label-primary);transition:transform .15s ease}',
+      '.soul-toggle input[type="checkbox"]:checked{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}',
+      '.soul-toggle input[type="checkbox"]:checked::after{transform:translateX(16px);background:var(--dsw-alias-bg-base)}',
+      '.soul-toggle input[type="checkbox"]:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
+      '.soul-toggle input[type="checkbox"]:disabled{opacity:.4;cursor:default}',
+      '@media (prefers-reduced-motion:reduce){.soul-toggle input[type="checkbox"],.soul-toggle input[type="checkbox"]::after{transition:none}}',
       '.soul-buttons{display:flex;gap:8px;margin-top:2px}',
       // 允许换行、不裁切。
       //

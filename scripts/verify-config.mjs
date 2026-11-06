@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 167
+const EXPECTED_ASSERTIONS = 168
 
 let passed = 0
 const failures = []
@@ -1171,6 +1171,40 @@ check('客户端 CSS 引用的每个 --dsw-* token 都在宿主主题里真实�
     !used.includes('--dsw-alias-label-error'),
     '--dsw-alias-label-error 在宿主主题里不存在（应为 --dsw-alias-state-error-primary）'
   )
+})
+
+// 用户要求：「设置页个性化 所有 checkbox 改用 switch 和宿主样式统一」。
+//
+// 实现是**只重绘原生 input[type=checkbox]**（appearance:none），不改 JSX：
+// 无障碍语义（键盘、读屏、表单序列化）全部不变，且一处 CSS 覆盖全部开关。
+//
+// ⚠️ 圆点颜色踩过坑，改前务必读：
+//   最初用 --dsw-alias-bg-base 做圆点色，实测**它与 --dsw-alias-bg-layer-2 在浅色
+//   主题下同为 #fff**（两者都指向 bluish-00），圆点会与轨道同色消失；
+//   改成「未选中 label-primary / 选中 bg-base」后，深色主题关闭态才真正可见
+//   （近黑点压在深灰轨道上是看不见的，截图验证过）。
+check('设置页开关改用 switch 形态，且颜色全部取宿主 token', () => {
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  assert.ok(cssBlock !== '', '找不到客户端 CSS 块')
+
+  // ① 用 appearance:none 重绘原生 checkbox（不是换成 div/button —— 那会丢掉无障碍语义）
+  assert.match(cssBlock, /\.soul-toggle input\[type="checkbox"\]\{appearance:none/, '开关必须用 appearance:none 重绘原生 checkbox')
+
+  // ② 轨道与圆点的尺寸/定位（36×20 + 16px 点 + 1.5px 内边距 + 右移 16px = 贴边）
+  assert.match(cssBlock, /width:36px;height:20px/, '轨道应为 36×20')
+  assert.match(cssBlock, /\.soul-toggle input\[type="checkbox"\]::after\{[^}]*width:16px;height:16px/, '圆点应为 16px')
+  assert.match(cssBlock, /:checked::after\{[^}]*translateX\(16px\)/, '打开时圆点右移 16px')
+
+  // ③ 选中态必须有独立底色（否则与关闭态无法区分）
+  assert.match(cssBlock, /\.soul-toggle input\[type="checkbox"\]:checked\{[^}]*background:var\(--dsw-alias-brand-primary\)/, '选中态必须用品牌色填充')
+
+  // ④ 圆点两态都要有底色覆盖：未选中 label-primary、选中 bg-base（反相）
+  assert.match(cssBlock, /::after\{[^}]*background:var\(--dsw-alias-label-primary\)/, '圆点默认色应为 label-primary')
+  assert.match(cssBlock, /:checked::after\{[^}]*background:var\(--dsw-alias-bg-base\)/, '选中态圆点应反相为 bg-base')
+
+  // ⑤ 键盘可达 + 尊重「减少动态效果」
+  assert.match(cssBlock, /:focus-visible\{outline:2px solid var\(--dsw-alias-brand-primary\)/, '必须保留 focus-visible 焦点环')
+  assert.match(cssBlock, /prefers-reduced-motion:reduce[^}]*\.soul-toggle input/, '必须尊重 prefers-reduced-motion')
 })
 
 check('设置页样式对齐宿主栏目：无外层盒子，分组用卡片', () => {
