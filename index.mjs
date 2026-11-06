@@ -1255,14 +1255,18 @@ function cwdOfAgent(agent) {
 // 避免「引用明明存了、送达时却取不到」这种静默失配 —— 那类问题最难排查。
 const quotePending = new Map()
 
-// 「引用 → 消息」真绑定用的**最近引用快照**。
+// 「引用 → 消息」真绑定 + **送达**共用的最近引用快照。
 //
-// 为什么必须另存一份：客户端一按发送就 `quoteClear` → POST 空数组 → quotePending 被删，
-// 而宿主的 `session/event` 是 post-commit 才发的，晚于清空。若只靠 quotePending，
-// 消息提交时已经读不到它带了什么引用。
+// 为什么必须另存一份（而不直接用 quotePending）：客户端一按 Enter 就
+// `quoteClear` → POST 空数组 → quotePending 被删；而宿主的
+// systemPrompt.context.text() 是在消息提交之后的 agent step 里才求值
+// （refreshContext → runtimeContext.project → append("user/message")），
+// session/event 更是 post-commit。若只靠 quotePending，两处都读不到。
 //
-// 生命周期：setQuotes(非空) 时写入 → session/event(user/message) 时消费并删除。
-// 它**不参与送达**（systemPrompt.context 仍只读 quotePending），所以多存一份没有副作用。
+// 生命周期：setQuotes(非空) 写入 → session/event(user/message) 消费并删除。
+//   · 送达：text() 在这之前求值，能读到；模型请求重试也仍在这之前，照样读到。
+//   · 绑定：session/event 拿它按消息 id 落盘。
+// 一次写入、两处只读、一处消费 —— 不再拆多份状态互相抢。
 const quoteSnapshot = new Map()
 
 // 「消息先到、引用快照晚到」的兜底。
@@ -1315,9 +1319,24 @@ function setQuotes(rawSessionId, rawQuotes) {
   return { ok: true, count: cleaned.length }
 }
 
+/**
+ * 送达侧读的引用。
+ *
+ * ★ 之前读 quotePending，但客户端一按 Enter 就 POST 空数组把它清了，
+ * 而 systemPrompt.context.text() 是在**消息提交之后**的 agent step 里才求值
+ * （宿主：refreshContext → runtimeContext.project → append("user/message")）。
+ * 结果模型请求装配时读到空 —— 用户看到「模型在思考里猜我的意思，根本没看到引用」
+ * （实测反馈）。这条链路此前没有任何测试覆盖。
+ *
+ * 现在读 quoteSnapshot：setQuotes 写入，session/event(post-commit) 才消费，
+ * 覆盖「求值 → 模型请求 → 重试 → 消息提交」整个过程。
+ * quotePending 保留为「当前草稿是否带引用」的可查状态（GET 端点用），不参与送达。
+ */
 function quotesOf(rawSessionId) {
   const key = quoteKeyOf(rawSessionId)
-  return key === '' ? [] : (quotePending.get(key) || [])
+  if (key === '') return []
+  const snap = quoteSnapshot.get(key)
+  return snap === undefined ? [] : snap.quotes
 }
 
 // ==================== HTTP 路由 ====================
