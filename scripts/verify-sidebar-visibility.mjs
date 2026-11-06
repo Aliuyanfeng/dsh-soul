@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { assertCount } from './lib/skip-report.mjs'
 import { DEFAULT_CONFIG, sanitizeConfig, migrateConfig } from '../lib/config.mjs'
 
-const EXPECTED_ASSERTIONS = 15
+const EXPECTED_ASSERTIONS = 16
 let passed = 0
 const check = (name, fn) => {
   passed++
@@ -100,9 +100,26 @@ check('注销的是图标行、不是 main 面板', () => {
   assert.match(seg, /name: 'sidebar\.panellist'/, 'registerRow 里注册的是图标行')
   assert.equal(seg.includes("name: 'main'"), false, '不该在动态分支里注册 main')
 })
-check('设置页有「打开人设总览」备用按钮', () => {
-  assert.match(clientCode, /action\.openOverview/, '缺备用按钮文案调用')
-  assert.match(clientCode, /selectPanel\(OVERVIEW_PANEL_ID\)/, '备用按钮必须真的切面板')
+check('「打开人设总览」入口在插件详情页（用户要求从设置页挪过来）', () => {
+  // 用户：「打开人设总览 这个按钮 不要放在设置页了 放在插件详情页吧」。
+  // 详情页入口与工作区人设 / 变更记录 / 会话清理同类：低频、需要空间。
+  assert.match(clientCode, /action\.openOverview/, '缺「打开人设总览」文案调用')
+  assert.match(clientCode, /selectPanel\(OVERVIEW_PANEL_ID\)/, '入口必须真的切面板')
+
+  // 必须注册到插件详情页槽位，且 id 独立
+  assert.match(clientCode, /id: 'soul-detail-overview'/, '必须注册为独立详情区块')
+  assert.match(clientCode, /name: 'plugins\.detail\.section'[\s\S]{0,160}soul-detail-overview|soul-detail-overview[\s\S]{0,160}plugins\.detail\.section/, '必须走 plugins.detail.section 槽位')
+
+  // 详情页槽位对所有插件详情页都渲染 —— 必须按 subject.pkg.name 过滤，
+  // 否则会跑到别的插件详情页里
+  assert.match(clientCode, /function SoulOverviewEntry[\s\S]{0,600}subject\.pkg\.name !== 'dsh-soul'/, '必须过滤 subject，只服务本插件详情页')
+})
+
+check('设置页不再放「打开人设总览」按钮（已迁到详情页）', () => {
+  // 设置页里不该再出现这个按钮：它的 onClick 调 selectPanel(OVERVIEW_PANEL_ID)。
+  // 详情页组件里必然有一处，所以这里断言「恰好一处」——多了就是设置页那份还在。
+  const hits = (clientCode.match(/selectPanel\(OVERVIEW_PANEL_ID\)/g) || []).length
+  assert.equal(hits, 1, `selectPanel(OVERVIEW_PANEL_ID) 应只在详情页组件里出现一次，实际 ${hits}`)
 })
 check('中英词典都有该字段的 label + hint + 按钮文案', () => {
   // 词典定义形态是 `      'key': '文案',`（行首缩进 + 冒号）。

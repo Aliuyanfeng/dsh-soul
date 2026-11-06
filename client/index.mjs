@@ -1828,6 +1828,14 @@ window.__ModuleLoader__.load({
       '.soul-history-retention select:disabled{opacity:.6}',
       // 下拉右侧的问号提示沿用设置页的 SoulHint；这里只压掉它的上边距以对齐这一行
       '.soul-history-retention .soul-hint{margin-top:0}',
+      // —— 插件详情页「人设总览」入口区块 ——
+      // 照同页其它区块的规格：section 纵向 12px 间距、标题 14/500/20、说明 12 次要色。
+      '.soul-detail-overview{display:flex;flex-direction:column;gap:12px}',
+      '.soul-detail-overview-head{display:flex;align-items:baseline;gap:8px}',
+      '.soul-detail-overview-title{margin:0;font-size:14px;font-weight:500;line-height:20px;color:var(--dsw-alias-label-primary)}',
+      '.soul-detail-overview-desc{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
+      // 按钮在 flex column 里会被 stretch 拉满，显式靠左（与详情页其它按钮一致）
+      '.soul-detail-overview-action{align-self:flex-start}',
       // —— 设置页指引（0.8.1 双入口）——
       // 列表整体迁去插件详情页后，设置页不再有指引行；去向说明并入「人设预设」
       // 展开区的 .soul-note（见下方 .soul-note 注释），不再单独占一行。
@@ -2174,8 +2182,9 @@ window.__ModuleLoader__.load({
       'field.quoteAsContext': '引用作为上下文',
       'hint.quoteAsContext': '默认关闭。DSH 官方已内置「消息引用」功能（在回答里选中文字 → 点引用，会插入输入框成为引用块，可见可编辑），推荐优先使用官方功能。开启本项后，引用不进你的消息正文，而是作为运行时上下文随下一轮请求送达模型。',
       'field.showOverviewInSidebar': '在侧边栏显示人设总览',
-      'hint.showOverviewInSidebar': '默认关闭，不占用侧栏位置；打开后侧栏才会出现图标。无论开关状态，都可用下面的按钮进入总览。',
+      'hint.showOverviewInSidebar': '默认关闭，不占用侧栏位置；打开后侧栏才会出现图标。想进入总览时，也可以在插件详情页里打开。',
       'action.openOverview': '打开人设总览',
+      'hint.overviewEntry': '在插件详情页直接打开人设总览面板 —— 侧边栏关闭该入口后，这里是常驻的去处。',
       'quote.actionFloat': '引用这段',
       'quote.sentBadge': '{count} 个已选文本片段',
       'quote.sentItem': '引用{index}：{text}',
@@ -2581,8 +2590,9 @@ window.__ModuleLoader__.load({
       'field.quoteAsContext': 'Quote as context',
       'hint.quoteAsContext': 'Off by default. DSH already ships an official "message quotes" feature (select text in a reply → Quote inserts it into the composer as a visible, editable quote) — prefer that. When this is on, quotes stay out of your message and are sent as runtime context with the next request.',
       'field.showOverviewInSidebar': 'Show persona overview in sidebar',
-      'hint.showOverviewInSidebar': 'Off by default so the sidebar stays uncluttered; turning it on adds the icon. The button below opens the overview either way.',
+      'hint.showOverviewInSidebar': 'Off by default so the sidebar stays uncluttered; turning it on adds the icon. You can also open the overview from the plugin detail page.',
       'action.openOverview': 'Open persona overview',
+      'hint.overviewEntry': 'Opens the persona overview panel right from the plugin detail page — a permanent way in when the sidebar entry is hidden.',
       'quote.actionFloat': 'Quote this',
       'quote.sentBadge': '{count} quoted passage(s)',
       'quote.sentItem': 'Quote {index}: {text}',
@@ -4179,6 +4189,37 @@ window.__ModuleLoader__.load({
     //
     // 交互刻意做成两步：先**预览**（不删任何东西），确认后才清理。
     // 删除不可逆，且回收依据（会话清单）可能不可用，所以默认永远站在"不删"一侧。
+    // 插件详情页的「人设总览」入口（用户要求：从设置页挪到这里）。
+    //
+    // 为什么放详情页：它和「工作区人设」「变更记录」「会话覆盖清理」是同类 ——
+    // 低频、需要空间、且都属于「这个插件的设置」而不是「使用者的偏好」。
+    // 侧栏入口关闭后，这里是常驻的去处；即使侧栏开着，从这里也能一键打开。
+    //
+    // 只服务本插件的 bundle 详情页：宿主的 plugins.detail.section 槽位对所有插件
+    // 详情页都渲染，必须用 subject.pkg.name 过滤，否则会在别人的详情页里冒出来。
+    function SoulOverviewEntry(props) {
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const subject = props.subject || null
+      if (!subject || subject.kind !== 'bundle' || !subject.pkg || subject.pkg.name !== 'dsh-soul') return null
+
+      return e('section', { className: 'soul-detail-overview', 'data-soul-overview-entry': 'true' },
+        e('div', { className: 'soul-detail-overview-head' },
+          e('h4', { className: 'soul-detail-overview-title' }, t('ov.title'))
+        ),
+        e('p', { className: 'soul-detail-overview-desc' }, t('hint.overviewEntry')),
+        e('button', {
+          type: 'button',
+          className: 'soul-ov-gc-btn soul-detail-overview-action',
+          onClick: () => {
+            const layout = layoutService.get()
+            if (layout && typeof layout.selectPanel === 'function') {
+              layout.selectPanel(OVERVIEW_PANEL_ID)
+            }
+          }
+        }, t('action.openOverview'))
+      )
+    }
+
     function SoulSessions(props) {
       const { controller } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
@@ -7766,16 +7807,6 @@ window.__ModuleLoader__.load({
               checked: localOverview,
               onChange: setLocalOverview
             }),
-            e('button', {
-              type: 'button',
-              className: 'soul-ov-gc-btn',
-              onClick: () => {
-                const layout = layoutService.get()
-                if (layout && typeof layout.selectPanel === 'function') {
-                  layout.selectPanel(OVERVIEW_PANEL_ID)
-                }
-              }
-            }, t('action.openOverview')),
 
             e('div', { className: 'soul-group-title' }, t('trail.title')),
             e(SoulSwitch, {
@@ -8685,6 +8716,18 @@ window.__ModuleLoader__.load({
 
       // —— 工作区人设（0.9.0-e）——
       //
+      // —— 人设总览入口：插件详情页最上方 ——
+      //
+      // order 30 排在工作区人设（40）/ 变更记录（50）/ 会话清理（60）之前：
+      // 它是「去哪里看」的导航，比具体配置更靠前。
+      ctx.slots.inject('plugins.detail.section', () => ctx.slots.register({
+        name: 'plugins.detail.section',
+        id: 'soul-detail-overview',
+        order: 30,
+        locale: NS,
+        inject: () => ({})
+      }, SoulOverviewEntry))
+
       // 注册到插件详情页：与变更记录同一槽位，宿主为每个注册者渲染一个区块。
       // 不与设置页放在一起的原因写在 SoulWorkspaces 头注释里（低频 + 需要空间）。
       ctx.slots.inject('plugins.detail.section', () => ctx.slots.register({
