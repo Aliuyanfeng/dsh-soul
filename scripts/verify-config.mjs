@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 168
+const EXPECTED_ASSERTIONS = 171
 
 let passed = 0
 const failures = []
@@ -428,6 +428,26 @@ check('DEFAULT_CONFIG：引用作为上下文默认关闭（官方已内置 mess
 check('migrateConfig：缺失 quoteAsContext 时回退为关闭', () => {
   assert.equal(migrateConfig({}).quoteAsContext, false)
   assert.equal(migrateConfig({ quoteAsContext: 'dirty' }).quoteAsContext, false)
+})
+
+check('DEFAULT_CONFIG：输入框快捷开关默认开启', () => {
+  // 默认方向很容易写反：它是本插件最常用的入口（不进设置页就能开关个性化），
+  // 藏起来会让「怎么关掉个性化」变成一道找门的题。
+  assert.equal(DEFAULT_CONFIG.showQuickToggle, true)
+})
+
+check('migrateConfig：缺失 showQuickToggle 时回退为开启（老配置不能被判成关闭）', () => {
+  assert.equal(migrateConfig({}).showQuickToggle, true)
+  assert.equal(migrateConfig({ showQuickToggle: 'dirty' }).showQuickToggle, true)
+  // 显式 false 必须被尊重
+  assert.equal(migrateConfig({ showQuickToggle: false }).showQuickToggle, false)
+})
+
+check('sanitizeConfig：showQuickToggle 只接受布尔值', () => {
+  assert.deepEqual(sanitizeConfig({ showQuickToggle: false }), { patch: { showQuickToggle: false }, errors: {} })
+  const bad = sanitizeConfig({ showQuickToggle: 'no' })
+  assert.deepEqual(bad.patch, {})
+  assert.ok(bad.errors.showQuickToggle, '非布尔值必须报错而不是静默忽略')
 })
 
 check('sanitizeConfig：光轨字段全部通过，颜色归一化为大写', () => {

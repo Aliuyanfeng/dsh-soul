@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 100
+const EXPECTED_ASSERTIONS = 101
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -658,6 +658,12 @@ async function clickButton(world, labelKey) {
 
 // ==================== 五、用例 ====================
 
+// 注意：这份基准配置**有意不包含**后来新增的字段（quoteAsContext /
+// showOverviewInSidebar / showQuickToggle 等）—— 它模拟的是「老配置文件升级后
+// 缺新字段」的真实场景，正好用来验证 applyConfig 的归一化方向：
+//   · 默认 false 的字段用 === true  ⇒ 缺席时得 false ✓
+//   · 默认 true  的字段用 !== false ⇒ 缺席时得 true  ✓（写成 === true 就错了）
+// 所以不要为了「看起来完整」把它们补进来 —— 补了反而测不到归一化。
 const CONFIG = {
   enabled: true,
   nickname: '',
@@ -5507,9 +5513,10 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.ok(textCols.length >= 1, '开关必须有 .soul-toggle-text 文字列')
     assert.match(source, /className: 'soul-toggle-title'/, '标题必须有独立类名（14px 标题层级）')
 
-    // 源码层面：5 个功能开关必须都走 SoulSwitch（别漏掉某个还用原生 checkbox）
+    // 源码层面：设置页的 6 个功能开关必须都走 SoulSwitch（别漏掉某个还用原生 checkbox）
+    // 6 = 启用 / 人设变更确认 / 显示快捷开关 / 引用作为上下文 / 侧栏总览 / 输入框光轨
     const soulSwitchUses = (source.match(/e\(SoulSwitch, \{/g) || []).length
-    assert.equal(soulSwitchUses, 5, `应有 5 处使用 SoulSwitch，实际 ${soulSwitchUses}`)
+    assert.equal(soulSwitchUses, 6, `应有 6 处使用 SoulSwitch，实际 ${soulSwitchUses}`)
 
     // 每个开关都要有无障碍标签（宿主 Switch 用 label 而非可见文字）
     for (const sw of switches) {
@@ -5527,6 +5534,39 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     let received = null
     first.props.onChange(true)
     assert.ok(true, '宿主 Switch 的 onChange 调用不应抛错')
+  })
+
+  await check('C107 输入框快捷开关受 showQuickToggle 控制：默认显示，关掉后不渲染', async () => {
+    // 用户要求：设置 → 个性化 → Agent 工具里加一个开关，控制输入框那个
+    // 「个性化已启用」按钮是否显示，**默认开启**。
+    const onWorld = await boot()
+    const onTree = await onWorld.runtime.settle(quickToggleElement(onWorld))
+    assert.equal(
+      findAllByClass(onTree, 'soul-quick-toggle').length,
+      1,
+      '默认应显示输入框快捷开关（默认开启）'
+    )
+
+    const offWorld = await boot()
+    offWorld.controller.store.update((s) => { s.showQuickToggle = false })
+    const offTree = await offWorld.runtime.settle(quickToggleElement(offWorld))
+    assert.equal(
+      findAllByClass(offTree, 'soul-quick-toggle').length,
+      0,
+      '关闭后不应渲染快捷开关（槽位返回 null 不占位）'
+    )
+
+    // 默认值方向很容易写反：字段缺席时必须当成「显示」而不是「关闭」，
+    // 否则老配置升级后入口凭空消失。这里钉住 applyConfig 的写法。
+    assert.match(
+      source,
+      /s\.showQuickToggle = config\.showQuickToggle !== false/,
+      '默认开启的开关必须用 !== false 归一化（写 === true 会让缺失字段被判成关闭）'
+    )
+
+    // 设置页必须能改它，且字段名与配置键一致
+    assert.match(source, /id: 'soul-showQuickToggle'/, '设置页缺少对应开关')
+    assert.match(source, /onChange: setLocalQuickToggle/, '开关必须接到本地表单状态')
   })
 
 

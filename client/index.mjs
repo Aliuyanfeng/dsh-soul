@@ -78,6 +78,8 @@ window.__ModuleLoader__.load({
       requireToolConfirmation: false,
       // 引用作为上下文：默认关（官方 dsh-message-quotes 已内置等价交互）
       quoteAsContext: false,
+      // 输入框「个性化已启用」快捷开关是否显示：默认开（最常用的入口）
+      showQuickToggle: true,
       // 侧栏「人设总览」入口开关（Issue #3）：默认关，不强制占用侧栏位置
       showOverviewInSidebar: false,
       // 输入框光轨（v0.6.0）：Agent 回复中时输入框边框的流光动效
@@ -477,7 +479,10 @@ window.__ModuleLoader__.load({
         s.language = config.language || 'zh'
         s.customInstructions = config.customInstructions
         s.requireToolConfirmation = config.requireToolConfirmation === true
-    s.quoteAsContext = config.quoteAsContext === true
+        // 默认 true 的开关必须用 !== false：写成 === true 会让「字段缺席」
+        // 被当成「用户关闭」，老配置升级后入口会凭空消失。
+        s.showQuickToggle = config.showQuickToggle !== false
+        s.quoteAsContext = config.quoteAsContext === true
         s.showOverviewInSidebar = config.showOverviewInSidebar === true
         s.trailEnabled = config.trailEnabled !== false
         s.trailColor = config.trailColor || TRAIL_COLOR_FALLBACK
@@ -2184,6 +2189,8 @@ window.__ModuleLoader__.load({
       'field.showOverviewInSidebar': '在侧边栏显示人设总览',
       'hint.showOverviewInSidebar': '默认关闭，不占用侧栏位置；打开后侧栏才会出现图标。想进入总览时，也可以在插件详情页里打开。',
       'action.openOverview': '打开人设总览',
+      'field.showQuickToggle': '显示输入框快捷开关',
+      'hint.showQuickToggle': '输入框左侧的「个性化已启用」按钮，点一下就能开关个性化，不必进设置页。关掉后该按钮不显示，只能从设置页切换。',
       'hint.overviewEntry': '在插件详情页直接打开人设总览面板 —— 侧边栏关闭该入口后，这里是常驻的去处。',
       'quote.actionFloat': '引用这段',
       'quote.sentBadge': '{count} 个已选文本片段',
@@ -2592,6 +2599,8 @@ window.__ModuleLoader__.load({
       'field.showOverviewInSidebar': 'Show persona overview in sidebar',
       'hint.showOverviewInSidebar': 'Off by default so the sidebar stays uncluttered; turning it on adds the icon. You can also open the overview from the plugin detail page.',
       'action.openOverview': 'Open persona overview',
+      'field.showQuickToggle': 'Show composer quick toggle',
+      'hint.showQuickToggle': 'The "Personalization enabled" button left of the composer toggles personalization in one click, without opening Settings. When hidden, you can only switch it from Settings.',
       'hint.overviewEntry': 'Opens the persona overview panel right from the plugin detail page — a permanent way in when the sidebar entry is hidden.',
       'quote.actionFloat': 'Quote this',
       'quote.sentBadge': '{count} quoted passage(s)',
@@ -2839,7 +2848,7 @@ window.__ModuleLoader__.load({
     ]
 
     // 设置页表单驱动的字段（dirty 检测与保存载荷共用）。
-    const FORM_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+    const FORM_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'showQuickToggle']
 
     // 由**别的界面**就地管理、因而不在这张表单里的配置字段：
     //   · `historyMaxEntries` —— 插件详情页的变更记录区块（改完即时落盘，不经保存按钮）；
@@ -2888,6 +2897,7 @@ window.__ModuleLoader__.load({
       requireToolConfirmation: 'field.toolConfirm',
       quoteAsContext: 'field.quoteAsContext',
       showOverviewInSidebar: 'field.showOverviewInSidebar',
+      showQuickToggle: 'field.showQuickToggle',
       trailEnabled: 'trail.enable',
       trailColor: 'trail.color',
       trailSpeed: 'trail.speed',
@@ -6401,6 +6411,11 @@ window.__ModuleLoader__.load({
       const { useSoulController, controller } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
+      // 设置页关掉「显示快捷开关」时整个按钮不渲染。
+      // 这里 early return 是安全的：conversation.input.dock 是普通渲染槽位，
+      // 返回 null 就是什么都不画，不会像 sidebar.panellist 那样留一个空位
+      // （那个槽位由宿主按注册 id 生成按钮，必须注销才腾得出位置）。
+      if (state.showQuickToggle === false) return null
       const enabled = state.enabled === true
       const busy = state.saving === true
       // 保存失败的本地标记：失败时 store.error 会带上原因，但按钮本身此前毫无反馈
@@ -6761,7 +6776,7 @@ window.__ModuleLoader__.load({
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
 
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
@@ -6777,6 +6792,8 @@ window.__ModuleLoader__.load({
       const [localToolConfirm, setLocalToolConfirm] = React.useState(requireToolConfirmation === true)
       const [localQuote, setLocalQuote] = React.useState(quoteAsContext === true)
       const [localOverview, setLocalOverview] = React.useState(showOverviewInSidebar === true)
+      // 默认 true 的开关：用 !== false 兜「字段缺席」（老配置升级时不该被判成关闭）
+      const [localQuickToggle, setLocalQuickToggle] = React.useState(showQuickToggle !== false)
       const [localTrailEnabled, setLocalTrailEnabled] = React.useState(trailEnabled === true)
       const [localTrailColor, setLocalTrailColor] = React.useState(trailColor || TRAIL_COLOR_FALLBACK)
       const [localTrailSpeed, setLocalTrailSpeed] = React.useState(trailSpeed || 'slow')
@@ -6897,9 +6914,9 @@ window.__ModuleLoader__.load({
       //
       // saving 期间仍然整体跳过：保存流程自身会带着响应回填（见 saveConfig →
       // applyConfig → 本 effect），中途再插一次写入只会造成闪烁。
-      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
-      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
-      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, quoteAsContext: quoteAsContext === true, showOverviewInSidebar: showOverviewInSidebar === true, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
+      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'showQuickToggle']
+      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, showQuickToggle: localQuickToggle, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, quoteAsContext: quoteAsContext === true, showOverviewInSidebar: showOverviewInSidebar === true, showQuickToggle: showQuickToggle !== false, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
       const lastSyncRef = React.useRef(null)
       // 判断某字段是否被用户动过：与「上次同步的快照」比。没有快照（首帧）时
       // 一律视为未动过 —— 首帧本地值本来就来自 store，无从谈起「编辑过」。
@@ -6934,6 +6951,7 @@ window.__ModuleLoader__.load({
         setLocalToolConfirm(next.requireToolConfirmation)
         setLocalQuote(next.quoteAsContext)
         setLocalOverview(next.showOverviewInSidebar)
+        setLocalQuickToggle(next.showQuickToggle !== false)
         setLocalTrailEnabled(next.trailEnabled)
         setLocalTrailColor(next.trailColor)
         setLocalTrailSpeed(next.trailSpeed)
@@ -6955,8 +6973,8 @@ window.__ModuleLoader__.load({
       const sameValue = (a, b) => (typeof a === 'string' && typeof b === 'string'
         ? a.trim() === b.trim()
         : a === b)
-      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, trailEnabled, trailColor, trailSpeed, trailWidth }
-      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, trailEnabled, trailColor, trailSpeed, trailWidth }
+      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, showQuickToggle: localQuickToggle, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
       const dirty = FORM_FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
 
       // 宿主 savedNotice 语义：一旦用户开始新的编辑（dirty 变 true），
@@ -7130,6 +7148,7 @@ window.__ModuleLoader__.load({
             setLocalLanguage(language || 'zh')
             setLocalInstructions(customInstructions || '')
             setLocalToolConfirm(requireToolConfirmation === true)
+            setLocalQuickToggle(showQuickToggle !== false)
                     setLocalQuote(quoteAsContext === true)
                     setLocalOverview(showOverviewInSidebar === true)
             setLocalTrailEnabled(trailEnabled)
@@ -7181,6 +7200,7 @@ window.__ModuleLoader__.load({
           setLocalLanguage(language || 'zh')
           setLocalInstructions(customInstructions || '')
           setLocalToolConfirm(requireToolConfirmation === true)
+          setLocalQuickToggle(showQuickToggle !== false)
                     setLocalQuote(quoteAsContext === true)
                     setLocalOverview(showOverviewInSidebar === true)
           setLocalTrailEnabled(trailEnabled)
@@ -7838,6 +7858,16 @@ window.__ModuleLoader__.load({
               hint: t('hint.toolConfirm'),
               checked: localToolConfirm,
               onChange: setLocalToolConfirm
+            }),
+
+            // 输入框快捷开关的显示控制：属于「界面里出现什么」，与 Agent 工具同组
+            // （都在描述本插件在会话界面的存在方式）。
+            e(SoulSwitch, {
+              id: 'soul-showQuickToggle',
+              labelText: t('field.showQuickToggle'),
+              hint: t('hint.showQuickToggle'),
+              checked: localQuickToggle,
+              onChange: setLocalQuickToggle
             }),
 
             // 引用作为上下文：独立开关，关掉只影响引用，人设照常工作。
