@@ -916,6 +916,10 @@ window.__ModuleLoader__.load({
       '.soul-version{flex:0 0 auto;color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:400;line-height:18px;white-space:nowrap}',
       // 字段：宿主用 12px / 500 / lh18 的字段标签 + 8px 间距
       '.soul-field{margin-bottom:14px;width:100%}',
+      // 开关行（.soul-toggle）只负责自己那一行的 padding 与分隔线；紧跟在它后面的
+      // 参数组（光轨的颜色 / 速度 / 粗细 / 示例）如果贴住分隔线会显得挤。
+      // 这里补 16px —— 与开关行自身的 padding 同一节奏，不另立一套间距。
+      '.soul-trail-detail{margin-top:16px}',
       '.soul-field label{display:block;margin-bottom:8px;font-size:12px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       // 与上面的 label 同形，但用于「没有对应控件」的分组标题（如光轨示例预览）：
       // 那种位置写 <label> 会是一个指向空的标签，语义错误
@@ -7897,7 +7901,9 @@ window.__ModuleLoader__.load({
               onChange: setLocalTrailEnabled
             }),
 
-            localTrailEnabled && e(Fragment, null,
+            // 用 div 而不是 Fragment：碎片没法挂 class，而这段需要一层容器来补上
+            // 与上方开关行之间的间距（.soul-trail-detail 的 margin-top）。
+            localTrailEnabled && e('div', { className: 'soul-trail-detail' },
               e('div', { className: 'soul-field' },
                 e('label', { htmlFor: 'soul-trailColor' }, t('trail.color')),
                 e('div', { className: 'soul-trail-colors' },

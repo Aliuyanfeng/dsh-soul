@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 171
+const EXPECTED_ASSERTIONS = 172
 
 let passed = 0
 const failures = []
@@ -449,6 +449,7 @@ check('sanitizeConfig：showQuickToggle 只接受布尔值', () => {
   assert.deepEqual(bad.patch, {})
   assert.ok(bad.errors.showQuickToggle, '非布尔值必须报错而不是静默忽略')
 })
+
 
 check('sanitizeConfig：光轨字段全部通过，颜色归一化为大写', () => {
   const { patch, errors } = sanitizeConfig({
@@ -1492,6 +1493,20 @@ check('人设插画：宿主路由存在、只服务内置人设名、缺图回�
   )
 })
 
+check('光轨参数组与上方开关行之间有间距', () => {
+  // 起因：删掉「输入框光轨」那个分组小标题后，颜色字段直接贴住了开关行的
+  // 分隔线。开关行只有自己的 padding，不负责它与下方参数组之间的距离，
+  // 所以要一层容器补 margin-top。
+  const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
+  assert.match(cssBlock, /\.soul-trail-detail\{margin-top:\d+px\}/, '缺 .soul-trail-detail 的上间距规则')
+  assert.match(clientSource, /className: 'soul-trail-detail'/, '光轨参数组必须包在这层容器里（Fragment 挂不了 class）')
+  // 不能用裸 Fragment：Fragment 没有 DOM 节点，样式无处可挂
+  assert.equal(
+    /localTrailEnabled && e\(Fragment/.test(clientSource),
+    false,
+    '光轨参数组不要再用 Fragment（没有 DOM 节点，间距挂不上去）'
+  )
+})
 check('人设插画：所有卡片都出图，且必须经 fetch 取回（不得直连 <img src>）', () => {
   // 0.11.x 的真实故障：插画全部不显示，只剩渐变底。
   // 根因：桌面宿主的 webServer 要求 `Authorization: Bearer`，而 `<img src>` 是
