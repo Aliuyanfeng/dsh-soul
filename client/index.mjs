@@ -2184,7 +2184,10 @@ window.__ModuleLoader__.load({
       'sessions.collected': '已清理 {count} 项。',
       'sessions.nothing': '没有可回收的条目。',
       'sessions.previewHint': '预览不会删除任何文件；确认后才会真的清理。',
-      'group.tool': 'Agent 工具',
+      // 这组里 4 项只有「人设变更需确认」真的与 Agent 工具（set_persona）有关，
+      // 其余三项（引用 / 侧栏 / 光轨）都是界面与交互。叫「Agent 工具」名不副实 ——
+      // 用户也是看到「输入框光轨」出现在这一组里才发现歧义的。
+      'group.tool': '交互与界面',
       'field.toolConfirm': '人设变更需确认',
       'field.quoteAsContext': '引用作为上下文',
       'hint.quoteAsContext': '默认关闭。DSH 官方已内置「消息引用」功能（在回答里选中文字 → 点引用，会插入输入框成为引用块，可见可编辑），推荐优先使用官方功能。开启本项后，引用不进你的消息正文，而是作为运行时上下文随下一轮请求送达模型。',
@@ -2593,7 +2596,7 @@ window.__ModuleLoader__.load({
       'sessions.collected': 'Cleaned up {count} item(s).',
       'sessions.nothing': 'Nothing to collect.',
       'sessions.previewHint': 'Previewing deletes nothing; files are removed only after you confirm.',
-      'group.tool': 'Agent tools',
+      'group.tool': 'Interaction & UI',
       'field.toolConfirm': 'Require confirmation for persona changes',
       'field.quoteAsContext': 'Quote as context',
       'hint.quoteAsContext': 'Off by default. DSH already ships an official "message quotes" feature (select text in a reply → Quote inserts it into the composer as a visible, editable quote) — prefer that. When this is on, quotes stay out of your message and are sent as runtime context with the next request.',

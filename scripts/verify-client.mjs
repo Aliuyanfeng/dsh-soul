@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 101
+const EXPECTED_ASSERTIONS = 102
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5537,7 +5537,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
   })
 
   await check('C107 输入框快捷开关受 showQuickToggle 控制：默认显示，关掉后不渲染', async () => {
-    // 用户要求：设置 → 个性化 → Agent 工具里加一个开关，控制输入框那个
+    // 用户要求：设置 → 个性化 → 交互与界面里加一个开关，控制输入框那个
     // 「个性化已启用」按钮是否显示，**默认开启**。
     const onWorld = await boot()
     const onTree = await onWorld.runtime.settle(quickToggleElement(onWorld))
@@ -5567,6 +5567,20 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 设置页必须能改它，且字段名与配置键一致
     assert.match(source, /id: 'soul-showQuickToggle'/, '设置页缺少对应开关')
     assert.match(source, /onChange: setLocalQuickToggle/, '开关必须接到本地表单状态')
+  })
+
+  await check('C108 分组命名不再叫「Agent 工具」（这一组多数不是工具）', async () => {
+    // 该组 4 项：人设变更需确认 / 引用作为上下文 / 侧边栏显示总览 / 输入框光轨。
+    // 只有第一项与 set_persona 这个 Agent 工具相关，其余三项都是界面与交互 ——
+    // 用户正是看到「输入框光轨」出现在「Agent 工具」里才发现名称有歧义。
+    //
+    // 断言只用 notEqual：将来换成任何更贴切的名字都通过，只有改回旧名才失败。
+    // 写死等值会挡住合理的文案优化。
+    const world = await boot()
+    assert.notEqual(world.dicts.zh['group.tool'], 'Agent 工具', '中文分组名不应再叫「Agent 工具」')
+    assert.notEqual(world.dicts.en['group.tool'], 'Agent tools', '英文分组名不应再叫「Agent tools」')
+    assert.ok(String(world.dicts.zh['group.tool'] || '').length > 0, '分组名不得为空')
+    assert.ok(String(world.dicts.en['group.tool'] || '').length > 0, '分组名不得为空（英文）')
   })
 
 
