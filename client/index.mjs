@@ -2931,6 +2931,51 @@ window.__ModuleLoader__.load({
     // 此前只有 :hover 可达，且提示节点用 visibility:hidden —— 那会把它移出无障碍树，
     // 键盘与读屏用户拿不到字段说明。这里补 tabIndex 让它可以聚焦，并在 :focus-visible
     // 下显示提示（同时保留 aria-label，聚焦时读屏会念出说明本身）。
+    // 宿主官方开关：与「设置 → 通用设置 → 显示代码工作视图」**同一个组件**
+    // （`@deepseek-ai/dsh-client-ui-primitives` 的 `Switch`，本文件顶部已 require 为 `ui`）。
+    //
+    // 用户要求「和这个统一」—— 直接复用宿主组件比自绘更彻底：尺寸、圆角、动效、
+    // 深浅色、键盘行为全部由宿主保证，宿主改版也不会偏离。
+    //
+    // 需要降级：`ui.Switch` 是宿主内部导出，老版本可能没有；缺失时回退到原生
+    // checkbox（CSS 已把它重绘成同形态的开关，见 .soul-toggle input[type=checkbox]）。
+    // 判据只看「有没有」，不要求 typeof === 'function'：
+    // React 组件可以是函数、也可以是 memo/forwardRef 对象；测试桩里更是字符串。
+    // 写死 function 会让「宿主明明有」却被判成没有、静默退化到自绘（实测踩过）。
+    const HostSwitch = ui !== null && ui !== undefined && ui.Switch !== undefined && ui.Switch !== null ? ui.Switch : null
+
+    /**
+     * 设置页的开关行：宿主 Switch（优先）+ 文案 + 可选提示图标。
+     *
+     * @param props.id        控件的 id（降级路径下 label 的 htmlFor 要用）
+     * @param props.checked   当前是否开启
+     * @param props.labelText 可见文案（同时作为宿主 Switch 的无障碍标签）
+     * @param props.hint      可选：ⓘ 提示文案
+     * @param props.onChange  收到**布尔值**（不是事件对象）
+     */
+    function SoulSwitch(props) {
+      const { id, checked, labelText, hint, onChange } = props
+      const on = checked === true
+      // 宿主 Switch 的 onChange 直接给下一个 boolean；原生 checkbox 要走事件。
+      const control = HostSwitch !== null
+        ? e(HostSwitch, {
+            checked: on,
+            label: labelText,
+            onChange: (next) => onChange(next === true)
+          })
+        : e('input', {
+            type: 'checkbox',
+            id,
+            checked: on,
+            onChange: (ev) => onChange(ev.target.checked)
+          })
+      return e('div', { className: 'soul-toggle' },
+        control,
+        e('label', { htmlFor: id }, labelText),
+        hint === undefined ? null : e(SoulHint, { text: hint })
+      )
+    }
+
     function SoulHint(props) {
       return e('span', { className: 'soul-hint', 'aria-label': props.text, tabIndex: 0 },
         e('svg', {
@@ -7196,15 +7241,12 @@ window.__ModuleLoader__.load({
           e('h3', null, t('settings.title')),
           e('span', { className: 'soul-version' }, `v${VERSION}`)
         ),
-        e('div', { className: 'soul-toggle' },
-          e('input', {
-            type: 'checkbox',
-            id: 'soul-enabled',
-            checked: localEnabled,
-            onChange: (ev) => setLocalEnabled(ev.target.checked)
-          }),
-          e('label', { htmlFor: 'soul-enabled' }, t('toggle.enabled'))
-        ),
+        e(SoulSwitch, {
+          id: 'soul-enabled',
+          labelText: t('toggle.enabled'),
+          checked: localEnabled,
+          onChange: setLocalEnabled
+        }),
 
         localEnabled && e(Fragment, null,
           e(SoulAccordion, {
@@ -7681,42 +7723,33 @@ window.__ModuleLoader__.load({
             open: openSection === 'tools',
             onToggle: toggleSection('tools')
           },
-            e('div', { className: 'soul-toggle' },
-              e('input', {
-                type: 'checkbox',
-                id: 'soul-toolConfirm',
-                checked: localToolConfirm,
-                onChange: (ev) => setLocalToolConfirm(ev.target.checked)
-              }),
-              e('label', { htmlFor: 'soul-toolConfirm' }, t('field.toolConfirm')),
-              e(SoulHint, { text: t('hint.toolConfirm') })
-            ),
+            e(SoulSwitch, {
+              id: 'soul-toolConfirm',
+              labelText: t('field.toolConfirm'),
+              hint: t('hint.toolConfirm'),
+              checked: localToolConfirm,
+              onChange: setLocalToolConfirm
+            }),
 
             // 引用作为上下文：独立开关，关掉只影响引用，人设照常工作。
-            e('div', { className: 'soul-toggle' },
-              e('input', {
-                type: 'checkbox',
-                id: 'soul-quoteAsContext',
-                checked: localQuote,
-                onChange: (ev) => setLocalQuote(ev.target.checked)
-              }),
-              e('label', { htmlFor: 'soul-quoteAsContext' }, t('field.quoteAsContext')),
-              e(SoulHint, { text: t('hint.quoteAsContext') })
-            ),
+            e(SoulSwitch, {
+              id: 'soul-quoteAsContext',
+              labelText: t('field.quoteAsContext'),
+              hint: t('hint.quoteAsContext'),
+              checked: localQuote,
+              onChange: setLocalQuote
+            }),
 
             // Issue #3：侧栏「人设总览」入口开关。
             // 关掉后侧栏图标被注销（位置真的释放），但 main 面板常驻，
             // 所以下面这个按钮仍能把总览打开 —— 用户不会「关了就回不来」。
-            e('div', { className: 'soul-toggle' },
-              e('input', {
-                type: 'checkbox',
-                id: 'soul-showOverviewInSidebar',
-                checked: localOverview,
-                onChange: (ev) => setLocalOverview(ev.target.checked)
-              }),
-              e('label', { htmlFor: 'soul-showOverviewInSidebar' }, t('field.showOverviewInSidebar')),
-              e(SoulHint, { text: t('hint.showOverviewInSidebar') })
-            ),
+            e(SoulSwitch, {
+              id: 'soul-showOverviewInSidebar',
+              labelText: t('field.showOverviewInSidebar'),
+              hint: t('hint.showOverviewInSidebar'),
+              checked: localOverview,
+              onChange: setLocalOverview
+            }),
             e('button', {
               type: 'button',
               className: 'soul-ov-gc-btn',
@@ -7729,16 +7762,13 @@ window.__ModuleLoader__.load({
             }, t('action.openOverview')),
 
             e('div', { className: 'soul-group-title' }, t('trail.title')),
-            e('div', { className: 'soul-toggle' },
-              e('input', {
-                type: 'checkbox',
-                id: 'soul-trailEnabled',
-                checked: localTrailEnabled,
-                onChange: (ev) => setLocalTrailEnabled(ev.target.checked)
-              }),
-              e('label', { htmlFor: 'soul-trailEnabled' }, t('trail.enable')),
-              e(SoulHint, { text: t('hint.trail') })
-            ),
+            e(SoulSwitch, {
+              id: 'soul-trailEnabled',
+              labelText: t('trail.enable'),
+              hint: t('hint.trail'),
+              checked: localTrailEnabled,
+              onChange: setLocalTrailEnabled
+            }),
 
             localTrailEnabled && e(Fragment, null,
               e('div', { className: 'soul-field' },

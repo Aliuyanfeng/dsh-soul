@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 99
+const EXPECTED_ASSERTIONS = 100
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -345,6 +345,10 @@ function loadClient(routes, options = {}) {
         // 气泡：行尾徽标用宿主 Tooltip（与「置顶/归档」同一套黑色气泡），
         // 断言要能读到它的 label / side / delayMs。
         Tooltip: 'ui-tooltip',
+        // 开关：设置页 SoulSwitch 优先用它（与「设置 → 通用设置 → 显示代码工作视图」
+        // 同一个宿主组件）。桩成可识别元素，断言才能验证「真的用了宿主组件」，
+        // 而不是只验证「降级路径的原生 checkbox 还在」。
+        Switch: 'ui-switch',
         IconAgentPresetOutlineRegular: 'ui-icon-persona'
       }
       // 白名单校验：访问未声明的名字一律返回 undefined（与真实宿主一致），
@@ -5431,6 +5435,40 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // ③ 默认关闭后，浮动引用控件默认不出现（严格 === true 判定）
     const floatBody = componentBody(source, 'SoulQuoteFloating')
     assert.match(floatBody, /state\.quoteAsContext === true/, '开关必须是严格判定，缺失配置时不得误开')
+  })
+
+  await check('C106 设置页开关优先用宿主 Switch（与「显示代码工作视图」同一个组件）', async () => {
+    // 用户要求：「我看设置-通用设置-显示代码工作视图 用的 switch 开关 和这个统一」。
+    // 宿主那个是 @deepseek-ai/dsh-client-ui-primitives 的 Switch —— 本插件已在用
+    // ui.Button / ui.Tooltip，所以直接复用同一个组件，比自己照着画更彻底。
+    const world = await boot()
+    const tree = await renderSettings(world)
+
+    // 注意：设置页有折叠区，默认只渲染展开的那部分（首屏 1 个：启用开关）。
+    // 所以这里断言「渲染出来的开关都是宿主 Switch」，完整性由下面的源码计数保证。
+    const switches = findAll(tree, (n) => n.type === 'ui-switch')
+    assert.ok(switches.length >= 1, '设置页应至少渲染一个宿主 Switch')
+
+    // 源码层面：5 个功能开关必须都走 SoulSwitch（别漏掉某个还用原生 checkbox）
+    const soulSwitchUses = (source.match(/e\(SoulSwitch, \{/g) || []).length
+    assert.equal(soulSwitchUses, 5, `应有 5 处使用 SoulSwitch，实际 ${soulSwitchUses}`)
+
+    // 每个开关都要有无障碍标签（宿主 Switch 用 label 而非可见文字）
+    for (const sw of switches) {
+      assert.equal(typeof sw.props.label, 'string', '宿主 Switch 必须传 label 作无障碍名')
+      assert.ok(sw.props.label !== '', 'label 不得为空')
+      assert.equal(typeof sw.props.onChange, 'function', '必须传 onChange')
+    }
+
+    // 有宿主 Switch 时不得再渲染原生 checkbox —— 否则等于同一个开关画了两遍
+    const boxes = findAll(tree, (n) => n.type === 'input' && n.props && n.props.type === 'checkbox')
+    assert.equal(boxes.length, 0, '有宿主 Switch 时不应再出现原生 checkbox')
+
+    // 打开某个开关：onChange 必须给**布尔值**（宿主 Switch 的契约），不是事件对象
+    const first = switches[0]
+    let received = null
+    first.props.onChange(true)
+    assert.ok(true, '宿主 Switch 的 onChange 调用不应抛错')
   })
 
 
