@@ -26,7 +26,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 98
+const EXPECTED_ASSERTIONS = 99
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5403,6 +5403,34 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.match(hostCode, /awaitingSnapshot\.set\(/, '消息先到时必须记下待补绑的 id')
     assert.match(hostCode, /persistBinding\(key, awaiting\.messageId, snap\)/, '快照晚到时必须补绑')
     assert.match(hostCode, /AWAIT_SNAPSHOT_MS/, '待补绑必须有过期时间，避免旧 id 长期挂着')
+  })
+
+  await check('C105 引用作为上下文默认关闭，且提示用户官方已内置该功能', async () => {
+    // 用户决定：「引用作为上下文 默认关闭吧，并且提示用户官方已存在该功能」。
+    // 官方 dsh-message-quotes 的交互入口与本插件相同（选中文本 → 引用），
+    // 但插入输入框成为可见可编辑的 Markdown 引用块，形态更符合预期。
+    // 本插件保留该功能给「不想进正文」的场景，默认不抢官方位置。
+    const codeOnly = source.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n')
+
+    // ① 默认值必须关闭
+    assert.match(codeOnly, /quoteAsContext: false/, 'INITIAL 里引用作为上下文必须默认关闭')
+
+    // ② 两处 hint 都必须提示官方功能（必须是**真实词典行**，不是注释里提一嘴）
+    const zhLine = source.match(/^\s*'hint\.quoteAsContext':\s*'([^']*)'/m)
+    const enLine = source.match(/^\s*'hint\.quoteAsContext':\s*'([^']*)'/gm)
+    assert.ok(zhLine, '缺 hint.quoteAsContext 定义')
+    // ★ 两个关键词都要在：只查「官方」会被文中第二处「官方功能」骗过（实测漏检）；
+    // 只查功能名则可能在文案改写时漏掉「官方」这层归属。
+    // ★ 必须出现「官方…内置」这个语义组合。只查「官方」会被文案里第二处
+    // 「推荐优先使用官方功能」骗过（实测漏检两次）。
+    assert.match(zhLine[1], /官方[^。；]{0,12}内置/, '中文提示必须写明「官方已内置」，否则用户不知道有更合适的入口')
+    assert.match(zhLine[1], /消息引用/, '中文提示必须写出官方功能名「消息引用」，否则用户找不到它')
+    assert.ok(enLine && enLine.length === 2, '中英词典应各有一条 hint.quoteAsContext')
+    assert.ok(enLine.some((l) => /official/i.test(l)), '英文提示必须提到 official')
+
+    // ③ 默认关闭后，浮动引用控件默认不出现（严格 === true 判定）
+    const floatBody = componentBody(source, 'SoulQuoteFloating')
+    assert.match(floatBody, /state\.quoteAsContext === true/, '开关必须是严格判定，缺失配置时不得误开')
   })
 
 

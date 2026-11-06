@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 165
+const EXPECTED_ASSERTIONS = 167
 
 let passed = 0
 const failures = []
@@ -416,6 +416,18 @@ check('DEFAULT_CONFIG 含光轨默认值', () => {
   assert.equal(DEFAULT_CONFIG.trailColor, '#679EFE')
   assert.equal(DEFAULT_CONFIG.trailSpeed, 'slow')
   assert.equal(DEFAULT_CONFIG.trailWidth, 'thin')
+})
+
+// 「引用作为上下文」默认关闭：官方 dsh-message-quotes 已内置等价交互（选中文本 → 引用，
+// 插入输入框成为可见可编辑的引用块）。本插件保留该功能给「不想进正文」的场景，
+// 但默认不抢官方的位置 —— 用户明确要求默认关闭，这条断言防止被悄悄改回开启。
+check('DEFAULT_CONFIG：引用作为上下文默认关闭（官方已内置 message-quotes）', () => {
+  assert.equal(DEFAULT_CONFIG.quoteAsContext, false)
+})
+
+check('migrateConfig：缺失 quoteAsContext 时回退为关闭', () => {
+  assert.equal(migrateConfig({}).quoteAsContext, false)
+  assert.equal(migrateConfig({ quoteAsContext: 'dirty' }).quoteAsContext, false)
 })
 
 check('sanitizeConfig：光轨字段全部通过，颜色归一化为大写', () => {

@@ -76,7 +76,8 @@ window.__ModuleLoader__.load({
       customInstructions: '',
       // set_persona 确认模式（v0.5.0）
       requireToolConfirmation: false,
-  quoteAsContext: true,
+      // 引用作为上下文：默认关（官方 dsh-message-quotes 已内置等价交互）
+      quoteAsContext: false,
       // 侧栏「人设总览」入口开关（Issue #3）：默认关，不强制占用侧栏位置
       showOverviewInSidebar: false,
       // 输入框光轨（v0.6.0）：Agent 回复中时输入框边框的流光动效
@@ -2149,7 +2150,7 @@ window.__ModuleLoader__.load({
       'group.tool': 'Agent 工具',
       'field.toolConfirm': '人设变更需确认',
       'field.quoteAsContext': '引用作为上下文',
-      'hint.quoteAsContext': '开启后，可在回答里选中一段文字并点「引用」，它作为上下文随下一轮请求送达模型 —— 不进你的消息正文，也不写进对话历史。',
+      'hint.quoteAsContext': '默认关闭。DSH 官方已内置「消息引用」功能（在回答里选中文字 → 点引用，会插入输入框成为引用块，可见可编辑），推荐优先使用官方功能。开启本项后，引用不进你的消息正文，而是作为运行时上下文随下一轮请求送达模型。',
       'field.showOverviewInSidebar': '在侧边栏显示人设总览',
       'hint.showOverviewInSidebar': '默认关闭，不占用侧栏位置；打开后侧栏才会出现图标。无论开关状态，都可用下面的按钮进入总览。',
       'action.openOverview': '打开人设总览',
@@ -2556,7 +2557,7 @@ window.__ModuleLoader__.load({
       'group.tool': 'Agent tools',
       'field.toolConfirm': 'Require confirmation for persona changes',
       'field.quoteAsContext': 'Quote as context',
-      'hint.quoteAsContext': 'When on, select a passage in a reply and click "Quote" — it is sent to the model as context with the next request, without entering your message or the chat history.',
+      'hint.quoteAsContext': 'Off by default. DSH already ships an official "message quotes" feature (select text in a reply → Quote inserts it into the composer as a visible, editable quote) — prefer that. When this is on, quotes stay out of your message and are sent as runtime context with the next request.',
       'field.showOverviewInSidebar': 'Show persona overview in sidebar',
       'hint.showOverviewInSidebar': 'Off by default so the sidebar stays uncluttered; turning it on adds the icon. The button below opens the overview either way.',
       'action.openOverview': 'Open persona overview',
