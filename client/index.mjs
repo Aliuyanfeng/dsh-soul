@@ -929,8 +929,6 @@ window.__ModuleLoader__.load({
       'body[data-ds-dark-theme] .soul-field select{color-scheme:dark}',
       '.soul-field textarea{min-height:120px;resize:vertical}',
       '.soul-field textarea.soul-textarea-sm{min-height:72px}',
-      // 组标题：宿主用 15px/600 的小标题，这里对齐并去掉下边框（宿主分组靠卡片分隔，不靠横线）
-      '.soul-group-title{margin:4px 0 0 0;font-size:15px;font-weight:600;line-height:22px;color:var(--dsw-alias-label-primary)}',
       // 折叠分组＝宿主卡片：.5px 描边 + card-fill + radius-xl + overflow hidden
       // 刻意不用 overflow:hidden 裁子元素圆角：那会把「向上弹出」的 .soul-hint-tip
       // 在跨出分组上边界时切掉顶部（实测复现：Agent 工具分组的提示是该分组第一个
@@ -2375,7 +2373,6 @@ window.__ModuleLoader__.load({
       // 会渲染成 `...excluded from this preview: style、tables`（中英混排）。
       'common.listSep': '、',
       'toast.saveFailed': '❌ 保存失败，请检查配置',
-      'trail.title': '输入框光轨',
       'trail.enable': '启用输入框光轨',
       'trail.color': '光轨颜色',
       'trail.speed': '流动速度',
@@ -2779,7 +2776,6 @@ window.__ModuleLoader__.load({
       // 会渲染成 `...excluded from this preview: style、tables`（中英混排）。
       'common.listSep': ', ',
       'toast.saveFailed': '❌ Save failed — please check the config',
-      'trail.title': 'Composer light trail',
       'trail.enable': 'Enable composer light trail',
       'trail.color': 'Trail color',
       'trail.speed': 'Flow speed',
@@ -7890,7 +7886,9 @@ window.__ModuleLoader__.load({
               onChange: setLocalOverview
             }),
 
-            e('div', { className: 'soul-group-title' }, t('trail.title')),
+            // 这里原来有一个 soul-group-title「输入框光轨」的分组小标题，
+            // 与下面开关的文案「启用输入框光轨」重复 —— 而且开关行现在自带
+            // 「标题 + 描述 + 分隔线」，本身就是这一段的视觉起点，不需要再套一层。
             e(SoulSwitch, {
               id: 'soul-trailEnabled',
               labelText: t('trail.enable'),
