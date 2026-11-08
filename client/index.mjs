@@ -74,6 +74,10 @@ window.__ModuleLoader__.load({
       replyLength: 'normal',
       language: 'zh',
       customInstructions: '',
+      // 子代理默认人设（0.11.1）：预设名 / null。
+      // null 表示「子代理没有人设」—— 这是默认值，也是与旧版本最大的行为差别：
+      // 子代理过去会继承主代理的人设，现在不会了。
+      subagentPersona: null,
       // set_persona 确认模式（v0.5.0）
       requireToolConfirmation: false,
       // 引用作为上下文：默认关（官方 dsh-message-quotes 已内置等价交互）
@@ -478,6 +482,10 @@ window.__ModuleLoader__.load({
         s.replyLength = config.replyLength || 'normal'
         s.language = config.language || 'zh'
         s.customInstructions = config.customInstructions
+        // 子代理默认人设：空串与 null 都当「没有」，界面只认一种空态
+        s.subagentPersona = typeof config.subagentPersona === 'string' && config.subagentPersona.length > 0
+          ? config.subagentPersona
+          : null
         s.requireToolConfirmation = config.requireToolConfirmation === true
         // 默认 true 的开关必须用 !== false：写成 === true 会让「字段缺席」
         // 被当成「用户关闭」，老配置升级后入口会凭空消失。
@@ -2007,6 +2015,9 @@ window.__ModuleLoader__.load({
       'hint.language': '设置 Agent 回复你使用的语言，同时影响 /soul 命令的输出语言。',
       'field.instructions': '自定义指令',
       'hint.instructions': '补充角色、习惯等个性化要求。建议不要重复设置回复风格和语调类似的话术，以免与上方选项冲突。',
+      'field.subagentPersona': '子代理默认人设',
+      'hint.subagentPersona': '子代理默认不继承你当前的人设。在这里选一张预设，作为所有子代理的起点；留空则子代理没有人设。单个子代理可由主代理用 set_subagent_persona 临时指定或清除。',
+      'option.subagentPersonaNone': '无（子代理没有人设）',
       'field.instructionsPlaceholder': '输入自定义指令，可以是其他行为、回复风格和语调等偏好设置',
       'group.personas': '人设预设',
       'personas.save': '保存当前为预设',
@@ -2437,6 +2448,9 @@ window.__ModuleLoader__.load({
       'hint.language': 'Sets the language the agent replies in; also affects the /soul command output.',
       'field.instructions': 'Custom instructions',
       'hint.instructions': 'Extra persona or habit requirements. Avoid repeating wording similar to the style & tone option above to prevent conflicts.',
+      'field.subagentPersona': 'Default subagent persona',
+      'hint.subagentPersona': 'Subagents do NOT inherit your current persona. Pick a preset as the starting point for every subagent; leave it empty for no persona. The main agent can set or clear one subagent ad hoc with set_subagent_persona.',
+      'option.subagentPersonaNone': 'None (subagents get no persona)',
       'field.instructionsPlaceholder': 'Custom instructions — other behaviors, style or tone preferences',
       'group.personas': 'Personas',
       'personas.save': 'Save current as persona',
@@ -2851,7 +2865,11 @@ window.__ModuleLoader__.load({
     ]
 
     // 设置页表单驱动的字段（dirty 检测与保存载荷共用）。
-    const FORM_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'showQuickToggle']
+    //
+    // subagentPersona（子代理默认人设）是普通配置字段，直接进表单、保存走既有
+    // /api/soul/config。刻意不另开一组 HTTP 端点 —— 多一套读写路径就多一处
+    // 可能与配置落盘不同步的地方。
+    const FORM_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'subagentPersona', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'showQuickToggle']
 
     // 由**别的界面**就地管理、因而不在这张表单里的配置字段：
     //   · `historyMaxEntries` —— 插件详情页的变更记录区块（改完即时落盘，不经保存按钮）；
@@ -2910,7 +2928,9 @@ window.__ModuleLoader__.load({
       historyMaxEntries: 'history.maxEntries',
       // 最近一次「使用预设」实际点的名字（0.9.0-p）：切预设同样要留痕，
       // 否则变更记录里它显示成裸键名。
-      activePersonaName: 'field.activePersonaName'
+      activePersonaName: 'field.activePersonaName',
+      // 子代理默认人设同样是配置字段：改它会留一条变更记录
+      subagentPersona: 'field.subagentPersona'
     }
 
     // 与 lib/history.mjs 的 HISTORY_SOURCES 对齐；认不出的来源原样显示。
@@ -6779,7 +6799,7 @@ window.__ModuleLoader__.load({
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, subagentPersona, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
 
       const [localEnabled, setLocalEnabled] = React.useState(enabled)
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
@@ -6792,6 +6812,8 @@ window.__ModuleLoader__.load({
       const [localReplyLength, setLocalReplyLength] = React.useState(replyLength)
       const [localLanguage, setLocalLanguage] = React.useState(language || 'zh')
       const [localInstructions, setLocalInstructions] = React.useState(customInstructions)
+      // 子代理默认人设：store 里是 null（没有），表单里统一用空串（select 的 value）
+      const [localSubagentPersona, setLocalSubagentPersona] = React.useState(subagentPersona || '')
       const [localToolConfirm, setLocalToolConfirm] = React.useState(requireToolConfirmation === true)
       const [localQuote, setLocalQuote] = React.useState(quoteAsContext === true)
       const [localOverview, setLocalOverview] = React.useState(showOverviewInSidebar === true)
@@ -6917,9 +6939,9 @@ window.__ModuleLoader__.load({
       //
       // saving 期间仍然整体跳过：保存流程自身会带着响应回填（见 saveConfig →
       // applyConfig → 本 effect），中途再插一次写入只会造成闪烁。
-      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'showQuickToggle']
-      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, showQuickToggle: localQuickToggle, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
-      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, quoteAsContext: quoteAsContext === true, showOverviewInSidebar: showOverviewInSidebar === true, showQuickToggle: showQuickToggle !== false, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
+      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'subagentPersona', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'showQuickToggle']
+      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, subagentPersona: localSubagentPersona, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, showQuickToggle: localQuickToggle, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, subagentPersona: subagentPersona || '', requireToolConfirmation: requireToolConfirmation === true, quoteAsContext: quoteAsContext === true, showOverviewInSidebar: showOverviewInSidebar === true, showQuickToggle: showQuickToggle !== false, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
       const lastSyncRef = React.useRef(null)
       // 判断某字段是否被用户动过：与「上次同步的快照」比。没有快照（首帧）时
       // 一律视为未动过 —— 首帧本地值本来就来自 store，无从谈起「编辑过」。
@@ -6951,6 +6973,7 @@ window.__ModuleLoader__.load({
         setLocalReplyLength(next.replyLength)
         setLocalLanguage(next.language)
         setLocalInstructions(next.customInstructions)
+        setLocalSubagentPersona(next.subagentPersona || '')
         setLocalToolConfirm(next.requireToolConfirmation)
         setLocalQuote(next.quoteAsContext)
         setLocalOverview(next.showOverviewInSidebar)
@@ -6961,7 +6984,7 @@ window.__ModuleLoader__.load({
         setLocalTrailWidth(next.trailWidth)
         // 依赖与 serverValues 的来源一致；localValues/sameValue 每次渲染都是新的，
         // 但只在「某字段真要写」时才 setState，故不会形成死循环。
-      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, trailEnabled, trailColor, trailSpeed, trailWidth])
+      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, subagentPersona, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, trailEnabled, trailColor, trailSpeed, trailWidth])
 
       // toast 的消失交给宿主 Toast 组件自己（holdMs 后淡出并回调 onDone）。
       // 此前这里有个 2s 定时器 + 自绘 CSS 动画，两者时长必须手工对齐，
@@ -6976,8 +6999,9 @@ window.__ModuleLoader__.load({
       const sameValue = (a, b) => (typeof a === 'string' && typeof b === 'string'
         ? a.trim() === b.trim()
         : a === b)
-      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, trailEnabled, trailColor, trailSpeed, trailWidth }
-      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, showQuickToggle: localQuickToggle, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      // 子代理默认人设：null 与 '' 都表示「没有」，比较时统一折成 ''（否则空态会被当成 dirty）
+      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, subagentPersona: subagentPersona || '', requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, trailEnabled, trailColor, trailSpeed, trailWidth }
+      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, subagentPersona: localSubagentPersona || '', requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, showQuickToggle: localQuickToggle, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
       const dirty = FORM_FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
 
       // 宿主 savedNotice 语义：一旦用户开始新的编辑（dirty 变 true），
@@ -7521,6 +7545,27 @@ window.__ModuleLoader__.load({
                 onChange: (ev) => setLocalInstructions(ev.target.value),
                 placeholder: t('field.instructionsPlaceholder')
               })
+            ),
+            // 子代理默认人设（0.11.1）。放在「行为」组末尾而不是预设组：
+            // 它描述的是**子代理**的起点，不是「当前这套人设」的一部分；
+            // 放进预设组会让人误以为它跟「使用预设」是一回事。
+            e('div', { className: 'soul-field' },
+              e('label', { htmlFor: 'soul-subagentPersona' },
+                t('field.subagentPersona'),
+                e(SoulHint, { text: t('hint.subagentPersona') })
+              ),
+              e('select', {
+                id: 'soul-subagentPersona',
+                value: localSubagentPersona,
+                onChange: (ev) => setLocalSubagentPersona(ev.target.value)
+              },
+                e('option', { key: '__none', value: '' }, t('option.subagentPersonaNone')),
+                // 预设库未加载 / 加载失败时只给「无」：先列出可能并不存在的名字，
+                // 保存时会被服务端当作未知预设（或写进一个已删的名字）。
+                ...(personas && typeof personas === 'object' && !Array.isArray(personas)
+                  ? Object.keys(personas).map((name) => e('option', { key: name, value: name }, name))
+                  : [])
+              )
             )
           ),
 

@@ -98,7 +98,12 @@ await check('覆盖项只保留白名单字段，包封字段被丢弃', () => {
     style: 'humorous',
     replyLength: 'concise',
     enabled: false,        // 包封字段：越界
-    nickname: 'x',          // 「关于你」不在范围内
+    // 0.11.1 起「关于你」三字段**允许**出现在会话覆盖里：主代理给子代理「临时写一段
+    // 人设」需要能写全身份三项（子代理默认无人设，nickname 空着就是空着）。
+    // 它们仍然不进全局预设库 —— 预设范围由 PERSONA_FIELDS 说话，两处白名单不同。
+    nickname: 'x',
+    occupation: 'y',
+    bio: 'z',
     historyMaxEntries: 1
   })
   // ⚠️ 这里必须**同时**断言两件事，缺一不可：
@@ -106,8 +111,15 @@ await check('覆盖项只保留白名单字段，包封字段被丢弃', () => {
   //   · override 里没有它 → 它真的没被带进配置。
   // 只断言前者会漏掉"记了一笔却又悄悄应用"的形态（判断力对照实测：把 continue 换成
   // 「记录但继续赋值」时，只查 dropped 的版本全部漏网）。
-  assert.deepEqual(override, { style: 'humorous', replyLength: 'concise' })
-  assert.deepEqual(dropped.slice().sort(), ['enabled', 'historyMaxEntries', 'nickname'])
+  assert.deepEqual(override, { style: 'humorous', replyLength: 'concise', nickname: 'x', occupation: 'y', bio: 'z' })
+  assert.deepEqual(dropped.slice().sort(), ['enabled', 'historyMaxEntries'])
+  // 反向：身份三字段必须真的进了会话覆盖白名单（否则「临时写一段人设」写不全），
+  // 且不得借道变成包封字段。「它们不得进预设范围」由 verify-config 那条
+  // 「预设范围只含人设」的断言守 —— 两个白名单各守各的，不在这里重复。
+  for (const key of ['nickname', 'occupation', 'bio']) {
+    assert.ok(SESSION_OVERRIDE_FIELDS.includes(key), `${key} 应能出现在会话覆盖里（主子代理可临时写）`)
+    assert.equal(SESSION_ENVELOPE_ONLY_FIELDS.includes(key), false, `${key} 不得变成包封字段`)
+  }
   for (const key of SESSION_ENVELOPE_ONLY_FIELDS) {
     assert.equal(
       Object.prototype.hasOwnProperty.call(override, key),

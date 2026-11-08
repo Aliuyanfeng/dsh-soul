@@ -26,10 +26,10 @@
  * 用法：node scripts/verify-e2e-prompt.mjs
  * 退出码：0 = 通过；1 = 存在失败项。
  */
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 内置人设的期望值直接取代码里的同一份数据（它的数据契约另有 verify-config 钉住），
@@ -1628,7 +1628,16 @@ async function bindingRoutesScenario(entry) {
 function prepareSandbox(pkgDir, label) {
   const dir = mkdtempSync(join(tmpdir(), `dsh-soul-e2e-${label}-`))
   cpSync(join(pkgDir, 'index.mjs'), join(dir, 'index.mjs'))
-  cpSync(join(pkgDir, 'lib'), join(dir, 'lib'), { recursive: true })
+  // lib 逐文件复制，不用 cpSync(..., { recursive: true }) 整目录：
+  // 实测 Windows + 工作目录含非 ASCII 字符（如「插件安装」）时，递归复制**目录**
+  // 会让 Node 进程直接死掉（exit 127、无栈、连 exit 事件都不触发；Node 24.9 与
+  // 22.20 均可复现），而同一批文件逐个 cpSync 完全正常。e2e 验证的是插件，
+  // 不该被一个与插件无关的 Node / 平台问题挡在门外。
+  mkdirSync(join(dir, 'lib'), { recursive: true })
+  for (const name of readdirSync(join(pkgDir, 'lib'))) {
+    if (!name.endsWith('.mjs')) continue
+    cpSync(join(pkgDir, 'lib', name), join(dir, 'lib', name))
+  }
   // package.json 也要带上：诊断端点用 createRequire 从包根读版本号（唯一来源）
   cpSync(join(pkgDir, 'package.json'), join(dir, 'package.json'))
 
@@ -1750,7 +1759,14 @@ async function main() {
     const patched = join(sandbox, 'pkg')
     cpSync(PKG_DIR, patched, {
       recursive: true,
-      filter: (src) => !src.includes('node_modules') && !src.includes('.git')
+      // 按**相对**路径判断，不是绝对路径：实装形态下 PKG_DIR 自己就在
+      // …\node_modules\dsh-soul 里，用绝对路径做 includes('node_modules')
+      // 会把整棵树（连 index.mjs）一起过滤掉，结果 patched 是空目录。
+      filter: (src) => {
+        const rel = relative(PKG_DIR, src)
+        if (!rel) return true
+        return !rel.split(/[\\/]/).some((seg) => seg === 'node_modules' || seg === '.git')
+      }
     })
     const target = join(patched, 'index.mjs')
     const source = readFileSync(target, 'utf8')

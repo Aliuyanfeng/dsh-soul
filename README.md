@@ -40,6 +40,8 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
   - 开启后，发送过的消息上方留一枚「N 个已选文本片段」胶囊，hover 显示引用原文；胶囊按**消息唯一 id** 绑定，不随轮次迁移、也不会被后续消息顶掉
   - 排队消息不带引用：队列项减少时引用立即失效 —— 它只属于你按发送的那一条
 - `set_persona` 确认模式（`requireToolConfirmation`）：Agent 的人设修改先在输入框处弹出**宿主原生审批面板**，由你点「允许一次」或「拒绝」（`Enter` 允许 / `Esc` 拒绝）后才会生效；审批通道不可用时（如会话审批策略为 `never`）退化为待确认提议，需 `/soul confirm` 处理
+- **子代理不继承主代理人设**（0.12.0，`lib/subagent-scope.mjs`）：子代理会话（`origin: 'subagent'` 或 `delegationDepth > 0`）默认**没有任何人设** —— 全局的回复风格、特质、「关于你」、自定义指令一概不带过去，工作区 / 目录绑定也不生效。它的提示词只有两处显式来源：① 全局「子代理默认人设」（设置页里选一张预设，默认「无」）；② 主代理临时写给**这一个**子代理的会话覆盖
+- 主代理可用工具 `set_subagent_persona` 给子代理**选预设**或**临时写一段**（省略 `session` 时，若当前只派出了一个子代理就自动选它；`clear: true` 清除）。反过来，子代理自己调用 `set_persona` 只改**它自己的**会话覆盖，永远不会改到全局 —— 否则一个子代理就能改掉所有会话的性格
 - 输入框光轨：Agent 回复中时，输入框边框显示沿边循环流动的光轨（默认颜色 `#679EFE`）
   - 颜色：预设色板、取色器或十六进制输入（如 `#679EFE`）
   - 流动速度：慢 / 中 / 快；光带粗细：细 / 中 / 粗
@@ -179,6 +181,7 @@ soul-config.json
   "style": "professional",
   "language": "zh",
   "customInstructions": "请保持简洁，优先给出结论。",
+  "subagentPersona": null,
   "requireToolConfirmation": false,
   "trailEnabled": true,
   "trailColor": "#679EFE",
@@ -190,6 +193,8 @@ soul-config.json
 自建人设预设保存在同一文件的 `personas` 字段：名称 → 人设字段快照（风格 / 特质 / 回复长度 / 输出语言 / 自定义指令）+ `updatedAt`。**预设不含「关于你」**（昵称 / 职业 / 介绍）——那是使用者本人的资料，切换预设只换 Agent 的说话方式；这条由 `PROFILE_FIELDS` 与 `PERSONA_FIELDS`（`lib/config.mjs`）结构性保证：保存快照、应用取键、★ 匹配判据、磁盘归一化四条路径都按 `PERSONA_FIELDS` 白名单走，所以内置与自建行为一致。预设库变更不影响活动配置，使用预设时才应用到配置并同步会话。内置人设不落盘（见 `lib/personas.mjs`），列表 / 使用 / ★ 匹配统一走「内置 + 自建」的合并视图，同名以内置为准，内置名既不可保存占用也不可删除。
 
 输入框光轨字段：`trailEnabled`（是否启用，默认 `true`）、`trailColor`（6 位十六进制颜色，统一大写存储，默认 `#679EFE`）、`trailSpeed`（`slow` / `normal` / `fast`，默认 `slow`）、`trailWidth`（`thin` / `normal` / `thick`，默认 `thin`）。这四个字段属纯外观配置，只落盘、不进入 system prompt、不触发会话注入。
+
+子代理字段：`subagentPersona`（子代理默认人设，预设名或 `null`，默认 `null` 即「子代理没有任何人设」）。它只决定**新启动**子代理的基线；主代理对某一个子代理的单次指定写在 `$DSH_HOME/soul-sessions/<sha256 前 32 位>.json`（该会话的覆盖文件），不落全局配置。子代理的会话覆盖白名单比主代理多出 `nickname` / `occupation` / `bio` —— 主代理「临时写一段人设」要能写全身份三项；预设库仍然只收人格字段（`PERSONA_FIELDS`），两处白名单各守各的。
 
 字段长度上限：昵称 / 职业 50 字符，介绍 500 字符，自定义指令 2000 字符；颜色必须为 `#rrggbb` 形式。未知字段会被丢弃，非法或超限字段整单拒绝（HTTP 返回 400 与字段级错误明细）。
 
@@ -226,6 +231,13 @@ agent.inject(createUserMessage({
 `agent.inject()` 会把最新配置放入 Agent 的待处理上下文，在下一次请求中生效；不会主动触发新请求，也不会修改历史消息。它同时是「即时生效」的可见载体：会话里会出现一条 `[dsh-soul 个性化配置已更新]` 消息。
 
 > 为什么两条都要：**只保留通道一时，实测「会话进行中修改人设」不会在下一轮生效**（0.7.1 开发中曾据此删除通道二，随后原样撤回）。`npm run verify:host` 与 `npm run verify:e2e` 分别把两条通道钉住，DSH 升级后请重跑。
+
+**子代理的解析链（0.12.0）。** 装配与注入共用 `resolvePromptForAgent()`，但它对子代理**刻意不对称**：
+
+- 主代理：`configForScope()` —— 工作区 → 目录绑定 → 会话覆盖，落在全局配置上。
+- 子代理：全空中性基线 → 全局 `subagentPersona` 预设 → 该会话覆盖。**不走工作区、不走目录绑定** —— 两者都是「这块地方该用谁」的自动规则，属于主代理的会话环境；拿父会话的地理位置去决定子代理的性格，等于让它继承。
+
+「没有人设」不等于「关掉插件」：中性基线把**每一个参与编译的字段**置空（不只是「关于你」），因为 `DEFAULT_CONFIG` 本身就会对 `style=professional` / `language=zh` 生成一段行为文案 —— 对主代理这是合理默认，对子代理它就是一份没人要的人设。`compileSubagentPrompt()` 对全空配置返回空字符串，且不含「执行规则」块（那是主代理的行为约束，不该发给干活的子代理）。子代理判定由 `isSubagentHeader()` 做：`origin === 'subagent'` 或 `delegationDepth > 0`；从主会话 fork 出来的会话两者都没有，按主代理处理。
 
 **诊断。** 这两条通道静默失效时症状都是「改了配置不生效」，因此插件会如实记录送达结果：`/soul show` 末尾的「送达」行、`GET /api/soul/status`、以及设置页的提示条（`configError` = 配置读不出来，`deliveryWarning` = 配置送不到活动会话）。
 

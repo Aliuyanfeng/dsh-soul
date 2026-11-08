@@ -808,11 +808,15 @@ check('预设范围只含人设，与「关于你」无交集', () => {
   // 输出语言属于人设（决定 Agent 用什么语言作答）：自建预设会保存并在应用时还原它
   assert.ok(PERSONA_FIELDS.includes('language'), 'language 应在预设范围内')
   assert.equal(PERSONA_FIELDS.includes('enabled'), false, 'enabled 是全局开关，不进预设')
+  // 0.11.1 起编译范围多了一项 subagentPersona（子代理默认人设）。它不属于预设
+  // （不参与预设的存/取/匹配），但改它同样要刷新 section 并重注入 —— 所以它进
+  // PROMPT_INPUT_FIELDS，却不进 PERSONA_FIELDS。两者职责不同，别混。
   assert.deepEqual(
     [...PROMPT_INPUT_FIELDS].sort(),
-    [...new Set(['enabled', ...PROFILE_FIELDS, ...PERSONA_FIELDS])].sort(),
-    '编译读取范围应恰好等于「总开关 + 关于你 + 人设」'
+    [...new Set(['enabled', ...PROFILE_FIELDS, ...PERSONA_FIELDS, 'subagentPersona'])].sort(),
+    '编译读取范围应恰好等于「总开关 + 关于你 + 人设 + 子代理默认人设」'
   )
+  assert.equal(PERSONA_FIELDS.includes('subagentPersona'), false, 'subagentPersona 是全局配置，不是预设里的人设项')
 })
 
 check('用户自建预设里残留的「关于你」一律不算数（匹配与取值都忽略）', () => {
@@ -3450,8 +3454,17 @@ check('工作区绑定：provider 每轮按会话 cwd 解析，且必须是同�
     /assembly\s*&&\s*assembly\.agent/,
     'text 回调必须从 assembly 取 agent（宿主在诊断装配时不传 agent，故须用 && 容忍 undefined）'
   )
-  assert.match(opts, /cwdOfAgent\(/, 'text 回调必须经 cwdOfAgent 取会话目录')
-  assert.match(opts, /configForScope\(/, 'text 回调必须经 configForScope 合成该作用域生效的配置')
+  // 0.11.1：主/子代理不再共用同一条解析路径 —— 回调统一交给 resolvePromptForAgent，
+  // 由它按「是否子代理」分派（子代理不走 cwd/工作区）。这里断言**入口**，
+  // configForScope 的接线改在 resolver 体内看。
+  assert.match(opts, /resolvePromptForAgent\(/, 'text 回调必须经 resolvePromptForAgent 按会话分派解析')
+  const resolverBody = stripComments(extractObject(indexSource, 'function resolvePromptForAgent'))
+  assert.ok(resolverBody !== '', '找不到 resolvePromptForAgent')
+  assert.match(
+    resolverBody,
+    /configForScope\(\s*base\s*,\s*cwdOfAgent\(\s*agent\s*\)\s*,\s*workspaceId\s*,\s*sessionOverride\s*\)/,
+    '主代理分支必须经 cwdOfAgent 取会话目录，并把 workspaceId 与会话覆盖一起传进 configForScope'
+  )
   assert.equal(/async\s*\(?\s*assembly/.test(opts), false, 'text 回调不得是 async')
   assert.equal(/await /.test(opts), false, 'text 回调内不得出现 await')
 
@@ -3558,10 +3571,12 @@ check('工作区绑定：注入通道逐 agent 编译，不共用一份全局文
   const loopAt = body.indexOf('for (const agent of listed)')
   assert.ok(loopAt !== -1, '找不到遍历活动会话的循环')
   const loop = body.slice(loopAt)
+  // 0.11.1：逐 agent 解析的入口统一为 resolvePromptForAgent（子代理走自己的链）。
+  // 语义不变：解析必须发生在循环体**内**，每个会话各算一份。
   assert.match(
     loop,
-    /configForCwd\(\s*config\s*,\s*cwdOfAgent\(\s*agent\s*\)\s*\)/,
-    '编译必须发生在循环体内、按该 agent 的 cwd 解析 —— 循环外算一份就和绑定功能互相抵消'
+    /resolvePromptForAgent\(\s*config\s*,\s*agent\s*,/,
+    '解析必须发生在循环体内、按该 agent 逐个解析 —— 循环外算一份就和绑定功能互相抵消'
   )
   // 反证：循环外不得再有 compilePrompt（否则那份文本会被复用给所有会话）
   assert.equal(
@@ -3573,8 +3588,8 @@ check('工作区绑定：注入通道逐 agent 编译，不共用一份全局文
   assert.ok(/delivered\+\+/.test(body) && /failed\+\+/.test(body), '仍应如实统计成功与失败数')
   assert.match(
     body,
-    /configForCwd\(config, cwdOfAgent\(agent\)\)[\s\S]{0,120}?const prompt = compilePrompt\(perAgent\)/,
-    '应当先用该会话的 cwd 合成配置、再编译（顺序反了等于还是全局文本）'
+    /const resolved = resolvePromptForAgent\([\s\S]{0,160}?const prompt = resolved\.prompt/,
+    '应当先按该会话解析出配置、再取提示词（顺序反了等于还是全局文本）'
   )
 })
 
@@ -3636,9 +3651,12 @@ check('0.9.0-b 工作区层：sessionId → workspaceId 索引接入，且失败
     /sessionWorkspaceIndex\.get\(sessionId\)/,
     '装配时必须查 sessionWorkspaceIndex —— 否则工作区层永远命中不到'
   )
+  // 0.11.1 起 configForScope 的调用在 resolvePromptForAgent 的主代理分支里
+  const resolverBody = stripComments(extractObject(indexSource, 'function resolvePromptForAgent'))
+  assert.ok(resolverBody !== '', '找不到 resolvePromptForAgent')
   assert.match(
-    opts,
-    /configForScope\(\s*snap\.value\s*,\s*cwdOfAgent\(agent\)\s*,\s*workspaceId\s*,/,
+    resolverBody,
+    /configForScope\(\s*base\s*,\s*cwdOfAgent\(\s*agent\s*\)\s*,\s*workspaceId\s*,/,
     'configForScope 必须收到 workspaceId（第三个参数）—— 漏传就退化成只有 cwd 回退'
   )
   // 反向：索引未命中时要能退化，不能因为查不到就抛错
@@ -4363,7 +4381,10 @@ check('0.9.0-c 会话层：装配走内存缓存，回收只认 sessionPersisten
   const opts = stripComments(extractObject(indexSource, 'spCtx.systemPrompt.section('))
   // 正则不能用 `[^)]*` 跨越参数里的括号（`cwdOfAgent(agent)` 就有 `)`）。
   // 改为从调用名开始取一段，再要求 workspaceId 与 sessionOverride 按序出现。
-  const callMatch = opts.match(/configForScope\([\s\S]{0,200}?\)\n/)
+  // 0.11.1：configForScope 的调用从装配回调下沉到 resolver 的主代理分支
+  const resolverBody = stripComments(extractObject(indexSource, 'function resolvePromptForAgent'))
+  assert.ok(resolverBody !== '', '找不到 resolvePromptForAgent')
+  const callMatch = resolverBody.match(/configForScope\([\s\S]{0,200}?\)\n/)
   assert.ok(callMatch, '找不到 configForScope 的调用')
   assert.match(
     callMatch[0],

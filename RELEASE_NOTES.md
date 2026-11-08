@@ -85,6 +85,47 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 
 ## 版本历史
 
+### v0.12.0（未发布）
+
+主题是**把子代理从主代理的人设里解耦**：子代理默认不再继承任何内容，主代理需要时用新工具 `set_subagent_persona` 给它挑一张预设，或临时写一段。
+
+**行为变更：子代理不再继承主代理人设**（默认值变化）
+
+- 判定口径与宿主一致：会话 header 的 `origin === 'subagent'` 或 `delegationDepth > 0`（依据 `dsh-session` 的 `SessionHeader`；全树只有 `@deepseek-ai/dsh-subagent` 的 `childSessionMeta()` 会写这两个字段）。fork 出来的会话不算子代理，仍然继承。
+- 子代理的解析链是**独立的三层**：全空中性基线 → 全局 `subagentPersona` 预设（默认 `null` = 无人设）→ 该子会话的覆盖。**不走工作区、不走目录绑定** —— 那两层回答的是「用户在这个目录下希望我怎么说话」，子代理不是对话对象。
+- 中性基线把每个参与编译的字段都置空，而不只是「关于你」：`DEFAULT_CONFIG` 本身就会按 `style: 'professional'` / `language: 'zh'` 生成行为文案，对子代理来说那仍是一份没人要的人设。
+- `compileSubagentPrompt()` 只出身份 / 背景 / 行为三段，**不含「执行规则」块**（那是主代理的行为约束）。全空时返回空字符串 —— 已核实宿主安全：`dsh-system-prompt` 装配时 `filter((text) => text.length > 0)`，全空返回 `""` 且不报错。
+- **这是一次默认行为的破坏性变更**：升级后所有子代理都变成「无人设」。需要统一口径的，在设置页选一张「子代理默认人设」，或在 spawn 后显式调用 `set_subagent_persona`。
+
+**新增：`set_subagent_persona` 工具**（主代理调用）
+
+- 三件事，可组合：应用预设（`persona`）、临时写若干字段（`nickname` / `occupation` / `bio` / `style` / `customInstructions` …）、清除（`clear: true`）。
+- `session` 传 spawn 返回的 `subagentId`（就是子会话的 sessionId，查自 `dsh-tool-subagent` 的 `startActivation(...).childId`）。省略时若当前只有一个活动子代理会自动选它；多个则报错并列出候选 id，让主代理自己挑。
+- 写入的是该子会话的 sidecar 覆盖（`$DSH_HOME/soul-sessions/<sha256 前 32 位>.json`），**不落全局配置**。
+- 显式字段优先于预设（`Object.assign(patch, declaredPersonaFields(entry), patch)`）：选一张卡再改两个字段，比让模型自己拼一整套更省事。
+
+**变更：会话覆盖白名单 7 → 10 项**
+
+新增 `nickname` / `occupation` / `bio`。「临时写一段人设」要能写全身份三项，否则只能写风格、写不了「你是谁」。**预设库仍然只收人格字段**（`PERSONA_FIELDS`）：预设是「一种说话方式」，身份属于使用者，不跟着预设走 —— 这条边界没有移动。
+
+**变更：子代理调用 `set_persona` 只改自己**
+
+此前子代理调用 `set_persona` 会写**全局**配置 —— 一个子代理就能改掉所有会话的性格。现在检测到调用方是子代理时，只写它自己的会话覆盖。
+
+**注入侧的两个降噪**
+
+- 同一会话提示词与上次成功注入相同时跳过（`lastInjectedPrompt`），避免每次刷新都给所有会话刷一条相同文本。
+- 子代理**一开始就没人设**时不发「人设已清除」注入：它本来就不该有人设，塞一条通知只会让它在上下文里以为自己刚被改过。只有「原本有、现在清空」才通知。
+
+**顺手修：`verify-e2e-prompt` 在非 ASCII 路径下崩溃**
+
+`prepareSandbox` 用 `cpSync(..., { recursive: true })` 复制 `lib`。实测 Windows + 工作目录含非 ASCII 字符（如「插件安装」）时，递归复制**目录**会让 Node 进程直接死掉：exit 127、无栈、连 `process.on('exit')` 都不触发（Node 24.9 与 22.20 均可复现），而同一批文件逐个 `cpSync` 完全正常。改为 `readdirSync` 遍历 + 逐文件复制。这不是插件自身的问题，但它让「在中文目录里开发这个插件」根本跑不了测试。
+
+**验证**
+
+- `npm run verify` **633 项通过**（16 个脚本）。
+- 新增 `scripts/verify-subagent-scope.mjs`（27 项）：判定口径（含 fork 会话不算子代理）、中性基线 10 字段全空、不继承全局人设与用户背景、工作区绑定不进子代理、预设整卡生效且身份三字段被丢弃、预设被删不回退全局、会话覆盖压过预设、覆盖可写身份三字段、非法 `subagentPersona` 视为 null，以及四条源码形态断言（装配与注入共用同一个解析函数、注入侧按 agent 解析并去重、子代理分支存在、工具已注册）。
+- `verify-config` / `verify-session-scope` / `verify-client` 同步了新字段与断言。
 ### v0.11.0（2026-11-06）
 
 共 65 个提交。主题是**从零加上「引用作为上下文」**，并在中途做了一次架构级重写：历史胶囊从「靠 DOM 时机推断」改成「按消息唯一 id 真绑定」。同时按 Issue #3 给侧栏人设总览加了显示开关。
