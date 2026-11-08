@@ -283,6 +283,10 @@ const PROMPT_TEXT = {
     joiner: '，',
     rulesHeader: '[执行规则]',
     rules: '你必须在每一条回复中严格遵守以上角色设定和回复风格；涉及用户背景时，用它来理解用户、贴合用户的需求和水平作答，而不是把它当作你自己的身份。包括但不限于：代码解释、技术问答、日常闲聊、知识科普等所有场景。违反此规则视为失败。',
+    // 常驻在主代理提示词里的派活提醒（0.12.0）。
+    // 工具定义只在「模型想调用某个工具」时才被读到，而「spawn 完别忘了设人设」
+    // 是派活那一刻的决策 —— 不写进提示词，主代理派完就走，子代理永远没人设。
+    subagentRule: '[子代理] 子代理默认不继承你的人设。需要它扮演某个角色时，spawn 之后立刻调用 set_subagent_persona 给它选预设或临时写几个字段（只有一个活动子代理时可省略 session）；人设只在子代理启动时装配一次，跑起来之后改不动，要换人设就新开一个子代理。',
     injectUpdatedHeader: '[dsh-soul 个性化配置已更新]',
     injectUpdatedBody: [
       '以下是当前最新的个性化配置快照（含昵称、回复风格和语调、特质、输出语言等）。',
@@ -357,6 +361,7 @@ const PROMPT_TEXT = {
     joiner: '; ',
     rulesHeader: '[Execution rules]',
     rules: 'You must strictly follow the role setup and reply style above in EVERY reply; when user background is involved, use it to understand the user and tailor your answers to their needs and level — never treat it as your own identity. This covers all scenarios including code explanation, technical Q&A, casual chat and knowledge sharing. Violating this rule counts as failure.',
+    subagentRule: '[Subagents] Subagents do not inherit your persona. When you need one to play a role, call set_subagent_persona right after spawn to apply a preset or write a few fields (session can be omitted when exactly one subagent is active). A persona is assembled once, when the subagent starts — once it is running it cannot be changed; start a new subagent instead.',
     injectUpdatedHeader: '[dsh-soul] Personalization config updated',
     injectUpdatedBody: [
       'Below is the latest personalization snapshot (nickname, reply style & tone, traits, output language, etc.).',
@@ -744,6 +749,9 @@ function compilePrompt(config) {
 
   // 执行规则
   parts.push(`${T.rulesHeader} ${T.rules}`)
+
+  // 子代理派活提醒：与角色扮演无关，但必须常驻 —— 见 PROMPT_TEXT 里的注释。
+  if (T.subagentRule) parts.push(T.subagentRule)
 
   return parts.join('\n')
 }
