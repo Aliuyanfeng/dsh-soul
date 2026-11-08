@@ -303,6 +303,10 @@ const PROMPT_TEXT = {
     ].join('\n'),
     toolUpdated: '已更新个性化设置',
     toolSubagentUpdated: '已为子代理设置人设',
+    // 目标会话已经结束时的说明。实测：子代理的人设只在它启动时装配，
+    // 会话结束后即使再唤醒（send_message）也不会重读 sidecar，所以不能
+    // 承诺「下次启动时生效」—— 唯一的办法是另开一个子代理。
+    toolSubagentEnded: '人设已写入，但这个子代理会话已经结束 —— 已结束的子代理不会再读人设；要换人设请新开一个子代理（人设只在子代理启动时装配一次）',
     toolSubagentCleared: '已清除子代理人设',
     toolSubagentMissing: '找不到这个预设：',
     toolSubagentNoTarget: '没有可用的活动子代理：请传 session（spawn 返回的 subagentId）',
@@ -370,6 +374,7 @@ const PROMPT_TEXT = {
     ].join('\n'),
     toolUpdated: 'Personalization settings updated',
     toolSubagentUpdated: 'Subagent persona applied',
+    toolSubagentEnded: 'Persona saved, but that subagent session has ended — an ended subagent will not read any persona again. To get a new persona, start a new subagent (a persona is assembled once, when the subagent starts).',
     toolSubagentCleared: 'Subagent persona cleared',
     toolSubagentMissing: 'No such persona preset: ',
     toolSubagentNoTarget: 'No active subagent to target: pass session (the subagentId returned by spawn)',
@@ -5172,10 +5177,12 @@ function registerTools(ctx) {
           '给一个子代理（subagent）设置人设：应用一张预设、临时写几个字段，或清除。' +
           '子代理默认**不继承**你（主代理）的人设，只有这里显式设置的才会生效。' +
           'session 传 spawn 返回的 subagentId；省略时若只有一个活动子代理会自动选它。' +
-          '只传要改的字段，其余保持不变。\n' +
+          '只传要改的字段，其余保持不变。' +
+          '人设在子代理启动时装配一次：请在 spawn 之后立刻设置；子代理结束后人设就改不动了，要换人设请新开一个子代理。\n' +
           'Set the persona of a subagent: apply a preset, write fields ad hoc, or clear it. ' +
           'Subagents do NOT inherit your persona by default — only what you set here applies. ' +
-          'Pass session = the subagentId returned by spawn; when omitted and exactly one subagent is active, it is picked automatically.',
+          'Pass session = the subagentId returned by spawn; when omitted and exactly one subagent is active, it is picked automatically. ' +
+          'A persona is assembled once, when the subagent starts: set it right after spawn. Once the subagent has ended its persona can no longer change — start a new subagent instead.',
         parameters: {
           session: {
             type: 'string',
@@ -5303,8 +5310,9 @@ function registerTools(ctx) {
             return {
               ok: true,
               // 目标会话不在活动列表（通常意味着这个子代理已经结束）时要说清楚：
-              // 人设写进去了，但它要等会话下次启动才被看见。
-              message: live ? T0.toolSubagentUpdated : T0.toolSubagentUpdated + '（该会话当前不在活动列表，下次启动时生效）',
+              // 人设写进去了，但它不会再被这个子代理读到 —— 实测唤醒已结束的
+              // 子代理（send_message）也不会重新装配人设。
+              message: live ? T0.toolSubagentUpdated : T0.toolSubagentEnded,
               session: target,
               ...(written.personaName ? { personaName: written.personaName } : {}),
               changes: Object.fromEntries(Object.entries(written.override || {}))

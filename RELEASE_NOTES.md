@@ -96,6 +96,7 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 - 中性基线把每个参与编译的字段都置空，而不只是「关于你」：`DEFAULT_CONFIG` 本身就会按 `style: 'professional'` / `language: 'zh'` 生成行为文案，对子代理来说那仍是一份没人要的人设。
 - `compileSubagentPrompt()` 只出身份 / 背景 / 行为三段，**不含「执行规则」块**（那是主代理的行为约束）。全空时返回空字符串 —— 已核实宿主安全：`dsh-system-prompt` 装配时 `filter((text) => text.length > 0)`，全空返回 `""` 且不报错。
 - **这是一次默认行为的破坏性变更**：升级后所有子代理都变成「无人设」。需要统一口径的，在设置页选一张「子代理默认人设」，或在 spawn 后显式调用 `set_subagent_persona`。
+- **人设只在子代理启动时装配一次**：因此要在 `spawn` 之后立刻设置。子代理结束后，会话即使被 `send_message` 再次唤醒也不会重读 sidecar（实测：对一个已结束的子代理写人设后再唤醒，它仍回答「没有名字也没有人设」）—— 要换人设请新开一个子代理，不要指望改现有会话。
 
 **新增：`set_subagent_persona` 工具**（主代理调用）
 
