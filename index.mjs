@@ -286,7 +286,7 @@ const PROMPT_TEXT = {
     // 常驻在主代理提示词里的派活提醒（0.12.0）。
     // 工具定义只在「模型想调用某个工具」时才被读到，而「spawn 完别忘了设人设」
     // 是派活那一刻的决策 —— 不写进提示词，主代理派完就走，子代理永远没人设。
-    subagentRule: '[子代理] 子代理默认不继承你的人设。需要它扮演某个角色时，spawn 之后立刻调用 set_subagent_persona 给它选预设或临时写几个字段（只有一个活动子代理时可省略 session）；人设只在子代理启动时装配一次，跑起来之后改不动，要换人设就新开一个子代理。',
+    subagentRule: '[子代理] 子代理默认不继承你的人设。要它扮演某个角色，先在 spawn 之前调用 set_subagent_persona 并传 pending: true（登记「下一个子代理」），它会带着这份人设出生，不用抢时序；如果已经 spawn 了，就立刻调用 set_subagent_persona 设定（不传 pending；只有一个活动子代理时可省略 session）。人设只在子代理启动时装配一次，跑起来之后改不动，要换人设就新开一个子代理。',
     injectUpdatedHeader: '[dsh-soul 个性化配置已更新]',
     injectUpdatedBody: [
       '以下是当前最新的个性化配置快照（含昵称、回复风格和语调、特质、输出语言等）。',
@@ -313,7 +313,9 @@ const PROMPT_TEXT = {
     toolSubagentEnded: '人设已写入，但这个子代理会话已经结束 —— 已结束的子代理不会再读人设；要换人设请新开一个子代理（人设只在子代理启动时装配一次）',
     toolSubagentCleared: '已清除子代理人设',
     toolSubagentMissing: '找不到这个预设：',
-    toolSubagentNoTarget: '没有可用的活动子代理：请传 session（spawn 返回的 subagentId）',
+    toolSubagentNoTarget: '没有可用的活动子代理：请传 session（spawn 返回的 subagentId）；若想给「下一个」子代理排队，传 pending: true 后再 spawn',
+    toolSubagentQueued: '已排队：下一个 spawn 的子代理会带着这份人设出生',
+    toolSubagentQueueCleared: '已清空排队的子代理默认人设',
     toolSubagentNeedTarget: '有多个活动子代理，请用 session 指定一个：',
     toolNoChanges: '没有要更改的设置',
     toolValidationFailed: '配置校验失败：',
@@ -361,7 +363,7 @@ const PROMPT_TEXT = {
     joiner: '; ',
     rulesHeader: '[Execution rules]',
     rules: 'You must strictly follow the role setup and reply style above in EVERY reply; when user background is involved, use it to understand the user and tailor your answers to their needs and level — never treat it as your own identity. This covers all scenarios including code explanation, technical Q&A, casual chat and knowledge sharing. Violating this rule counts as failure.',
-    subagentRule: '[Subagents] Subagents do not inherit your persona. When you need one to play a role, call set_subagent_persona right after spawn to apply a preset or write a few fields (session can be omitted when exactly one subagent is active). A persona is assembled once, when the subagent starts — once it is running it cannot be changed; start a new subagent instead.',
+    subagentRule: '[Subagents] Subagents do not inherit your persona. To have one play a role, call set_subagent_persona BEFORE spawn with pending: true (it registers the NEXT subagent) so it is born with that persona — no race. If it is already spawned, call set_subagent_persona right away without pending (session can be omitted when exactly one subagent is active). A persona is assembled once, when the subagent starts — once it is running it cannot be changed; start a new subagent instead.',
     injectUpdatedHeader: '[dsh-soul] Personalization config updated',
     injectUpdatedBody: [
       'Below is the latest personalization snapshot (nickname, reply style & tone, traits, output language, etc.).',
@@ -382,7 +384,9 @@ const PROMPT_TEXT = {
     toolSubagentEnded: 'Persona saved, but that subagent session has ended — an ended subagent will not read any persona again. To get a new persona, start a new subagent (a persona is assembled once, when the subagent starts).',
     toolSubagentCleared: 'Subagent persona cleared',
     toolSubagentMissing: 'No such persona preset: ',
-    toolSubagentNoTarget: 'No active subagent to target: pass session (the subagentId returned by spawn)',
+    toolSubagentNoTarget: 'No active subagent to target: pass session (the subagentId returned by spawn); to queue a persona for the NEXT subagent, pass pending: true before spawn',
+    toolSubagentQueued: 'Queued: the next spawned subagent will be born with this persona',
+    toolSubagentQueueCleared: 'Cleared the queued subagent persona',
     toolSubagentNeedTarget: 'Several active subagents — pick one with session: ',
     toolNoChanges: 'No settings to change',
     toolValidationFailed: 'Config validation failed: ',
@@ -797,16 +801,60 @@ function compileSubagentPrompt(config) {
 // （见 lib/subagent-scope.mjs）。它唯一能拿到的人设来自两处显式来源：
 //   ① 全局「子代理默认人设」（config.subagentPersona 指的预设）
 //   ② 该子代理会话自己的会话覆盖（主代理临时写给它的）
-function resolvePromptForAgent(base, agent, workspaceId, sessionOverride) {
+// ==================== 排队：让子代理「出生即带人设」（0.12.1）====================
+//
+// 为什么需要：DSH 的 spawn 是**带着任务一起出生**的，没有「先建空壳、再派活」的
+// 分步。主代理拿到 subagentId 时，子代理往往已经在初始化 —— 这时候再写 sidecar
+// 是在抢时间，赶上了才算数（实测能赶上，但不该依赖运气）。
+//
+// 排队把动作挪到 spawn **之前**：主代理先登记「下一个子代理用这张卡」，子代理
+// 第一次装配 system prompt 时由 section 回调取走 —— 同一进程、同一份内存，所以
+// 它第一次模型请求就带着人设，不依赖任何时序。
+const pendingSubagentPersonas = []   // [{ override, personaName }]
+const PENDING_SUBAGENT_LIMIT = 8     // 防止登记一堆没人认领的卡
+
+// 取走队列头，立刻写进内存缓存（同步，装配这一轮就能看到）；落盘异步进行。
+// 落盘失败不影响这一轮提示词 —— 它是从内存里的 override 编出来的；代价是重启后
+// 这个子会话的覆盖会丢（可接受：子代理本来就是一次性的）。
+function takePendingSubagentPersona(sessionId) {
+  if (pendingSubagentPersonas.length === 0) return null
+  // 已经显式设过覆盖的会话不抢队首 —— 队列是给「还没有人设的新子代理」的。
+  if (sessionOverrides.has(sessionId)) return null
+  const entry = pendingSubagentPersonas.shift()
+  sessionOverrides.set(sessionId, entry.override)
+  sessionOverridesKnown.add(sessionId)
+  if (entry.personaName) sessionPersonaNames.set(sessionId, entry.personaName)
+  persistSessionOverride(sessionId, entry.override, entry.personaName).catch(() => {})
+  return entry
+}
+
+async function persistSessionOverride(sessionId, override, personaName) {
+  const filePath = sessionScopePathFor(configPath(), sessionId)
+  const now = Date.now()
+  const doc = createSessionScopeDoc(sessionId, override, now, personaName || null)
+  await writeSessionScope(filePath, doc)
+}
+
+function resolvePromptForAgent(base, agent, workspaceId, sessionOverride, consumePending) {
   if (isSubagentAgent(agent)) {
-    const resolved = resolveSubagentConfig(base, sessionOverride)
+    const sid = sessionIdOfAgent(agent)
+    let effectiveOverride = sessionOverride
+    let queued = null
+    // 只有装配侧（section）消费队列；注入侧不碰 —— 注入是「配置变了」的通知，
+    // 不该顺手把一个新子代理的人设领走。
+    if (consumePending === true && !effectiveOverride && sid) {
+      queued = takePendingSubagentPersona(sid)
+      if (queued) effectiveOverride = queued.override
+    }
+    const resolved = resolveSubagentConfig(base, effectiveOverride)
     return {
       prompt: compileSubagentPrompt(resolved.config),
       scope: resolved.source,
       config: resolved.config,
-      personaName: resolved.personaName,
+      personaName: queued ? queued.personaName : resolved.personaName,
       personaMissing: resolved.personaMissing,
-      subagent: true
+      subagent: true,
+      queued: queued !== null
     }
   }
   const resolved = configForScope(base, cwdOfAgent(agent), workspaceId, sessionOverride)
@@ -4740,7 +4788,8 @@ function registerSystemPrompt(ctx) {
           //
           // 与 injection 侧共用同一个 resolver，是为了让「装配时看到的」和「注入时发的」
           // 永远是同一段文本；两处各写一份的历史后果是两者静默漂移。
-          const resolved = resolvePromptForAgent(snap.value, agent, workspaceId, sessionOverride)
+          // 第 5 个参数 = 装配侧可以消费「下一个子代理」的排队人设（spawn 前登记）。
+          const resolved = resolvePromptForAgent(snap.value, agent, workspaceId, sessionOverride, true)
           const prompt = resolved.prompt
           // 记下「这一轮实际用的是哪一版」：排查「改了却没生效」时，第一个要回答的就是它。
           // 只写不读，不影响任何行为（deliveryState 由状态端点序列化给设置页）。
@@ -5186,11 +5235,13 @@ function registerTools(ctx) {
           '子代理默认**不继承**你（主代理）的人设，只有这里显式设置的才会生效。' +
           'session 传 spawn 返回的 subagentId；省略时若只有一个活动子代理会自动选它。' +
           '只传要改的字段，其余保持不变。' +
-          '人设在子代理启动时装配一次：请在 spawn 之后立刻设置；子代理结束后人设就改不动了，要换人设请新开一个子代理。\n' +
+          '人设在子代理启动时装配一次：请在 spawn 之后立刻设置；子代理结束后人设就改不动了，要换人设请新开一个子代理。' +
+          '想让它**出生时就带好人设**：在 spawn 之前调用并传 pending: true（登记「下一个子代理」），子代理第一次装配时自动生效，不必抢时序。\n' +
           'Set the persona of a subagent: apply a preset, write fields ad hoc, or clear it. ' +
           'Subagents do NOT inherit your persona by default — only what you set here applies. ' +
           'Pass session = the subagentId returned by spawn; when omitted and exactly one subagent is active, it is picked automatically. ' +
-          'A persona is assembled once, when the subagent starts: set it right after spawn. Once the subagent has ended its persona can no longer change — start a new subagent instead.',
+          'A persona is assembled once, when the subagent starts: set it right after spawn. Once the subagent has ended its persona can no longer change — start a new subagent instead. ' +
+          'To have it BORN with a persona: call this before spawn with pending: true — it is applied at the subagent\'s first assembly, so there is no race.',
         parameters: {
           session: {
             type: 'string',
@@ -5210,7 +5261,8 @@ function registerTools(ctx) {
           tables: { type: 'string', enum: TRAIT_VALUES, description: '特质·表格。/ Table usage.' },
           replyLength: { type: 'string', enum: REPLY_LENGTH_VALUES, description: '回复长度偏好。/ Reply length.' },
           customInstructions: { type: 'string', description: '这个子代理的角色设定（一句话说清它是谁、负责什么）。/ Role instructions for this subagent.' },
-          clear: { type: 'boolean', description: '清除该子代理的全部人设（回到「没有人设」）。/ Clear the whole persona of this subagent.' }
+          clear: { type: 'boolean', description: '清除该子代理的全部人设（回到「没有人设」）。/ Clear the whole persona of this subagent.' },
+          pending: { type: 'boolean', description: '排队给「下一个」spawn 的子代理：在 spawn 之前调用它，子代理出生时就带着这份人设（配合 clear: true 可清空队列）。/ Queue this persona for the NEXT spawned subagent: call before spawn and it is born with it (with clear: true it empties the queue).' }
         },
         output: {
           schema: {
@@ -5221,6 +5273,8 @@ function registerTools(ctx) {
               message: { type: 'string' },
               session: { type: 'string' },
               personaName: { type: 'string' },
+              pending: { type: 'boolean' },
+              queued: { type: 'integer' },
               changes: {
                 type: 'object',
                 additionalProperties: false,
@@ -5283,6 +5337,20 @@ function registerTools(ctx) {
             const clear = args.clear === true
             if (!clear && Object.keys(patch).length === 0) {
               return { ok: true, message: T0.toolNoChanges }
+            }
+
+            // —— 排队：spawn 之前登记，子代理出生即带人设 ——
+            //
+            // 显式 pending: true 才算排队，不猜意图：主代理忘了传 session 时若
+            // 静默入队，下一个子代理会莫名带上人设，这比报错难查得多。
+            if (args.pending === true) {
+              if (clear) {
+                pendingSubagentPersonas.length = 0
+                return { ok: true, message: T0.toolSubagentQueueCleared, pending: true, queued: 0 }
+              }
+              pendingSubagentPersonas.push({ override: patch, personaName: personaWanted || null })
+              if (pendingSubagentPersonas.length > PENDING_SUBAGENT_LIMIT) pendingSubagentPersonas.shift()
+              return { ok: true, message: T0.toolSubagentQueued, pending: true, queued: pendingSubagentPersonas.length }
             }
 
             // —— 目标子会话 ——

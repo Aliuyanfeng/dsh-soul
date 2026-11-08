@@ -23,7 +23,7 @@ import {
   subagentPersonaNameOf
 } from '../lib/subagent-scope.mjs'
 
-const EXPECTED_ASSERTIONS = 27
+const EXPECTED_ASSERTIONS = 28
 const HERE = dirname(fileURLToPath(import.meta.url))
 const INDEX_PATH = join(HERE, '..', 'index.mjs')
 
@@ -221,8 +221,19 @@ await check('declaredPersonaFields：非法枚举被 sanitize 丢掉', () => {
 
 const SRC = await readFile(INDEX_PATH, 'utf8')
 
-await check('接线：装配侧 section text 走 resolvePromptForAgent', () => {
-  assert.match(SRC, /resolvePromptForAgent\(snap\.value, agent, workspaceId, sessionOverride\)/)
+await check('接线：装配侧 section text 走 resolvePromptForAgent，并允许消费排队', () => {
+  // 第 5 个参数 consumePending 是排队机制的开关：装配侧才消费队列（子代理出生那一刻），
+  // 所以这里锚到末尾的 ", true"，而不是只锚调用名 —— 少了它排队就永远不生效。
+  assert.match(SRC, /resolvePromptForAgent\(snap\.value, agent, workspaceId, sessionOverride, true\)/)
+})
+
+await check('接线：排队机制 —— 只有装配侧消费队列，注入侧不抢', () => {
+  assert.match(SRC, /const pendingSubagentPersonas = \[\]/)
+  assert.match(SRC, /if \(consumePending === true && !effectiveOverride && sid\)/)
+  assert.match(SRC, /if \(args\.pending === true\)/)
+  assert.match(SRC, /pendingSubagentPersonas\.push\(\{ override: patch, personaName: personaWanted \|\| null \}\)/)
+  // 注入侧是「配置变了」的通知，不带第 5 参：否则一次全局保存会顺手把新子代理的人设领走。
+  assert.match(SRC, /resolvePromptForAgent\(\s*config,\s*agent,\s*workspaceId,\s*sessionOverridesOrNull\(sessionId\)\s*\)/)
 })
 
 await check('接线：注入侧按 agent 解析，提示词没变就跳过', () => {

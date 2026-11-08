@@ -96,7 +96,7 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 - 中性基线把每个参与编译的字段都置空，而不只是「关于你」：`DEFAULT_CONFIG` 本身就会按 `style: 'professional'` / `language: 'zh'` 生成行为文案，对子代理来说那仍是一份没人要的人设。
 - `compileSubagentPrompt()` 只出身份 / 背景 / 行为三段，**不含「执行规则」块**（那是主代理的行为约束）。全空时返回空字符串 —— 已核实宿主安全：`dsh-system-prompt` 装配时 `filter((text) => text.length > 0)`，全空返回 `""` 且不报错。
 - **这是一次默认行为的破坏性变更**：升级后所有子代理都变成「无人设」。需要统一口径的，在设置页选一张「子代理默认人设」，或在 spawn 后显式调用 `set_subagent_persona`。
-- **人设只在子代理启动时装配一次**：因此要在 `spawn` 之后立刻设置。子代理结束后，会话即使被 `send_message` 再次唤醒也不会重读 sidecar（实测：对一个已结束的子代理写人设后再唤醒，它仍回答「没有名字也没有人设」）—— 要换人设请新开一个子代理，不要指望改现有会话。
+- **人设只在子代理启动时装配一次**：因此要在 `spawn` 之前排队（见下一节）或在 `spawn` 之后立刻设置。子代理结束后，会话即使被 `send_message` 再次唤醒也不会重读 sidecar（实测：对一个已结束的子代理写人设后再唤醒，它仍回答「没有名字也没有人设」）—— 要换人设请新开一个子代理，不要指望改现有会话。
 
 **新增：`set_subagent_persona` 工具**（主代理调用）
 
@@ -104,6 +104,16 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 - `session` 传 spawn 返回的 `subagentId`（就是子会话的 sessionId，查自 `dsh-tool-subagent` 的 `startActivation(...).childId`）。省略时若当前只有一个活动子代理会自动选它；多个则报错并列出候选 id，让主代理自己挑。
 - 写入的是该子会话的 sidecar 覆盖（`$DSH_HOME/soul-sessions/<sha256 前 32 位>.json`），**不落全局配置**。
 - 显式字段优先于预设（`Object.assign(patch, declaredPersonaFields(entry), patch)`）：选一张卡再改两个字段，比让模型自己拼一整套更省事。
+
+**新增：排队 —— 出生即带人设（`pending: true`）**
+
+`spawn` 是「带着任务一起出生」的，没有「先建壳、再派活」的分步；主代理拿到 `subagentId` 时子代理通常已经进入启动流程。靠「spawn 之后立刻调用」是在**抢时序**，能成但不稳。所以补了一条显式路径：
+
+- 在 `spawn` **之前**调用 `set_subagent_persona(..., pending: true)`，这份人设进队列（模块级 `pendingSubagentPersonas`，上限 8 条，超出丢最旧）；`pending: true, clear: true` 清空队列。
+- 子代理第一次装配提示词时，`takePendingSubagentPersona(sessionId)` 把队首领走：写进该会话的 `sessionOverrides` 内存缓存、写入 sidecar，然后照常参与编译。领到的会话不会再领第二次（`sessionOverrides.has(sessionId)` 为真就直接返回），所以显式指定过的子代理不会被队列覆盖。
+- 「消费队列」只在装配侧发生：`resolvePromptForAgent(base, agent, workspaceId, sessionOverride, consumePending)` 的第 5 个参数只有 section 的 `text` 回调传 `true`；注入侧不传 —— 注入是「配置变了」的通知，不该顺手把新子代理的人设领走。
+- `pending` 必须显式传才排队，不猜意图：主代理忘了传 `session` 时若静默入队，下一个子代理会莫名带上人设，比报错难查得多（此时返回 `toolSubagentNoTarget`，文案里提示可以用 `pending: true`）。
+- 主提示词里的常驻提醒同步改成推荐顺序：**先 `pending: true` 排队，已经 spawn 了再立刻设置**。
 
 **变更：会话覆盖白名单 7 → 10 项**
 
@@ -124,8 +134,8 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 
 **验证**
 
-- `npm run verify` **633 项通过**（16 个脚本）。
-- 新增 `scripts/verify-subagent-scope.mjs`（27 项）：判定口径（含 fork 会话不算子代理）、中性基线 10 字段全空、不继承全局人设与用户背景、工作区绑定不进子代理、预设整卡生效且身份三字段被丢弃、预设被删不回退全局、会话覆盖压过预设、覆盖可写身份三字段、非法 `subagentPersona` 视为 null，以及四条源码形态断言（装配与注入共用同一个解析函数、注入侧按 agent 解析并去重、子代理分支存在、工具已注册）。
+- `npm run verify` **625 项通过**（16 个脚本）。
+- 新增 `scripts/verify-subagent-scope.mjs`（28 项）：判定口径（含 fork 会话不算子代理）、中性基线 10 字段全空、不继承全局人设与用户背景、工作区绑定不进子代理、预设整卡生效且身份三字段被丢弃、预设被删不回退全局、会话覆盖压过预设、覆盖可写身份三字段、非法 `subagentPersona` 视为 null，以及五条源码形态断言（装配与注入共用同一个解析函数、注入侧按 agent 解析并去重、子代理分支存在、工具已注册、排队机制只在装配侧消费队列）。
 - `verify-config` / `verify-session-scope` / `verify-client` 同步了新字段与断言。
 ### v0.11.0（2026-11-06）
 
