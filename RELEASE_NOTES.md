@@ -115,6 +115,20 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 - `pending` 必须显式传才排队，不猜意图：主代理忘了传 `session` 时若静默入队，下一个子代理会莫名带上人设，比报错难查得多（此时返回 `toolSubagentNoTarget`，文案里提示可以用 `pending: true`）。
 - 主提示词里的常驻提醒同步改成推荐顺序：**先 `pending: true` 排队，已经 spawn 了再立刻设置**。
 
+**实测修正：子代理的系统提示里没有 `soul:persona` 段**
+
+排队机制上线后按主路径实测（本机 Web 实例，2026-11-08）：`pending: true` 返回队列长度 1，随后 `spawn` 的子代理答「名字：没有；人设：没有」，被追问「系统提示里有没有校对员小七/小七/老派编辑字样」时答「没有」。逐层核对：
+
+- sidecar 确实写了（`$DSH_HOME/soul-sessions/<sha256 前 32 位>.json`，433 字节，五个字段齐全）⇒ 队列**被领走了**。
+- 子会话 header 正确（`origin: 'subagent'`、`delegationDepth: 1`、`agentPreset: 'bare-ptc'`）⇒ 判定口径没问题。
+- 让子代理原样复述系统提示开头，拿到的是 `You are an AI agent powered by DeepSeek Harness.` 紧跟 preset 的 persona prefix，**没有 soul 段**。
+
+结论：dsh-soul 注册在主 ctx 的 `systemPrompt.section` 不进入子代理的装配 —— 子代理只用 agent preset 自己的 plugins 注册的段。因此「装配侧带人设」对子代理是空承诺。
+
+修法：领队之后**主动注入一次**。`scheduleQueuedInjection(sessionId, prompt)` 登记任务，`flushQueuedInjections()` 在 `setTimeout(0)` 里执行（装配过程中调 `agent.inject` 会重入），用与常规注入相同的 `createUserMessage` + `createInjectionSource` 文案；子代理刚建会话时可能还不在 `agents.list()`，所以最多重试 6 次、间隔 400 ms，成功后写 `lastInjectedPrompt` 免得常规刷新再注入一遍同样的文本。
+
+这也解释了此前一个看似矛盾的现象：spawn 之后立刻调 `set_subagent_persona`（不传 `pending`）确实能让子代理第一轮自称「小七」—— 那条路走的是注入，不是系统提示。
+
 **变更：会话覆盖白名单 7 → 10 项**
 
 新增 `nickname` / `occupation` / `bio`。「临时写一段人设」要能写全身份三项，否则只能写风格、写不了「你是谁」。**预设库仍然只收人格字段**（`PERSONA_FIELDS`）：预设是「一种说话方式」，身份属于使用者，不跟着预设走 —— 这条边界没有移动。
@@ -134,8 +148,8 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 
 **验证**
 
-- `npm run verify` **625 项通过**（16 个脚本）。
-- 新增 `scripts/verify-subagent-scope.mjs`（28 项）：判定口径（含 fork 会话不算子代理）、中性基线 10 字段全空、不继承全局人设与用户背景、工作区绑定不进子代理、预设整卡生效且身份三字段被丢弃、预设被删不回退全局、会话覆盖压过预设、覆盖可写身份三字段、非法 `subagentPersona` 视为 null，以及五条源码形态断言（装配与注入共用同一个解析函数、注入侧按 agent 解析并去重、子代理分支存在、工具已注册、排队机制只在装配侧消费队列）。
+- `npm run verify` **626 项通过**（16 个脚本）。
+- 新增 `scripts/verify-subagent-scope.mjs`（29 项）：判定口径（含 fork 会话不算子代理）、中性基线 10 字段全空、不继承全局人设与用户背景、工作区绑定不进子代理、预设整卡生效且身份三字段被丢弃、预设被删不回退全局、会话覆盖压过预设、覆盖可写身份三字段、非法 `subagentPersona` 视为 null，以及六条源码形态断言（装配与注入共用同一个解析函数、注入侧按 agent 解析并去重、子代理分支存在、工具已注册、排队机制只在装配侧消费队列、**领队后必须主动注入**）。
 - `verify-config` / `verify-session-scope` / `verify-client` 同步了新字段与断言。
 ### v0.11.0（2026-11-06）
 

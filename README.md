@@ -42,7 +42,7 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
 - `set_persona` 确认模式（`requireToolConfirmation`）：Agent 的人设修改先在输入框处弹出**宿主原生审批面板**，由你点「允许一次」或「拒绝」（`Enter` 允许 / `Esc` 拒绝）后才会生效；审批通道不可用时（如会话审批策略为 `never`）退化为待确认提议，需 `/soul confirm` 处理
 - **子代理不继承主代理人设**（0.12.0，`lib/subagent-scope.mjs`）：子代理会话（`origin: 'subagent'` 或 `delegationDepth > 0`）默认**没有任何人设** —— 全局的回复风格、特质、「关于你」、自定义指令一概不带过去，工作区 / 目录绑定也不生效。它的提示词只有两处显式来源：① 全局「子代理默认人设」（设置页里选一张预设，默认「无」）；② 主代理临时写给**这一个**子代理的会话覆盖
 - 主代理可用工具 `set_subagent_persona` 给子代理**选预设**或**临时写一段**（省略 `session` 时，若当前只派出了一个子代理就自动选它；`clear: true` 清除）。反过来，子代理自己调用 `set_persona` 只改**它自己的**会话覆盖，永远不会改到全局 —— 否则一个子代理就能改掉所有会话的性格
-- **出生即带人设**（0.12.0）：`spawn` **之前**调用 `set_subagent_persona` 并传 `pending: true`，这份人设进队列，下一个子代理第一次装配提示词时自动领走 —— 不用和子代理的启动抢时序。传 `pending: true, clear: true` 清空队列
+- **出生即带人设**（0.12.0）：`spawn` **之前**调用 `set_subagent_persona` 并传 `pending: true`，这份人设进队列，下一个子代理第一次装配提示词时自动领走，并**立刻用注入送达**（子代理的系统提示里没有 soul 段，只写进 sidecar 等于没送达，见下文）—— 不用和子代理的启动抢时序。传 `pending: true, clear: true` 清空队列
 - 输入框光轨：Agent 回复中时，输入框边框显示沿边循环流动的光轨（默认颜色 `#679EFE`）
   - 颜色：预设色板、取色器或十六进制输入（如 `#679EFE`）
   - 流动速度：慢 / 中 / 快；光带粗细：细 / 中 / 粗
@@ -240,7 +240,9 @@ agent.inject(createUserMessage({
 
 「没有人设」不等于「关掉插件」：中性基线把**每一个参与编译的字段**置空（不只是「关于你」），因为 `DEFAULT_CONFIG` 本身就会对 `style=professional` / `language=zh` 生成一段行为文案 —— 对主代理这是合理默认，对子代理它就是一份没人要的人设。`compileSubagentPrompt()` 对全空配置返回空字符串，且不含「执行规则」块（那是主代理的行为约束，不该发给干活的子代理）。子代理判定由 `isSubagentHeader()` 做：`origin === 'subagent'` 或 `delegationDepth > 0`；从主会话 fork 出来的会话两者都没有，按主代理处理。
 
-**人设只在子代理启动时装配一次。** 想让它**出生时就带好人设**，就在 `spawn` **之前**调用 `set_subagent_persona` 并传 `pending: true`：这份人设进队列（`pendingSubagentPersonas`），下一个子代理第一次装配提示词时由 `takePendingSubagentPersona()` 领走 —— 装配侧调用 `resolvePromptForAgent(..., consumePending = true)` 才消费队列，注入侧不传这个参数，免得一次全局保存顺手把新子代理的人设领走。队列已有人设的会话不会再领（`sessionOverrides.has(sessionId)` 直接返回），上限 8 条、超出丢最旧。已经 spawn 了就立刻调用（不传 `pending`）抢时序。子代理一旦结束，会话即使被再次唤醒（`send_message`）也不会重读 sidecar —— 实测对一个已结束的子代理写人设后再唤醒，它仍答「没有名字也没有人设」；要换人设请另开一个子代理。
+**人设只在子代理启动时装配一次。** 想让它**出生时就带好人设**，就在 `spawn` **之前**调用 `set_subagent_persona` 并传 `pending: true`：这份人设进队列（`pendingSubagentPersonas`），下一个子代理第一次装配提示词时由 `takePendingSubagentPersona()` 领走 —— 装配侧调用 `resolvePromptForAgent(..., consumePending = true)` 才消费队列，注入侧不传这个参数，免得一次全局保存顺手把新子代理的人设领走。队列已有人设的会话不会再领（`sessionOverrides.has(sessionId)` 直接返回），上限 8 条、超出丢最旧。已经 spawn 了就立刻调用（不传 `pending`）抢时序。
+
+**为什么领走之后还要注入。** 本机实测（2026-11-08）：队列确实被装配侧取走、sidecar 也确实落盘，但子代理复述自己的系统提示时**没有任何 soul 段** —— 原文只有宿主那句 `You are an AI agent powered by DeepSeek Harness.` 加 agent preset 自己的 persona prefix。子代理只用 preset 里的 plugins 注册的段，主 ctx 注册的 section 不进它的装配。所以「写进 sidecar / 写进系统提示」对子代理都不算送达，只有注入（user message）能到达它。领队后立刻 `scheduleQueuedInjection(sessionId, prompt)`，由 `flushQueuedInjections()` 在 `setTimeout(0)` 里找到该会话的 agent 并 `inject()`（装配过程中直接注入会重入；子代理刚建会话时还不在 `agents.list()` 里，所以带最多 6 次、400 ms 间隔的重试）。子代理一旦结束，会话即使被再次唤醒（`send_message`）也不会重读 sidecar —— 实测对一个已结束的子代理写人设后再唤醒，它仍答「没有名字也没有人设」；要换人设请另开一个子代理。
 
 **诊断。** 这两条通道静默失效时症状都是「改了配置不生效」，因此插件会如实记录送达结果：`/soul show` 末尾的「送达」行、`GET /api/soul/status`、以及设置页的提示条（`configError` = 配置读不出来，`deliveryWarning` = 配置送不到活动会话）。
 

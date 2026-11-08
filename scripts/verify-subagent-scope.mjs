@@ -23,7 +23,7 @@ import {
   subagentPersonaNameOf
 } from '../lib/subagent-scope.mjs'
 
-const EXPECTED_ASSERTIONS = 28
+const EXPECTED_ASSERTIONS = 29
 const HERE = dirname(fileURLToPath(import.meta.url))
 const INDEX_PATH = join(HERE, '..', 'index.mjs')
 
@@ -234,6 +234,20 @@ await check('接线：排队机制 —— 只有装配侧消费队列，注入�
   assert.match(SRC, /pendingSubagentPersonas\.push\(\{ override: patch, personaName: personaWanted \|\| null \}\)/)
   // 注入侧是「配置变了」的通知，不带第 5 参：否则一次全局保存会顺手把新子代理的人设领走。
   assert.match(SRC, /resolvePromptForAgent\(\s*config,\s*agent,\s*workspaceId,\s*sessionOverridesOrNull\(sessionId\)\s*\)/)
+})
+
+await check('接线：排队人设在装配侧消费后**必须主动注入**（子代理系统提示里没有 soul 段）', () => {
+  // 2026-11-08 实测：队列被消费、sidecar 也落盘，但子代理复述的系统提示里没有任何
+  // soul 段 —— 子代理只用 preset 自己的 plugins 注册的段。所以「写进 sidecar」对
+  // 子代理等于什么都没发生，必须再走一次注入（user message）才算送达。
+  assert.match(SRC, /if \(queued\) scheduleQueuedInjection\(sid, prompt\)/)
+  assert.match(SRC, /function flushQueuedInjections\(\)/)
+  assert.match(SRC, /const agent = listed\.find\(a => sessionIdOfAgent\(a\) === job\.sessionId\)/)
+  assert.match(SRC, /QUEUED_INJECT_MAX_ATTEMPTS = \d+/)
+  // 注入放在 setTimeout 之外执行（装配过程中调 agent.inject 会重入）
+  assert.match(SRC, /setTimeout\(flushQueuedInjections, /)
+  // ctx 在注册 system prompt 时留下一份；否则 flush 拿不到 agents 服务
+  assert.match(SRC, /soulPluginCtx = ctx/)
 })
 
 await check('接线：注入侧按 agent 解析，提示词没变就跳过', () => {

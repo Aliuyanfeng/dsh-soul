@@ -835,6 +835,90 @@ async function persistSessionOverride(sessionId, override, personaName) {
   await writeSessionScope(filePath, doc)
 }
 
+// ==================== 排队人设的送达：注入（0.12.2）====================
+//
+// 实测（2026-11-08，本机 Web 实例）：排队 entry 确实被装配侧取走、sidecar 也落盘了，
+// 但子代理复述自己的系统提示时**没有任何 soul 段** —— 它说「系统提示里没有这几个字样」，
+// 原文只有宿主那句 `You are an AI agent powered by DeepSeek Harness.` 加 preset 的
+// persona prefix。⇒ 子代理只用 agent preset 自己的 plugins 注册的段，主 ctx 注册的
+// section 不进它的装配。所以「装配侧带人设」这条路对子代理是**空承诺**。
+//
+// 能到达子代理的只有注入（user message）：与「spawn 后立刻 set_subagent_persona」
+// 同一条通道 —— 那条路实测有效（子代理第一轮就自称小七）。
+//
+// 时序：装配过程中只登记，真正 inject 推迟到 setTimeout(0)。理由是在 system prompt
+// 装配里调 agent.inject 可能重入；而此刻子代理常常还没出现在 agents.list()，
+// 所以带有限次重试（子代理从建会话到进列表有几百毫秒的窗口）。
+let soulPluginCtx = null
+const queuedInjectJobs = []       // [{ sessionId, prompt, attempts }]
+let queuedInjectTimer = null
+const QUEUED_INJECT_MAX_ATTEMPTS = 6
+const QUEUED_INJECT_RETRY_MS = 400
+
+function scheduleQueuedInjection(sessionId, prompt) {
+  if (!sessionId || !prompt) return
+  queuedInjectJobs.push({ sessionId, prompt, attempts: 0 })
+  if (queuedInjectTimer === null) {
+    queuedInjectTimer = setTimeout(flushQueuedInjections, 0)
+    // 定时器不该把进程吊着（宿主退出时也能正常结束）
+    if (queuedInjectTimer && typeof queuedInjectTimer.unref === 'function') queuedInjectTimer.unref()
+  }
+}
+
+function flushQueuedInjections() {
+  queuedInjectTimer = null
+  if (queuedInjectJobs.length === 0) return
+
+  let listed = []
+  try {
+    const agents = soulPluginCtx && typeof soulPluginCtx.get === 'function'
+      ? soulPluginCtx.get('agents')
+      : null
+    if (agents && typeof agents.list === 'function') listed = agents.list()
+  } catch {
+    listed = []
+  }
+
+  let T = null
+  try {
+    T = promptTextOf(snapshotConfig().value)
+  } catch {
+    T = null
+  }
+
+  const retry = []
+  for (const job of queuedInjectJobs) {
+    job.attempts++
+    const agent = listed.find(a => sessionIdOfAgent(a) === job.sessionId)
+    if (!agent) {
+      // 还在建会话：留到下一轮；超过上限就丢弃（子代理本来是一次性的，
+      // 丢一份人设远比在内存里留一堆僵尸任务好）
+      if (job.attempts < QUEUED_INJECT_MAX_ATTEMPTS) retry.push(job)
+      continue
+    }
+    const text = T
+      ? `${T.injectUpdatedHeader}\n${T.injectUpdatedBody}\n\n${job.prompt}`
+      : job.prompt
+    try {
+      agent.inject(createUserMessage({
+        content: [{ type: 'text', text }],
+        source: createInjectionSource(text)
+      }))
+      lastInjectedPrompt.set(job.sessionId, job.prompt)
+    } catch {
+      // 注入失败不重试：下一轮装配不会再消费队列（sidecar 已写、缓存已有），
+      // 由「spawn 后 set_subagent_persona」那条常规路径兜底。
+    }
+  }
+
+  queuedInjectJobs.length = 0
+  queuedInjectJobs.push(...retry)
+  if (retry.length > 0) {
+    queuedInjectTimer = setTimeout(flushQueuedInjections, QUEUED_INJECT_RETRY_MS)
+    if (queuedInjectTimer && typeof queuedInjectTimer.unref === 'function') queuedInjectTimer.unref()
+  }
+}
+
 function resolvePromptForAgent(base, agent, workspaceId, sessionOverride, consumePending) {
   if (isSubagentAgent(agent)) {
     const sid = sessionIdOfAgent(agent)
@@ -847,8 +931,12 @@ function resolvePromptForAgent(base, agent, workspaceId, sessionOverride, consum
       if (queued) effectiveOverride = queued.override
     }
     const resolved = resolveSubagentConfig(base, effectiveOverride)
+    const prompt = compileSubagentPrompt(resolved.config)
+    // 队列入账之后必须**主动送一次**：子代理的系统提示装配里没有 soul 段
+    // （见 scheduleQueuedInjection 上方的实测记录），只写 sidecar 等于什么都没发生。
+    if (queued) scheduleQueuedInjection(sid, prompt)
     return {
-      prompt: compileSubagentPrompt(resolved.config),
+      prompt,
       scope: resolved.source,
       config: resolved.config,
       personaName: queued ? queued.personaName : resolved.personaName,
@@ -4696,6 +4784,9 @@ function registerCommands(ctx) {
 let globalUpdatePrompt = null
 
 function registerSystemPrompt(ctx) {
+  // 排队人设的注入需要一个能取到 agents 服务的 ctx；在装配回调里拿不到，
+  // 所以在注册时留一份引用（见 flushQueuedInjections）。
+  soulPluginCtx = ctx
   ctx.inject(['systemPrompt'], (spCtx) => {
     let disposeSection = null
 
