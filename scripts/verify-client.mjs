@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 103
+const EXPECTED_ASSERTIONS = 109
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -637,16 +637,13 @@ async function clickQuickToggle(world) {
   return findAll(after, (n) => n.type === 'button')[0]
 }
 
-/** 像用户一样点下指定文案的按钮，返回之后的 toast（{ text, kind }）。 */
-async function clickButton(world, labelKey) {
-  const tree = await renderSettings(world)
-  const label = world.dicts.zh[labelKey]
-  const buttons = findAll(tree, (n) => n.type === 'ui-button' && textOf(n) === label)
-  assert.equal(buttons.length, 1, `期望恰好一个「${label}」按钮，实际 ${buttons.length} 个`)
-  await buttons[0].props.onClick()
-  const after = await renderSettings(world)
-  // 提示形态对齐宿主模型设置页：成功走内联绿字（.soul-saved-notice，role=status）、
-  // 失败走内联红字（.soul-error-notice，role=alert）—— 宿主设置页从不使用 toast。
+/**
+ * 从渲染树里读出那条内联提示。
+ *
+ * 提示形态对齐宿主模型设置页：成功走内联绿字（.soul-saved-notice，role=status）、
+ * 失败走内联红字（.soul-error-notice，role=alert）—— 宿主设置页从不使用 toast。
+ */
+function noticeOf(after) {
   const notices = findAll(after, (n) => typeof n.props?.className === 'string' && n.props.className.includes('soul-saved-notice'))
   if (notices.length > 0) {
     assert.equal(notices.length, 1, `期望恰好一条成功绿字，实际 ${notices.length} 条`)
@@ -657,8 +654,77 @@ async function clickButton(world, labelKey) {
   return { text: textOf(errs[0]), kind: 'error' }
 }
 
-// ==================== 五、用例 ====================
+/**
+ * 像用户一样展开某个折叠分组，返回展开后的树。
+ *
+ * 为什么测试需要它：SoulAccordion 的 body 只在 open 时渲染，而设置页同时只展开一个分组
+ *（openSection）。把动作挪进折叠区，就等于把它从默认视图里移走 —— 这是产品语义不是测试障碍，
+ * 所以断言区内有什么之前，必须真的把它点开。
+ */
+async function openAccordion(world, id) {
+  const tree = await renderSettings(world)
+  // 展开与否看 body 在不在树里，且**已展开就直接返回**：触发器是 toggle，
+  // 而首屏默认展开的正是「关于你」—— 无条件点一下会把它关掉（实测踩到）。
+  if (findAll(tree, (n) => n.props && n.props.id === `${id}-body`).length > 0) return tree
+  const triggers = findAll(tree, (n) => n.type === 'button' && n.props && n.props['aria-controls'] === `${id}-body`)
+  assert.equal(triggers.length, 1, `分组「${id}」的触发器应恰好一个，实际 ${triggers.length}`)
+  await triggers[0].props.onClick()
+  return renderSettings(world)
+}
 
+/**
+ * 走完整条「重置默认」路径：展开高级选项 → 点重置 → 在确认弹层点确认。
+ *
+ * 第一段可以只点不确认（confirm:false），用来钉住「确认之前绝不写盘」这道门槛。
+ */
+async function clickReset(world, { confirm = true } = {}) {
+  const opened = await openAccordion(world, 'soul-advanced')
+  const buttons = findAll(opened, (n) => n.type === 'ui-button' && textOf(n) === world.dicts.zh['button.reset'])
+  assert.equal(buttons.length, 1, `高级选项里应恰好一个「重置默认」按钮，实际 ${buttons.length} 个`)
+  await buttons[0].props.onClick()
+  if (!confirm) return { tree: await renderSettings(world) }
+  const tree = await renderSettings(world)
+  const confirms = findAll(tree, (n) => n.type === 'ui-button' && textOf(n) === world.dicts.zh['reset.confirmButton'])
+  assert.equal(confirms.length, 1, `确认弹层里应恰好一个「确认重置」按钮，实际 ${confirms.length} 个`)
+  await confirms[0].props.onClick()
+  return { toast: noticeOf(await renderSettings(world)) }
+}
+
+/** 像用户一样点下指定文案的按钮，返回之后的 toast（{ text, kind }）。 */
+async function clickButton(world, labelKey) {
+  const tree = await renderSettings(world)
+  const label = world.dicts.zh[labelKey]
+  const buttons = findAll(tree, (n) => n.type === 'ui-button' && textOf(n) === label)
+  assert.equal(buttons.length, 1, `期望恰好一个「${label}」按钮，实际 ${buttons.length} 个`)
+  await buttons[0].props.onClick()
+  const after = await renderSettings(world)
+  return noticeOf(after)
+}
+
+/**
+ * 弹层里的「保存后立即应用」开关。
+ *
+ * 它现在用的是全站统一的开关行 SoulSwitch：宿主有 Switch 就渲染宿主 Switch
+ * （无障碍名 = 文案），没有则降级成 .soul-toggle 里的原生 checkbox。
+ * 两种形态都要认出来，否则测试会在降级路径上假失败；取到之后再统一成
+ * 「props.onChange(布尔值)」这一种调用方式（与设置页其余开关一致）。
+ */
+function findApplyAfterSaveSwitch(scope, zh) {
+  const label = zh['personas.applyAfterSave']
+  const host = findAll(scope, (n) => n.type === 'ui-switch' && n.props && n.props.label === label)[0]
+  if (host) return host
+  const box = findAll(scope, (n) => n.type === 'input' && n.props &&
+    n.props.type === 'checkbox' && n.props.id === 'soul-apply-after-save')[0]
+  assert.ok(box, `弹层里应有「${label}」开关（宿主 Switch 或降级的 checkbox）`)
+  return {
+    props: {
+      checked: box.props.checked,
+      onChange: (next) => box.props.onChange({ target: { checked: next } })
+    }
+  }
+}
+
+// ==================== 五、用例 ====================
 // 注意：这份基准配置**有意不包含**后来新增的字段（quoteAsContext /
 // showOverviewInSidebar / showQuickToggle 等）—— 它模拟的是「老配置文件升级后
 // 缺新字段」的真实场景，正好用来验证 applyConfig 的归一化方向：
@@ -756,7 +822,7 @@ try {
   await check('C8 重置失败时弹「重置失败」，不得报成成功（0.7.1 修的就是这里）', async () => {
     const world = await boot()
     world.routes['/api/soul/config/reset'] = () => false // 失败响应
-    const toast = await clickButton(world, 'button.reset')
+    const { toast } = await clickReset(world)
     assert.equal(toast.kind, 'error', `重置失败的提示应为错误样式，实际 ${toast.kind}`)
     assert.equal(toast.text, world.dicts.zh['toast.resetFailed'])
     assert.notEqual(toast.text, world.dicts.zh['notice.reset'])
@@ -767,7 +833,7 @@ try {
     world.routes['/api/soul/config/reset'] = () => ({
       ok: true, config: { ...CONFIG }, changed: [], backupPath: '/x/soul-config.json.corrupt'
     })
-    const toast = await clickButton(world, 'button.reset')
+    const { toast } = await clickReset(world)
     assert.equal(toast.kind, 'success')
     assert.equal(toast.text, world.dicts.zh['notice.resetRecovered'])
   })
@@ -775,7 +841,7 @@ try {
   await check('C10 普通重置只提示「已重置」，且不留残余的送达警告', async () => {
     const world = await boot({ deliveryWarning: '旧的送达警告' })
     world.routes['/api/soul/config/reset'] = () => ({ ok: true, config: { ...CONFIG }, changed: [], backupPath: null })
-    const toast = await clickButton(world, 'button.reset')
+    const { toast } = await clickReset(world)
     assert.equal(toast.text, world.dicts.zh['notice.reset'])
     assert.equal(world.controller.store.getSnapshot().error, null, '重置后不应残留上一轮的送达警告')
   })
@@ -785,24 +851,28 @@ try {
     world.routes['/api/soul/config'] = (call) => (call.method === 'GET'
       ? { ok: true, config: { ...CONFIG } }
       : { ok: false, error: '非法颜色' })
-    const toast = await clickButton(world, 'button.save')
+    // 「关于你」是默认展开的那一区，所以它的保存按钮在首屏就能点到。
+    const tree = await renderSettings(world)
+    const buttons = findAll(tree, (n) => n.type === 'ui-button' && textOf(n) === world.dicts.zh['button.saveAbout'])
+    assert.equal(buttons.length, 1, `首屏应恰好一个「保存关于你」按钮，实际 ${buttons.length} 个`)
+    await buttons[0].props.onClick()
+    const toast = noticeOf(await renderSettings(world))
     assert.equal(toast.kind, 'error')
     assert.equal(toast.text, world.dicts.zh['toast.saveFailed'])
     assert.notEqual(toast.text, world.dicts.zh['notice.noChanges'])
   })
 
-  await check('C12 设置页真的渲染出可点的保存 / 重置按钮（断言不是对着空树跑）', async () => {
+  await check('C12 设置页真的渲染出可点的分区保存按钮（断言不是对着空树跑）', async () => {
     const world = await boot()
     const tree = await renderSettings(world)
     const buttons = findAll(tree, (n) => n.type === 'ui-button')
-    assert.ok(buttons.length >= 2, `应至少有保存与重置两个按钮，实际 ${buttons.length}`)
+    assert.ok(buttons.length >= 1, `至少要有分区保存按钮，实际 ${buttons.length}`)
     const labels = buttons.map(textOf)
-    assert.ok(labels.includes(world.dicts.zh['button.save']), `未找到保存按钮：${labels.join(' / ')}`)
-    assert.ok(labels.includes(world.dicts.zh['button.reset']), `未找到重置按钮：${labels.join(' / ')}`)
+    assert.ok(labels.includes(world.dicts.zh['button.saveAbout']), `未找到「关于你」的保存按钮：${labels.join(' / ')}`)
     assert.ok(buttons.every((b) => typeof b.props.onClick === 'function'), '按钮缺少 onClick')
     // 反「空树也通过」：不仅要有按钮，还要真的渲染出了栏目与字段
     const text = textOf(tree)
-    for (const key of ['settings.title', 'field.nickname', 'button.save', 'button.reset']) {
+    for (const key of ['settings.title', 'field.nickname', 'button.saveAbout']) {
       assert.ok(
         text.includes(world.dicts.zh[key]),
         `设置页缺少「${key}」对应的文案（${world.dicts.zh[key]}）：${text}`
@@ -1159,7 +1229,8 @@ try {
     const nickInput = findAll(tree0, (n) => n.type === 'input' && n.props && n.props.id === 'soul-nickname')[0]
     assert.ok(nickInput, '应能看到昵称输入框')
     await nickInput.props.onChange({ target: { value: '临时昵称' } })
-    const dirtyTree = await renderSettings(world)
+    // 预设动作（存为预设 / 更新到预设）现在跟着**特质**区走 —— 先把它展开。
+    const dirtyTree = await openAccordion(world, 'soul-traits')
     assert.equal(
       findAllByClass(dirtyTree, 'soul-dirty').length,
       1,
@@ -1168,7 +1239,7 @@ try {
 
     // ② 打开「更新到预设」弹层，选「我的预设」
     const openBtn = findAll(dirtyTree, (n) => textOf(n) === zh['personas.updateTo'])[0]
-    assert.ok(openBtn, '应有「更新到预设」按钮')
+    assert.ok(openBtn, '应有「更新到全局预设」按钮')
     await openBtn.props.onClick()
     const withModal = await renderSettings(world)
     const item = findAllByClass(withModal, 'soul-update-item')
@@ -1177,8 +1248,9 @@ try {
     await item.props.onClick()
     await new Promise((r) => drainTick(r))
 
-    // ③ 更新后 dirty 必须消失，且表单回到**当前配置**的值
-    const finalTree = await renderSettings(world)
+    // ③ 更新后 dirty 必须消失，且表单回到**当前配置**的值。
+    // 昵称在「关于你」区，所以这里切回去看（分区之后，一区的编辑不该在另一区里断言）。
+    const finalTree = await openAccordion(world, 'soul-about')
     assert.equal(
       findAllByClass(finalTree, 'soul-dirty').length,
       0,
@@ -1231,7 +1303,8 @@ try {
     const nickInput = findAll(tree0, (n) => n.type === 'input' && n.props && n.props.id === 'soul-nickname')[0]
     assert.ok(nickInput, '应能看到昵称输入框（关于你分组默认展开）')
     await nickInput.props.onChange({ target: { value: '临时昵称' } })
-    const dirtyTree = await renderSettings(world)
+    // 预设动作（存为预设 / 更新到预设）现在跟着**特质**区走 —— 先把它展开。
+    const dirtyTree = await openAccordion(world, 'soul-traits')
     assert.equal(
       findAllByClass(dirtyTree, 'soul-dirty').length,
       1,
@@ -1242,7 +1315,7 @@ try {
     const tree = await renderSettings(world)
     // 找到「存为预设」按钮
     const openBtn = findAll(tree, (n) => textOf(n) === zh['personas.saveAs'])[0]
-    assert.ok(openBtn, '应有「存为预设」按钮')
+    assert.ok(openBtn, '应有「存为全局预设」按钮')
     await openBtn.props.onClick()
     const withModal = await renderSettings(world)
     // 输入名字
@@ -1251,14 +1324,13 @@ try {
     await input.props.onChange({ target: { value: '新预设' } })
     const withName = await renderSettings(world)
     // 默认不勾选
-    // ⚠️ 必须限定在**弹层内**找：设置页本身还有一个复选框（soul-enabled 启用开关），
-    // 在整棵树里取第一个 type=checkbox 会抓到它（判断力对照实测踩过）。
+    // ⚠️ 必须限定在**弹层内**找：这一行现在用的是全站统一的开关行 SoulSwitch
+    // （宿主 Switch，降级为原生 checkbox），设置页别处还有好几个开关。
     const modal = findAll(withName, (n) => n.props && n.props.className === 'soul-modal')[0]
     assert.ok(modal, '应能找到弹层容器')
-    const checkbox = findAll(modal, (n) => n.type === 'input' && n.props && n.props.type === 'checkbox')[0]
-    assert.ok(checkbox, '弹层应有「保存后立即应用」复选框')
+    const applySwitch = findApplyAfterSaveSwitch(modal, zh)
     // 垫片不做受控属性归一化：初始值可能是 undefined 而非 false ⇒ 判「非真」
-    assert.ok(!checkbox.props.checked, '默认不勾选（不该替用户静默改配置）')
+    assert.ok(!applySwitch.props.checked, '默认不勾选（不该替用户静默改配置）')
     // 点确认
     const confirm = findAll(withName, (n) => textOf(n) === zh['personas.saveConfirm'])[0]
     assert.ok(confirm, '应有确认按钮')
@@ -1301,7 +1373,7 @@ try {
       return { ok: true, config: { ...CONFIG, style: 'roast' }, invalid: [], changed: ['style'], unchanged: false }
     }
 
-    const tree = await renderSettings(world)
+    const tree = await openAccordion(world, 'soul-traits')
     const openBtn = findAll(tree, (n) => textOf(n) === zh['personas.saveAs'])[0]
     await openBtn.props.onClick()
     const withModal = await renderSettings(world)
@@ -1310,8 +1382,8 @@ try {
     const withName = await renderSettings(world)
     const modal = findAll(withName, (n) => n.props && n.props.className === 'soul-modal')[0]
     assert.ok(modal, '应能找到弹层容器')
-    const checkbox = findAll(modal, (n) => n.type === 'input' && n.props && n.props.type === 'checkbox')[0]
-    await checkbox.props.onChange({ target: { checked: true } })
+    const applySwitch = findApplyAfterSaveSwitch(modal, zh)
+    await applySwitch.props.onChange(true)
     const checkedTree = await renderSettings(world)
     const confirm = findAll(checkedTree, (n) => textOf(n) === zh['personas.saveConfirm'])[0]
     await confirm.props.onClick()
@@ -1319,6 +1391,37 @@ try {
     const kinds = posts.map((x) => x.kind)
     assert.deepEqual(kinds, ['save', 'use'], `勾选时应先 save 再 use，实际 ${JSON.stringify(kinds)}`)
     assert.equal(posts[1].name, '新预设', 'use 的目标应是刚保存的预设名')
+    const okNotice = noticeOf(await renderSettings(world))
+    assert.equal(okNotice.kind, 'success', '全部字段合法时应报「已保存并应用」')
+    assert.ok(okNotice.text.includes('新预设'), `成功提示应带上预设名，实际 ${okNotice.text}`)
+
+    // 再来一遍：这次服务端回报「有字段取值非法被跳过」⇒ 只应用了一部分。
+    // 这条以前没人管：勾选分支直接把 use 响应里的 invalid 丢掉，仍然报「已保存并
+    // 应用」，用户以为整套生效（实测：replyLength 被丢弃）。判断力对照：把
+    // handleSavePersona 里的 invalid 分支删掉，本条必须失败。
+    world.routes['/api/soul/personas/use'] = () => ({
+      ok: true,
+      config: { ...CONFIG, style: 'roast' },
+      invalid: ['replyLength'],
+      changed: ['style'],
+      unchanged: false
+    })
+    posts.length = 0
+    const tree2 = await renderSettings(world)
+    const openBtn2 = findAll(tree2, (n) => textOf(n) === zh['personas.saveAs'])[0]
+    await openBtn2.props.onClick()
+    const withModal2 = await renderSettings(world)
+    const nameInput2 = findAll(withModal2, (n) => n.type === 'input' && n.props && n.props.id === 'soul-new-persona-name')[0]
+    await nameInput2.props.onChange({ target: { value: '新预设' } })
+    const withName2 = await renderSettings(world)
+    const modal2 = findAll(withName2, (n) => n.props && n.props.className === 'soul-modal')[0]
+    await findApplyAfterSaveSwitch(modal2, zh).props.onChange(true)
+    const tree3 = await renderSettings(world)
+    await findAll(tree3, (n) => textOf(n) === zh['personas.saveConfirm'])[0].props.onClick()
+    await new Promise((r) => drainTick(r))
+    const partialNotice = noticeOf(await renderSettings(world))
+    assert.equal(partialNotice.kind, 'error', '部分应用时必须报失败，不能报「已保存并应用」')
+    assert.ok(partialNotice.text.includes('replyLength'), `提示应点出被跳过的字段，实际 ${partialNotice.text}`)
   })
 
   await check('C47 切换人设后，header 标签必须跟着更新（单一数据源）', async () => {
@@ -1667,14 +1770,15 @@ try {
     // store 才会被 usePersona 的响应写入（排空后还要再排空一次：写入触发的渲染链）。
     await useBtns[useBtns.length - 1].props.onClick()
     for (let i = 0; i < 10; i++) await new Promise((r) => drainTick(r))
-    const tree1 = await renderSettings(world)
+    // 回填检验的是**特质**那六个维度，所以切到特质区看它的保存按钮。
+    const tree1 = await openAccordion(world, 'soul-traits')
     // ① 保存按钮必须**不亮**（disabled）—— 用户什么都没改
-    const saveBtn = findAll(tree1, (n) => n.type === 'ui-button' && textOf(n) === world.dicts.zh['button.save'])
-    assert.equal(saveBtn.length, 1, `应恰好一个「保存设置」按钮，实际 ${saveBtn.length}`)
+    const saveBtn = findAll(tree1, (n) => n.type === 'ui-button' && textOf(n) === world.dicts.zh['button.saveTraits'])
+    assert.equal(saveBtn.length, 1, `应恰好一个「保存特质」按钮，实际 ${saveBtn.length}`)
     assert.equal(
       saveBtn[0].props.disabled,
       true,
-      '应用预设后（未手改字段）「保存设置」应禁用 —— 亮起说明表单没跟上 store（本 bug 的第一症状）'
+      '应用预设后（未手改字段）「保存特质」应禁用 —— 亮起说明表单没跟上 store（本 bug 的第一症状）'
     )
     // ② store 与「已保存配置」一致（usePersona 已写回）
     const snap = world.controller.store.getSnapshot()
@@ -1685,20 +1789,16 @@ try {
     const dirtyHint = findAll(tree1, (n) => typeof n.props?.className === 'string' && String(n.props.className).includes('soul-dirty'))
     assert.equal(dirtyHint.length, 0, '不应出现「未保存的更改」提示')
     // ④ 编辑某字段后 dirty 仍应正常亮起（确认按字段判断没有把保护一并去掉）。
-    //    折叠分组是**互斥**的（toggleSection 会关掉人设分组），先切回「特质」分组。
-    const triggerTraits = findAll(tree1, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.traits']))
-    assert.ok(triggerTraits.length > 0, '应存在「特质」分组标题（前置条件）')
-    await triggerTraits[0].props.onClick()
-    const treeTraits = await renderSettings(world)
-    const styleSelects = findAll(treeTraits, (n) => n.type === 'select')
+    //    特质区此刻已经展开（上面 openAccordion 进来的），直接改风格下拉。
+    const styleSelects = findAll(tree1, (n) => n.type === 'select')
     assert.ok(styleSelects.length > 0, '应存在风格下拉框（前置条件）')
     await styleSelects[0].props.onChange({ target: { value: 'roast' } })
     const tree2 = await renderSettings(world)
-    const saveBtn2 = findAll(tree2, (n) => n.type === 'ui-button' && textOf(n) === world.dicts.zh['button.save'])
+    const saveBtn2 = findAll(tree2, (n) => n.type === 'ui-button' && textOf(n) === world.dicts.zh['button.saveTraits'])
     assert.equal(
       saveBtn2[0].props.disabled,
       false,
-      '手动改动字段后「保存设置」应恢复可用（按字段保护不能连编辑检测一起丢掉）'
+      '手动改动字段后「保存特质」应恢复可用（按字段保护不能连编辑检测一起丢掉）'
     )
     // ⑤ 按字段保护的**另一半**：用户正在编辑的字段，不能被外部写入（loadConfig 的
     //    applyConfig，等价于 2s 轮询干的事）覆盖。若去掉按字段判断（无条件跟随
@@ -5514,10 +5614,14 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.ok(textCols.length >= 1, '开关必须有 .soul-toggle-text 文字列')
     assert.match(source, /className: 'soul-toggle-title'/, '标题必须有独立类名（14px 标题层级）')
 
-    // 源码层面：设置页的 6 个功能开关必须都走 SoulSwitch（别漏掉某个还用原生 checkbox）
-    // 6 = 启用 / 人设变更确认 / 显示快捷开关 / 引用作为上下文 / 侧栏总览 / 输入框光轨
+    // 源码层面：设置页的 7 个开关必须都走 SoulSwitch（别漏掉某个还用原生 checkbox）
+    // 7 = 启用 / 人设变更确认 / 显示快捷开关 / 引用作为上下文 / 侧栏总览 / 输入框光轨
+    //     + 存为预设弹层里的「保存后立即应用」
+    // 那一个原来是**全站唯一漏网**的原生 checkbox：它自绘一行、说明文字 flex:none，
+    // 在 380px 弹层里把标题挤成「一个字一行」，而且拿不到 .soul-toggle 那套
+    // appearance:none 重绘 —— 用户就是指着这个弹窗说要「和其他地方统一」。
     const soulSwitchUses = (source.match(/e\(SoulSwitch, \{/g) || []).length
-    assert.equal(soulSwitchUses, 6, `应有 6 处使用 SoulSwitch，实际 ${soulSwitchUses}`)
+    assert.equal(soulSwitchUses, 7, `应有 7 处使用 SoulSwitch，实际 ${soulSwitchUses}`)
 
     // 每个开关都要有无障碍标签（宿主 Switch 用 label 而非可见文字）
     for (const sw of switches) {
@@ -5529,6 +5633,30 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 有宿主 Switch 时不得再渲染原生 checkbox —— 否则等于同一个开关画了两遍
     const boxes = findAll(tree, (n) => n.type === 'input' && n.props && n.props.type === 'checkbox')
     assert.equal(boxes.length, 0, '有宿主 Switch 时不应再出现原生 checkbox')
+
+    // 弹层也要成立：上面两条只覆盖「没开弹层的默认视图」，而漏网的那个恰恰藏在弹层里。
+    const modalWorld = await boot()
+    const modalTree0 = await openAccordion(modalWorld, 'soul-traits')
+    await findAll(modalTree0, (n) => textOf(n) === modalWorld.dicts.zh['personas.saveAs'])[0].props.onClick()
+    const modalTree = await renderSettings(modalWorld)
+    const modalBox = findAll(modalTree, (n) => n.type === 'soul-modal' || (n.props && n.props.className === 'soul-modal'))
+    assert.ok(modalBox.length >= 1, '应已打开「存为全局预设」弹层')
+    const applySw = findApplyAfterSaveSwitch(modalTree, modalWorld.dicts.zh)
+    assert.equal(applySw.type, 'ui-switch', '弹层里的「保存后立即应用」必须是宿主 Switch（与设置页其余开关同源）')
+    assert.deepEqual(
+      findAll(modalTree, (n) => n.type === 'input' && n.props && n.props.type === 'checkbox').map((n) => n.props.id),
+      [],
+      '弹层里不应再有原生 checkbox'
+    )
+    // 说明文字必须落在 .soul-toggle-desc 里（和设置页其余开关同一个两行结构）。
+    // ⚠️ 别用 `textOf(n) === hint` 在全树里数命中：`#text` 叶子的 textOf 也等于
+    // 同一段文字，一个 div 会被数成 2 个节点 —— 命中集合要先按类名收口。
+    const hintText = modalWorld.dicts.zh['personas.applyAfterSaveHint']
+    const descRows = findAllByClass(modalTree, 'soul-toggle-desc').filter((n) => textOf(n) === hintText)
+    assert.equal(descRows.length, 1, `弹层里应有一行完整可读的说明文字（.soul-toggle-desc），实际 ${descRows.length} 行`)
+    const titleRows = findAllByClass(modalTree, 'soul-toggle-title')
+      .filter((n) => textOf(n) === modalWorld.dicts.zh['personas.applyAfterSave'])
+    assert.equal(titleRows.length, 1, `弹层里应有「${modalWorld.dicts.zh['personas.applyAfterSave']}」标题行`)
 
     // 打开某个开关：onChange 必须给**布尔值**（宿主 Switch 的契约），不是事件对象
     const first = switches[0]
@@ -5567,7 +5695,13 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
 
     // 设置页必须能改它，且字段名与配置键一致
     assert.match(source, /id: 'soul-showQuickToggle'/, '设置页缺少对应开关')
-    assert.match(source, /onChange: setLocalQuickToggle/, '开关必须接到本地表单状态')
+    // 设置页必须能改它，且**直接写盘**：这一组是即时字段，没有本地草稿、也没有保存按钮。
+    // （原先接的是 setLocalQuickToggle —— 那意味着拨完还要再点一次底部「保存设置」才生效。）
+    assert.match(
+      source,
+      /onChange: \(next\) => void saveImmediate\('showQuickToggle', next\)/,
+      '开关必须即时落盘，不得退回「本地草稿 + 全局保存」'
+    )
 
     // ⚠️ 下面这段是为「关掉能生效、再打开按钮再也不出现」（用户实测）加的。
     //
@@ -5639,6 +5773,251 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
   })
 
 
-if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
+  // ── 0.12 分段保存 / 即时生效 / 重置二次确认 ──
+  //
+  // 这一组钉的是**载荷边界**，不是文案。底部那个把 19 个字段整份 POST 的「保存设置」
+  // 删掉之后，「点这一区的按钮就只动这一区」成了新的不变量；它在界面上几乎看不出来
+  // —— 只有请求体不会骗人。
+  const ABOUT_KEYS = ['bio', 'nickname', 'occupation']
+  const TRAIT_KEYS = ['customInstructions', 'emoji', 'headingLists', 'language', 'replyLength', 'style', 'tables']
+  const configPosts = () => fetchCalls.filter((c) => c.path === '/api/soul/config' && c.method === 'POST')
+  const byText = (tree, label) => findAll(tree, (n) => n.type === 'ui-button' && textOf(n) === label)
 
+  await check('C110 分区保存只提交本区字段，且提示说的是「存的哪一区」', async () => {
+    // 旧行为的后果：在「关于你」改了昵称、在「特质」改了风格，点底部保存会一次提交
+    // 两份草稿 —— 用户以为存的是刚看的那一区，实际把另一区早就放弃的编辑也写盘了。
+    const world = await boot()
+    world.routes['/api/soul/config'] = (call) => (call.method === 'GET'
+      ? { ok: true, config: { ...CONFIG } }
+      : { ok: true, config: { ...CONFIG }, changed: ['nickname'] })
+
+    const tAbout = await openAccordion(world, 'soul-about')
+    const nick = findAll(tAbout, (n) => n.type === 'input' && n.props && n.props.id === 'soul-nickname')[0]
+    assert.ok(nick, '缺少昵称输入框（前置条件）')
+    await nick.props.onChange({ target: { value: '连长' } })
+    const tTraits = await openAccordion(world, 'soul-traits')
+    const style = findAll(tTraits, (n) => n.type === 'select' && n.props && n.props.id === 'soul-style')[0]
+    assert.ok(style, '缺少风格下拉框（前置条件）')
+    await style.props.onChange({ target: { value: 'roast' } })
+
+    const tAbout2 = await openAccordion(world, 'soul-about')
+    const btnAbout = byText(tAbout2, world.dicts.zh['button.saveAbout'])
+    assert.equal(btnAbout.length, 1, '「关于你」区应恰好一个保存按钮')
+    assert.equal(btnAbout[0].props.disabled, false, '昵称已改，「保存关于你」应可用')
+    await btnAbout[0].props.onClick()
+    const notice1 = noticeOf(await renderSettingsSettled(world))
+    assert.equal(notice1.kind, 'success')
+    assert.equal(notice1.text, world.dicts.zh['notice.savedAbout'], '提示必须说是哪一区存了（两区都会亮按钮）')
+    assert.deepEqual(configPosts().map((c) => Object.keys(c.body).sort()), [ABOUT_KEYS],
+      '「保存关于你」的请求体只能是本区三个字段 —— 多带一个就是旧的全局提交')
+
+    const tTraits2 = await openAccordion(world, 'soul-traits')
+    const btnTraits = byText(tTraits2, world.dicts.zh['button.saveTraits'])
+    assert.equal(btnTraits.length, 1, '「特质」区应恰好一个保存按钮')
+    assert.equal(btnTraits[0].props.disabled, false, '风格仍是未保存的草稿，「保存特质」应可用')
+    await btnTraits[0].props.onClick()
+    const notice2 = noticeOf(await renderSettingsSettled(world))
+    assert.equal(notice2.text, world.dicts.zh['notice.savedTraits'], '第二次保存的提示要换成「特质」')
+    const posts = configPosts()
+    assert.equal(posts.length, 2, `应恰好两次分区提交，实际 ${posts.length}`)
+    assert.deepEqual(Object.keys(posts[1].body).sort(), TRAIT_KEYS, '「保存特质」的请求体只能是特质字段')
+  })
+
+  await check('C111 交互与界面：拨完即落盘、载荷只有这一格，且本区没有保存按钮', async () => {
+    // 用户原话：「像那种操作按钮的就没有保存你设置了，直接点击就生效」。
+    // 所以这一区既不能留按钮，也不能攒草稿 —— 每次 onChange 就是一次单字段写。
+    const world = await boot()
+    // 桩要像宿主一样**回读刚落盘的配置**：默认那份固定返回 CONFIG，于是「store 是否跟上」
+    // 测的其实是桩答得不答（实测把正确实现判成失败）。
+    world.routes['/api/soul/config'] = (call) => (call.method === 'GET'
+      ? { ok: true, config: { ...CONFIG } }
+      : { ok: true, config: { ...CONFIG, ...(call.body || {}) }, changed: Object.keys(call.body || {}) })
+    const tree = await openAccordion(world, 'soul-tools')
+    const zh = world.dicts.zh
+    assert.equal('button.save' in zh, false, '全局「保存设置」文案应已删除（分区保存后它没有对应按钮了）')
+    assert.equal(
+      ['button.saveAbout', 'button.saveTraits'].flatMap((k) => byText(tree, zh[k])).length,
+      0,
+      '「交互与界面」展开时不得出现任何保存按钮（这一组即时生效）'
+    )
+    const sw = findAll(tree, (n) => n.type === 'ui-switch' && n.props && n.props.label === zh['field.showQuickToggle'])
+    assert.equal(sw.length, 1, '应找到「显示输入框快捷开关」那一格（前置条件）')
+    await sw[0].props.onChange(false)
+    await renderSettingsSettled(world)
+    const posts = configPosts()
+    assert.equal(posts.length, 1, `拨动开关应立刻发一次请求，实际 ${posts.length} 次`)
+    assert.deepEqual(posts[0].body, { showQuickToggle: false }, '即时字段的载荷只能是这一格')
+    assert.equal(world.controller.store.getSnapshot().showQuickToggle, false, 'store 必须跟上（不跟就是只改了界面）')
+
+    // 光轨的速度/宽度是下拉，同属即时字段
+    const speed = findAll(tree, (n) => n.type === 'select' && n.props && n.props.id === 'soul-trailSpeed')[0]
+    assert.ok(speed, '缺少光轨速度下拉框（前置条件）')
+    await speed.props.onChange({ target: { value: 'fast' } })
+    await renderSettingsSettled(world)
+    assert.deepEqual(configPosts()[1].body, { trailSpeed: 'fast' }, '光轨速度也必须即时且单字段提交')
+  })
+
+  await check('C112 光轨颜色防抖 600ms：非法中间值不发请求，连续输入只留最后一次', async () => {
+    // 取色器拖动一次能产出几十个值。不设防抖就是几十个请求、几十条变更记录；
+    // 而不挡住非法值（'#aa'）更糟：宿主 sanitizeConfig 是**整单拒绝**，
+    // 一次拖拽会把这段颜色的写入全打成 400。
+    const world = await boot()
+    const tree = await openAccordion(world, 'soul-tools')
+    const hex = findAll(tree, (n) => n.type === 'input' && n.props && n.props.className === 'soul-trail-hex')[0]
+    assert.ok(hex, '缺少十六进制色值输入框（前置条件）')
+    const debounce = () => timerQueue.filter((t) => !t.repeat && t.delay === 600)
+
+    await hex.props.onChange({ target: { value: '#aa' } })
+    const warned = await renderSettings(world)
+    assert.equal(debounce().length, 0, '非法色值不得起防抖（发了就是 400）')
+    assert.equal(configPosts().length, 0, '非法色值不得发请求')
+    assert.equal(findAllByClass(warned, 'soul-field-warn').length, 1, '非法中间态要就地说明，否则用户以为已经存上了')
+
+    await hex.props.onChange({ target: { value: '#aabbcc' } })
+    const clean = await renderSettings(world)
+    assert.equal(findAllByClass(clean, 'soul-field-warn').length, 0, '改成合法值后警告要撤掉')
+    // 再改一次：上一个定时器必须清掉，否则会先后发两次（后者覆盖前者，白写一次）
+    await hex.props.onChange({ target: { value: '#ddeeff' } })
+    await renderSettings(world)
+    const pending = debounce()
+    assert.equal(pending.length, 1, `连续输入只应留一个待发防抖，实际 ${pending.length}`)
+
+    pending[0].fn()
+    await renderSettingsSettled(world)
+    const posts = configPosts()
+    assert.equal(posts.length, 1, '防抖到期前不得有任何请求')
+    assert.deepEqual(posts[0].body, { trailColor: '#DDEEFF' }, '色值按服务端口径归一为大写后单字段落盘')
+  })
+
+  await check('C113 重置默认必须二次确认：不确认就一次都不写', async () => {
+    // 重置是「整份配置消失」级别的动作。它现在被收进「高级选项」—— 位置变深
+    // 不等于门槛变低，所以这里钉的是**写盘次数**，不是弹层长什么样。
+    const resetPosts = () => fetchCalls.filter((c) => c.path === '/api/soul/config/reset')
+    const world = await boot()
+    const { tree: opened } = await clickReset(world, { confirm: false })
+    assert.equal(resetPosts().length, 0, '只点「重置默认」不得写盘')
+    const zh = world.dicts.zh
+    assert.equal(byText(opened, zh['reset.confirmButton']).length, 1, '确认弹层里应有「确认重置」')
+
+    // 取消 = 什么都没发生（而不是「先重置再提示已取消」）
+    const cancels = byText(opened, zh['button.cancel'])
+    assert.equal(cancels.length, 1, '确认弹层里应恰好一个「取消」')
+    await cancels[0].props.onClick()
+    const cancelled = await renderSettings(world)
+    assert.equal(resetPosts().length, 0, '取消后仍然不得写盘')
+    assert.equal(byText(cancelled, zh['reset.confirmButton']).length, 0, '取消后弹层要关掉')
+
+    // 确认才真的执行
+    const { toast } = await clickReset(world)
+    assert.equal(resetPosts().length, 1, '确认后应恰好一次重置请求')
+    assert.equal(toast.text, zh['notice.reset'])
+  })
+
+  await check('C114 卡片「使用」只覆盖预设声明的人设字段：提示照常，且不清掉无关的未保存编辑', async () => {
+    // 排查「勾选立即应用没反应」时顺带钉下的另一头。C50 那条修完，最容易顺手把
+    // handleUsePersona 也加一句 revertDraftToSaved(快照) —— **在这里是错的**：
+    // 预设不动「关于你」（E25 的边界），用户正在打的昵称跟他点的那张卡毫无关系，
+    // 对齐表单等于把他的编辑静默扔掉，而「有未保存的更改」这时说的是真话。
+    //
+    // 所以这条钉三件事：请求发了、提示留下来了、那格无关编辑还在。
+    const world = await boot()
+    const zh = world.dicts.zh
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: {
+        苏格拉底式提问者: { style: 'professional', builtin: true },
+        极简主义者: { style: 'efficient', builtin: true }
+      },
+      activeName: '苏格拉底式提问者'
+    })
+    await world.controller.loadPersonas()
+    const usedNames = []
+    world.routes['/api/soul/personas/use'] = (call) => {
+      usedNames.push(call.body.name)
+      return { ok: true, config: { ...CONFIG, style: 'efficient' }, invalid: [], changed: ['style'], unchanged: false }
+    }
+
+    const tree0 = await renderSettings(world)
+    const nickInput = findAll(tree0, (n) => n.type === 'input' && n.props && n.props.id === 'soul-nickname')[0]
+    assert.ok(nickInput, '应能看到昵称输入框（关于你分组默认展开）')
+    await nickInput.props.onChange({ target: { value: '还没保存的昵称' } })
+    const cards = await openAccordion(world, 'soul-personas')
+    assert.equal(findAllByClass(cards, 'soul-dirty').length, 1, '前置条件：改过表单应显示「有未保存的更改」')
+
+    const useBtn = findAll(cards, (n) => n.type === 'button'
+      && n.props && n.props.className === 'soul-persona-action'
+      && textOf(n) === zh['personas.use'])[0]
+    assert.ok(useBtn, '未生效的那张卡上应有「使用」按钮')
+    await useBtn.props.onClick({ stopPropagation() {} })
+    await new Promise((r) => drainTick(r))
+
+    assert.deepEqual(usedNames, ['极简主义者'], `应恰好一次「使用」请求，实际 ${JSON.stringify(usedNames)}`)
+    const noticeTree = await renderSettings(world)
+    const notice = noticeOf(noticeTree)
+    assert.equal(notice.kind, 'success', '全部字段合法时应报「已应用预设」，不得被别的状态挤掉')
+    assert.ok(notice.text.includes('极简主义者'), `提示应带上刚应用的预设名，实际 ${notice.text}`)
+
+    // 手风琴一次只开一区，上面点开「人设预设」时「关于你」已经收起 ⇒ 重新展开再读那一格。
+    await openAccordion(world, 'soul-about')
+    const finalTree = await renderSettings(world)
+    const stillEdited = findAll(finalTree, (n) => n.type === 'input' && n.props && n.props.id === 'soul-nickname')[0]
+    assert.ok(stillEdited, '重新展开「关于你」后应能看到昵称输入框')
+    assert.equal(stillEdited.props.value, '还没保存的昵称',
+      '「使用」预设不得覆盖与预设无关的未保存编辑（预设不动「关于你」）')
+    assert.ok(findAllByClass(finalTree, 'soul-dirty').length >= 1,
+      '那格编辑仍未保存 ⇒ 「有未保存的更改」必须继续说真话')
+  })
+
+  await check('C115 特质区分层说明走「一句话 + 问号」：正文短、细节在 tooltip、不指路', async () => {
+    // 「我在全局改了特质，那个会话怎么没变」的**现场**答案，写在按下保存的那个位置旁边，
+    // 而不是某个绑定分组里。
+    //
+    // 形态必须是本页已有的「短行 + ⓘ」而不是整段正文：这一区七个控件全是下拉/文本域，
+    // 一段灰字会被读成表头条款（人设预设那一区的说明正是为此瘦的身，见 C34）。
+    const world = await boot()
+    const zh = world.dicts.zh
+    const tree = await openAccordion(world, 'soul-traits')
+
+    const notes = findAllByClass(tree, 'soul-note-inline')
+    assert.equal(notes.length, 1, `特质区应只有一行分层说明，实际 ${notes.length}`)
+    assert.ok(zh['traits.scopeNote'], '缺中文文案 traits.scopeNote')
+    const bodyText = textOf(findAllByClass(notes[0], 'soul-note-text')[0])
+    assert.equal(bodyText, zh['traits.scopeNote'], '正文应与词典一致（写死一份就会与词典漂移）')
+    // 正文必须真的是**一句**：这段的活是把人拦住，不是把规则讲全（细节归问号）。
+    assert.ok(zh['traits.scopeNote'].length <= 40,
+      `正文应是短句（≤40 字，与 personas.hint 同标准），实际 ${zh['traits.scopeNote'].length} 字`)
+
+    // 细节走问号 tooltip —— 没有它，这一句就只是「不告诉你为什么」
+    const tips = findAllByClass(tree, 'soul-hint-tip').map((n) => textOf(n))
+    assert.ok(tips.includes(zh['traits.scopeNoteMore']), '问号里应有分层规则的全文')
+    assert.ok(zh['traits.scopeNoteMore'].includes('会话覆盖 > 工作区绑定 > 目录绑定 > 全局设置'),
+      '问号里的优先级链必须与装配实际实现的顺序逐字一致')
+    // 少了「关于你不受影响」，用户会推断整页都被绑定接管，于是去解绑 —— 比不解释更坏。
+    assert.ok(zh['traits.scopeNoteMore'].includes('关于你'),
+      '问号全文必须点出「关于你」不在绑定范围内（预设字段白名单里没有它们）')
+
+    // 顺序也是内容：说明在**保存按钮下方**，而不是第一个下拉之前 —— 用户是在按下保存
+    // 之后才发现「那个会话怎么没变」，解释挨着那个动作才像动作的后果（表头版被打回）。
+    const all = textOf(tree)
+    const atNote = all.indexOf(bodyText)
+    const atSave = all.indexOf(zh['button.saveTraits'])
+    assert.ok(atNote !== -1 && atSave !== -1 && atNote > atSave,
+      `说明应在「保存特质」按钮之后（说明 ${atNote}，按钮 ${atSave}）`)
+
+    // 反向红线：文案只能说规则，不能指路。设置页**没有**「工作区绑定」分组（C35 撤下），
+    // 而 `工作区绑定` 作为层级名出现在优先级链里是对的 —— 钉「请…去/分组」这类指路句式，
+    // 才既拦住假出口又不误伤层级名。
+    const copy = zh['traits.scopeNote'] + zh['traits.scopeNoteMore']
+    assert.equal(/请?(到|前往|进入)[^。；]{0,8}(分组|页面|里改|里设)/.test(copy), false,
+      `文案不得指路到位置（设置页没有那个分组）：${copy}`)
+
+    // 双语齐备，且英文里不夹中文（真机切英文时漏出中文是最难自见的缺陷）
+    for (const key of ['traits.scopeNote', 'traits.scopeNoteMore']) {
+      const en = world.dicts.en[key]
+      assert.ok(typeof en === 'string' && en.length > 0, `缺英文文案 ${key}`)
+      assert.equal(/[一-鿿]/.test(en), false, `英文文案 ${key} 夹了中文字符：${en}`)
+    }
+  })
+
+if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 console.log(`\n全部通过：${passed} 项检查`)

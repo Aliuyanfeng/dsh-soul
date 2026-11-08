@@ -1985,20 +1985,27 @@ check('客户端 FIELD_KEYS 覆盖宿主全部配置字段（dirty 门控不漏�
   // 「保留条数」搬去插件详情页后不再属于设置页表单，但**仍然是一个配置字段**，
   // 必须继续被这张全集表覆盖。所以这里按组合语义解析，而不是要求它仍是单个数组字面量
   // —— 断言要守的是「全集对不对」，不是「写法长什么样」。
-  const parseKeys = (name) => {
+  // 0.8.1 起 FIELD_KEYS 由多段组合而成，且**分组自己也是拼出来的**
+  //（FORM_FIELD_KEYS = 关于你 + 特质；IMMEDIATE_FIELD_KEYS 单独一段）。
+  // 所以这里按名字递归展开，而不是要求它仍是单个数组字面量
+  // —— 断言要守的是「全集对不对、分组之间有没有重叠」，不是「写法长什么样」。
+  const parseKeys = (name, seen = []) => {
     const m = clientCode.match(new RegExp(`const ${name} = \\[([^\\]]*)\\]`))
     assert.ok(m, `客户端缺少 ${name}`)
-    return [...m[1].matchAll(/'([^']*)'/g)].map((x) => x[1])
+    const out = []
+    for (const part of m[1].split(',').map((p) => p.trim()).filter(Boolean)) {
+      const spread = part.match(/^\.\.\.(\w+)$/)
+      if (spread) {
+        assert.ok(!seen.includes(spread[1]), `${name} 的分组定义出现循环引用：${spread[1]}`)
+        out.push(...parseKeys(spread[1], [...seen, name]))
+        continue
+      }
+      const literal = part.match(/^'([^']*)'$/)
+      if (literal) out.push(literal[1])
+    }
+    return out
   }
-  const m = clientCode.match(/const FIELD_KEYS = \[([^\]]*)\]/)
-  assert.ok(m, '客户端缺少 FIELD_KEYS')
-  const clientKeys = m[1].includes('...')
-    // 组合式：把每个展开项按同名常量解析出来再拼起来
-    ? m[1].split(',').flatMap((part) => {
-      const spread = part.trim().match(/^\.\.\.(\w+)$/)
-      return spread ? parseKeys(spread[1]) : part.trim().match(/'([^']*)'/g) || []
-    }).map((x) => x.replace(/'/g, ''))
-    : parseKeys('FIELD_KEYS')
+  const clientKeys = parseKeys('FIELD_KEYS')
   const hostFields = Object.keys(DEFAULT_CONFIG).sort()
   assert.deepEqual(
     [...clientKeys].sort(),
@@ -2007,16 +2014,16 @@ check('客户端 FIELD_KEYS 覆盖宿主全部配置字段（dirty 门控不漏�
   )
   // 顺序无关紧要但重复有害：同一字段出现两次会让 dirty 判定重复计算。
   assert.equal(new Set(clientKeys).size, clientKeys.length, 'FIELD_KEYS 含重复字段')
-  // 组合式写法下，两段不得交叉：表单字段与「别处管理」的字段是互斥集合，
-  // 交叉会让「这个字段归谁管」变成两处都要读才能回答。
+  // **三段互斥**：草稿字段、即时字段、外部管理字段回答的是同一个问题
+  //（「这个字段归谁写」），一个字段落在两处就意味着两条写入路径会互相覆盖。
   const formKeys = parseKeys('FORM_FIELD_KEYS')
+  const immediateKeys = parseKeys('IMMEDIATE_FIELD_KEYS')
   const externalKeys = parseKeys('EXTERNALLY_MANAGED_FIELDS')
-  assert.deepEqual(
-    formKeys.filter((k) => externalKeys.includes(k)),
-    [],
-    'FORM_FIELD_KEYS 与 EXTERNALLY_MANAGED_FIELDS 不得有交集'
-  )
-  // dirty 判定必须只用表单段：拿全集去比，会让表单对一个它并不持有的字段反复比较。
+  const overlap = (a, b) => a.filter((k) => b.includes(k))
+  assert.deepEqual(overlap(formKeys, immediateKeys), [], '草稿字段与即时字段不得有交集（既是草稿又即时 = 两处都会写它）')
+  assert.deepEqual(overlap(formKeys, externalKeys), [], 'FORM_FIELD_KEYS 与 EXTERNALLY_MANAGED_FIELDS 不得有交集')
+  assert.deepEqual(overlap(immediateKeys, externalKeys), [], 'IMMEDIATE_FIELD_KEYS 与 EXTERNALLY_MANAGED_FIELDS 不得有交集')
+  // dirty 判定必须只用草稿段：拿全集去比，会让表单对一个它并不持有的字段反复比较。
   // （全集里可能包含表单没有的字段，那样 dirty 会恒为真或恒为假 —— 都不是想要的语义。）
   const dirtyExpr = clientCode.match(/const dirty = (\w+)\.some\(/)
   assert.ok(dirtyExpr, '应能读到 dirty 的判定表达式')
@@ -2036,10 +2043,16 @@ check('预设应用只有一条实现路径，且非法字段必须回报（HTTP
   const bare = stripComments(indexSource)
   const inlined = [...bare.matchAll(/sanitizeConfig\(pickPersonaValues\(entry\)\)/g)].length
   assert.equal(inlined, 1, `预设取值校验只应有一处实现（收口在 applyPersonaEntry），实际 ${inlined} 处`)
-  const uses = [...bare.matchAll(/await applyPersonaEntry\(ctx, entry\)/g)].length
-  assert.equal(uses, 2, `HTTP 与 /soul use 都应走 applyPersonaEntry，实际 ${uses} 处`)
+  const uses = [...bare.matchAll(/await applyPersonaEntry\(ctx, entry, personaName\)/g)].length
+  assert.equal(uses, 2, `HTTP 与 /soul use 都应把预设名显式传给 applyPersonaEntry，实际 ${uses} 处`)
   const body = stripComments(extractObject(indexSource, 'async function applyPersonaEntry'))
   assert.ok(body !== '', '找不到 applyPersonaEntry')
+  // ⚠️ 名字必须是**入参**，不能从 entry 上读。entry 来自 resolvePersona，
+  // 它的语义是纯净条目（不含 name）⇒ 读 entry.name 得到 undefined，
+  // activePersonaName 与审计 label 双双静默失效 —— 而下面那两条源码锚点
+  // 在当时照样全绿（源码里确实写着 activePersonaName）。行为由
+  // verify-e2e-prompt 的「应用预设后 activePersonaName = 点的名字」钉住。
+  assert.ok(!/entry\.name/.test(body), 'applyPersonaEntry 不得从 entry 上读预设名（resolvePersona 返回的是纯净条目，恒为 undefined）')
   for (const token of ['invalid', 'applied', 'Object.keys(errors)']) {
     assert.ok(body.includes(token), `applyPersonaEntry 未回报 ${token}：非法字段会被静默丢弃`)
   }
@@ -2451,9 +2464,10 @@ check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', (
     ["{ source: 'web', action: 'reset' }", 'HTTP 重置'],
     ["{ source: 'web', action: 'savePreset' }", 'HTTP 保存预设'],
     ["{ source: 'web', action: 'deletePreset' }", 'HTTP 删除预设'],
-    // 0.9.0-p：applyPersonaEntry 重构了 label 的取值（先算 personaName 再用），
-    // 同时多合并一个 namePatch（activePersonaName）—— 来源标注不变，判据随形状更新。
-    ["{ source: 'persona', action: 'use', label: personaName || undefined }", '应用预设（两条入口共用，label 带预设名）'],
+    // 0.9.0-p：applyPersonaEntry 重构了 label 的取值，同时多合并一个 namePatch（activePersonaName）。
+    // 0.11.x：名字改由调用方**显式传第三参数**（`personaName` 是那个参数的名字，不再是从
+    // entry 上读出来的空串）—— 来源标注不变，判据随形状更新。
+    ["{ source: 'persona', action: 'use', label: name || undefined }", '应用预设（两条入口共用，label 带预设名）'],
     ["{ source: 'command', action: 'nickname' }", '/soul <昵称>'],
     ["{ source: 'command', action: 'reset' }", '/soul reset'],
     ["{ source: 'command', action: 'enable' }", '/soul enable'],
@@ -2506,11 +2520,12 @@ check('提交即留痕：唯一漏斗的每个调用点都自带来源归属', (
 
   // 关联性（光有标注不够，还要落在对的地方）：抽几个有稳定锚点的切片来钉，
   // 防止「标注都在，但张冠李戴」——例如把 confirm 的标注挪到 set 上。
-  const personaApply = indexCode.match(/async function applyPersonaEntry\(ctx, entry\)[\s\S]*?\n\}/)?.[0] ?? ''
-  // 0.9.0-p：label 取值重构为 personaName 变量；同时多写 activePersonaName
-  // （记住用户实际点的预设名，★ 标记的依据不再靠字段反查）。
-  assert.match(personaApply, /\{ source: 'persona', action: 'use', label: personaName \|\| undefined \}/, 'applyPersonaEntry 的来源应是 persona/use 且 label 带预设名')
-  assert.match(personaApply, /activePersonaName: personaName \}/, '应用预设必须把用户点的名字写进配置（activePersonaName）')
+  const personaApply = indexCode.match(/async function applyPersonaEntry\(ctx, entry, personaName\)[\s\S]*?\n\}/)?.[0] ?? ''
+  // 0.9.0-p：应用预设时多写 activePersonaName（记住用户实际点的预设名，
+  // ★ 标记的依据不再靠字段反查）。名字先 trim 成 name 再用于两处（namePatch / label），
+  // 所以锚点取 name；第三参数 personaName 由「调用预设名」的锚点单独钉。
+  assert.match(personaApply, /\{ source: 'persona', action: 'use', label: name \|\| undefined \}/, 'applyPersonaEntry 的来源应是 persona/use 且 label 带预设名')
+  assert.match(personaApply, /activePersonaName: name \}/, '应用预设必须把用户点的名字写进配置（activePersonaName）')
   const toolSlice = indexSource.match(/defineTool\([\s\S]*?\n    \}\)/)?.[0] ?? ''
   assert.match(toolSlice, /\{ source: 'tool', action: 'setPersona' \}/, 'set_persona 工具的来源应是 tool/setPersona')
   assert.match(indexCode, /updateConfig[\s\S]*?\{ source: 'service', action: 'update' \}/, 'updateConfig 的来源应是 service/update')
@@ -3304,34 +3319,78 @@ check('卡背（详情面）展示全部维度与全文，且不动卡片 transf
   )
 })
 
-check('「存为预设」入口与「保存设置」并列，且点开才问名字', () => {
+check('「存为全局预设 / 更新到全局预设」与「保存特质」同区并列，且点开才问名字', () => {
   // 用户反馈原位置「比较迷茫」：它被塞在预设列表最下面，而用户此时的心理模型是
   // 「我在看别人的预设」；真正保存的却是「关于你/特质」里的字段（在别的分组里）。
-  // 方案 A：移到「保存设置」旁做同级动作，点开才问名字，并明确列出保存范围。
+  // 0.12 分段保存后它跟着**特质**走 —— 预设存的正是那几个维度，按钮挨着它们，
+  // 「存的是我刚编辑的这些」才不用解释。
+  // ⚠️ 别再锚定底部 `.soul-buttons`：那个全局「保存设置」按钮区已经删了，
+  // 继续锚定只会让断言在「布局变了但语义没错」时凭空失败。
   const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
   // ① 预设列表里不得再有那个输入框（旧位置已移除）
   assert.equal(/soul-persona-save/.test(cssBlock), false, '预设列表里的「保存为预设」输入框样式应已移除（入口已移到保存按钮旁）')
-  // ② 与「保存设置」并排出现
-  const buttons = extractCall(clientSource, "e('div', { className: 'soul-buttons' }")
-  assert.ok(buttons !== '', '找不到保存按钮区')
-  assert.match(buttons, /t\('button\.save'\)/, '保存按钮区应有「保存设置」')
-  assert.match(buttons, /t\('personas\.saveAs'\)/, '「存为预设…」应与「保存设置」并列（同一按钮区）')
-  // ③ 点开才问名字：按钮点击只打开弹层，不直接保存
+  // ② 全局按钮区 + 全局文案都已移除：整页只剩分区保存
+  assert.equal(/soul-buttons/.test(clientSource), false, '底部全局「保存设置」按钮区应已移除（改由分区各自保存）')
+  assert.equal(/t\('button\.save'\)/.test(clientSource), false, "不得再引用 t('button.save')（全局保存按钮已移除，留着是死文案）")
+  // ③ 特质区的按钮区：保存特质 ｜ 存为全局预设… ｜ 更新到全局预设
+  //    ⚠️ 用「分组 id 之间」切片 + 一条有序正则，而不是 extractCall：
+  //    那个 helper 的返回是 `source.slice(at, i + 1)`，但 `at`/`i` 来自**去掉注释之后**
+  //    的文本 —— 偏移量对不上原文件，切出来的块会前后错位（实测整块内容被切掉）。
+  const between = (from, to) => {
+    const a = clientCode.indexOf(from)
+    const b = clientCode.indexOf(to)
+    return a !== -1 && b > a ? clientCode.slice(a, b) : ''
+  }
+  const traits = between("id: 'soul-traits'", "id: 'soul-personas'")
+  assert.ok(traits !== '', '找不到「特质」分组')
+  assert.match(
+    traits,
+    /className: 'soul-section-actions'[\s\S]*?t\('button\.saveTraits'\)[\s\S]*?t\('personas\.saveAs'\)[\s\S]*?t\('personas\.updateTo'\)/,
+    '「保存特质」「存为全局预设…」「更新到全局预设」必须并列在特质区分组末尾的同一个按钮区里'
+  )
+  // ④「关于你」只保存自己，不挂预设动作（预设刻意不含昵称/职业/介绍）
+  // ③.1 特质区的**保存按钮下方**必须说明分层规则：绑定层会盖掉这里保存的人设字段，
+  //      而「关于你」不会被盖。用户反馈过「改了没生效」的困惑，这句是唯一写在**那个
+  //      动作旁边**的解释（绑定区只说绑定本身）。
+  //      形态钉死为「短行 + 问号」（与 personas 那一区的说明同一形状）—— 这一区全是
+  //      下拉，整段正文会被读成表头条款；细节必须走 SoulHint，不能摊在正文里。
+  assert.match(
+    traits,
+    /className: 'soul-note soul-note-inline'[\s\S]*?className: 'soul-note-text' \}, t\('traits\.scopeNote'\)[\s\S]*?e\(SoulHint, \{ text: t\('traits\.scopeNoteMore'\) \}\)/,
+    '特质区应有一行「短正文 + ⓘ 全文」的分层说明（正文走 .soul-note-text，细节走 SoulHint）'
+  )
+  assert.match(
+    traits,
+    /t\('personas\.updateTo'\)\)[\s\S]*?className: 'soul-note soul-note-inline'/,
+    '分层说明必须在保存按钮区**下方**（用户是按下保存之后才困惑的，解释要挨着那个动作）'
+  )
+  const about = between("id: 'soul-about'", "id: 'soul-traits'")
+  assert.ok(about !== '', '找不到「关于你」分组')
+  assert.match(
+    about,
+    /className: 'soul-section-actions'[\s\S]*?t\('button\.saveAbout'\)/,
+    '「关于你」区应有自己的保存按钮（贴在本区表单末尾）'
+  )
+  assert.equal(/personas\.(saveAs|updateTo)/.test(about), false, '预设动作不该出现在「关于你」区（预设不含关于你）')
+  // ⑤ 点开才问名字：按钮点击只打开弹层，不直接保存
   assert.match(
     clientSource,
     /onClick: \(\) => \{ setPersonaName\(''\); setShowSavePersona\(true\) \}/,
-    '「存为预设…」应只打开命名弹层（不是先填名字才能点）'
+    '「存为全局预设…」应只打开命名弹层（不是先填名字才能点）'
   )
   assert.match(clientSource, /showSavePersona && e\('div', \{/, '缺少命名弹层渲染分支')
-  // ④ 弹层必须说明「会保存什么 / 不会保存什么」—— 这是消除困惑的关键
+  // ⑥ 弹层必须说明「会保存什么 / 不会保存什么」—— 这是消除困惑的关键
   assert.match(clientSource, /t\('personas\.saveCovers'\)/, '弹层应说明会保存哪些字段')
   assert.match(clientSource, /t\('personas\.saveExcludes'\)/, '弹层应说明不含「关于你」（这正是困惑来源）')
-  // ⑤ 弹层要能关闭：遮罩点击 + 取消按钮 + Esc
+  // ⑦ 弹层要能关闭：遮罩点击 + 取消按钮 + Esc
   assert.match(clientSource, /onClick: \(\) => \{ setShowSavePersona\(false\); setPersonaName\(''\) \}/, '弹层应可关闭（遮罩/取消）')
   assert.match(clientSource, /ev\.key === 'Escape'/, '弹层应支持 Esc 关闭')
-  // ⑥ 中英文案键齐备
+  // ⑧ 中英文案键齐备
   for (const [k, zh, en] of [
-    ['personas.saveAs', '存为预设…', 'Save as persona…'],
+    ['personas.saveAs', '存为全局预设…', 'Save as global persona…'],
+    ['personas.updateTo', '更新到全局预设', 'Update global persona'],
+    ['traits.scopeNote', '这里保存的特质不会作用于绑定了人设的工作区或目录。', 'Traits saved here do not apply to workspaces or directories that have a persona bound.'],
+    ['traits.scopeNoteMore', '优先级：会话覆盖 > 工作区绑定 > 目录绑定 > 全局设置。绑定是部分覆盖，只接管那个人设声明过的字段；「关于你」（昵称、职业、介绍）不在绑定范围内，永远用这里的值。', 'Precedence: session override > workspace binding > directory binding > global settings. A binding is partial — it takes over only the fields that persona actually declares. "About you" (nickname, occupation, bio) falls outside that scope and always comes from here.'],
     ['personas.saveConfirm', '保存', 'Save'],
     ['button.cancel', '取消', 'Cancel']
   ]) {
@@ -3548,7 +3607,7 @@ check('0.9.0-a 配置快照：修订号单调递增，装配只取一次快照',
   )
 })
 
-check('工作区绑定：注入通道逐 agent 编译，不共用一份全局文本', () => {
+check('工作区绑定：注入通道逐 agent 分层解析，不共用一份全局文本', () => {
   const matched = indexCode.match(/function injectPromptToAllAgents\(ctx, config\)[\s\S]*?\n\}/)
   assert.ok(matched, 'index.mjs 中找不到 injectPromptToAllAgents')
   const body = matched[0]
@@ -3558,10 +3617,21 @@ check('工作区绑定：注入通道逐 agent 编译，不共用一份全局文
   const loopAt = body.indexOf('for (const agent of listed)')
   assert.ok(loopAt !== -1, '找不到遍历活动会话的循环')
   const loop = body.slice(loopAt)
+  // ⚠️ 这里守的是「同一个解析函数」而不是「编译在循环里」。上一版钉的是
+  // `configForCwd(config, cwdOfAgent(agent))` —— 它在结构上看不见工作区层与会话层，
+  // 于是每一次全局写入都往绑定会话里塞一份**全局**人设，而该会话自己的 system message
+  // 仍是绑定人设。界面说 A、最新一条指令说 B，模型听后者（本机实测：会话日志
+  // 第 77 行「先发散再收敛」vs 第 84 行注入快照「你是一个搞笑的人」）。
   assert.match(
     loop,
-    /configForCwd\(\s*config\s*,\s*cwdOfAgent\(\s*agent\s*\)\s*\)/,
-    '编译必须发生在循环体内、按该 agent 的 cwd 解析 —— 循环外算一份就和绑定功能互相抵消'
+    /configForScope\(\s*config,\s*cwdOfAgent\(agent\),\s*workspaceId,\s*sessionOverridesOrNull\(sessionId\)\s*\)/,
+    '编译必须发生在循环体内、按该 agent 的**全部分层**解析 —— 少一层就等于那一层被全局值盖掉'
+  )
+  // 分层不是摆设：workspaceId 必须真的来自索引，否则参数永远传 null、上一条断言照样过。
+  assert.match(
+    loop,
+    /sessionWorkspaceIndex\.get\(sessionId\)/,
+    'workspaceId 必须来自 sessionId → workspaceId 索引（与装配通道同源），不得留空'
   )
   // 反证：循环外不得再有 compilePrompt（否则那份文本会被复用给所有会话）
   assert.equal(
@@ -3573,9 +3643,17 @@ check('工作区绑定：注入通道逐 agent 编译，不共用一份全局文
   assert.ok(/delivered\+\+/.test(body) && /failed\+\+/.test(body), '仍应如实统计成功与失败数')
   assert.match(
     body,
-    /configForCwd\(config, cwdOfAgent\(agent\)\)[\s\S]{0,120}?const prompt = compilePrompt\(perAgent\)/,
-    '应当先用该会话的 cwd 合成配置、再编译（顺序反了等于还是全局文本）'
+    /configForScope\([\s\S]{0,200}?\)\.config[\s\S]{0,160}?const prompt = compilePrompt\(perAgent\)/,
+    '应当先合成该会话的配置、再编译（顺序反了等于还是全局文本）'
   )
+  // 快照的框定语也随该会话的语言：`promptTextOf(config)` 留在循环外也是同一个错 ——
+  // 全局英文 + 工作区中文人设时，说明文字仍是英文。所以按**整个函数体**判，不只判循环内。
+  assert.equal(
+    /promptTextOf\(\s*config\s*\)/.test(body),
+    false,
+    '注入文本的框定语必须按每会话生效配置取文案，不得按全局语言'
+  )
+  assert.match(body, /promptTextOf\(perAgent\)/, '框定语应由该会话生效配置取文案（promptTextOf(perAgent)）')
 })
 
 check('工作区绑定：合成配置只覆盖人设字段，全局总开关不被覆盖', () => {
@@ -3599,10 +3677,19 @@ check('工作区绑定：合成配置只覆盖人设字段，全局总开关不�
     false,
     'configForScope 不得触碰 enabled —— 全局总开关必须始终说话'
   )
-  // 反向：薄包装只该转调，不该自己再实现一遍合并（两份实现必然漂移）
-  const thin = stripComments(extractObject(indexSource, 'function configForCwd'))
-  assert.ok(thin !== '', '找不到 configForCwd 薄包装')
-  assert.match(thin, /configForScope\(/, 'configForCwd 应转调 configForScope，不得保留第二份合并实现')
+  // 反向：分层解析**只有一个入口**。上一版这里断言的是「configForCwd 薄包装只该转调」——
+  // 那句话没错，但它允许一个"只按 cwd 解析"的合法入口继续存在，而两个调用点正是从
+  // 这个入口把整套语义用错的。函数已删除；留一条结构守卫，防止它被顺手加回来。
+  assert.equal(
+    /function configForCwd\s*\(/.test(stripComments(indexSource)),
+    false,
+    '不得恢复 configForCwd：它等于 configForScope(base, cwd, null, null)，看不见工作区层与会话层'
+  )
+  assert.equal(
+    /configForCwd\s*\(/.test(stripComments(indexSource)),
+    false,
+    'index.mjs 生产代码不得再有 configForCwd 调用点'
+  )
   const cwdOf = stripComments(extractObject(indexSource, 'function cwdOfAgent'))
   assert.ok(cwdOf !== '', '找不到 cwdOfAgent 函数体')
   assert.match(
@@ -3720,7 +3807,7 @@ check('0.9.0-s 「更新到预设」入口：只列自建预设 + 复用草稿 +
   assert.match(
     client,
     /'personas\.updateTo'/,
-    '必须有「更新到预设」入口的文案键'
+    '必须有「更新到全局预设」入口的文案键'
   )
   // 更新走的是同一个 savePersona(name, draft) —— 不新造一条写路径。
   // 用括号配平取**完整**函数体：正则 `([\s\S]*?)\n      \}` 会在第一个缩进闭合处截断，
@@ -4621,9 +4708,22 @@ check('工作区绑定只读视图：失效条目标注、sessions 走与会话�
   assert.equal(/throw /.test(sessions), false, 'describeActiveSessions 不得抛错：列不出会话只是少一段信息，不该让整个读接口失败')
   assert.match(sessions, /typeof agents\.list !== 'function'\) return out/, 'agents 服务不可用时应返回空列表')
   assert.match(sessions, /catch \{[\s\S]{0,200}?return out/, 'list() 抛错时同样返回空列表，且不得把异常冒泡给 HTTP 层')
-  // 生效人设必须走与真实装配**同一条路径**，否则设置页显示的人设与实际注入的可能不一致 ——
-  // 那正是最难查的一类 bug。
-  assert.match(sessions, /configForCwd\(config, cwd\)\.config/, '生效人设必须走 configForCwd（与真实装配同一条路径）')
+  // 生效人设必须走与真实装配**同一个解析函数**，否则设置页显示的人设与实际注入的可能不一致 ——
+  // 那正是最难查的一类 bug。上一版钉的是 `configForCwd(config, cwd)`，注释还写着
+  // 「与真实装配同一条路径」；装配早已换成带工作区/会话层的 configForScope，这一格就一直在
+  // 说假话（失效注释比没注释更误导人）。现在按四个入参钉死。
+  assert.match(
+    sessions,
+    /configForScope\(\s*config,\s*cwd,\s*workspaceId,\s*sessionOverridesOrNull\(id\)\s*\)\.config/,
+    '生效人设必须走 configForScope 的三层全链（与装配同一入口），少传一层就是少认一层'
+  )
+  // 「没有 cwd」的分支同样要看工作区层：无目录 ≠ 无归属。它不再自己算人设，
+  // 而是复用上面那次分层解析的结果 —— 下面的 0 处红线兜住这条。
+  assert.match(
+    sessions,
+    /const workspaceId = id === null \? null : \(wsOfSession\.get\(String\(id\)\) \|\| null\)/,
+    'workspaceId 必须在分支之前就取好（装配按它解析，展示侧不能只在有 cwd 时才带上）'
+  )
   // ★ 光「算了」还不够，还得**回报出去**：sessions[].persona 是设置页回答「我这个项目
   // 现在到底是谁」的唯一来源。曾有一条变异把这一项写成 null 而全部断言照绿 ——
   // 因为断言只看 binding 名，没看生效人设。
@@ -4632,14 +4732,14 @@ check('工作区绑定只读视图：失效条目标注、sessions 走与会话�
     /persona: resolveActivePersonaName\(effective\)/,
     'sessions 必须回报生效人设（不是 null、也不是全局那一个）：界面要答得出「这个会话现在是谁」'
   )
-  // 只有**没有 cwd** 的分支才可以用全局配置算生效人设（那时确实没有绑定可解析）。
-  // 有 cwd 的分支若也这么算，带绑定的会话会显示成全局那个名字，而注入的是绑定的人设。
-  // 0.9.0-p：函数名从 findActivePersonaName 换成 resolveActivePersonaName（内部
-  // 多了「优先用记住的名字」），红线判据的字面量随之更新。
+  // 红线：任何分支都**不得**用全局配置算生效人设。原先这里允许 1 处 —— 「没有 cwd」的分支，
+  // 理由是「那时确实没有绑定可解析」。但那个理由只覆盖了目录层：无 cwd ≠ 无工作区归属，
+  // 索引里的 workspaceId 照样说话（本机就有绑定指向无目录会话的可能）。允许 1 处，
+  // 就是给"绑定在界面上一格生效、一格不生效"留了一个合法出口。现在是 0 处。
   assert.equal(
     (sessions.match(/persona: resolveActivePersonaName\(config\)/g) || []).length,
-    1,
-    '用全局配置算生效人设只允许出现在「没有 cwd」那一个分支里'
+    0,
+    '生效人设一律走分层解析结果，不得有用全局配置直接反查的分支'
   )
   // 没有 cwd 的会话要如实说出来，而不是静默省略：用户需要知道「这个会话没有目录」。
   assert.match(sessions, /cwd: null/, '没有 cwd 的会话要显式回报，不能静默跳过')
@@ -4964,15 +5064,22 @@ check('「N 个会话」必须与列表口径一致（不得用注册表原始�
     //
     // 与其靠「下次记得」，不如让每次 verify 都替我看着 —— 只要目录里出现非 .mjs
     // 的文件就失败。合法文件只有两类：verify-*.mjs（回归脚本）与 lib/（夹具子目录）。
+    //
+    // `tmp-` 前缀也一起拦：本会话排查「存为预设勾选立即应用」时写的是 tmp-repro-*.mjs，
+    // 后缀合法、光看扩展名放行 —— 一次性脚本换了个马甲就绕过整条门禁。
     const entries = readdirSync(new URL('./', import.meta.url), { withFileTypes: true })
     const offenders = []
     for (const entry of entries) {
       if (entry.isDirectory()) continue
+      if (entry.name.startsWith('tmp-')) {
+        offenders.push(entry.name)
+        continue
+      }
       if (entry.name.endsWith('.mjs')) continue
       offenders.push(entry.name)
     }
     assert.equal(offenders.length, 0,
-      `scripts/ 出现非 .mjs 文件（多为跑完忘删的一次性脚本）：${offenders.join(", ")}`
+      `scripts/ 出现非 .mjs 文件或 tmp- 一次性脚本（多为跑完忘删）：${offenders.join(", ")}`
       + " —— 用完即删，提交前看一眼 scripts/ 目录。")
   })
   check('C100 引用端点支持 GET 自查（直接读宿主侧 pending）', () => {

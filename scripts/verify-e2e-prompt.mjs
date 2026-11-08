@@ -35,13 +35,14 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 内置人设的期望值直接取代码里的同一份数据（它的数据契约另有 verify-config 钉住），
 // 免得 e2e 里再抄一份「极简主义者 = efficient / less」这类会悄悄漂移的常量。
 // 「关于你」的字段名单同理取自配置层唯一来源（PROFILE_FIELDS）。
-import { BUILTIN_PERSONAS } from '../lib/personas.mjs'
-import { PROFILE_FIELDS } from '../lib/config.mjs'
+import { BUILTIN_PERSONAS, personaMatches } from '../lib/personas.mjs'
+import { PROFILE_FIELDS, PERSONA_FIELDS } from '../lib/config.mjs'
 
-// 基线运行应跑出的断言数：E 场景 28 项 + F 损坏场景 8 项 + G 变更记录 16 项
-// + H 撤销拒绝路径 3 项 + W 工作区绑定 15 项 + 2 项判断力对照。跑完时校验，
-// 防止「脚本加/删用例」与文档口径悄悄脱节。
-const EXPECTED_ASSERTIONS = 100
+// 基线运行应跑出的断言数：E/F/G/H/W/S/P 各场景与判断力对照的合计（逐场景的分项数字
+// 会随用例增减漂移，这里不重新抄一遍 —— 真值由 assertCount 在跑完后对账）。
+// 本轮 +6：S11–S16 读的是**注入通道**收到的文本与显示侧报出的名字（S1–S6 只读装配
+// 通道，而这两条通道曾经用不同的解析函数，只测一条就等于没测）。
+const EXPECTED_ASSERTIONS = 116
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -1250,13 +1251,16 @@ async function scopeScenario(entry) {
     const ctx = makeCtx([
       { id: 'sess-ws', cwd: dirA },
       { id: 'sess-cwd', cwd: dirB },
-      { id: 'sess-none' }
+      { id: 'sess-none' },
+      // 无 cwd、但有工作区归属：describeActiveSessions 的「没有 cwd」分支过去直接拿
+      // 全局配置反查生效人设（理由写的是「那时确实没有绑定可解析」—— 那只对目录层成立）。
+      { id: 'sess-nocwd-ws' }
     ])
     ctx.state.workspaces = [
-      { id: 'ws_strict', title: '项目A', path: dirA, sessionIds: ['sess-ws'] },
+      { id: 'ws_strict', title: '项目A', path: dirA, sessionIds: ['sess-ws', 'sess-nocwd-ws'] },
       { id: 'ws_min', title: '项目B', path: dirB, sessionIds: [] }
     ]
-    ctx.state.storedSessions = ['sess-ws', 'sess-cwd', 'sess-none']
+    ctx.state.storedSessions = ['sess-ws', 'sess-cwd', 'sess-none', 'sess-nocwd-ws']
 
     // 目录绑定：dirB 绑「极简」（验证"索引未命中时回退目录"）
     writeFileSync(join(dshHome, 'soul-bindings.json'), JSON.stringify({
@@ -1317,6 +1321,78 @@ async function scopeScenario(entry) {
       'S6 会话覆盖是字段级的：工作区层的其它字段不被清掉',
       typeof pSession === 'string' && pSession.includes('安全优先'),
       JSON.stringify({ keeps: typeof pSession === 'string' && pSession.includes('安全优先') })
+    )
+
+    // ── 注入通道：同一批会话、另一条送达路径（本轮修复的正题）────────────────
+    //
+    // S1..S6 全走 promptFor()（装配通道），它们**历来都是绿的** —— 因为注入通道用的是
+    // 另一个解析函数（遗留的 configForCwd = 只看目录层）。后果不是「没送达」而是
+    // 「送达了错的那一版」：每次全局写入都往绑定会话里塞一份**全局**人设，而该会话自己的
+    // system message 仍是绑定人设 ⇒ 界面说 A、最新一条指令说 B，模型听后者。
+    // 本机实测的形态：会话日志第 77 行「先发散再收敛」（绑定的预设）vs 第 84 行注入快照
+    // 「你是一个搞笑的人」（刚保存的全局特质）。
+    //
+    // 所以这组断言必须读 ctx.state.injections，而不是读 promptFor —— 读后者等于
+    // 用没有 bug 的那条通道验证有 bug 的那条。
+    const injectedTextOf = (id) =>
+      (ctx.state.injections.get(id) || []).map((m) => m?.content?.[0]?.text || '').join('\n')
+
+    // 判据字段刻意选 customInstructions：ws_strict 覆盖了它、会话层没覆盖它、
+    // 而全局刚刚被改掉 ⇒ 「注入用的是哪一层」在这一格上有唯一答案。
+    await callRoute(ctx, '/api/soul/config', { customInstructions: 'X-全局新指令' })
+    await drain()
+
+    const injWs = injectedTextOf('sess-ws')
+    const injCwd = injectedTextOf('sess-cwd')
+    const injNone = injectedTextOf('sess-none')
+    push(
+      'S11 全局保存后，绑定工作区的会话收到的是该工作区生效的文本，不是全局文本',
+      injWs.includes('安全优先') && !injWs.includes('X-全局新指令'),
+      JSON.stringify({ 工作区指令: injWs.includes('安全优先'), 全局泄漏: injWs.includes('X-全局新指令') })
+    )
+    push(
+      'S12 注入通道也认会话层：该会话的临时覆盖不被全局保存打回',
+      injWs.includes('幽默风趣、适当使用比喻和玩笑'),
+      JSON.stringify({ head: injWs.slice(0, 90) })
+    )
+    push(
+      'S13 两条通道对同一会话给出逐字节相同的文本（工作区层与会话层都算）',
+      injWs.endsWith(promptFor(ctx, 'sess-ws')) &&
+        injNone.endsWith(promptFor(ctx, 'sess-none')),
+      JSON.stringify({
+        ws: injWs.endsWith(promptFor(ctx, 'sess-ws')),
+        none: injNone.endsWith(promptFor(ctx, 'sess-none'))
+      })
+    )
+    // 对照组：证明 S11 不是「注入根本没发生」或「所有会话都被换成绑定文本」。
+    push(
+      'S14 无归属的会话照常收到刚保存的全局文本（分层解析没把它误当绑定会话）',
+      injNone.includes('X-全局新指令'),
+      JSON.stringify({ head: injNone.slice(0, 90) })
+    )
+    push(
+      'S15 目录回退层同样走注入通道：绑定目录的会话拿到绑定风格，未被覆盖的字段仍来自全局',
+      injCwd.includes('高效干练') && injCwd.includes('X-全局新指令') && !injCwd.includes('安全优先'),
+      JSON.stringify({
+        风格: injCwd.includes('高效干练'),
+        全局指令: injCwd.includes('X-全局新指令'),
+        工作区泄漏: injCwd.includes('安全优先')
+      })
+    )
+
+    // 显示侧（设置页/总览的「这个会话现在是谁」）走的是 describeActiveSessions，
+    // 与注入通道是两个不同的函数 —— 上面那组只证明送达的文本对了，还得证明**说出来的名字**
+    // 也对了，否则「header 说 A、回复说 B」会换成「header 说 B、回复说 A」继续存在。
+    const bindingsView = await callRoute(ctx, '/api/soul/bindings', null, 'GET')
+    const listRows = bindingsView.body?.sessions || []
+    const nocwdRow = listRows.find((s) => String(s.id) === 'sess-nocwd-ws') || null
+    push(
+      'S16 无 cwd 但有工作区归属的会话，生效人设按工作区层反查（显示侧与送达侧同一口径）',
+      bindingsView.status === 200 &&
+        !!nocwdRow &&
+        nocwdRow.workspaceId === 'ws_strict' &&
+        nocwdRow.persona === '严格审查',
+      JSON.stringify({ status: bindingsView.status, row: nocwdRow })
     )
 
     // enabled：全局关掉后，任何层都不能把它打开
@@ -1613,6 +1689,172 @@ async function bindingRoutesScenario(entry) {
   return results
 }
 
+// ==================== 「存为预设 + 勾选立即应用」链路（0.11.x）====================
+
+/**
+ * 弹层里勾上「保存后立即应用」时，客户端发的是**两次请求**：
+ *   POST /personas/save {name, draft}  → 只进预设库，不动活动配置
+ *   POST /personas/use  {name}         → 把这套应用为当前配置，并记住点的名字
+ *
+ * 这条链路此前只有源码锚点（verify-config 里 `/activePersonaName: name/` 那类），
+ * 而锚点恰好测不出它真实坏掉的形态：名字从 resolvePersona 的**纯净条目**上读
+ * （entry 根本不带 name）⇒ 恒为空串 ⇒ activePersonaName 一次都没落盘、审计 label
+ * 全空，锚点照样全绿。用户看到的就是「勾了却没应用上」。
+ *
+ * 单独一个场景：前置状态是「库里有一个与内置内容完全相同的自建预设」—— 那是重复
+ * 门禁（0.9.0-q）上线前的历史数据，也正是 ★ 归属歧义的来源，而门禁本身禁止在运行
+ * 时造出这种库（save 会被判重复拒掉）。
+ */
+async function personaApplyScenario(entry) {
+  const dshHome = mkdtempSync(join(tmpdir(), 'dsh-soul-e2e-apply-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+
+  const results = []
+  const push = (name, ok, detail) => results.push({ name, ok, detail })
+
+  const minimal = BUILTIN_PERSONAS['极简主义者']
+  // 名字首字符刻意用 ASCII：反查兜底按名称排序取首个命中（findActivePersonaName），
+  // 'A' < 任何汉字 ⇒ 猜测必然先命中这个复刻条目。歧义不是嘴上说的，是排出来的。
+  const COPY_NAME = 'A_复刻极简主义者'
+  const BAD_NAME = '全部非法预设'
+  // 内置预设**不声明 language**，所以应用内置后 language 保持磁盘上这份值 ——
+  // 复刻条目（7 个字段全声明）照样逐字段命中，与内置形成真歧义。
+  const LANG = 'en'
+  writeFileSync(
+    join(dshHome, 'soul-config.json'),
+    JSON.stringify({
+      language: LANG,
+      personas: {
+        [COPY_NAME]: { ...minimal, language: LANG, updatedAt: '2025-01-01T00:00:00.000Z' },
+        [BAD_NAME]: { style: 'bogus', emoji: 'lots' }
+      }
+    }, null, 2)
+  )
+
+  try {
+    const mod = await import(pathToFileURL(entry).href + `?t=${Date.now()}`)
+    const ctx = makeCtx()
+    await mod.apply(ctx)
+
+    // 用户此刻的表单是一份**没点过「保存设置」**的编辑（客户端把表单整份放进 draft）。
+    // 活动配置仍是上一个预设的内容 —— 若 draft 不参与，存下的就是它，"立即应用"
+    // 等于把旧内容再写一遍，看起来正是「勾了没反应」。
+    // 取值全部合法（非法值会被 sanitizeConfig 丢进 invalid，那是另一条被测路径）。
+    const draftNow = {
+      style: 'humorous',
+      headingLists: 'more',
+      emoji: 'default',
+      tables: 'less',
+      replyLength: 'detailed',
+      language: LANG,
+      customInstructions: 'P-草稿：先给结论，再给依据，不写铺垫。'
+    }
+    const NEW_NAME = 'P_草稿预设'
+
+    const saved = await callRoute(ctx, '/api/soul/personas/save', { name: NEW_NAME, draft: draftNow })
+    const stored = saved.body?.personas?.[NEW_NAME] || {}
+    push(
+      'P1 「存为预设」带草稿时，落进库里的是草稿内容而不是已保存的旧配置',
+      saved.status === 200 && PERSONA_FIELDS.every((key) => stored[key] === draftNow[key]),
+      JSON.stringify({ status: saved.status, stored })
+    )
+
+    const used = await callRoute(ctx, '/api/soul/personas/use', { name: NEW_NAME })
+    const afterUse = used.body?.config || {}
+    push(
+      'P2 紧接着「使用」它 ⇒ 7 个人设字段全部落到活动配置（勾选立即应用真的动了配置）',
+      used.status === 200 &&
+        PERSONA_FIELDS.every((key) => afterUse[key] === draftNow[key]) &&
+        Array.isArray(used.body?.invalid) && used.body.invalid.length === 0,
+      JSON.stringify({ status: used.status, invalid: used.body?.invalid, style: afterUse.style })
+    )
+    push(
+      'P3 生效提示词随之换成这套草稿（P2 不只是字段相等，用户下一轮拿到的就是它）',
+      currentPrompt(ctx).includes('P-草稿：先给结论'),
+      JSON.stringify(currentPrompt(ctx).slice(0, 80))
+    )
+    push(
+      'P4 应用后 config.activePersonaName = 用户点的名字（名字由调用方显式传入；写成从 entry 上读时这里是空串）',
+      afterUse.activePersonaName === NEW_NAME,
+      JSON.stringify({ activePersonaName: afterUse.activePersonaName })
+    )
+
+    const listAfterNew = await callRoute(ctx, '/api/soul/personas', null, 'GET')
+    push(
+      'P5 ★（GET /personas 的 activeName）指向用户刚点的那个预设',
+      listAfterNew.body?.activeName === NEW_NAME,
+      JSON.stringify({ activeName: listAfterNew.body?.activeName })
+    )
+
+    // ── ★ 归属：记名字 vs 反查猜名字 ─────────────────────────────────────────
+    // 点内置「极简主义者」，而库里有一条内容与之完全相同的自建条目（复刻）。
+    // 反查按名称排序取首个命中 ⇒ 会答成复刻那条；只有记住的名字能答对
+    // 「用户点的是内置那张卡」。
+    const useBuiltin = await callRoute(ctx, '/api/soul/personas/use', { name: '极简主义者' })
+    const afterBuiltin = useBuiltin.body?.config || {}
+    const viewAfterBuiltin = await callRoute(ctx, '/api/soul/personas', null, 'GET')
+    const libAfter = viewAfterBuiltin.body?.personas || {}
+    push(
+      'P6 歧义真实存在：应用内置后，复刻条目与内置逐字段同时命中同一份配置（否则 P7 只是蒙对）',
+      personaMatches(libAfter[COPY_NAME], afterBuiltin) === true &&
+        personaMatches(libAfter['极简主义者'], afterBuiltin) === true,
+      JSON.stringify({ 复刻: libAfter[COPY_NAME], 生效style: afterBuiltin.style, language: afterBuiltin.language })
+    )
+    push(
+      'P7 记住的名字随每次应用覆盖，★ 指向用户点的内置卡（不是内容相同的复刻条目）',
+      useBuiltin.status === 200 &&
+        afterBuiltin.activePersonaName === '极简主义者' &&
+        viewAfterBuiltin.body?.activeName === '极简主义者',
+      JSON.stringify({
+        activePersonaName: afterBuiltin.activePersonaName,
+        activeName: viewAfterBuiltin.body?.activeName
+      })
+    )
+
+    // 对照组（判断力）：把记住的名字擦掉（0.9.0-p 之前的老配置就是这个形态），
+    // 同一个状态再问一次 ★ —— 反查必然给出另一个名字。P8 与这条分叉，才证明
+    // 界面那个 ★ 来自「记住的名字」而不是字段猜测。
+    const cleared = await callRoute(ctx, '/api/soul/config', { activePersonaName: null })
+    const listGuessed = await callRoute(ctx, '/api/soul/personas', null, 'GET')
+    push(
+      'P8 对照组：擦掉记住的名字后，反查兜底把 ★ 给了按名称排序先命中的复刻条目（证明 P7 的判据不是猜出来的）',
+      cleared.status === 200 && listGuessed.body?.activeName === COPY_NAME,
+      JSON.stringify({ 兜底: listGuessed.body?.activeName, 用户点的: '极简主义者' })
+    )
+
+    // 特质改动后 ★ 的语义：改任何一个维度 ⇒ 不再属于该预设。
+    // 这里重新应用（把名字记回来），再手改一个特质：配置里名字仍在，但它已不再
+    // 匹配 —— 必须退回"如实的没有命中"，而不是继续谎报上一个预设。
+    await callRoute(ctx, '/api/soul/personas/use', { name: '极简主义者' })
+    await callRoute(ctx, '/api/soul/config', { style: 'roast' })
+    const listEdited = await callRoute(ctx, '/api/soul/personas', null, 'GET')
+    push(
+      'P9 手改特质后 ★ 如实消失（记住的名字不再匹配 ⇒ 不谎报旧预设）',
+      listEdited.body?.activeName === null,
+      JSON.stringify({ activeName: listEdited.body?.activeName })
+    )
+
+    // 全部字段非法 ⇒ 调用方按 400 处理，一个字节都不该动。
+    // 此前 namePatch 在 patch 为空时照样合并 ⇒ activePersonaName 会被写成一个
+    // 从未生效过的预设名（界面上靠 personaMatches 兜住了，磁盘与审计里却是脏的）。
+    const useBad = await callRoute(ctx, '/api/soul/personas/use', { name: BAD_NAME })
+    const afterBad = await callRoute(ctx, '/api/soul/config', null, 'GET')
+    push(
+      'P10 全部字段非法的预设按 400 失败，且不把它的名字记进 activePersonaName',
+      useBad.status === 400 && afterBad.body?.config?.activePersonaName === '极简主义者',
+      JSON.stringify({ status: useBad.status, activePersonaName: afterBad.body?.config?.activePersonaName })
+    )
+
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    rmSync(dshHome, { recursive: true, force: true })
+  }
+
+  return results
+}
+
 // ==================== 挂载沙箱 ====================
 /**
  * 把插件复制到临时目录，并生成静态依赖 `@deepseek-ai/dsh-llm` 的形状兼容桩。
@@ -1740,6 +1982,17 @@ async function main() {
     for (const r of await scopeScenario(scopeSandbox.entry)) record(r.name, r.ok, r.detail)
   } finally {
     rmSync(scopeSandbox.dir, { recursive: true, force: true })
+  }
+
+  // 「存为预设 + 勾选立即应用」链路：另起沙箱，因为它的前置是「库里有一条与内置
+  // 内容完全相同的自建预设」—— 重复门禁上线后这种库在运行时造不出来，只能预置。
+  console.log('')
+  console.log('P 存为预设（带草稿）→ 立即应用：配置、记住的名字与 ★ 归属')
+  const applySandbox = prepareSandbox(PKG_DIR, 'apply')
+  try {
+    for (const r of await personaApplyScenario(applySandbox.entry)) record(r.name, r.ok, r.detail)
+  } finally {
+    rmSync(applySandbox.dir, { recursive: true, force: true })
   }
 
   // 判断力对照：把 provider 读的配置源换成 DEFAULT_CONFIG（模拟「配置改了但读不到」），

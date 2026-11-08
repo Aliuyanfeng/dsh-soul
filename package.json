@@ -1,6 +1,6 @@
 {
   "name": "dsh-soul",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "为 DeepSeek Harness 添加个性化设置。",
   "icon": "./assets/icon.svg",
   "keywords": [

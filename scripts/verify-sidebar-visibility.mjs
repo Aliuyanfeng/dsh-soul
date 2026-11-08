@@ -42,33 +42,43 @@ check('★ 全部读取点必须用严格 === true（默认 false 时 !== false 
   assert.equal(/showOverviewInSidebar !== false/.test(clientCode), false,
     '残留宽松判定：配置缺失时会被当成"开启"')
   const strict = (clientCode.match(/showOverviewInSidebar === true/g) || []).length
-  assert.ok(strict >= 5, `严格判定应覆盖全部读取点，实际 ${strict} 处`)
+  // 三处读取点：applyConfig 归一化、设置页开关、侧栏 sync。0.12 分段保存后设置页
+  // 不再持有草稿副本（它直接读 store、拨完即存），原先「回填草稿」那两处判定消失了。
+  // 用等号而不是 >=：新增读取点会撞到这条，逼着写的人确认自己用的也是严格判定。
+  assert.equal(strict, 3, `严格判定的读取点应为 3 处（store 归一化 / 设置页开关 / 侧栏同步），实际 ${strict} 处`)
 })
 
 // ── ② 字段全集对账：DEFAULT_CONFIG ↔ client FIELD_KEYS ──
 // 这次的 bug 正是「FORM_FIELD_KEYS 加了但 savedMap 漏了」，靠人眼很难发现。
 check('DEFAULT_CONFIG 每个键都在 client 的字段全集里', () => {
-  // FIELD_KEYS 由 FORM_FIELD_KEYS + EXTERNALLY_MANAGED_FIELDS 展开，
-  // 所以要把两个字面量数组的键合起来对账。
-  const collect = (name) => {
-    const m = clientCode.match(new RegExp('const ' + name + ' = \\[([^\\]]+)\\]'))
+  // 0.12 分段保存后 FIELD_KEYS 是多段组合（表单段本身又是「关于你 + 特质」两段），
+  // 所以按**展开语义**递归解析，而不是抓单个数组字面量。
+  const collect = (name, seen = new Set()) => {
+    if (seen.has(name)) return []
+    seen.add(name)
+    const m = clientCode.match(new RegExp('const ' + name + ' = (\\[[^\\]]*\\])'))
     assert.ok(m, `找不到 ${name}`)
-    return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1])
+    return [...m[1].matchAll(/'([^']+)'/g)].flatMap((x) => [x[1]])
+      .concat([...m[1].matchAll(/\.\.\.(\w+)/g)].flatMap((x) => collect(x[1], seen)))
   }
-  const keys = new Set([...collect('FORM_FIELD_KEYS'), ...collect('EXTERNALLY_MANAGED_FIELDS')])
+  const keys = new Set(collect('FIELD_KEYS'))
   for (const key of Object.keys(DEFAULT_CONFIG)) {
     assert.ok(keys.has(key), `DEFAULT_CONFIG.${key} 不在 client 字段全集里`)
   }
 })
-check('FORM_FIELD_KEYS 含 showOverviewInSidebar', () => {
-  assert.match(clientCode, /FORM_FIELD_KEYS = \[[^\]]*'showOverviewInSidebar'/)
+check('IMMEDIATE_FIELD_KEYS 含 showOverviewInSidebar（点击即生效，不走草稿）', () => {
+  assert.match(clientCode, /IMMEDIATE_FIELD_KEYS = \[[^\]]*'showOverviewInSidebar'/)
 })
-check('设置页 savedMap / localMap / serverValues 三处都含该字段', () => {
+check('该字段只有一条写入路径：即时落盘，且不在草稿映射里', () => {
+  // 分段保存后「一个字段两处写」是会真实发生的：分区载荷提交 + 即时落盘都能覆盖它，
+  // 谁后到谁赢。所以即时字段必须**缺席**于草稿侧的四个映射。
   for (const name of ['savedMap', 'localMap', 'serverValues', 'localValues']) {
     const m = clientCode.match(new RegExp('const ' + name + ' = \\{([^}]*)\\}'))
     assert.ok(m, `找不到 ${name}`)
-    assert.ok(m[1].includes('showOverviewInSidebar'), `${name} 漏了 showOverviewInSidebar（dirty 会恒 true）`)
+    assert.equal(m[1].includes('showOverviewInSidebar'), false,
+      `${name} 不该含 showOverviewInSidebar —— 它是即时字段，进草稿表就有两个写入方`)
   }
+  assert.match(clientCode, /saveImmediate\('showOverviewInSidebar'/, '侧栏开关必须即时落盘')
 })
 check('applyConfig 把服务端值归一化进 store', () => {
   assert.match(clientCode, /s\.showOverviewInSidebar = config\.showOverviewInSidebar === true/)

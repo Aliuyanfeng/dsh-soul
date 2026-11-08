@@ -792,8 +792,6 @@ function injectPromptToAllAgents(ctx, config) {
     return
   }
 
-  const T = promptTextOf(config)
-
   // 为什么必须「注入」而不能只靠 systemPrompt.section：
   // section 虽然每步求值（preStep 每个 step 都 assemble），但产物是 **system message**，
   // 一旦进入会话历史就固定了 —— 所以「会话进行中改配置」不会生效。
@@ -810,16 +808,33 @@ function injectPromptToAllAgents(ctx, config) {
     // 该拿到「极简主义者」。若在这里算一份全局文本发给所有人，B 项目会收到 A 的人设 ——
     // 这比不注入更糟（不注入时它至少还是全局配置，与用户以为的一致）。
     //
-    // 拿不到 cwd（会话头无该字段）时 configForCwd 返回原配置，行为与绑定功能上线前一致。
-    const perAgent = configForCwd(config, cwdOfAgent(agent)).config
+    // ⚠️ 必须与装配通道用**同一个解析函数**（configForScope 的三层全链）。这里原先是
+    // 遗留的 `configForCwd(config, cwd)`，它等于 `configForScope(base, cwd, null, null)`
+    // ⇒ 工作区层与会话层**结构上看不见**。后果不是「没送达」而是「送达了错的那一版」：
+    // 每次全局写入都往绑定会话里塞一份全局人设，而该会话自己的 system message 仍是绑定
+    // 人设 ⇒ 界面说 A、最新一条指令说 B，而模型听的是后者。本机实测的形态：会话日志里
+    // system/message 写「先发散再收敛」（绑定的头脑风暴伙伴），紧随其后的注入快照写
+    // 「你是一个搞笑的人」（全局特质）—— 用户报的就是这两行打架。
+    const sessionId = sessionIdOfAgent(agent)
+    // 索引缺席（诊断装配 / 会话未归属任何工作区）时为 null ⇒ 自然退回目录层，与装配同形。
+    const workspaceId = sessionId === null ? null : (sessionWorkspaceIndex.get(sessionId) || null)
+    const perAgent = configForScope(
+      config,
+      cwdOfAgent(agent),
+      workspaceId,
+      sessionOverridesOrNull(sessionId)
+    ).config
+    // 快照的**框定语**也按该会话的语言：`promptTextOf` 只认 `language`，而工作区可以
+    // 覆盖它 —— 全局英文 + 工作区中文人设时，说明文字不该还是英文。
+    const TA = promptTextOf(perAgent)
     const prompt = compilePrompt(perAgent)
-    const snapshotText = prompt || T.injectDisabled
+    const snapshotText = prompt || TA.injectDisabled
 
     try {
       agent.inject(createUserMessage({
         content: [{
           type: 'text',
-          text: prompt ? `${T.injectUpdatedHeader}\n${T.injectUpdatedBody}\n\n${prompt}` : snapshotText
+          text: prompt ? `${TA.injectUpdatedHeader}\n${TA.injectUpdatedBody}\n\n${prompt}` : snapshotText
         }],
         // 会话格式 v4 要求生产者自持 kind；旧的 `kind: 'plugin'` + `plugin` 组合
         // 会让每一轮在 step 开始前失败（issue #1，构造与校验见 lib/injection.mjs）
@@ -1116,13 +1131,6 @@ function configForScope(base, cwd, workspaceId, sessionOverride) {
   }
 
   return { config: merged, source, workspaceId: workspaceId || null, binding }
-}
-
-// 兼容既有调用点：只按 cwd 解析（不含工作区层）。
-// 保留这个名字是因为 verify-*.mjs 与若干注释按它描述契约；新代码应直接用 configForScope。
-function configForCwd(base, cwd) {
-  const { config, binding } = configForScope(base, cwd, null, null)
-  return { config, binding }
 }
 
 // 读出配置里的工作区覆盖表（已校验过的形态）。
@@ -1855,7 +1863,13 @@ function resolveActivePersonaName(config) {
 //
 // 来源固定为 persona/use：两个调用入口（网页「使用」与 /soul use）是同一个动作，
 // 用户视角下「用了个预设」这件事本身比「从哪个入口点的」更重要，故不细分。
-async function applyPersonaEntry(ctx, entry) {
+// ⚠️ 预设名必须由调用方**显式传进来**，不能从 entry 上读：两个调用点拿到的 entry 都是
+// `resolvePersona()` 的产物，而它的语义是**纯净条目**（只有人设字段 + updatedAt，
+// 不含 name / builtin 标记 —— verify-config 钉住了这条）。写成读 entry.name 时，
+// personaName 恒为空串：activePersonaName 从不落盘、审计 label 恒为 undefined，
+// ★ 归属退回到「按名称排序取首个命中」这个我们 0.9.0-p 就是要换掉的猜测。
+// 实测痕迹：本机变更记录里 30 条 persona/use 的 label 全为空。
+async function applyPersonaEntry(ctx, entry, personaName) {
   const { patch, errors } = sanitizeConfig(pickPersonaValues(entry))
   const invalid = Object.keys(errors)
   // label 带上预设名：审计里「应用预设」这条记录光有字段差，缺「应用的是什么」——
@@ -1865,11 +1879,16 @@ async function applyPersonaEntry(ctx, entry) {
   // ★ 标记原先靠字段反查，两个预设声明相同字段时（自建预设是内置的子集很常见）
   // 反查结果取决于名称排序 —— 实测 ★ 标在了没点的卡上。记名字把"猜"变成"知道"。
   // 名字是注解不是人设字段（不进提示词），所以放在 patch 之外单独合并。
-  const personaName = entry && typeof entry.name === 'string' ? entry.name.trim() : ''
-  const namePatch = personaName ? { activePersonaName: personaName } : {}
+  const name = typeof personaName === 'string' ? personaName.trim() : ''
+  // `Object.keys(patch).length > 0` 这一半不是洁癖，是 ★ 的正确性：预设字段全部非法时
+  // 调用方按 400「没有可应用的合法字段」处理，配置一个字节都不该动；但 namePatch
+  // 单独就能写脏 activePersonaName —— 于是磁盘上留下一条「正在用这个预设」的记号，
+  // 而它一次都没生效过。resolveActivePersonaName 的 personaMatches 兜底虽然遮得住，
+  // 那是事后补救：失败的应用压根不该留下"我在用它"的记号。
+  const namePatch = name && Object.keys(patch).length > 0 ? { activePersonaName: name } : {}
   const { config: updated, changed, promptChanged } = await commitConfig(
     c => ({ ...c, ...patch, ...namePatch }),
-    { source: 'persona', action: 'use', label: personaName || undefined }
+    { source: 'persona', action: 'use', label: name || undefined }
   )
   if (promptChanged.length > 0) refreshPromptAndInject(ctx, updated)
   // applied 是「通过校验的字段数」——与 changed（实际产生差异的字段）不同：
@@ -2008,7 +2027,7 @@ function registerPersonaRoutes(ctx) {
           // 内置预设已在代码里写过一遍；用户预设保存时也校验过。此处统一再过一遍
           // 白名单，防御手改 config.json 注入的异常数据。
           // invalid = 因取值非法而被丢弃的字段名：必须回报，不能静默部分应用。
-          const { updated, changed, invalid, applied } = await applyPersonaEntry(ctx, entry)
+          const { updated, changed, invalid, applied } = await applyPersonaEntry(ctx, entry, personaName)
           // 一个合法字段都没有 ⇒ 什么都没应用，按失败处理（与 /soul use 同语义）
           if (applied === 0) {
             send(res, 400, { ok: false, error: `预设「${personaName}」没有可应用的合法字段`, invalid })
@@ -3042,6 +3061,15 @@ function describeActiveSessions(ctx, config) {
   for (const agent of listed) {
     const cwd = cwdOfAgent(agent)
     const id = agent && typeof agent.id === 'string' ? agent.id : null
+    // 级联归属：总览页按工作区分组时要靠它。
+    // 提到分支外，是因为「生效人设」的解析同样需要它 —— 工作区层不看这一格。
+    const workspaceId = id === null ? null : (wsOfSession.get(String(id)) || null)
+    // 生效人设必须走与真实装配**同一个解析函数**（三层全链 → 部分覆盖 → findActivePersonaName）。
+    // 这里原先用 `configForCwd`，等价于 `configForScope(config, cwd, null, null)` ——
+    // 注释写着「与真实装配同一条路径」，而装配早已换成带工作区与会话层的版本：一句失效的
+    // 注释比没有注释更糟，它会让人以为这个 bug 不存在。
+    // 会话层走内存缓存：装配那边也是同步取的，冷启动首轮两边同样按上层走（一致比精确优先）。
+    const effective = configForScope(config, cwd, workspaceId, sessionOverridesOrNull(id)).config
 
     if (!cwd) {
       // cwd 缺席是宿主允许的情况（会话没有工作目录）。必须如实说出来 ——
@@ -3049,9 +3077,8 @@ function describeActiveSessions(ctx, config) {
       out.push({
         id,
         cwd: null,
-        // 级联归属：无 cwd 也可能有工作区归属（索引里有就带上）
-        workspaceId: id === null ? null : (wsOfSession.get(String(id)) || null),
-        persona: resolveActivePersonaName(config),
+        workspaceId,
+        persona: resolveActivePersonaName(effective),
         binding: null,
         shadowed: []
       })
@@ -3059,9 +3086,6 @@ function describeActiveSessions(ctx, config) {
     }
 
     const resolved = resolveBindingForCwd(cwd, config.personas)
-    // 生效人设走与真实装配**同一条路径**（configForCwd → 部分覆盖 → findActivePersonaName），
-    // 否则设置页显示的「生效人设」与实际注入的可能不一致 —— 那正是最难查的一类 bug。
-    const effective = configForCwd(config, cwd).config
 
     let binding = null
     if (resolved) {
@@ -3075,8 +3099,7 @@ function describeActiveSessions(ctx, config) {
     out.push({
       id,
       cwd,
-      // 级联归属：总览页按工作区分组时要靠它
-      workspaceId: id === null ? null : (wsOfSession.get(String(id)) || null),
+      workspaceId,
       persona: resolveActivePersonaName(effective),
       binding,
       shadowed: resolved ? resolved.shadowed : []
@@ -4355,7 +4378,7 @@ function registerCommands(ctx) {
             }
             // 预设值保存时已校验；此处再过一遍白名单，防御手改文件等异常数据。
             // 非法字段不再被静默丢弃：applied=0 ⇒ 报错；有部分非法 ⇒ 明示被跳过的字段。
-            const { changed, invalid, applied } = await applyPersonaEntry(ctx, entry)
+            const { changed, invalid, applied } = await applyPersonaEntry(ctx, entry, personaName)
             const fieldsText = invalid.join(t.listSep)
             // 预设未声明任何字段（applied=0 且 invalid=0）不是错误，是「无可应用内容」
             if (invalid.length > 0 && applied === 0) {
@@ -4560,11 +4583,11 @@ function registerSystemPrompt(ctx) {
           // 比较——路径的身份解析（realpath）已在 loadBindings() 里对**键**做过一次。
           //
           // ⚠️ 也必须**只取一次快照**：configCache 由写队列整体替换。若这里分两次读
-          // （例如先 configCache、再在 configForCwd 里又读一遍），装配期间发生写入就会
+          // （例如先 configCache、再在 configForScope 里又读一遍），装配期间发生写入就会
           // 让同一轮用上两个版本的配置。快照先取，之后全用它。
           //
           // `assembly.agent` 在诊断装配时缺席（宿主注释写明 `absent on diagnostics`），
-          // cwdOfAgent 对 undefined 返回 null ⇒ configForCwd 原样返回全局配置。
+          // cwdOfAgent 对 undefined 返回 null ⇒ configForScope 原样返回全局配置。
           const snap = snapshotConfig()
           const agent = assembly && assembly.agent
           // 快照必须**整体**使用：连同索引一起，本轮只取一次。

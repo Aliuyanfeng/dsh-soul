@@ -61,7 +61,7 @@ window.__ModuleLoader__.load({
     // -------------------------------------------------------------------------
 
     const NS = 'soul'
-    const VERSION = '0.11.0'
+    const VERSION = '0.12.0'
     const INITIAL = {
       enabled: true,
       nickname: '',
@@ -977,7 +977,12 @@ window.__ModuleLoader__.load({
       '.soul-toggle input[type="checkbox"]:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       '.soul-toggle input[type="checkbox"]:disabled{opacity:.4;cursor:default}',
       '@media (prefers-reduced-motion:reduce){.soul-toggle input[type="checkbox"],.soul-toggle input[type="checkbox"]::after{transition:none}}',
-      '.soul-buttons{display:flex;gap:8px;margin-top:2px}',
+      '.soul-section-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:14px;padding-top:12px;border-top:.5px solid var(--dsw-alias-border-l2)}',
+      // 分区内的一句口径说明（如「这一组改动即时生效」）：次要色、12/18，与弹层说明同源
+      '.soul-field-note{margin-bottom:12px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+      // 非法中间态的就地提醒（如十六进制色值没写完）：用文字色而非 .soul-error 那个
+      // 带背景的面板 —— 那是给「请求失败了」留的，这里只是「还没写完」。
+      '.soul-field-warn{margin-top:6px;color:var(--dsw-alias-state-warn-primary);font-size:12px;line-height:18px}',
       // 允许换行、不裁切。
       //
       // 为什么必须改容器（而不只是放宽 max-width）：
@@ -1530,10 +1535,16 @@ window.__ModuleLoader__.load({
       // 「将保存 / 不含」两行说明：这是消除「不知道存了哪些值」的关键，用弱化样式但仍可读
       '.soul-modal-note{display:flex;flex-direction:column;gap:4px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       '.soul-modal-note-excl{color:var(--dsw-alias-label-tertiary)}',
-      // 「保存后立即应用」复选框（0.9.0-t）
-      '.soul-modal-check{display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);cursor:pointer}',
-      '.soul-modal-check input{flex:none;margin-top:3px;width:14px;height:14px;cursor:pointer}',
-      '.soul-modal-check-hint{flex:none;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
+      // 「保存后立即应用」——这一行现在复用设置页的开关行 SoulSwitch（.soul-toggle），
+      // 不再自绘原生 checkbox。两个原因：
+      //   ① 用户要求「设置页个性化 所有 checkbox 改用 switch 和宿主样式统一」，
+      //      而 .soul-toggle 的那套重绘**只覆盖 .soul-toggle 内部**，弹层里的原生
+      //      checkbox 从来没被覆盖到 —— 它是全站唯一漏网的一个。
+      //   ② 原先 .soul-modal-check 里长说明文字是 flex:none、标题 span 可缩，
+      //      于是 380px 的弹层里标题被挤到「一个字一行」，整行溢出卡片边界。
+      //      开关行的 .soul-toggle-text 有 min-width:0，文字正常换行。
+      // 这里只收紧弹层内的间距并去掉行底分隔线（弹层自己已经有 14px 的列间距）。
+      '.soul-modal .soul-toggle{padding:0;border-bottom:none;gap:12px}',
       // 「更新到预设」列表（0.9.0-s）：每行一个可选预设名。
       '.soul-update-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow:auto}',
       '.soul-update-item{box-sizing:border-box;display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px;text-align:left;cursor:pointer}',
@@ -1823,8 +1834,8 @@ window.__ModuleLoader__.load({
       // 内联展开的人设胶囊：占满整行，与卡片内容左对齐
       '.soul-ws-picker{flex-basis:100%;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:.5px solid var(--dsw-alias-settings-card-stroke)}',
       '.soul-ws-picker-label{flex:none;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
-      // 会话清理的按钮行：与设置页的 .soul-buttons **分开命名**（那个 class 语义是
-      // 「保存按钮区」，复用它会让"保存设置在哪里"这类断言抓到错误的块 —— 实测抓到过）。
+      // 会话清理的按钮行：与设置页分区里的 .soul-section-actions **分开命名**（那个 class
+      // 语义是「保存按钮区」，复用它会让"保存按钮在哪里"这类断言抓到错误的块 —— 实测抓到过）。
       '.soul-sessions-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px}',
       // 保留条数（0.8.1 从设置页迁来）：一行「标签 + 下拉 + 提示」。
       // 下拉不撑满整行 —— 它是容量参数，不是表单主字段，铺满会显得比记录本身还重。
@@ -1992,6 +2003,14 @@ window.__ModuleLoader__.load({
       'field.bio': '用户介绍',
       'field.bioPlaceholder': '简单介绍自己，让回复更贴合你的背景',
       'group.traits': '特质',
+      // 「我在这里改了，为什么那个会话没变」的答案。形态照「人设预设」那一区：
+      // 一句话 + 一个问号，细节收在 tooltip 里（那一区的瘦身正是这个理由，C34 钉着）。
+      // 规则而非状态 —— 设置页并不知道用户眼前是哪个会话（他可以同时开几个工作区），
+      // 所以只陈述优先级，不假装能报出「当前绑定是谁」（那在绑定区里）。
+      // 穷举「昵称、职业、介绍」只出现在问号里：正文用分组名「关于你」就够，那三个词
+      // 就在上一区的标题与字段里，重列一遍是条款腔。
+      'traits.scopeNote': '这里保存的特质不会作用于绑定了人设的工作区或目录。',
+      'traits.scopeNoteMore': '优先级：会话覆盖 > 工作区绑定 > 目录绑定 > 全局设置。绑定是部分覆盖，只接管那个人设声明过的字段；「关于你」（昵称、职业、介绍）不在绑定范围内，永远用这里的值。',
       'field.style': '回复风格和语调',
       'hint.style': '设置 Agent 回复你的风格和语调。这不会影响 Agent 的功能。',
       'field.headingLists': '标题和列表',
@@ -2010,10 +2029,12 @@ window.__ModuleLoader__.load({
       'field.instructionsPlaceholder': '输入自定义指令，可以是其他行为、回复风格和语调等偏好设置',
       'group.personas': '人设预设',
       'personas.save': '保存当前为预设',
-      // 方案 A：入口移出预设列表，与「保存设置」并列（文案用「存为预设…」表示会再问一步）
-      'personas.saveAs': '存为预设…',
-      // 更新到预设（0.9.0-s）：与「存为预设」并列 —— 前者覆盖已有，后者新建。
-      'personas.updateTo': '更新到预设',
+      // 入口移出预设列表，跟着「特质」走（方案 A）；省略号表示点开会再问一步（名字）。
+      // 「全局」不是修饰词：预设库只有全局那一份（config.personas），工作区/会话
+      // 覆盖是另一层 —— 按钮写的是库与全局活动配置，不碰当前工作区的覆盖。
+      'personas.saveAs': '存为全局预设…',
+      // 更新到全局预设（0.9.0-s）：与「存为全局预设」并列 —— 前者覆盖已有，后者新建。
+      'personas.updateTo': '更新到全局预设',
       'personas.updateNone': '还没有可更新的自建预设。内置预设不可修改。',
       'personas.updateCovers': '会把「关于你」之外的人格字段（风格、特质、长度、指令）写入所选预设。',
       'personas.updateExcludes': '不会包含昵称、职业、介绍 —— 它们不属于预设。',
@@ -2275,7 +2296,22 @@ window.__ModuleLoader__.load({
       // 服务端不记空条目，所以这一句正常情况下到不了屏幕；但记录文件是可以被手工
       // 改坏的，真遇到时宁可写「无字段变化」，也不要显示成裸键名 history.emptyFields。
       'history.emptyFields': '无字段变化',
-      'button.save': '保存设置',
+      // 分区保存：按钮文字点名存的是哪一区。全局按钮删掉后（0.12 分段保存），
+      // 「已保存」必须能回答「存的哪一部分」，否则两区各自亮按钮时无从区分。
+      'button.saveAbout': '保存关于你',
+      'button.saveTraits': '保存特质',
+      'notice.savedAbout': '「关于你」已保存。',
+      'notice.savedTraits': '「特质」已保存。',
+      'group.advanced': '高级选项',
+      'hint.immediateApply': '这一组的改动即时生效，不需要再点保存。',
+      'hint.reset': '把全部人设与界面字段一次性恢复默认值，立即写入。',
+      'reset.confirmTitle': '重置为默认值？',
+      'reset.confirmBody': '关于你、特质、交互与界面的所有设置都会回到默认值。',
+      'reset.confirmKeeps': '预设库与会话历史不受影响。',
+      'reset.confirmDraft': '表单里还有未保存的编辑：重置只改已保存的配置，那些编辑仍留在表单里。',
+      'reset.confirmButton': '确认重置',
+      'status.unsavedShort': '未保存',
+      'trail.colorInvalid': '色值需为 6 位十六进制（如 #679EFE），暂时未保存。',
       'button.saving': '保存中...',
       'button.cancel': '取消',
       'button.reset': '重置默认',
@@ -2422,6 +2458,8 @@ window.__ModuleLoader__.load({
       'field.bio': 'Bio',
       'field.bioPlaceholder': 'A short introduction so replies fit your background',
       'group.traits': 'Traits',
+      'traits.scopeNote': 'Traits saved here do not apply to workspaces or directories that have a persona bound.',
+      'traits.scopeNoteMore': 'Precedence: session override > workspace binding > directory binding > global settings. A binding is partial — it takes over only the fields that persona actually declares. "About you" (nickname, occupation, bio) falls outside that scope and always comes from here.',
       'field.style': 'Reply style & tone',
       'hint.style': "Sets the style and tone the agent uses when replying to you. It does not affect the agent's capabilities.",
       'field.headingLists': 'Headings & lists',
@@ -2440,8 +2478,8 @@ window.__ModuleLoader__.load({
       'field.instructionsPlaceholder': 'Custom instructions — other behaviors, style or tone preferences',
       'group.personas': 'Personas',
       'personas.save': 'Save current as persona',
-      'personas.saveAs': 'Save as persona…',
-      'personas.updateTo': 'Update preset',
+      'personas.saveAs': 'Save as global persona…',
+      'personas.updateTo': 'Update global persona',
       'personas.updateNone': 'No editable custom presets yet. Built-in presets cannot be modified.',
       'personas.updateCovers': 'Writes the persona fields (style, traits, length, instructions) into the selected preset.',
       'personas.updateExcludes': 'Nickname, occupation and bio are not included — they are not part of a persona.',
@@ -2681,7 +2719,20 @@ window.__ModuleLoader__.load({
       // while "it was cleared" is itself a fact worth showing.
       'history.valueEmpty': '(empty)',
       'history.emptyFields': 'No field changes',
-      'button.save': 'Save Settings',
+      'button.saveAbout': 'Save about-you',
+      'button.saveTraits': 'Save traits',
+      'notice.savedAbout': 'About-you saved.',
+      'notice.savedTraits': 'Traits saved.',
+      'group.advanced': 'Advanced',
+      'hint.immediateApply': 'Changes in this group apply immediately - no save needed.',
+      'hint.reset': 'Restore every persona and UI field to its default, written immediately.',
+      'reset.confirmTitle': 'Reset to defaults?',
+      'reset.confirmBody': 'About-you, traits and interaction settings all return to their defaults.',
+      'reset.confirmKeeps': 'Your persona presets and change history are not affected.',
+      'reset.confirmDraft': 'You still have unsaved edits: the reset only touches saved settings, and your edits stay in the form.',
+      'reset.confirmButton': 'Reset now',
+      'status.unsavedShort': 'unsaved',
+      'trail.colorInvalid': 'Needs a 6-digit hex value (e.g. #679EFE) - not saved yet.',
       'button.saving': 'Saving...',
       'button.cancel': 'Cancel',
       'button.reset': 'Reset to Default',
@@ -2850,8 +2901,22 @@ window.__ModuleLoader__.load({
       { value: 'en', label: 'English' }
     ]
 
-    // 设置页表单驱动的字段（dirty 检测与保存载荷共用）。
-    const FORM_FIELD_KEYS = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'showQuickToggle']
+    // 设置页字段的三种交互形态。**分组边界就是保存边界**，动 UI 之前先读这段。
+    //
+    //   · ABOUT / TRAIT —— 草稿字段：表单里改的是本地值，点**本区**的保存按钮才落盘，
+    //     且载荷只含本区那几个字段。此前底部一个「保存设置」把全部 19 个字段整份 POST，
+    //     代价是串味：只调了光轨颜色，也会把「关于你」里没打算提交的编辑一起写下去。
+    //   · IMMEDIATE —— 点击即写入：开关、下拉、光轨。没有草稿、没有保存按钮，
+    //     控件直接读 store，onChange 发一个局部补丁 —— 和详情页的「保留条数」、
+    //     输入框快捷开关走的是同一条 patch 合并写路径（服务端 `{...current, ...patch}`）。
+    //     唯一例外是 trailColor：十六进制框允许「#679」这种非法中间态，所以它保留本地值，
+    //     并防抖到最后一个合法值才提交（非法值不发请求，否则整单 400）。
+    //   · EXTERNALLY_MANAGED —— 由别的界面就地管理，这张表单连草稿都不持有。
+    const ABOUT_FIELD_KEYS = ['nickname', 'occupation', 'bio']
+    const TRAIT_FIELD_KEYS = ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions']
+    const IMMEDIATE_FIELD_KEYS = ['enabled', 'requireToolConfirmation', 'showQuickToggle', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+    // 表单以草稿持有、需要点保存才落盘的字段（dirty 检测与分区保存载荷共用）。
+    const FORM_FIELD_KEYS = [...ABOUT_FIELD_KEYS, ...TRAIT_FIELD_KEYS]
 
     // 由**别的界面**就地管理、因而不在这张表单里的配置字段：
     //   · `historyMaxEntries` —— 插件详情页的变更记录区块（改完即时落盘，不经保存按钮）；
@@ -2863,10 +2928,11 @@ window.__ModuleLoader__.load({
     const EXTERNALLY_MANAGED_FIELDS = ['historyMaxEntries', 'workspaces', 'activePersonaName']
 
     // 配置字段全集（宿主 DEFAULT_CONFIG 的对账基准）。
-    // 顺序与 DEFAULT_CONFIG 一致，便于人眼对账；重复字段会让 dirty 判定重复计算。
-    // **表单只认 FORM_FIELD_KEYS** —— 拿全集去判 dirty 会让表单对着一个它并不持有的
+    // 三段拼接：草稿字段 + 即时字段 + 外部管理字段，一个都不能少 ——
+    // 漏掉的字段的后果是静默的：dirty 对账看不见它，改了也不会有任何提示。
+    // **dirty 只看 FORM_FIELD_KEYS** —— 拿全集去判 dirty 会让表单对着一个它并不持有的
     // 字段反复比较，语义混乱（当前恰好因为两边都是 undefined 而等价，但那是巧合）。
-    const FIELD_KEYS = [...FORM_FIELD_KEYS, ...EXTERNALLY_MANAGED_FIELDS]
+    const FIELD_KEYS = [...FORM_FIELD_KEYS, ...IMMEDIATE_FIELD_KEYS, ...EXTERNALLY_MANAGED_FIELDS]
 
     // 变更记录保留条数的可选值。**只放整数档位，不做自由输入**：
     // 这是个一次设定、此后不再碰的容量参数，自由输入只会带来
@@ -4348,8 +4414,8 @@ window.__ModuleLoader__.load({
           : e('p', { className: 'soul-saved-notice', role: 'status', 'aria-live': 'polite' }, notice)),
         e('div', { className: 'soul-note' }, t('sessions.hint')),
         body,
-        // 用独立 class 而不是 .soul-buttons：那个 class 属于**设置页的保存按钮区**，
-        // 复用会让「保存设置在哪里」这类断言抓到错误的块（verify-config 立刻抓到过）。
+        // 用独立 class 而不是 .soul-section-actions：那个 class 属于**设置页的保存按钮区**，
+        // 复用会让「保存按钮在哪里」这类断言抓到错误的块（verify-config 立刻抓到过）。
         e('div', { className: 'soul-sessions-actions' },
           e('button', {
             type: 'button',
@@ -6816,7 +6882,11 @@ window.__ModuleLoader__.load({
       const state = useSoulController((state) => state)
       const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
 
-      const [localEnabled, setLocalEnabled] = React.useState(enabled)
+      // —— 草稿字段（「关于你」/「特质」）的本地值 ——
+      //
+      // 只这两组保留草稿。原先 19 个字段都有本地副本、由底部一个按钮整份提交，
+      // 后果不止是串味：开关类字段明明拨了就等于决定完了，却还要再点一次保存，
+      // 而用户看到开关已经拨过去，以为生效了（IMMEDIATE 那 9 个字段因此改为直接读写 store）。
       const [localNickname, setLocalNickname] = React.useState(nickname || '')
       const [localOccupation, setLocalOccupation] = React.useState(occupation || '')
       const [localBio, setLocalBio] = React.useState(bio || '')
@@ -6827,15 +6897,9 @@ window.__ModuleLoader__.load({
       const [localReplyLength, setLocalReplyLength] = React.useState(replyLength)
       const [localLanguage, setLocalLanguage] = React.useState(language || 'zh')
       const [localInstructions, setLocalInstructions] = React.useState(customInstructions)
-      const [localToolConfirm, setLocalToolConfirm] = React.useState(requireToolConfirmation === true)
-      const [localQuote, setLocalQuote] = React.useState(quoteAsContext === true)
-      const [localOverview, setLocalOverview] = React.useState(showOverviewInSidebar === true)
-      // 默认 true 的开关：用 !== false 兜「字段缺席」（老配置升级时不该被判成关闭）
-      const [localQuickToggle, setLocalQuickToggle] = React.useState(showQuickToggle !== false)
-      const [localTrailEnabled, setLocalTrailEnabled] = React.useState(trailEnabled === true)
+      // trailColor 是 IMMEDIATE 里唯一保留本地值的字段：十六进制框要允许非法中间态
+      // （打字过程中必然出现 `#679`），合法值防抖后再提交 —— 见下方防抖 effect。
       const [localTrailColor, setLocalTrailColor] = React.useState(trailColor || TRAIL_COLOR_FALLBACK)
-      const [localTrailSpeed, setLocalTrailSpeed] = React.useState(trailSpeed || 'slow')
-      const [localTrailWidth, setLocalTrailWidth] = React.useState(trailWidth || 'thin')
       // 变更记录保留条数**不再是设置页的表单字段**（0.8.1 迁到插件详情页的变更记录
       // 区块，就地改、立刻落盘）。因此它不进 localMap / savedMap / dirty ——
       // 否则「在详情页改了容量」会让设置页的保存按钮莫名亮起，且点保存会把那份
@@ -6871,6 +6935,17 @@ window.__ModuleLoader__.load({
       //          即「我把这套存起来了，但现在不切过去」。
       // 默认不勾选：存预设与改当前配置是两件事，默认不该替用户静默改配置。
       const [applyAfterSave, setApplyAfterSave] = React.useState(false)
+      // 「重置默认」的二次确认弹层。
+      //
+      // 这个动作原先是底部第四个按钮，**点一下就整份配置回默认**（昵称、介绍、
+      // 自定义指令全没）—— 它比「删除预设」破坏性大得多，却有三个按钮并列摆在
+      // 顺手的位置，而删除预设反而有 arm-再点一次的确认。破坏性更大的动作确认更轻，
+      // 这个倒挂本身没有道理，只是历史顺序的结果。
+      //
+      // 用弹层而不是预设删除那种「原地变字」：重置是**不可撤销**的（预设删除错了
+      // 还能从变更记录恢复，重置默认会一次改光十几个字段，撤销要逐条点），
+      // 值得多一道看得见的门槛。
+      const [showResetConfirm, setShowResetConfirm] = React.useState(false)
       // 待删除的预设名（null = 没有待确认的删除）。
       //
       // 替代原生 window.confirm：原生模态框在 webview 里可能把文档焦点留在异常状态
@@ -6952,9 +7027,11 @@ window.__ModuleLoader__.load({
       //
       // saving 期间仍然整体跳过：保存流程自身会带着响应回填（见 saveConfig →
       // applyConfig → 本 effect），中途再插一次写入只会造成闪烁。
-      const formKeys = ['enabled', 'nickname', 'occupation', 'bio', 'style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions', 'requireToolConfirmation', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'showQuickToggle']
-      const localValues = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, showQuickToggle: localQuickToggle, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
-      const serverValues = { enabled, nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, requireToolConfirmation: requireToolConfirmation === true, quoteAsContext: quoteAsContext === true, showOverviewInSidebar: showOverviewInSidebar === true, showQuickToggle: showQuickToggle !== false, trailEnabled: trailEnabled === true, trailColor: trailColor || TRAIL_COLOR_FALLBACK, trailSpeed: trailSpeed || 'slow', trailWidth: trailWidth || 'thin' }
+      // 回填范围 = 草稿字段 + trailColor（IMMEDIATE 里唯一有本地值的）。
+      // 其余即时字段不在这里：它们直接读 store，写了就生效，没有「本地值等回填」这回事。
+      const formKeys = [...FORM_FIELD_KEYS, 'trailColor']
+      const localValues = { nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, trailColor: localTrailColor }
+      const serverValues = { nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, trailColor: trailColor || TRAIL_COLOR_FALLBACK }
       const lastSyncRef = React.useRef(null)
       // 判断某字段是否被用户动过：与「上次同步的快照」比。没有快照（首帧）时
       // 一律视为未动过 —— 首帧本地值本来就来自 store，无从谈起「编辑过」。
@@ -6975,7 +7052,6 @@ window.__ModuleLoader__.load({
         }
         lastSyncRef.current = next
         if (!changed) return
-        setLocalEnabled(next.enabled)
         setLocalNickname(next.nickname)
         setLocalOccupation(next.occupation)
         setLocalBio(next.bio)
@@ -6986,17 +7062,13 @@ window.__ModuleLoader__.load({
         setLocalReplyLength(next.replyLength)
         setLocalLanguage(next.language)
         setLocalInstructions(next.customInstructions)
-        setLocalToolConfirm(next.requireToolConfirmation)
-        setLocalQuote(next.quoteAsContext)
-        setLocalOverview(next.showOverviewInSidebar)
-        setLocalQuickToggle(next.showQuickToggle !== false)
-        setLocalTrailEnabled(next.trailEnabled)
         setLocalTrailColor(next.trailColor)
-        setLocalTrailSpeed(next.trailSpeed)
-        setLocalTrailWidth(next.trailWidth)
         // 依赖与 serverValues 的来源一致；localValues/sameValue 每次渲染都是新的，
         // 但只在「某字段真要写」时才 setState，故不会形成死循环。
-      }, [enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, trailEnabled, trailColor, trailSpeed, trailWidth])
+        // 依赖表必须覆盖 formKeys 的每一个 store 来源 —— 原先 `showQuickToggle` 在
+        // formKeys 里却不在依赖里，它变了本组件永不回填（因为那时它是草稿字段）。
+        // 现在它不进 formKeys，但这条约束要留给下一个加字段的人。
+      }, [nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, trailColor])
 
       // toast 的消失交给宿主 Toast 组件自己（holdMs 后淡出并回调 onDone）。
       // 此前这里有个 2s 定时器 + 自绘 CSS 动画，两者时长必须手工对齐，
@@ -7011,8 +7083,12 @@ window.__ModuleLoader__.load({
       const sameValue = (a, b) => (typeof a === 'string' && typeof b === 'string'
         ? a.trim() === b.trim()
         : a === b)
-      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, trailEnabled, trailColor, trailSpeed, trailWidth }
-      const localMap = { enabled: localEnabled, nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, requireToolConfirmation: localToolConfirm, quoteAsContext: localQuote, showOverviewInSidebar: localOverview, showQuickToggle: localQuickToggle, trailEnabled: localTrailEnabled, trailColor: localTrailColor, trailSpeed: localTrailSpeed, trailWidth: localTrailWidth }
+      const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions }
+      const localMap = { nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions }
+      // **分区 dirty**：哪一区还没存，就在哪一区的标题和按钮上各说各话。
+      // 底部那个全局按钮删掉之后，只看一个全局 dirty 已经不够用了。
+      const dirtyAbout = ABOUT_FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
+      const dirtyTraits = TRAIT_FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
       const dirty = FORM_FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
 
       // 宿主 savedNotice 语义：一旦用户开始新的编辑（dirty 变 true），
@@ -7023,18 +7099,23 @@ window.__ModuleLoader__.load({
       }, [dirty])
 
       // 预览是否反映未保存的编辑：只看参与编译的字段（见 PROMPT_FIELD_KEYS）。
-      // 这里用 localMap/savedMap 逐字段比，而不是复用上面的 dirty —— 改光轨颜色会让
-      // dirty 为真，但那不影响提示词，此时预览仍是「已生效内容」，标成草稿反而误导。
-      // 必须与 dirty 用**同一个** sameValue 判据：否则「只改了首尾空格」时 dirty 为假
-      // （保存按钮禁用）而 promptDirty 为真（预览标成草稿），两处自相矛盾。
-      const promptDirty = PROMPT_FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
+      // 这里逐字段比，而不是复用上面的 dirty —— 不影响提示词的字段会把预览标成草稿，
+      // 反而误导。必须与 dirty 用**同一个** sameValue 判据：否则「只改了首尾空格」时
+      // dirty 为假（保存按钮禁用）而 promptDirty 为真（预览标成草稿），两处自相矛盾。
+      //
+      // promptValues：参与编译的字段里，草稿字段取本地值、即时字段取 store。
+      // `enabled` 现在是即时字段（拨一下就落盘），从 localMap 取会拿到 undefined，
+      // 而它恰好是编译的第一判据 —— 预览会编出一份「未启用」的空提示词。
+      const promptValues = {}
+      for (const key of PROMPT_FIELD_KEYS) promptValues[key] = key in localMap ? localMap[key] : savedMap[key]
+      const promptDirty = PROMPT_FIELD_KEYS.some((key) => !sameValue(savedMap[key], promptValues[key]))
       // 草稿指纹：仅在影响编译的字段真的变化时才重新预览
-      const promptDraftKey = PROMPT_FIELD_KEYS.map((key) => String(localMap[key])).join('\u0000')
+      const promptDraftKey = PROMPT_FIELD_KEYS.map((key) => String(promptValues[key])).join('\u0000')
 
       // 只把参与编译的字段发给预览端点：光轨等字段的校验失败不该出现在提示词预览里
       const promptDraft = () => {
         const out = {}
-        for (const key of PROMPT_FIELD_KEYS) out[key] = localMap[key]
+        for (const key of PROMPT_FIELD_KEYS) out[key] = promptValues[key]
         return out
       }
 
@@ -7104,23 +7185,59 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(timer)
       }, [showPrompt, promptDraftKey, promptDirty])
 
-      const handleSave = async () => {
-        const payload = await controller.saveConfig(localMap)
+      // 分区保存：载荷**只取本区字段**。
+      //
+      // 这条边界是这次改造的重点，不是排版细节：服务端按 `{...current, ...patch}` 合并，
+      // 少发一个字段就是「不动它」。原先底部按钮整份提交 localMap，代价是哪一格里
+      // 留着没打算提交的编辑，都会被另一格的保存顺带写下去。
+      const saveSection = async (keys, savedKey) => {
+        const payload = {}
+        for (const key of keys) payload[key] = localMap[key]
+        const result = await controller.saveConfig(payload)
         // saveConfig 失败时内部已记录 error 并返回 undefined：给出失败提示，而非误报「无变化」
-        if (!payload) {
+        if (!result) {
           showError(t('toast.saveFailed'))
           return
         }
         // 成功提示走**内联绿字**（对齐宿主模型设置页的 savedNotice —— 见渲染处注释）：
-        // 有实际变化时报「已保存」；无变化时报「配置无变化」。
+        // 文案点名是哪一区存的 —— 只剩全局一行提示时，「已保存」回答不了「存了什么」。
         showSavedNotice(
-          Array.isArray(payload.changed) && payload.changed.length > 0
-            ? t('notice.saved')
+          Array.isArray(result.changed) && result.changed.length > 0
+            ? t(savedKey)
             : t('notice.noChanges')
         )
-        // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
+        // 预览刷新交由上方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
         // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
       }
+
+      const handleSaveAbout = () => void saveSection(ABOUT_FIELD_KEYS, 'notice.savedAbout')
+      const handleSaveTraits = () => void saveSection(TRAIT_FIELD_KEYS, 'notice.savedTraits')
+
+      // 即时字段：控件 onChange 直接落盘，没有草稿、没有保存按钮。
+      //
+      // 刻意不做乐观更新：store 值在响应回来后才变，所以开关会有几十毫秒的滞后。
+      // 换来的是「屏幕上看到的位置一定等于磁盘上的值」—— 乐观更新失败要回滚，
+      // 而回滚在用户已经移开视线时，看起来像开关自己跳回去了。
+      const saveImmediate = async (key, value) => {
+        const result = await controller.saveConfig({ [key]: value })
+        // 成功不占绿字（开关自己已经动了，那一行只是重复确认）；
+        // 失败必须占 —— 那种情况下屏幕在说谎，而 dirty 永远不会亮（它不在草稿字段里）。
+        if (!result) showError(t('toast.saveFailed'))
+      }
+
+      // trailColor 的防抖提交：取色器拖动与十六进制逐字符输入都会连发 onChange，
+      // 每一次都落盘会把变更记录灌满 `trailColor` 条目（默认只留 200 条，
+      // 真正的人设改动会被挤出去），而非法中间态（`#679`）还会让整单 400。
+      //
+      // 大小写不比对：服务端统一存大写，本地留着用户敲的小写，
+      // 严格比较会让每次输入都多打一发「其实没变化」的写入。
+      React.useEffect(() => {
+        const text = String(localTrailColor || '').trim()
+        if (!TRAIL_COLOR_PATTERN.test(text)) return
+        if (text.toUpperCase() === String(trailColor || '').toUpperCase()) return
+        const timer = setTimeout(() => { void saveImmediate('trailColor', text.toUpperCase()) }, 600)
+        return () => clearTimeout(timer)
+      }, [localTrailColor, trailColor])
 
       const handleReset = async () => {
         // resetConfig 失败时内部已记录 error 并返回 undefined。
@@ -7134,6 +7251,39 @@ window.__ModuleLoader__.load({
         showSavedNotice(payload.backupPath ? t('notice.resetRecovered') : t('notice.reset'))
         // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
         // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
+      }
+
+      // 把**草稿**回退到给定配置（不写盘）。存为预设 / 更新到预设两条路径共用。
+      //
+      // 为什么要清空 lastSyncRef **又**逐个 setState：清空只是让下一次回填 effect 认为
+      // 「没人编辑过」从而整体跟随 store，但本帧的 dirty 仍会亮一下 —— 预览也会跟着标成
+      // 草稿。用户不该看见这一闪。
+      //
+      // `from`（可选）：显式指定「对齐到哪些值」，取自 store 的**当下快照**。
+      // 不传则用本帧闭包里的字段 —— 那就是「已保存配置」。而「勾选立即应用」那条路
+      // 必须在 usePersona 之后传进来：那时本帧闭包还是**应用前的旧值**，照它设一遍
+      // 等于把表单按回旧配置，于是 savedMap 已经是新值、localMap 还是旧值 ⇒ dirty
+      // 从假跳到真。清提示那条 effect 判的是**跃迁**（deps `[dirty]`）⇒ 它当场把
+      // 「已保存并应用」抹掉 ⇒ 用户看不到任何反馈（实测：这就是「勾选了没反应」）。
+      // 也正因为判的是跃迁，同一个动作在卡片「使用」那里不会坏 —— 走那条路的用户
+      // 通常已经带着未保存编辑，dirty 一直为真、没有跃迁（C114 钉住这个差别）。
+      //
+      // 即时字段不在这里：它们没有草稿，屏幕上的值一直等于 store，无所谓回退。
+      // （原先这里列着 19 个 setter，两份副本还各自漂移过 —— 现在只有一处。）
+      const revertDraftToSaved = (from = null) => {
+        const src = from || { nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, trailColor }
+        lastSyncRef.current = null
+        setLocalNickname(src.nickname || '')
+        setLocalOccupation(src.occupation || '')
+        setLocalBio(src.bio || '')
+        setLocalStyle(src.style)
+        setLocalHeadingLists(src.headingLists || 'default')
+        setLocalEmoji(src.emoji || 'default')
+        setLocalTables(src.tables || 'default')
+        setLocalReplyLength(src.replyLength || 'normal')
+        setLocalLanguage(src.language || 'zh')
+        setLocalInstructions(src.customInstructions || '')
+        setLocalTrailColor(src.trailColor || TRAIL_COLOR_FALLBACK)
       }
 
       // 存为预设：把「关于你/特质」里的**当前设置**存成一个新预设。
@@ -7163,36 +7313,24 @@ window.__ModuleLoader__.load({
           // 勾选 ⇒ 把这套**应用为当前配置**（dirty 消失，★ 指向新预设）；
           // 不勾选 ⇒ 把表单**回退到已保存配置**（丢弃这次编辑的表单值）。
           if (applyAfterSave) {
-            await controller.usePersona(name)
-            // usePersona 里 applyConfig 会把 store 更新成该预设的值；
-            // 表单由下面的 effect 逐字段跟随（userEdited 判据会让"用户编辑过"的字段保留，
-            // 但这里我们刚把 store 改成与 draft 一致，故不会残留 dirty）。
+            const used = await controller.usePersona(name)
+            // store 已经被 applyConfig 换成这套预设的值 ⇒ 表单必须**当场**跟上。
+            // 不能等回填 effect：那一帧 dirty 仍为真，会把紧接着弹出的
+            // 「已保存并应用」清掉（见 revertDraftToSaved 的 `from` 注释）。
+            revertDraftToSaved(controller.store.getSnapshot())
             await loadPersonas()
-            showSavedNotice(t('notice.personaSavedAndApplied', { name }))
+            // ⚠️ 与「使用」按钮同一条规矩：服务端回报了被丢弃的非法字段 ⇒ 只应用了
+            // 一部分，不能说「已应用」。此前只有 handleUsePersona 检查 invalid，
+            // 勾选立即应用这条路直接把 invalid 丢掉 ⇒ 用户以为整套生效了。
+            const invalid = Array.isArray(used && used.invalid) ? used.invalid : []
+            if (invalid.length > 0) {
+              showError(t('toast.personaPartial', { fields: invalid.join(', ') }))
+            } else {
+              showSavedNotice(t('notice.personaSavedAndApplied', { name }))
+            }
           } else {
-            // 回退表单：把 lastSyncRef 清空 ⇒ userEdited 一律视为"未编辑" ⇒
-            // 下一次 effect 用 store（已保存配置）覆盖全部表单字段。
-            lastSyncRef.current = null
-            // 直接把本地状态写回已保存配置，保证本帧就清掉 dirty（不等 effect）。
-            setLocalEnabled(enabled)
-            setLocalNickname(nickname || '')
-            setLocalOccupation(occupation || '')
-            setLocalBio(bio || '')
-            setLocalStyle(style)
-            setLocalHeadingLists(headingLists || 'default')
-            setLocalEmoji(emoji || 'default')
-            setLocalTables(tables || 'default')
-            setLocalReplyLength(replyLength || 'normal')
-            setLocalLanguage(language || 'zh')
-            setLocalInstructions(customInstructions || '')
-            setLocalToolConfirm(requireToolConfirmation === true)
-            setLocalQuickToggle(showQuickToggle !== false)
-                    setLocalQuote(quoteAsContext === true)
-                    setLocalOverview(showOverviewInSidebar === true)
-            setLocalTrailEnabled(trailEnabled)
-            setLocalTrailColor(trailColor)
-            setLocalTrailSpeed(trailSpeed)
-            setLocalTrailWidth(trailWidth)
+            // 回退表单到已保存配置（见 revertDraftToSaved）。
+            revertDraftToSaved()
             await loadPersonas()
             showSavedNotice(t('notice.personaSaved', { name }))
           }
@@ -7225,26 +7363,7 @@ window.__ModuleLoader__.load({
           // 表单回退到**当前配置**：更新的是某个预设，不是当前配置，
           // 所以那套编辑不该继续挂在表单上（否则「已更新预设」+「有未保存的更改」
           // 并存，仍然是矛盾提示）。
-          lastSyncRef.current = null
-          setLocalEnabled(enabled)
-          setLocalNickname(nickname || '')
-          setLocalOccupation(occupation || '')
-          setLocalBio(bio || '')
-          setLocalStyle(style)
-          setLocalHeadingLists(headingLists || 'default')
-          setLocalEmoji(emoji || 'default')
-          setLocalTables(tables || 'default')
-          setLocalReplyLength(replyLength || 'normal')
-          setLocalLanguage(language || 'zh')
-          setLocalInstructions(customInstructions || '')
-          setLocalToolConfirm(requireToolConfirmation === true)
-          setLocalQuickToggle(showQuickToggle !== false)
-                    setLocalQuote(quoteAsContext === true)
-                    setLocalOverview(showOverviewInSidebar === true)
-          setLocalTrailEnabled(trailEnabled)
-          setLocalTrailColor(trailColor)
-          setLocalTrailSpeed(trailSpeed)
-          setLocalTrailWidth(trailWidth)
+          revertDraftToSaved()
 
           setShowUpdatePersona(false)
           await loadPersonas()
@@ -7368,9 +7487,11 @@ window.__ModuleLoader__.load({
         setPersonaIndex(at >= 0 ? at : 0)
         autoPositionedRef.current = true
       }, [openSection, personaNames, activePersona])
+      // 折叠态也要说清「这区有没存的改动」：保存按钮在 body 里，折叠时根本看不见。
+      const unsavedMark = (on) => (on ? ` · ${t('status.unsavedShort')}` : '')
       const aboutFilled = [localNickname, localOccupation, localBio].filter(Boolean).length
-      const aboutSummary = aboutFilled > 0 ? `${aboutFilled}/3 ${t('accordion.filled')}` : t('accordion.empty')
-      const traitsSummary = t(`style.${localStyle}`)
+      const aboutSummary = (aboutFilled > 0 ? `${aboutFilled}/3 ${t('accordion.filled')}` : t('accordion.empty')) + unsavedMark(dirtyAbout)
+      const traitsSummary = t(`style.${localStyle}`) + unsavedMark(dirtyTraits)
       // 失败时摘要也要区分（折叠状态下用户只看得到这一行）
       const personasSummary = personasError
         ? t('accordion.loadFailed')
@@ -7389,7 +7510,7 @@ window.__ModuleLoader__.load({
             : (Object.keys(bindings).length === 0
                 ? t('bindings.empty')
                 : t('bindings.count', { count: String(Object.keys(bindings).length), max: Number.isFinite(bindingsMax) ? String(bindingsMax) : '—' })))
-      const toolSummary = localToolConfirm ? t('accordion.on') : t('accordion.off')
+      const toolSummary = requireToolConfirmation === true ? t('accordion.on') : t('accordion.off')
       const promptSummary = promptText.length > 0
         ? t(promptIsDraft ? 'prompt.summaryDraft' : 'prompt.summaryChars', { n: String(promptText.length) })
         : (enabled ? t('prompt.summaryEnabled') : t('prompt.summaryDisabled'))
@@ -7413,14 +7534,16 @@ window.__ModuleLoader__.load({
           e('h3', null, t('settings.title')),
           e('span', { className: 'soul-version' }, `v${VERSION}`)
         ),
+        // 总开关也是即时字段：底部没有全局保存之后，它若还留在草稿里，
+        // 就成了「拨下去却没有地方点保存」的死字段。快捷开关按钮早就是这个口径。
         e(SoulSwitch, {
           id: 'soul-enabled',
           labelText: t('toggle.enabled'),
-          checked: localEnabled,
-          onChange: setLocalEnabled
+          checked: enabled,
+          onChange: (next) => void saveImmediate('enabled', next)
         }),
 
-        localEnabled && e(Fragment, null,
+        enabled && e(Fragment, null,
           e(SoulAccordion, {
             id: 'soul-about',
             title: t('group.aboutYou'),
@@ -7457,6 +7580,14 @@ window.__ModuleLoader__.load({
                 onChange: (ev) => setLocalBio(ev.target.value),
                 placeholder: t('field.bioPlaceholder')
               })
+            ),
+            // 保存按钮贴在刚编辑的表单末尾，且**只提交本区字段**（见 saveSection）。
+            e('div', { className: 'soul-section-actions' },
+              e(ui.Button, {
+                variant: 'primary',
+                onClick: handleSaveAbout,
+                disabled: saving || !dirtyAbout
+              }, saving ? t('button.saving') : t('button.saveAbout'))
             )
           ),
 
@@ -7556,6 +7687,31 @@ window.__ModuleLoader__.load({
                 onChange: (ev) => setLocalInstructions(ev.target.value),
                 placeholder: t('field.instructionsPlaceholder')
               })
+            ),
+            // 「存为预设 / 更新到预设」跟着**特质**走，而不是留在底部或预设列表里：
+            // 预设保存的正是这六个维度（PERSONA_FIELDS），按钮挨着它们，
+            // 「存的是我刚编辑的这些」才不用解释。输出语言不在预设范围内 ——
+            // 弹层里那句「会保存 / 不会保存」负责说清差异。
+            e('div', { className: 'soul-section-actions' },
+              e(ui.Button, {
+                variant: 'primary',
+                onClick: handleSaveTraits,
+                disabled: saving || !dirtyTraits
+              }, saving ? t('button.saving') : t('button.saveTraits')),
+              e(ui.Button, {
+                onClick: () => { setPersonaName(''); setShowSavePersona(true) }
+              }, t('personas.saveAs')),
+              e(ui.Button, {
+                onClick: () => setShowUpdatePersona(true),
+                disabled: saving || editablePersonaNames.length === 0
+              }, t('personas.updateTo'))
+            ),
+            // 分层说明放在**按钮下方**：用户是在按下「保存特质」之后才发现「那个会话怎么
+            // 没变」的，解释挨着那个动作才像动作的后果。形态沿用「人设预设」那一区的短行 + ⓘ
+            // （表头版整段灰字已被打回 —— 这一区七个控件全是下拉/文本域）。
+            e('div', { className: 'soul-note soul-note-inline' },
+              e('span', { className: 'soul-note-text' }, t('traits.scopeNote')),
+              e(SoulHint, { text: t('traits.scopeNoteMore') })
             )
           ),
 
@@ -7890,12 +8046,17 @@ window.__ModuleLoader__.load({
             open: openSection === 'tools',
             onToggle: toggleSection('tools')
           },
+            // 这一组没有保存按钮：每一项都是即时字段，onChange 直接落盘（见 saveImmediate）。
+            // 判据是「这一格的值改了，用户期望它什么时候开始生效」—— 开关类答案是「立刻」，
+            // 而底部那个整份提交的全局按钮让「立刻」变成了「要点一下才算」，是这次拆分的起因。
+            e('div', { className: 'soul-field-note' }, t('hint.immediateApply')),
+
             e(SoulSwitch, {
               id: 'soul-toolConfirm',
               labelText: t('field.toolConfirm'),
               hint: t('hint.toolConfirm'),
-              checked: localToolConfirm,
-              onChange: setLocalToolConfirm
+              checked: requireToolConfirmation === true,
+              onChange: (next) => void saveImmediate('requireToolConfirmation', next)
             }),
 
             // 输入框快捷开关的显示控制：属于「界面里出现什么」，与 Agent 工具同组
@@ -7904,8 +8065,9 @@ window.__ModuleLoader__.load({
               id: 'soul-showQuickToggle',
               labelText: t('field.showQuickToggle'),
               hint: t('hint.showQuickToggle'),
-              checked: localQuickToggle,
-              onChange: setLocalQuickToggle
+              // `!== false` 兜「字段缺席」：老配置升级时不该被判成关闭
+              checked: showQuickToggle !== false,
+              onChange: (next) => void saveImmediate('showQuickToggle', next)
             }),
 
             // 引用作为上下文：独立开关，关掉只影响引用，人设照常工作。
@@ -7913,8 +8075,8 @@ window.__ModuleLoader__.load({
               id: 'soul-quoteAsContext',
               labelText: t('field.quoteAsContext'),
               hint: t('hint.quoteAsContext'),
-              checked: localQuote,
-              onChange: setLocalQuote
+              checked: quoteAsContext === true,
+              onChange: (next) => void saveImmediate('quoteAsContext', next)
             }),
 
             // Issue #3：侧栏「人设总览」入口开关。
@@ -7924,8 +8086,8 @@ window.__ModuleLoader__.load({
               id: 'soul-showOverviewInSidebar',
               labelText: t('field.showOverviewInSidebar'),
               hint: t('hint.showOverviewInSidebar'),
-              checked: localOverview,
-              onChange: setLocalOverview
+              checked: showOverviewInSidebar === true,
+              onChange: (next) => void saveImmediate('showOverviewInSidebar', next)
             }),
 
             // 这里原来有一个 soul-group-title「输入框光轨」的分组小标题，
@@ -7935,13 +8097,13 @@ window.__ModuleLoader__.load({
               id: 'soul-trailEnabled',
               labelText: t('trail.enable'),
               hint: t('hint.trail'),
-              checked: localTrailEnabled,
-              onChange: setLocalTrailEnabled
+              checked: trailEnabled === true,
+              onChange: (next) => void saveImmediate('trailEnabled', next)
             }),
 
             // 用 div 而不是 Fragment：碎片没法挂 class，而这段需要一层容器来补上
             // 与上方开关行之间的间距（.soul-trail-detail 的 margin-top）。
-            localTrailEnabled && e('div', { className: 'soul-trail-detail' },
+            trailEnabled && e('div', { className: 'soul-trail-detail' },
               e('div', { className: 'soul-field' },
                 e('label', { htmlFor: 'soul-trailColor' }, t('trail.color')),
                 e('div', { className: 'soul-trail-colors' },
@@ -7971,14 +8133,19 @@ window.__ModuleLoader__.load({
                     onChange: (ev) => setLocalTrailColor(ev.target.value),
                     placeholder: TRAIL_COLOR_FALLBACK
                   })
-                )
+                ),
+                // 非法中间态要说出来：防抖 effect 对非法值不发请求，
+                // 不提示的话用户看到色块变了，以为已经存上了。
+                !TRAIL_COLOR_PATTERN.test(String(localTrailColor || '').trim())
+                  ? e('div', { className: 'soul-field-warn' }, t('trail.colorInvalid'))
+                  : null
               ),
               e('div', { className: 'soul-field' },
                 e('label', { htmlFor: 'soul-trailSpeed' }, t('trail.speed')),
                 e('select', {
                   id: 'soul-trailSpeed',
-                  value: localTrailSpeed,
-                  onChange: (ev) => setLocalTrailSpeed(ev.target.value)
+                  value: trailSpeed || 'slow',
+                  onChange: (ev) => void saveImmediate('trailSpeed', ev.target.value)
                 },
                   ...TRAIL_SPEED_VALUES.map((value) => e('option', { key: value, value }, t(`trail.speed.${value}`)))
                 )
@@ -7987,8 +8154,8 @@ window.__ModuleLoader__.load({
                 e('label', { htmlFor: 'soul-trailWidth' }, t('trail.width')),
                 e('select', {
                   id: 'soul-trailWidth',
-                  value: localTrailWidth,
-                  onChange: (ev) => setLocalTrailWidth(ev.target.value)
+                  value: trailWidth || 'thin',
+                  onChange: (ev) => void saveImmediate('trailWidth', ev.target.value)
                 },
                   ...TRAIL_WIDTH_VALUES.map((value) => e('option', { key: value, value }, t(`trail.width.${value}`)))
                 )
@@ -7997,10 +8164,12 @@ window.__ModuleLoader__.load({
                 // 预览示例不是表单控件，没有可关联的 id —— 用 label 会是「指向空的标签」，
                 // 所以改用同风格的 div（样式见 .soul-field-label）
                 e('div', { className: 'soul-field-label' }, t('trail.preview')),
+                // 颜色取本地值：拖动中就该看到效果，而它 600ms 后才落盘；
+                // 速度/粗细取 store：它们点击即写，示例与线上必然一致。
                 e(SoulTrailPreview, {
                   color: localTrailColor,
-                  speed: localTrailSpeed,
-                  width: localTrailWidth,
+                  speed: trailSpeed || 'slow',
+                  width: trailWidth || 'thin',
                   t
                 })
               )
@@ -8034,31 +8203,29 @@ window.__ModuleLoader__.load({
 
         error && e('div', { className: 'soul-error' }, error),
 
-        e('div', { className: 'soul-buttons' },
-          e(ui.Button, {
-            variant: 'primary',
-            onClick: handleSave,
-            disabled: saving || !dirty
-          }, saving ? t('button.saving') : t('button.save')),
-          // 方案 A：「保存当前为预设」从预设列表移到这里，与「保存设置」并列为同级动作。
-          // 两个保存动作放在一起，差异一眼可见（就地生效 vs 另存一份），
-          // 且按钮就贴在刚编辑过的表单旁 ⇒ 用户自然理解「存的是我刚才编的」。
-          e(ui.Button, {
-            onClick: () => { setPersonaName(''); setShowSavePersona(true) },
-            disabled: saving
-          }, t('personas.saveAs')),
-          // 「更新到预设」（0.9.0-s）：把当前草稿覆盖写回某个已有自建预设。
-          //
-          // 只列**自建**预设：内置预设不可改（写入路径一律拒绝内置名），
-          // 列出来只会让用户点了吃一个 400。
-          e(ui.Button, {
-            onClick: () => setShowUpdatePersona(true),
-            disabled: saving || editablePersonaNames.length === 0
-          }, t('personas.updateTo')),
-          e(ui.Button, {
-            onClick: handleReset,
-            disabled: saving
-          }, t('button.reset'))
+        // ——「高级选项」（放在提示词预览之后）——
+        //
+        // 这一格里只有一个动作：重置默认。它单独成组有三个理由：
+        //   ① 破坏性与其它字段不同档 —— 别处是「改一格」，这里是「十几个字段一起回默认」；
+        //   ② 原先它和「保存设置」并排摆在底部顺手的位置，而**删除预设**反而有二次确认，
+        //      破坏性更大的动作确认更轻，这个倒挂没有道理；
+        //   ③ 它不属于任何内容分区（关于你 / 特质 / 交互），留在页尾就是一条孤零零的红按钮。
+        // 位置选在预览之后：那是用户读完成本才会往下走的地方，也是「我想知道现在到底生效了什么」
+        // 与「我想推倒重来」天然相邻的位置。
+        e(SoulAccordion, {
+          id: 'soul-advanced',
+          title: t('group.advanced'),
+          summary: t('button.reset'),
+          open: openSection === 'advanced',
+          onToggle: toggleSection('advanced')
+        },
+          e('div', { className: 'soul-field-note' }, t('hint.reset')),
+          e('div', { className: 'soul-section-actions' },
+            e(ui.Button, {
+              onClick: () => setShowResetConfirm(true),
+              disabled: saving
+            }, t('button.reset'))
+          )
         ),
 
         // ——「存为新预设」命名弹层 ——
@@ -8102,15 +8269,13 @@ window.__ModuleLoader__.load({
             // 不加这个开关时，保存预设后表单里仍是那套未保存编辑 ⇒ 底部同时显示
             // 「已保存预设「X」」和「有未保存的更改」，读起来矛盾。
             // 默认不勾：存预设与改当前配置是两件事，不该替用户静默改配置。
-            e('label', { className: 'soul-modal-check' },
-              e('input', {
-                type: 'checkbox',
-                checked: applyAfterSave,
-                onChange: (ev) => setApplyAfterSave(ev.target.checked)
-              }),
-              e('span', null, t('personas.applyAfterSave')),
-              e('span', { className: 'soul-modal-check-hint' }, t('personas.applyAfterSaveHint'))
-            ),
+            e(SoulSwitch, {
+              id: 'soul-apply-after-save',
+              checked: applyAfterSave,
+              labelText: t('personas.applyAfterSave'),
+              hint: t('personas.applyAfterSaveHint'),
+              onChange: (next) => setApplyAfterSave(next)
+            }),
             e('div', { className: 'soul-modal-actions' },
               e(ui.Button, {
                 onClick: () => { setShowSavePersona(false); setPersonaName(''); setApplyAfterSave(false) }
@@ -8167,6 +8332,46 @@ window.__ModuleLoader__.load({
           )
         ),
 
+        // ——「重置默认」二次确认弹层 ——
+        //
+        // 不可撤销的批量写入值得一道看得见的门槛。删除预设用的是「原地变字 + 5 秒超时」，
+        // 这里改用弹层：那条动作只影响一个预设、且能从变更记录恢复；
+        // 重置一次改光十几个字段，撤销要逐条点，代价不对等。
+        showResetConfirm && e('div', {
+          className: 'soul-modal-mask',
+          role: 'presentation',
+          onClick: () => setShowResetConfirm(false)
+        },
+          e('div', {
+            className: 'soul-modal',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': t('reset.confirmTitle'),
+            onClick: (ev) => ev.stopPropagation()
+          },
+            e('div', { className: 'soul-modal-title' }, t('reset.confirmTitle')),
+            e('div', { className: 'soul-modal-note' },
+              e('div', null, t('reset.confirmBody')),
+              // 预设库不在重置范围内 —— 不说清楚，用户会以为存过的人设也没了，
+              // 于是either 不敢点，either 点完才发现「原来预设还在」。
+              e('div', { className: 'soul-modal-note-excl' }, t('reset.confirmKeeps'))
+            ),
+            // 有未保存草稿时额外说一句：重置只动已保存的配置，草稿仍在表单里，
+            // 此时点本区的保存会把草稿写回默认之上（这是用户自己的决定，但必须知道）。
+            dirty && e('div', { className: 'soul-field-warn' }, t('reset.confirmDraft')),
+            e('div', { className: 'soul-modal-actions' },
+              e(ui.Button, {
+                onClick: () => setShowResetConfirm(false)
+              }, t('button.cancel')),
+              e(ui.Button, {
+                variant: 'primary',
+                disabled: saving,
+                onClick: () => { setShowResetConfirm(false); void handleReset() }
+              }, t('reset.confirmButton'))
+            )
+          )
+        ),
+
         dirty && !saving && e('div', { className: 'soul-status soul-dirty' }, t('status.unsaved')),
 
         // —— 内联结果提示（对齐宿主模型设置页的全局形态）——
@@ -8201,7 +8406,8 @@ window.__ModuleLoader__.load({
     // 设置页内的实时示例：与线上光轨共用同一渲染层、同一挂载点解析（resolveTrailMountPoint）
     // 与同一份 CSS，因此「示例所见」即「回复时所得」；颜色/速度/粗细随表单实时联动。
     //
-    // 本组件**只在光轨开启时**被渲染（见调用处的 `localTrailEnabled &&`），所以它没有
+    // 本组件**只在光轨开启时**被渲染（见调用处的 `trailEnabled &&` —— 那个开关是即时字段，
+    // 直接读 store），所以它没有
     // 「关闭」这一态：此前它接了一个 `enabled` prop 并写了 off 分支，那是永不执行的死
     // 代码（且 `data-soul-trail="off"` 会连带影响 CSS 选择器），现在去掉。
     function SoulTrailPreview(props) {
