@@ -961,7 +961,10 @@ window.__ModuleLoader__.load({
       // `minmax(0,1fr) auto` 把第二列天然推到右侧（与子元素 display 无关），
       // `minmax(0,1fr)` 保证左侧文字不会被长下拉挤没。
       '.soul-field-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:24px;padding:16px 0;margin-bottom:0;width:100%;border-bottom:.5px solid var(--dsw-alias-border-l2)}',
-      '.soul-field-row .soul-select-anchor{grid-column:2;justify-self:end}',
+      // 宿主 Menu 的 anchor wrapper 默认是 inline span —— inline 拿不到 grid 的 auto 列宽，
+      // justify-self:end 对 inline 无效，触发按钮贴左、右侧留白（用户实测「文字和 chevron
+      // 整体贴左，右边框空一大段」）。改 flex 容器 + justify-content:flex-end 推到列右端。
+      '.soul-field-row .soul-select-anchor{grid-column:2;display:flex;min-width:0}',
       // 左侧两行：标题（14/22 label-primary）+ 说明（12/18 label-tertiary）。
       // 宿主 PreferenceRow 的 `.rowText / .title / .desc` 就是这套值；我们把原来的
       // ⓘ tooltip 换成可见说明 —— 说明本身就短，藏进 tooltip 反而让人非点不可。
@@ -979,10 +982,15 @@ window.__ModuleLoader__.load({
       ".soul-select-trigger{box-sizing:border-box;display:inline-flex;align-items:center;gap:12px;height:36px;padding:0 14px;border:none;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;line-height:22px;cursor:pointer;flex:none;width:auto;text-align:left}",
       ".soul-select-trigger:hover{background:var(--dsw-alias-interactive-bg-hover)}",
       ".soul-select-trigger:disabled{opacity:.6;cursor:default}",
-      ".soul-select-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      "// 下拉框里选中项文本：flex:1 让它撑满按钮剩余空间，text-align:right 把文字推到",
+      "// chevron 旁边、右边框处 —— 否则内容比 min-width 窄时（如「中文」两个字），flex-start",
+      "// 会把它留在左侧，右侧留一大片空白（用户实测）。",
+      ".soul-select-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".soul-select-chevron{flex:none}",
       // 设置行里的下拉：限宽，避免长选项把左侧标题挤没
-      ".soul-field-row .soul-select-trigger{min-width:120px;max-width:280px}",
+      "// trigger 填满 wrapper：label(flex:1) 把文字推到左、chevron 顶到右，右侧不空白。",
+"// 宿主 wrapper 是 inline span，trigger 不占满时 justify-self 无效 ⇒ 右侧留白。",
+".soul-field-row .soul-select-trigger{width:100%;min-width:120px;max-width:280px}",
       ".soul-history-retention .soul-select-trigger{min-width:112px}",
       ".soul-bindings-new .soul-select-trigger{min-width:120px}",
       '.soul-field select option{color:var(--dsw-alias-label-primary)}',

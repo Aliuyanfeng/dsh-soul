@@ -6091,7 +6091,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     ]
     for (const [re, label] of expectations) assert.match(css, re, '缺少：' + label)
     // 限宽单独一条规则（只有设置行需要一个上限；历史保留 / 绑定按各自 min-width 走）
-    assert.match(source, /\.soul-field-row \.soul-select-trigger\{min-width:120px;max-width:280px\}/, '设置行下拉应限宽（固定 px：百分比在 auto 宽度的父级里会塌）')
+    assert.match(source, /\.soul-field-row \.soul-select-trigger\{width:100%;min-width:120px;max-width:280px\}/, '设置行下拉应占满 wrapper 并限宽（width:100% 让 label 左文右钩，右侧不空白）')
     // 悬停与宿主一致
     assert.match(source, /\.soul-select-trigger:hover[^}]*interactive-bg-hover/, '悬停应用 interactive-bg-hover')
     // 文字超长要省略，不能溢出胶囊
@@ -6166,7 +6166,10 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const anchor = source.match(/\.soul-field-row \.soul-select-anchor\{[^}]*\}/)
     assert.ok(anchor, '缺少 .soul-select-anchor 规则（wrapper 必须落到第二列）')
     assert.match(anchor[0], /grid-column:2/, 'wrapper 必须显式落到第二列')
-    assert.match(anchor[0], /justify-self:end/, 'wrapper 必须在第二列内靠右')
+    // 0.13.0：wrapper 转 flex 容器 + trigger width:100%，把文字推到左、chevron 顶到右，
+    // 右侧不空白。原先用 justify-self:end 对 inline wrapper 无效（trigger 贴左、右侧留白）。
+    assert.match(anchor[0], /display:flex/, 'wrapper 必须是 flex 容器（让 trigger 能 width:100% 撑满）')
+    assert.match(source, /\.soul-field-row \.soul-select-trigger\{width:100%/, 'trigger 必须 width:100% 填满 wrapper（否则文字贴左、右侧留白）')
     // 百分比上限是踩过的坑：auto 宽度的父级里会塌
     assert.equal(/\.soul-field-row \.soul-select-trigger\{[^}]*max-width:\s*min\(/.test(source), false,
       '    trigger 的上限不能用百分比（父级宽度 auto 时会塌成很窄）'.trim())
