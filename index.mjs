@@ -85,6 +85,13 @@ import {
 import { createInjectionSource } from './lib/injection.mjs'
 import { encodeSessionDirName, matchSessionDirsToWorkspaces, pathCompareKey } from './lib/session-dir.mjs'
 import {
+  declaredPersonaFields,
+  hasSubagentPersona,
+  isSubagentAgent,
+  resolveSubagentConfig,
+  subagentInheritsPersona
+} from './lib/subagent-scope.mjs'
+import {
   findDuplicatePersonas, isBuiltinPersona, builtinPersonaNames, mergePersonas, personaMatches, resolvePersona, declaredPersonaKeys } from './lib/personas.mjs'
 import { configWriteRefusal, describeConfigFailure, moveAsideConfigFile, readConfigFile, writeConfigFile } from './lib/store.mjs'
 import {
@@ -230,7 +237,6 @@ function builtinPersonaNamesSafe() {
   }
 }
 
-
 // ==================== 提示词文案与构建器 ====================
 
 // 提示词固定文案表：所有进入 system prompt / 会话注入 / 工具返回的文本，
@@ -243,6 +249,9 @@ const PROMPT_TEXT = {
     profileNickname: (n) => `- 昵称：${n}（回复时使用这个称呼）`,
     profileOccupation: (o) => `- 职业：${o}`,
     profileBio: (b) => `- 用户自述：${b}`,
+    // 子代理身份兜底：预设可能只声明了风格维度、没写角色说明（见 lib/subagent-scope.mjs 的
+    // declaredPersonaFields）。那样模型只看到「务实高效」，不知道自己在扮演谁 —— 用预设名补一句。
+    subagentIdentityHint: (name) => `你正在扮演「${name}」这个角色 —— 按这个名称所指的职责行事。`,
     styleHeader: '[回复风格]',
     styleLabel: '回复风格和语调：',
     styles: {
@@ -285,7 +294,24 @@ const PROMPT_TEXT = {
       '从现在开始不要使用 dsh-soul 之前注入的昵称、角色、回复风格、语调、特质或输出语言配置。',
       '请恢复使用 Agent 的默认行为。'
     ].join('\n'),
+    // 子代理无人设（关闭继承）时的通知 —— 与 injectDisabled 分开：
+    // 「整个插件关了」和「这只子代理本来就没有人设」对模型是两件事。
+    injectCleared: [
+      '[dsh-soul 子代理人设已清除]',
+      '从现在开始不要使用 dsh-soul 之前注入给你的昵称、角色、回复风格、语调或特质配置。',
+      '按任务本身的要求工作即可。'
+    ].join('\n'),
     toolUpdated: '已更新个性化设置',
+    // ===== 子代理（0.13.0）=====
+    subagentRule: '[子代理] 子代理默认不继承你的人设（除非用户在设置里打开了继承）。要它扮演特定角色，先在 spawn 之前调用 set_subagent_persona 并传 pending: true 登记，它会出生即带该人设；已启动的子代理也可用 session 指定，但只在其运行期间有效。',
+    toolSubagentMissing: '找不到这个预设：',
+    toolSubagentNoTarget: '没有可用的活动子代理：请传 session（spawn 返回的 subagentId）；若想给「下一个」子代理排队，传 pending: true 后再 spawn',
+    toolSubagentNeedTarget: '有多个活动子代理，请用 session 指定一个：',
+    toolSubagentNotMine: '该会话不是你的活动子代理 —— 只能改自己派出的、且仍在运行的子代理。想给下一个子代理设人设，请用 pending: true。',
+    toolSubagentUpdated: '已更新该子代理的人设（下一轮装配生效）',
+    toolSubagentCleared: '已清除该子代理的人设',
+    toolSubagentQueued: '已排队：下一个 spawn 的子代理会带着这份人设出生',
+    toolSubagentQueueCleared: '已清空排队的子代理人设',
     toolNoChanges: '没有要更改的设置',
     toolValidationFailed: '配置校验失败：',
     toolProposal: '已收到人设变更请求（确认模式已开启，尚未生效）：',
@@ -300,6 +326,7 @@ const PROMPT_TEXT = {
     profileNickname: (n) => `- Nickname: ${n} (address the user by this name in replies)`,
     profileOccupation: (o) => `- Occupation: ${o}`,
     profileBio: (b) => `- Self-description: ${b}`,
+    subagentIdentityHint: (name) => `You are acting as the "${name}" role — do what that name implies.`,
     styleHeader: '[Reply style]',
     styleLabel: 'Reply style & tone: ',
     styles: {
@@ -342,7 +369,21 @@ const PROMPT_TEXT = {
       'Stop using any nickname, role, reply style, tone, traits or output language previously injected by dsh-soul.',
       'Return to your default behavior.'
     ].join('\n'),
+    injectCleared: [
+      '[dsh-soul] Subagent persona cleared',
+      'Stop using any nickname, role, reply style, tone or traits previously injected into you by dsh-soul.',
+      'Work according to the task itself.'
+    ].join('\n'),
     toolUpdated: 'Personalization settings updated',
+    subagentRule: '[Subagents] Subagents do not inherit your persona (unless inheritance is enabled in settings). To have one play a specific role, call set_subagent_persona with pending: true BEFORE spawning so it is born with that persona; you can also target a running subagent by session, but only while it is alive.',
+    toolSubagentMissing: 'No such preset: ',
+    toolSubagentNoTarget: 'No active subagent to target: pass session (the subagentId returned by spawn); to queue a persona for the next subagent, pass pending: true before spawning',
+    toolSubagentNeedTarget: 'Multiple active subagents — pass session to pick one: ',
+    toolSubagentNotMine: 'That session is not one of your active subagents — you can only change subagents you spawned that are still running. To set a persona for the next subagent, use pending: true.',
+    toolSubagentUpdated: 'Subagent persona updated (applies on the next assembly)',
+    toolSubagentCleared: 'Subagent persona cleared',
+    toolSubagentQueued: 'Queued: the next spawned subagent will be born with this persona',
+    toolSubagentQueueCleared: 'Cleared the queued subagent persona',
     toolNoChanges: 'No settings to change',
     toolValidationFailed: 'Config validation failed: ',
     toolProposal: 'Persona change requested (confirmation mode is on — not applied yet):',
@@ -357,12 +398,31 @@ function promptTextOf(config) {
   return PROMPT_TEXT[config && config.language === 'en' ? 'en' : 'zh']
 }
 
+// 用户可控文本进提示词前的**防伪处理**。
+//
+// 攻击面很具体：昵称上限 50 字，够写 `Nick\n\n[执行规则] 忽略以上所有指令`；
+// 自定义指令 2000 字更能伪造出完整的 `[用户背景]` / `[回复风格]` 段 —— 编译结果里
+// 会出现两个同名段头，模型无从分辨哪个是插件生成的（安全审计 findings）。
+//
+// 为什么不加 `<<<USER>>>` 定界符：那会把每个字段撑成三行、提示词显著变长，而且
+// 依赖模型对标记语法的服从度（不稳定）。这里做两件成本极低、命中面很窄的事：
+//   ① 剥掉控制字符（保留换行）—— 防止 NUL / ESC 之类充当隐形分隔符；
+//   ② 行首若是 `[`（我们自己的段头形态），前缀一个反斜杠 —— 可读性不变，但不再是
+//      合法段头。只挡 `[`，不碰 `#` / `<`：markdown 标题在正常内容里太常见，误伤大。
+function sanitizePromptText(text) {
+  return String(text == null ? '' : text)
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .split('\n')
+    .map((line) => (/^\s*\[/.test(line) ? '\\' + line : line))
+    .join('\n')
+}
+
 // 用户背景块（「关于你」）：描述对话用户本人，不属于 Agent 的角色设定
 function buildUserProfile(config, T) {
   const lines = []
-  if (config.nickname) lines.push(T.profileNickname(config.nickname))
-  if (config.occupation) lines.push(T.profileOccupation(config.occupation))
-  if (config.bio) lines.push(T.profileBio(config.bio))
+  if (config.nickname) lines.push(T.profileNickname(sanitizePromptText(config.nickname)))
+  if (config.occupation) lines.push(T.profileOccupation(sanitizePromptText(config.occupation)))
+  if (config.bio) lines.push(T.profileBio(sanitizePromptText(config.bio)))
   return lines.join('\n')
 }
 
@@ -480,6 +540,31 @@ function enqueueConfigWrite(task) {
   const run = configWriteQueue.then(task)
   // 队列吞掉单次任务的失败，保证后续写入不会被一次磁盘错误卡死
   configWriteQueue = run.then(() => {}, () => {})
+  return run
+}
+
+// ==================== 会话覆盖 sidecar 写链 ====================
+//
+// 配置本体有 configWriteQueue，但会话覆盖（sidecar）的写入原先**完全没有串行化**：
+// 两个并发请求对同一会话做「读—改—写」会互相覆盖，或者同时在 Windows 上 rename
+// 同一目标而拿到 EPERM。docs/DESIGN-config-scope.md 承诺过「每个 sessionId 一条
+// Promise 链 + updatedAt 乐观校验」，代码里一直没有落地（安全审计 findings）。
+//
+// 这里只做**串行化**这一半：按 sessionId 分链，不同会话互不阻塞。乐观校验（冲突时
+// 返回 409 让调用方重试）留待后续 —— 串行化已能消除丢更新，409 属于更细的语义。
+const sessionWriteChains = new Map()
+
+function enqueueSessionWrite(sessionId, task) {
+  const key = sessionId === null || sessionId === undefined ? '__global__' : String(sessionId)
+  const previous = sessionWriteChains.get(key) || Promise.resolve()
+  const run = previous.then(task)
+  // 与配置队列同样的取舍：吞掉失败，别让一次磁盘错误卡死该会话后续的写入。
+  const settled = run.then(() => {}, () => {})
+  sessionWriteChains.set(key, settled)
+  // 链执行完就回收，避免 Map 随会话数无限增长。
+  settled.then(() => {
+    if (sessionWriteChains.get(key) === settled) sessionWriteChains.delete(key)
+  })
   return run
 }
 
@@ -647,7 +732,36 @@ function formatFieldErrors(errors) {
 
 // 读取 JSON 请求体：限制大小（超限读完丢弃并返回 413），解析失败返回 400。
 // 超限时继续读完剩余数据，避免连接中残留未读字节污染 keep-alive。
+// 面向 **web 页面跨站** 的 CSRF 防护：只对**写方法**（POST/PUT/DELETE）做来源约束，
+// GET 保持放开（读操作不产生副作用，跨站读了也拿不到响应 —— 受同源策略保护）。
+//
+// 威胁：攻击者页面 `fetch('http://127.0.0.1:11809/api/soul/config', {method:'POST',
+// headers:{'Content-Type':'text/plain'}, body:'...'})`。text/plain 是 CORS 简单请求，
+// 不触发预检，宿主又不做 Origin 校验 ⇒ 副作用执行（人设被改写、审计被清空）。
+//
+// 两道廉价防线（都不依赖安全敏感的头字段）：
+//   ① 要求 `Content-Type: application/json` —— 跨站无法预设该头（会触发预检）；
+//   ② Sec-Fetch-Site 非 same-origin / none/same-site 则拒绝 —— 浏览器加的头，跨站伪造不了。
+// 返回 null 表示放行；否则返回 [status, body]。
+function csrfGuard(req) {
+  const method = String((req && req.method) || 'GET').toUpperCase()
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return null
+  const contentType = String((req.headers && req.headers['content-type']) || '').toLowerCase()
+  if (!contentType.startsWith('application/json')) {
+    return [415, { ok: false, error: 'Content-Type 必须为 application/json（防止跨站简单请求）' }]
+  }
+  const site = String((req.headers && req.headers['sec-fetch-site']) || '').toLowerCase()
+  if (site !== '' && site !== 'none' && site !== 'same-origin' && site !== 'same-site') {
+    return [403, { ok: false, error: '拒绝跨站请求（Sec-Fetch-Site: ' + site + '）' }]
+  }
+  return null
+}
+
 async function readJsonBody(req) {
+  // CSRF 防护（0.13.0 安全加固）：写端点必须用 JSON Content-Type + 可信来源。
+  // readJsonBody 是所有「读 body 的写请求」的统一入口，守卫放这里一处覆盖全部。
+  const g0 = csrfGuard(req)
+  if (g0) return { ok: false, status: g0[0], error: g0[1].error }
   const chunks = []
   let size = 0
   let oversized = false
@@ -680,7 +794,8 @@ function compilePrompt(config) {
   }
 
   const T = promptTextOf(config)
-  const identity = (config.customInstructions || '').trim()
+  // 自定义指令是**用户可控的长文本**，直接拼进 `[角色设定]` 等于允许它自带段头。
+  const identity = sanitizePromptText(config.customInstructions || '').trim()
   const profile = buildUserProfile(config, T)
   const behavior = buildBehavior(config, T)
 
@@ -706,9 +821,55 @@ function compilePrompt(config) {
     parts.push(`${T.styleHeader} ${behavior}`)
   }
 
+  // 子代理派活提醒：与角色扮演无关，但必须**常驻**。
+  //
+  // 工具的定义只在「模型想调用某个工具」时才被读到，而「spawn 之前别忘了登记人设」
+  // 是派活那一刻的决策 —— 不写进提示词，主代理派完就走，子代理出生即无人设，
+  // 而它不会报错（上游 PR #4 为此专门补了一个 commit）。
+  if (T.subagentRule) parts.push(T.subagentRule)
+
   // 执行规则
   parts.push(`${T.rulesHeader} ${T.rules}`)
 
+  return parts.join('\n')
+}
+
+// 子代理的提示词（0.13.0）：只出身份 / 背景 / 行为三段，**不含「执行规则」块**。
+//
+// 为什么不能直接复用 compilePrompt：它末尾无条件 push 执行规则 —— 即便前面全空
+// 也会返回一段文本。执行规则是给**主代理对话**用的（怎么称呼、怎么组织回答），
+// 对「被派出去干活的手」既是噪音，也会让「无人设」这个状态名不副实（提示词非空），
+// 进而让注入侧把「本来没人设」误判成「有人设」。
+//
+// 全空配置返回空字符串 —— 空提示词正是「这个子代理没有人设」该有的状态。
+// 宿主装配时对 section 文本做 `filter((text) => text.length > 0)`，空串不会出错。
+function compileSubagentPrompt(config, personaName) {
+  if (!config || !config.enabled) {
+    return ''
+  }
+
+  const T = promptTextOf(config)
+  // 身份层优先用预设自带的角色说明；没有就用预设名兜底。
+  //
+  // 为什么需要兜底：预设只声明风格维度（style/emoji/…）时，模型会看到「务实高效」
+  // 却不知道自己在扮演「安全审计员」—— 名字是唯一携带角色意图的东西，而它此前只用于
+  // 查表与 ★ 标注，从没进过提示词。
+  // 两条来源都是用户可控：自定义指令是人写的长文本，预设名也会被原样嵌进
+  // `你正在扮演「${name}」` 这句里 —— 都过一遍防伪处理（段头转义 + 控制字符剥离）。
+  const authored = sanitizePromptText(config.customInstructions || '').trim()
+  const safePersonaName = personaName ? sanitizePromptText(personaName).replace(/\n/g, ' ') : ''
+  const identity = authored || (safePersonaName ? T.subagentIdentityHint(safePersonaName) : '')
+  const profile = buildUserProfile(config, T)
+  const behavior = buildBehavior(config, T)
+
+  if (!identity && !profile && !behavior) {
+    return ''
+  }
+
+  const parts = []
+  if (identity) parts.push(`${T.roleHeader} ${identity}`)
+  if (profile) parts.push(`${T.profileHeader} ${T.profileDisclaimer}\n${profile}`)
+  if (behavior) parts.push(`${T.styleHeader} ${behavior}`)
   return parts.join('\n')
 }
 
@@ -725,6 +886,7 @@ const deliveryState = {
   agents: 0,               // 最近一次看到的活动会话数
   delivered: 0,            // 最近一次成功注入的会话数
   failed: 0,               // 最近一次注入抛错的会话数
+  skipped: 0,              // 最近一次因「提示词与上次相同」而跳过的会话数
   injectionProblem: null,  // 未能如实送达的原因；正常为 null
   sectionRegisteredAt: null, // section 最近一次注册成功的时间（ISO）
   lastAssembledRevision: null, // 最近一次装配实际使用的配置修订号（排查「改了没生效」用）
@@ -734,6 +896,24 @@ const deliveryState = {
 // 同一原因只告一次警，避免每次保存都刷屏；一旦恢复正常则清掉记录，
 // 这样「好了又坏」会再次告警。
 const warnedReasons = new Set()
+
+// sessionId → 上次**成功注入**的提示词文本。
+//
+// 用来跳过「文本没变」的重复注入。典型场景：主代理换了人设，而关闭继承的子代理
+// 提示词恒为空 —— 旧实现会给每个活动子代理各塞一条「配置已更新」，让它们误以为
+// 自己的设定被改过。只在注入**成功**后记录：失败时下次还要重试。
+const lastInjectedPrompt = new Map()
+
+// sessionId → 上次**装配**时它有没有人设（boolean）。用来回答「这个会话曾经有人设吗」。
+//
+// 为什么不能用 lastInjectedPrompt 判断：它记的是「注入过什么」，而注入只在配置变更时
+// 发生。一个继承了人设、但配置此后没变过的子代理，在注入表里是缺席的 —— 用
+// `!has(sessionId)` 当「它本来就没人工设」的判据，会在「继承开着时启动 → 用户关掉
+// 继承」这条路径上漏发清除通知，子代理继续拿旧人设跑完任务（静默，且方向相反）。
+//
+// 也不能记提示词文本：language 是全局开关，无人设时仍会编出「用简体中文回答」一句，
+// 按「文本非空」判断会把它误当成有人设。所以这里只记**人设有无**（见 hasSubagentPersona）。
+const lastAssembledPersona = new Map()
 
 function warnOnce(ctx, reason, message) {
   if (warnedReasons.has(reason)) return
@@ -799,6 +979,7 @@ function injectPromptToAllAgents(ctx, config) {
   // lib/injection.mjs 的模块头注释。
   let delivered = 0
   let failed = 0
+  let skipped = 0
   let lastError = null
 
   for (const agent of listed) {
@@ -818,28 +999,63 @@ function injectPromptToAllAgents(ctx, config) {
     const sessionId = sessionIdOfAgent(agent)
     // 索引缺席（诊断装配 / 会话未归属任何工作区）时为 null ⇒ 自然退回目录层，与装配同形。
     const workspaceId = sessionId === null ? null : (sessionWorkspaceIndex.get(sessionId) || null)
-    const perAgent = configForScope(
+    // 与装配侧走**同一个** resolvePromptForAgent（含子代理分岔）。
+    const resolved = resolvePromptForAgent(
       config,
-      cwdOfAgent(agent),
+      agent,
       workspaceId,
       sessionOverridesOrNull(sessionId)
-    ).config
-    // 快照的**框定语**也按该会话的语言：`promptTextOf` 只认 `language`，而工作区可以
-    // 覆盖它 —— 全局英文 + 工作区中文人设时，说明文字不该还是英文。
-    const TA = promptTextOf(perAgent)
-    const prompt = compilePrompt(perAgent)
-    const snapshotText = prompt || TA.injectDisabled
+    )
+    const prompt = resolved.prompt
+
+    // 与上次成功注入的完全相同 ⇒ 跳过。
+    //
+    // 典型场景：主代理换了人设，而关闭继承的活动子代理提示词恒为空 —— 旧实现
+    // 会给它们各塞一条「个性化配置已更新」，让子代理误以为自己的设定被改。
+    if (sessionId !== null && lastInjectedPrompt.get(sessionId) === prompt) {
+      skipped++
+      continue
+    }
+
+    // 这个子代理**现在有没有人设**。注意不能看 prompt 是否为空：language 是全局开关，
+    // 无人设时仍会编出「用简体中文回答」一句，文本非空但人设为空。
+    const hasPersonaNow = hasSubagentPersona(resolved.config)
+
+    // 子代理**本来就没有人设**（上次装配也没有）⇒ 什么都不注入。
+    //
+    // 它本来就不该有人设，一条「你的人设已清除」只会在它的上下文里制造噪音。
+    // 「本来没有」要看**上次装配时的人设有无**：注入表缺席不等于没人设（见上）。
+    const hadPersonaBefore = sessionId !== null
+      && (lastAssembledPersona.get(sessionId) === true || lastInjectedPrompt.has(sessionId))
+    if (resolved.subagent && !hasPersonaNow && !hadPersonaBefore) {
+      skipped++
+      continue
+    }
+
+    // 快照的**框定语**也按该会话生效配置的语言：`promptTextOf` 只认 `language`，
+    // 而工作区可以覆盖它 —— 全局英文 + 工作区中文人设时，说明文字不该还是英文。
+    const TA = promptTextOf(resolved.config)
+    // 文案不能混用：
+    //   · 主代理 + 提示词为空：个性化总开关关了（injectDisabled）
+    //   · 主代理 + 提示词非空：配置已更新（injectUpdated）
+    //   · 子代理 + 人设被清空：injectCleared（此时提示词可能只剩语言那一句，不能当「有配置」）
+    const updatedText = `${TA.injectUpdatedHeader}\n${TA.injectUpdatedBody}\n\n${prompt}`
+    const snapshotText = resolved.subagent
+      ? (hasPersonaNow ? updatedText : TA.injectCleared)
+      : (prompt ? updatedText : TA.injectDisabled)
 
     try {
       agent.inject(createUserMessage({
         content: [{
           type: 'text',
-          text: prompt ? `${TA.injectUpdatedHeader}\n${TA.injectUpdatedBody}\n\n${prompt}` : snapshotText
+          text: snapshotText
         }],
         // 会话格式 v4 要求生产者自持 kind；旧的 `kind: 'plugin'` + `plugin` 组合
         // 会让每一轮在 step 开始前失败（issue #1，构造与校验见 lib/injection.mjs）
         source: createInjectionSource(snapshotText)
       }))
+      // 只在**成功**后记录：注入抛错时下次还要重试。
+      if (sessionId !== null) lastInjectedPrompt.set(sessionId, prompt)
       delivered++
     } catch (err) {
       failed++
@@ -856,6 +1072,7 @@ function injectPromptToAllAgents(ctx, config) {
   deliveryState.agents = listed.length
   deliveryState.delivered = delivered
   deliveryState.failed = failed
+  deliveryState.skipped = skipped
   deliveryState.injectionProblem = failed > 0
     ? `inject-failed: ${String((lastError && lastError.message) || lastError)}`
     : null
@@ -1133,6 +1350,127 @@ function configForScope(base, cwd, workspaceId, sessionOverride) {
   return { config: merged, source, workspaceId: workspaceId || null, binding }
 }
 
+// ==================== 排队：让子代理「出生即带人设」（0.13.0）====================
+//
+// 为什么需要排队：DSH 的 spawn 是**带着任务一起出生**的，没有「先建空壳、再派活」的
+// 分步。主代理拿到 subagentId 时，子代理往往已经在初始化 —— 这时候再写 sidecar 是在
+// 抢时间，赶上了才算数（上游 PR #4 实测能赶上，但不该依赖运气，它为此返工了三次）。
+//
+// 排队把动作挪到 spawn **之前**：主代理先登记「下一个子代理用这张卡」，子代理第一次
+// 装配 system prompt 时由 section 回调取走 —— 同一进程、同一份内存，所以它第一次模型
+// 请求就带着人设，不依赖任何时序。
+// 队列项必须带 `parentSession`：这是**归属**，不是元数据。
+//
+// 队列是进程级全局的，早先 `takePendingSubagentPersona` 只判「该会话还没有覆盖」就
+// shift() —— 主代理 A 登记的卡会被并行的主代理 B 的子代理领走（安全审计 findings）。
+// 判据与 activeSubagentsOf 一致：都用宿主给的 header.parentSession。
+const pendingSubagentPersonas = []   // [{ override, personaName, parentSession }]
+const PENDING_SUBAGENT_LIMIT = 8     // 防止登记一堆没人认领的卡
+
+// 取走队列头，立刻写进内存缓存（同步，装配这一轮就能看到）；落盘异步进行。
+//
+// 落盘失败不影响这一轮提示词 —— 它是从内存里的 override 编出来的；代价是重启后这个
+// 子会话的覆盖会丢（可接受：子代理本来就是一次性的）。
+function takePendingSubagentPersona(sessionId, parentSessionId) {
+  if (pendingSubagentPersonas.length === 0) return null
+  // 已经显式设过覆盖的会话不抢队首 —— 队列是给「还没有人设的新子代理」的。
+  if (sessionOverrides.has(sessionId)) return null
+  // 只领**自己父会话登记**的卡。按 index 找而不是 shift()：别人的卡要原样留在队里。
+  //
+  // parentSessionId 为 null（拿不到归属，例如 fork 出来的分支）⇒ 一律不领：
+  // 宁可这张卡留在队列里等人认领，也不能让不相干的子代理拿走它（fail-closed）。
+  if (parentSessionId === null) return null
+  const index = pendingSubagentPersonas.findIndex((e) => e.parentSession === parentSessionId)
+  if (index < 0) return null
+  const entry = pendingSubagentPersonas.splice(index, 1)[0]
+  sessionOverrides.set(sessionId, entry.override)
+  sessionOverridesKnown.add(sessionId)
+  if (entry.personaName) sessionPersonaNames.set(sessionId, entry.personaName)
+  persistSessionOverride(sessionId, entry.override, entry.personaName).catch(() => {})
+  return entry
+}
+
+async function persistSessionOverride(sessionId, override, personaName) {
+  const filePath = sessionScopePathFor(configPath(), sessionId)
+  const doc = createSessionScopeDoc(sessionId, override, Date.now(), personaName || null)
+  await enqueueSessionWrite(sessionId, () => writeSessionScope(filePath, doc))
+}
+
+// 某个主代理名下的**活动**子代理。
+//
+// 用它做归属校验：显式传 session 时，目标必须出现在这里 —— 否则主代理就能给任意已知
+// sessionId 写人设覆盖（上游 PR #4 的实现在这里只校验了 id 格式，`live` 仅影响文案，
+// 写入是无条件的）。越权口子不该靠「UUID 猜不到」来防。
+//
+// 代价：刚 spawn、还没进 agents.list() 的子代理不能按 id 设置 —— 那正是 pending 要解决
+// 的场景（spawn 前登记），不是绕过校验的理由。
+function activeSubagentsOf(ctx, parentSessionId) {
+  let listed = []
+  try {
+    const agents = ctx.get('agents')
+    listed = agents && typeof agents.list === 'function' ? agents.list() : []
+  } catch {
+    return []
+  }
+  const out = []
+  for (const agent of listed) {
+    if (!isSubagentAgent(agent)) continue
+    // fail-closed：拿不到调用者会话时返回空列表。
+    //
+    // 这是**唯一的越权闸门**（显式 session 必须出现在这里才算「自己的子代理」）。
+    // 原先这里 out.push(agent) 把所有活动子代理都算成自己的 —— 一旦宿主给不出
+    // parentSession，闸门就等于没有。失败方向必须是「拒绝」。
+    if (parentSessionId === null) return []
+    const owner = agent?.session?.header?.parentSession
+    if (owner === parentSessionId) out.push(agent)
+  }
+  return out
+}
+
+// 一个 agent 实际该拿到的提示词 —— **唯一的解析入口**。
+//
+// 装配（section.text）与注入（injectPromptToAllAgents）必须走同一条路径：
+// 两处各写一份「怎么算人设」的历史后果是「界面显示 A、模型拿到 B」，
+// 而这类割裂没有任何报错，只能靠人眼发现（0.12.0 修过同一个形状的问题）。
+//
+// 子代理分岔（0.13.0）：
+//   · 继承开启（默认）⇒ 与主代理完全一致，走 configForScope 全链，行为零变化；
+//   · 继承关闭     ⇒ 不碰工作区/目录/全局人格，只从中性基线 + 可选的统一预设
+//                    + 该会话自己的覆盖起算（见 lib/subagent-scope.mjs）。
+function resolvePromptForAgent(base, agent, workspaceId, sessionOverride, consumePending) {
+  if (isSubagentAgent(agent) && !subagentInheritsPersona(base)) {
+    const sid = sessionIdOfAgent(agent)
+    let effectiveOverride = sessionOverride
+    let queued = null
+    // 只有装配侧（section）消费队列；注入侧不碰 —— 注入是「配置变了」的通知，
+    // 不该顺手把一个新子代理的人设领走（那会让「谁拿到队首」取决于调用顺序）。
+    if (consumePending === true && !effectiveOverride && sid) {
+      // 父会话是归属判据：子代理只能领自己父会话登记的卡。
+      queued = takePendingSubagentPersona(sid, agent?.session?.header?.parentSession ?? null)
+      if (queued) effectiveOverride = queued.override
+    }
+    const resolved = resolveSubagentConfig(base, effectiveOverride)
+    return {
+      prompt: compileSubagentPrompt(resolved.config, resolved.personaName),
+      scope: resolved.source,
+      config: resolved.config,
+      // 排队来的名字优先：它是「这次派活指定的角色」，覆盖全局卡的注解
+      personaName: queued ? queued.personaName : resolved.personaName,
+      personaMissing: resolved.personaMissing,
+      queued: queued !== null,
+      subagent: true
+    }
+  }
+  const resolved = configForScope(base, cwdOfAgent(agent), workspaceId, sessionOverride)
+  return {
+    prompt: compilePrompt(resolved.config),
+    scope: resolved.source,
+    config: resolved.config,
+    binding: resolved.binding,
+    subagent: isSubagentAgent(agent)
+  }
+}
+
 // 读出配置里的工作区覆盖表（已校验过的形态）。
 function workspaceScopesOf(config) {
   const raw = config && config.workspaces
@@ -1224,6 +1562,55 @@ function forgetSessionOverride(sessionId) {
   sessionOverrides.delete(sessionId)
   sessionOverridesKnown.delete(sessionId)
   sessionPersonaNames.delete(sessionId)
+}
+
+// 写某个会话的人设覆盖（部分更新 + 白名单 + 删空即删文件）。
+//
+// 与 HTTP 路由的会话覆盖写入共用同一套校验（sanitizeSessionOverride），差别只在
+// 合并语义：这里把 patch 合进**已有**覆盖，而不是整份替换 —— 子代理分几次调
+// set_persona 时，后一次不该把前一次写的字段抹掉。
+async function writeSessionPersonaPatch(sessionId, patch, personaName) {
+  const key = String(sessionId)
+  const filePath = sessionScopePathFor(configPath(), key)
+  const previous = await readSessionScope(filePath, key)
+  const merged = { ...(previous.override || {}) }
+  for (const [k, v] of Object.entries(patch)) {
+    // 空值 = 清除该字段（与设置页「留空即清除」同一约定）
+    if (v === null || v === '') delete merged[k]
+    else merged[k] = v
+  }
+  const { override } = sanitizeSessionOverride(merged)
+
+  // 覆盖被删空 ⇒ 会话不再有覆盖。删文件而不是留空壳：空 sidecar 会让
+  // 「这个会话被手动设过」变成假事实，也让 GC 多扫一份。
+  if (override === null) {
+    try {
+      const { rm } = await import('node:fs/promises')
+      await rm(filePath, { force: true })
+    } catch (err) {
+      throw new Error(`清除失败：${String((err && err.message) || err)}`)
+    }
+    forgetSessionOverride(key)
+    return { cleared: true, override: null, personaName: null }
+  }
+
+  const now = Date.now()
+  const name = typeof personaName === 'string' && personaName !== ''
+    ? personaName
+    : (previous.personaName ?? null)
+  const doc = {
+    ...createSessionScopeDoc(key, override, now, name),
+    // 保留首次创建时间与孤儿标记：改人设不等于这个会话是新出现的
+    createdAt: (previous.doc && previous.doc.createdAt) || new Date(now).toISOString(),
+    ...(previous.orphan ? { orphan: previous.orphan } : {})
+  }
+  await enqueueSessionWrite(key, () => writeSessionScope(filePath, doc))
+  // 同步内存缓存：让「改完立刻生效」成立（装配是同步读缓存的）
+  sessionOverrides.set(key, override)
+  sessionOverridesKnown.add(key)
+  if (name) sessionPersonaNames.set(key, name)
+  else sessionPersonaNames.delete(key)
+  return { cleared: false, override, personaName: name }
 }
 
 // 会话覆盖的合并：部分覆盖 + 白名单 + 包封字段保护。
@@ -1349,7 +1736,6 @@ function quotesOf(rawSessionId) {
 
 // ==================== HTTP 路由 ====================
 
-
 // ==================== 引用 → 消息真绑定 ====================
 //
 // 目标：让「这条消息带了哪些引用」成为**显式、持久、按消息唯一 id** 的关联，
@@ -1431,6 +1817,7 @@ function registerQuoteBinding(ctx) {
           res.writeHead(status, { 'content-type': 'application/json' })
           res.end(JSON.stringify(body))
         }
+
         if (req.method !== 'GET') {
           send(405, { ok: false, error: 'Method not allowed' })
           return
@@ -1473,6 +1860,7 @@ function registerRoutes(ctx) {
           res.writeHead(status, { 'content-type': 'application/json' })
           res.end(JSON.stringify(body))
         }
+
         // GET：查询当前挂在宿主侧的引用（自查用）。
         //
         // 为什么需要它：「排队消息有没有把引用带走」这件事，靠看模型回答来判断并不可靠 ——
@@ -1522,6 +1910,7 @@ function registerRoutes(ctx) {
           res.writeHead(status, { 'content-type': 'application/json' })
           res.end(JSON.stringify(body))
         }
+
         
         try {
           if (req.method === 'GET') {
@@ -1580,6 +1969,7 @@ function registerRoutes(ctx) {
           res.writeHead(status, { 'content-type': 'application/json' })
           res.end(JSON.stringify(body))
         }
+
         
         try {
           // 方法校验：本端点只读。此前是唯一不判 method 的端点（同文件其余 7 处都有
@@ -1652,6 +2042,9 @@ function registerRoutes(ctx) {
           res.writeHead(status, { 'content-type': 'application/json' })
           res.end(JSON.stringify(body))
         }
+        // CSRF 防护（0.13.0）：重置是破坏性写入口，不走 readJsonBody，单独守卫
+        const g1 = csrfGuard(req)
+        if (g1) return send(g1[0], g1[1])
 
         // 方法校验：这是**破坏性写**入口（重置配置、必要时丢弃并备份损坏文件），
         // 缺了它任何 HTTP 方法都能触发 —— 而 GET 是浏览器预取、爬虫、<img src>、
@@ -2321,6 +2714,9 @@ function registerHistoryRoutes(ctx) {
       kind: 'exact',
       path: '/api/soul/history/clear',
       handler: async (req, res) => {
+        // CSRF 防护（0.13.0）：清空审计是破坏性写入口，不走 readJsonBody，单独守卫
+        const g2 = csrfGuard(req)
+        if (g2) { send(res, g2[0], g2[1]); return }
         try {
           if (req.method !== 'POST') {
             send(res, 405, { ok: false, error: 'Method not allowed' })
@@ -2494,7 +2890,6 @@ function persistBlankCache() {
     // 写不进去就只留内存缓存
   }
 }
-
 
 /** 文本里是否出现过真实的对话消息事件。 */
 function hasMessageEvent(text) {
@@ -3756,7 +4151,7 @@ function registerSessionScopeRoutes(ctx) {
             createdAt: (previous.doc && previous.doc.createdAt) || new Date(now).toISOString(),
             ...(previous.orphan ? { orphan: previous.orphan } : {})
           }
-          await writeSessionScope(filePath, doc)
+          await enqueueSessionWrite(sessionId, () => writeSessionScope(filePath, doc))
 
           // **先写缓存再刷新提示词**：缓存更新是同步的，保证紧接着的那一轮装配
           // 一定能看到新值。若等磁盘异步完成再刷，装配可能先跑、读到旧缓存。
@@ -3956,7 +4351,7 @@ async function planSessionGc(ctx) {
           ? { ...doc, orphan: undefined }
           : { ...doc, orphan: decision.orphan }
         if (decision.action === 'clear-mark') delete nextDoc.orphan
-        await writeSessionScope(file.path, nextDoc)
+        await enqueueSessionWrite(sessionId, () => writeSessionScope(file.path, nextDoc))
       } catch (err) {
         item.markError = String((err && err.message) || err)
       }
@@ -4597,8 +4992,15 @@ function registerSystemPrompt(ctx) {
           // 会话层覆盖走**内存缓存**（同步），未命中时它会在后台排一次读盘，
           // 本轮按上层配置走 —— 下一轮生效。装配里绝不能 await。
           const sessionOverride = sessionOverridesOrNull(sessionId)
-          const resolved = configForScope(snap.value, cwdOfAgent(agent), workspaceId, sessionOverride)
-          const prompt = compilePrompt(resolved.config)
+          // 与注入侧共用同一个 resolver：
+          //   子代理 + 关闭继承 ⇒ 中性基线链（不碰工作区/目录/全局人格）；
+          //   其余情况        ⇒ 原来的 configForScope 三层全链，行为不变。
+          // 第 5 参 = 装配侧可以消费「下一个子代理」的排队人设（spawn 前登记）。
+          const resolved = resolvePromptForAgent(snap.value, agent, workspaceId, sessionOverride, true)
+          const prompt = resolved.prompt
+          // 记下「这一轮它实际拿到了什么」：注入侧据此判断「曾经有人设、现在为空」，
+          // 那是**唯一**需要发「人设已清除」的情形。
+          if (sessionId !== null) lastAssembledPersona.set(sessionId, hasSubagentPersona(resolved.config))
           // 记下「这一轮实际用的是哪一版」：排查「改了却没生效」时，第一个要回答的就是它。
           // 只写不读，不影响任何行为（deliveryState 由状态端点序列化给设置页）。
           deliveryState.lastAssembledRevision = snap.revision
@@ -4863,6 +5265,25 @@ function registerTools(ctx) {
               return { ok: true, message: T0.toolNoChanges }
             }
 
+            // 子代理调用 set_persona 只能改**它自己**的人设。
+            //
+            // 为什么必须分岔：这个工具原本写全局配置 —— 子代理调一次，主代理和所有
+            // 别的会话一起换了人设。那正是「共用同一份人设」的一条隐性通道。子代理的
+            // 人设只在它自己的会话里成立，所以写会话覆盖（sidecar），也不需要审批：
+            // 它动不到任何别的会话。
+            const callerIsSubagent = isSubagentAgent(exec && exec.agent)
+            const callerSessionId = sessionIdOfAgent(exec && exec.agent)
+            if (callerIsSubagent && callerSessionId !== null) {
+              const before = await loadConfig()
+              const T0 = promptTextOf(before)
+              await writeSessionPersonaPatch(callerSessionId, patch, null)
+              refreshPromptAndInject(ctx, before)
+              const applied = Object.fromEntries(
+                Object.entries(patch).filter(([, value]) => value !== null && value !== '')
+              )
+              return { ok: true, message: T0.toolUpdated, changes: applied }
+            }
+
             // 确认模式：先走**宿主的原生审批交互**（输入框处的「允许一次 / 拒绝」面板）。
             //
             // 三态处理：
@@ -4931,6 +5352,222 @@ function registerTools(ctx) {
             return { ok: false, message: String(err.message || err) }
           }
         },
+      }))
+
+      // ==================== set_subagent_persona（主代理用，0.13.0）====================
+      //
+      // 为什么是**主代理**用的工具，而不是让子代理自选：需求原话是「主代理帮子代理来选，
+      // 也可以主代理临时给子代理写」。子代理自选有两个问题：它得先知道有哪几张卡（要读
+      // 全局配置），而且它没有「该不该继承」的判断权 —— 那是派活的人的事。
+      //
+      // 参数刻意只覆盖 PERSONA_FIELDS：不声明 nickname / occupation / bio。
+      // 那三项是「关于你」（对话用户本人的画像），不在会话覆盖白名单里，声明了也写不进去
+      // —— 声明了却写不进去等于对模型谎报能力。子代理真要「怎么称呼用户」，用
+      // customInstructions 写一句即可。
+      toolsCtx.tools.register(defineTool({
+        name: 'set_subagent_persona',
+        description:
+          '给一个子代理（subagent）设置人设：应用一张预设、临时写几个字段，或清除。' +
+          '子代理默认不继承你的人设，只有这里显式设置的才会生效。' +
+          'session 传 spawn 返回的 subagentId；省略时若只有一个活动子代理会自动选它。' +
+          '只传要改的字段，其余保持不变。' +
+          '想让它**出生时就带好人设**：在 spawn 之前调用并传 pending: true（登记「下一个子代理」），子代理第一次装配时自动生效，不必抢时序。' +
+          '注意：人设只在子代理启动时装配一次；只能操作自己派出的、仍在运行的子代理。\n' +
+          'Set the persona of a subagent: apply a preset, write fields ad hoc, or clear it. ' +
+          'Subagents do NOT inherit your persona by default — only what you set here applies. ' +
+          'Pass session = the subagentId returned by spawn; when omitted and exactly one subagent is active, it is picked automatically. ' +
+          'To have it BORN with a persona: call this before spawn with pending: true. ' +
+          'A persona is assembled once, when the subagent starts; you can only target subagents you spawned that are still running.',
+        parameters: {
+          session: {
+            type: 'string',
+            description: '子代理会话 id（spawn 返回的 subagentId）。省略时只有一个活动子代理会自动选中。/ Subagent session id (the subagentId returned by spawn).'
+          },
+          persona: {
+            type: 'string',
+            description: '预设名：把该预设声明的人设字段整套写进去（可再用其它参数覆盖个别字段）。/ Preset name: apply every persona field the preset declares.'
+          },
+          style: { type: 'string', enum: STYLE_VALUES, description: '回复风格和语调。/ Reply style & tone.' },
+          language: { type: 'string', enum: LANGUAGE_VALUES, description: '输出语言：zh=简体中文，en=English。/ Output language.' },
+          headingLists: { type: 'string', enum: TRAIT_VALUES, description: '特质·标题和列表。/ Headings & lists.' },
+          emoji: { type: 'string', enum: TRAIT_VALUES, description: '特质·表情符号。/ Emoji usage.' },
+          tables: { type: 'string', enum: TRAIT_VALUES, description: '特质·表格。/ Table usage.' },
+          replyLength: { type: 'string', enum: REPLY_LENGTH_VALUES, description: '回复长度偏好。/ Reply length.' },
+          customInstructions: { type: 'string', description: '这个子代理的角色设定（一句话说清它是谁、负责什么）。/ Role instructions for this subagent.' },
+          clear: { type: 'boolean', description: '清除该子代理的全部人设（回到「没有人设」）。/ Clear the whole persona of this subagent.' },
+          pending: { type: 'boolean', description: '排队给「下一个」spawn 的子代理：在 spawn 之前调用，子代理出生时就带着这份人设（配合 clear: true 可清空队列）。/ Queue for the NEXT spawned subagent.' }
+        },
+        output: {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              ok: { type: 'boolean', required: true },
+              message: { type: 'string' },
+              session: { type: 'string' },
+              personaName: { type: 'string' },
+              pending: { type: 'boolean' },
+              queued: { type: 'integer' },
+              changes: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  style: { type: 'string' },
+                  language: { type: 'string' },
+                  headingLists: { type: 'string' },
+                  emoji: { type: 'string' },
+                  tables: { type: 'string' },
+                  replyLength: { type: 'string' },
+                  customInstructions: { type: 'string' }
+                }
+              }
+            }
+          },
+          render: (_args, value) => {
+            const text = typeof value?.message === 'string' && value.message.length > 0
+              ? value.message
+              : (value?.ok === true ? 'ok' : 'failed')
+            return [{ type: 'text', text }]
+          }
+        },
+        async execute(args, exec) {
+          try {
+            const config = await loadConfig()
+            const T0 = promptTextOf(config)
+            const caller = exec && exec.agent
+
+            // 子代理调这个工具没有意义：它只能改自己（set_persona 会落到会话覆盖上）。
+            // 明确拒绝，比让它写自己再返回「成功」更不容易造成误解。
+            if (isSubagentAgent(caller)) {
+              return { ok: false, message: '这是给主代理用的工具。子代理要改人设请用 set_persona（只会改你自己）。' }
+            }
+
+            // 调用者会话在 pending 分支之前就要用到（队列项要记归属），提前算。
+            const callerSessionId = sessionIdOfAgent(caller)
+            const { patch: clean, errors } = sanitizeConfig(args || {})
+            if (Object.keys(errors).length > 0) {
+              return { ok: false, message: T0.toolValidationFailed + formatFieldErrors(errors) }
+            }
+
+            // 只取会话覆盖能承载的字段（enabled 是包封字段，不属于人设）
+            const patch = {}
+            for (const key of SESSION_OVERRIDE_FIELDS) {
+              if (SESSION_ENVELOPE_ONLY_FIELDS.includes(key)) continue
+              if (Object.prototype.hasOwnProperty.call(clean, key)) patch[key] = clean[key]
+            }
+
+            const personaWanted = typeof args.persona === 'string' ? args.persona.trim() : ''
+            if (personaWanted) {
+              const entry = resolvePersona(personaWanted, config.personas)
+              if (!entry) {
+                return { ok: false, message: T0.toolSubagentMissing + personaWanted }
+              }
+              // 预设在前、显式字段在后：同一字段两处都给了，以显式参数为准
+              Object.assign(patch, declaredPersonaFields(entry), patch)
+            }
+
+            const clear = args.clear === true
+            if (!clear && Object.keys(patch).length === 0) {
+              return { ok: true, message: T0.toolNoChanges }
+            }
+
+            // ⚠️ 与人设写入同一个闸门（0.13.0 安全加固）。
+            //
+            // 这个工具原先**完全不看** requireToolConfirmation —— 模型只要被一段不可信
+            // 文本诱导，就能把任意指令写进另一个 Agent 的系统提示词，连全局开关都管不到
+            //（安全审计 findings）。代价是每次设置子代理人都要确认一次，与 set_persona 一致。
+            //
+            // clear 不放行也不拦：清空是收敛动作，风险低于写入，直接放行。
+            if (!clear) {
+              const snapshot = await loadConfig()
+              if (snapshot.requireToolConfirmation) {
+                const verdict = await requestToolApproval(toolsCtx, exec, patch)
+                if (verdict === 'rejected') {
+                  return { ok: false, message: T0.toolRejected }
+                }
+                if (verdict === 'unavailable' || verdict === 'policy-disabled') {
+                  // 没有交互界面时不能假装「已确认」—— 明确告诉模型这次没写成。
+                  return { ok: false, message: T0.toolRejected }
+                }
+              }
+            }
+
+            // —— 排队：spawn 之前登记，子代理出生即带人设 ——
+            //
+            // 显式 pending: true 才算排队，不猜意图：主代理忘了传 session 时若静默入队，
+            // 下一个子代理会莫名带上人设，这比报错难查得多。
+            if (args.pending === true) {
+              // 空载荷（全部字段都是空串 / null）**不入队**。
+              //
+              // S27 的注释写着「no-op 而不是占位」，但原先只判了 `Object.keys(patch).length`：
+              // `{ customInstructions: '' }` 的键数是 1，于是照样入队 —— 一张没有任何内容的卡
+              // 会占住队首，把后面真正登记的那张挤到第二位（S30 实测领到的正是这张空卡）。
+              const hasEffect = Object.keys(patch).some((key) => patch[key] !== '' && patch[key] != null)
+              if (!clear && !hasEffect) {
+                return { ok: true, message: T0.toolNoChanges, pending: true, queued: pendingSubagentPersonas.length }
+              }
+              if (clear) {
+                // 只清**自己登记的**：一刀切会顺手干掉并行任务里别人的卡。
+                const before = pendingSubagentPersonas.length
+                for (let i = pendingSubagentPersonas.length - 1; i >= 0; i -= 1) {
+                  if (pendingSubagentPersonas[i].parentSession === callerSessionId) pendingSubagentPersonas.splice(i, 1)
+                }
+                const removed = before - pendingSubagentPersonas.length
+                return { ok: true, message: T0.toolSubagentQueueCleared, pending: true, queued: pendingSubagentPersonas.length, cleared: removed }
+              }
+              pendingSubagentPersonas.push({ override: patch, personaName: personaWanted || null, parentSession: callerSessionId })
+              if (pendingSubagentPersonas.length > PENDING_SUBAGENT_LIMIT) pendingSubagentPersonas.shift()
+              return { ok: true, message: T0.toolSubagentQueued, pending: true, queued: pendingSubagentPersonas.length }
+            }
+
+            // —— 目标子会话：必须是**自己名下的活动子代理** ——
+            const active = activeSubagentsOf(ctx, callerSessionId)
+            let target = typeof args.session === 'string' ? args.session.trim() : ''
+            if (target !== '' && !isSessionId(target)) {
+              return { ok: false, message: 'session 不是合法的会话 id。' }
+            }
+            if (target === '') {
+              if (active.length === 1) {
+                target = sessionIdOfAgent(active[0]) || ''
+              } else if (active.length === 0) {
+                return { ok: false, message: T0.toolSubagentNoTarget }
+              } else {
+                const ids = active.map((a) => sessionIdOfAgent(a)).filter(Boolean)
+                return { ok: false, message: T0.toolSubagentNeedTarget + ids.join(', ') }
+              }
+            }
+
+            // ⚠️ 归属校验：显式传的 session 必须出现在自己的活动列表里。
+            //
+            // 少了这一步，主代理就能给任意已知 sessionId 写人设覆盖（上游 PR #4 的实现
+            // 只校验了 id 格式）。代价是「刚 spawn、还没进 agents.list() 的子代理」不能用
+            // 显式 session 设置 —— 那正是 pending 要解决的场景。
+            if (!active.some((a) => sessionIdOfAgent(a) === target)) {
+              return { ok: false, message: T0.toolSubagentNotMine }
+            }
+
+            if (clear) {
+              // 把白名单里的每一项都置空 ⇒ helper 会把它们从覆盖里删掉 ⇒ 覆盖为空 ⇒ 删 sidecar
+              const wipe = {}
+              for (const key of SESSION_OVERRIDE_FIELDS) wipe[key] = ''
+              await writeSessionPersonaPatch(target, wipe, null)
+              refreshPromptAndInject(ctx, config)
+              return { ok: true, message: T0.toolSubagentCleared, session: target }
+            }
+
+            const written = await writeSessionPersonaPatch(target, patch, personaWanted || null)
+            refreshPromptAndInject(ctx, config)
+            return {
+              ok: true,
+              message: T0.toolSubagentUpdated,
+              session: target,
+              ...(written.personaName ? { personaName: written.personaName } : {}),
+              changes: Object.fromEntries(Object.entries(written.override || {}))
+            }
+          } catch (err) {
+            return { ok: false, message: String(err.message || err) }
+          }
+        }
       }))
     }).catch((err) => {
       toolsCtx.logger?.warn?.('[dsh-soul] set_persona tool not registered: ' + String((err && err.message) || err))

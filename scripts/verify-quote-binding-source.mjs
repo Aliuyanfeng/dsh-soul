@@ -62,7 +62,13 @@ const call = async (path, body, method = 'POST', url = path) => {
   if (!handler) throw new Error('no route ' + path)
   let out
   const res = { writeHead() {}, end(text) { out = text } }
-  const req = { method, url }
+  const req = {
+    method,
+    url,
+    // 真实浏览器的 JSON fetch 会带 Content-Type；csrfGuard（0.13.0）要求写请求是 JSON。
+    // Sec-Fetch-Site 缺省即放行（同源 / 本地调用不一定带）。
+    headers: method === 'POST' ? { 'content-type': 'application/json' } : {}
+  }
   if (method === 'POST') req[Symbol.asyncIterator] = async function* () { yield Buffer.from(JSON.stringify(body)) }
   await handler(req, res)
   return JSON.parse(out)

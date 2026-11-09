@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 172
+const EXPECTED_ASSERTIONS = 173
 
 let passed = 0
 const failures = []
@@ -336,7 +336,8 @@ check('migrateConfig：personas 归一化透传，缺省时保持缺席；确认
   const clean = migrateConfig({ nickname: 'x' })
   assert.equal('personas' in clean, false)
   const dirty = migrateConfig({ requireToolConfirmation: 'yes' })
-  assert.equal(dirty.requireToolConfirmation, false)
+  // 0.13.0 起默认是**开启**（安全加固），脏值回退同样落到新默认值
+  assert.equal(dirty.requireToolConfirmation, true)
 })
 
 console.log('特质：表格 / 回复长度')
@@ -441,6 +442,17 @@ check('migrateConfig：缺失 showQuickToggle 时回退为开启（老配置不�
   assert.equal(migrateConfig({ showQuickToggle: 'dirty' }).showQuickToggle, true)
   // 显式 false 必须被尊重
   assert.equal(migrateConfig({ showQuickToggle: false }).showQuickToggle, false)
+})
+
+check('migrateConfig：输出语言缺失/非法一律回退中文（否则下拉显示空白）', () => {
+  // 编译层对非 en 一律走中文，所以提示词本身不会坏；坏的是**下拉** —— 它按枚举渲染，
+  // 脏值找不到对应项就显示空白。用户实测报「输出语言默认不是中文」正是这个。
+  assert.equal(DEFAULT_CONFIG.language, 'zh', '默认输出语言必须是中文')
+  assert.equal(migrateConfig({}).language, 'zh', '缺失时应回退中文')
+  assert.equal(migrateConfig({ language: 'cn' }).language, 'zh', '脏值应回退中文')
+  assert.equal(migrateConfig({ language: null }).language, 'zh', 'null 应回退中文')
+  // 反向：回退不能把合法值也吃掉
+  assert.equal(migrateConfig({ language: 'en' }).language, 'en', '显式 en 必须被尊重')
 })
 
 check('sanitizeConfig：showQuickToggle 只接受布尔值', () => {
@@ -781,9 +793,9 @@ check('内置人设（含默认）只声明 PERSONA_FIELDS 内的键', () => {
 
 check('内置人设不声明「关于你」、输出语言与总开关', () => {
   // 「关于你」的三个字段根本不在 PERSONA_FIELDS 里（见下面「预设范围」一组），这里
-  // 另外钉住内置数据本身也不写；language 在预设范围内，但内置是给任何语言用户共用的
-  // 通用人格，写死会让另一种语言的用户应用一次就被强行切回；enabled 是总开关，
-  // 预设不该能替你关掉个性化。
+  // 另外钉住内置数据本身也不写。language 现在根本不在 PERSONA_FIELDS 里（0.13.0 起按
+  // 「全局开关」处理），所以这条对它是双保险：即便有人手改预设文件写进去，
+  // normalizePersonas 也会剥掉；enabled 是总开关，预设不该能替你关掉个性化。
   const view = mergePersonas(null)
   for (const name of builtinPersonaNames()) {
     for (const key of [...PROFILE_FIELDS, 'language', 'enabled']) {
@@ -805,14 +817,26 @@ check('预设范围只含人设，与「关于你」无交集', () => {
   // 反向防空过：人设维度必须还在，否则「无交集」会因为 PERSONA_FIELDS 被误清空而假通过
   assert.ok(PERSONA_FIELDS.includes('style'), 'style 应在预设范围内')
   assert.ok(PERSONA_FIELDS.includes('customInstructions'), 'customInstructions 应在预设范围内')
-  // 输出语言属于人设（决定 Agent 用什么语言作答）：自建预设会保存并在应用时还原它
-  assert.ok(PERSONA_FIELDS.includes('language'), 'language 应在预设范围内')
+  // 输出语言是**全局开关**，不是角色特征：它决定「用哪套提示词文案」与「要求模型用哪种
+  // 语言回答」，对所有 agent 生效（含子代理），与「这个角色是谁、什么脾气」无关。
+  // 所以它**不进 PERSONA_FIELDS** —— 预设不保存也不还原它（0.13.0 前的旧预设里若残留
+  // language，normalizePersonas 会剥掉）。
+  assert.equal(PERSONA_FIELDS.includes('language'), false, 'language 是全局开关，不进预设范围')
+  // 反向防空过：它仍然改变编译结果，必须留在 PROMPT_INPUT_FIELDS 里（改它要重注册 section）
+  assert.ok(PROMPT_INPUT_FIELDS.includes('language'), 'language 仍影响编译结果，必须在 PROMPT_INPUT_FIELDS 里')
   assert.equal(PERSONA_FIELDS.includes('enabled'), false, 'enabled 是全局开关，不进预设')
+  // 子代理的两个开关也参与编译（改它会改变子代理拿到的提示词），
+  // 但它们**不是人设字段** —— 预设不该能声明它们，否则「应用预设」会顺手
+  // 改掉子代理的行为设定。所以：范围里显式列出，PERSONA_FIELDS 里必须没有。
+  const SUBAGENT_INPUT_FIELDS = ['subagentInheritPersona', 'subagentPersona']
   assert.deepEqual(
     [...PROMPT_INPUT_FIELDS].sort(),
-    [...new Set(['enabled', ...PROFILE_FIELDS, ...PERSONA_FIELDS])].sort(),
-    '编译读取范围应恰好等于「总开关 + 关于你 + 人设」'
+    [...new Set(['enabled', ...PROFILE_FIELDS, ...PERSONA_FIELDS, 'language', ...SUBAGENT_INPUT_FIELDS])].sort(),
+    '编译读取范围应恰好等于「总开关 + 关于你 + 人设 + 语言 + 子代理开关」'
   )
+  for (const key of SUBAGENT_INPUT_FIELDS) {
+    assert.equal(PERSONA_FIELDS.includes(key), false, key + ' 不应出现在 PERSONA_FIELDS（预设不该管子代理）')
+  }
 })
 
 check('用户自建预设里残留的「关于你」一律不算数（匹配与取值都忽略）', () => {
@@ -2251,10 +2275,16 @@ check('配置写入只有一条路径：lib/store.mjs 的「临时文件 + renam
     'index.mjs 不应直接操作文件系统——原子写必须收口在 lib/store.mjs，否则会被绕过'
   )
   assert.ok(/await writeConfigFile\(configPath\(\), clean\)/.test(stripComments(indexSource)), 'saveConfig 应经由 writeConfigFile 写入（匹配去注释后的源码：注释里留字样不算）')
+  // 0.13.0：rename 外面包了瞬时冲突重试（Windows 并发 rename 会 EPERM），
+  // 所以断言从「直接 rename」改成「经由 renameWithRetry」——判据仍然是先 tmp 后覆盖。
   assert.ok(
-    /writeFile\(tmpPath[\s\S]*?rename\(tmpPath, filePath\)/.test(storeCode),
+    /writeFile\(tmpPath[\s\S]*?renameWithRetry\(tmpPath, filePath\)/.test(storeCode),
     'lib/store.mjs 的写入必须是「先写 .tmp、再 rename 覆盖」；直接 writeFile 会在中断时留下截断的 JSON'
   )
+  // 临时名必须带随机后缀：sidecar 有四处写入不在配置队列里，固定名会互相截断
+  assert.ok(/randomBytes\(/.test(storeCode), '临时文件名必须带随机后缀，避免并发写互相截断')
+  // 崩溃残留要自清理（随机名之后不再靠「下次覆盖」）
+  assert.ok(/sweepStaleTemps/.test(storeCode), '写入成功后应清理同前缀的残留 .tmp（含 PII）')
 })
 
 check('set_persona 的输出 schema 能被真实 dsh-tools 的 DSL 接受（注册不失败）', () => {
@@ -3509,8 +3539,15 @@ check('工作区绑定：provider 每轮按会话 cwd 解析，且必须是同�
     /assembly\s*&&\s*assembly\.agent/,
     'text 回调必须从 assembly 取 agent（宿主在诊断装配时不传 agent，故须用 && 容忍 undefined）'
   )
-  assert.match(opts, /cwdOfAgent\(/, 'text 回调必须经 cwdOfAgent 取会话目录')
-  assert.match(opts, /configForScope\(/, 'text 回调必须经 configForScope 合成该作用域生效的配置')
+  // 0.13.0 起装配侧不再直接调 configForScope：它走统一入口 resolvePromptForAgent
+  // （因为同一入口还要分岔子代理）。判据随之迁移，但守的语义没变 ——
+  // **必须按当前会话的分层配置解析**，而不是拿一份全局文本。
+  // 所以：装配侧钉「用了统一入口」，入口内部钉「仍走 cwdOfAgent + configForScope」。
+  assert.match(opts, /resolvePromptForAgent\(/, 'text 回调必须经统一解析入口 resolvePromptForAgent')
+  const resolverBody = stripComments(indexCode.match(/function resolvePromptForAgent\([\s\S]*?\n\}/)?.[0] ?? '')
+  assert.ok(resolverBody !== '', '找不到 resolvePromptForAgent 的实现')
+  assert.match(resolverBody, /cwdOfAgent\(/, '统一入口内部必须经 cwdOfAgent 取会话目录')
+  assert.match(resolverBody, /configForScope\(/, '统一入口内部必须经 configForScope 合成该作用域生效的配置')
   assert.equal(/async\s*\(?\s*assembly/.test(opts), false, 'text 回调不得是 async')
   assert.equal(/await /.test(opts), false, 'text 回调内不得出现 await')
 
@@ -3622,10 +3659,13 @@ check('工作区绑定：注入通道逐 agent 分层解析，不共用一份全
   // 于是每一次全局写入都往绑定会话里塞一份**全局**人设，而该会话自己的 system message
   // 仍是绑定人设。界面说 A、最新一条指令说 B，模型听后者（本机实测：会话日志
   // 第 77 行「先发散再收敛」vs 第 84 行注入快照「你是一个搞笑的人」）。
+  // 0.13.0 起注入侧也走统一入口 resolvePromptForAgent（同一入口还要分岔子代理），
+  // 判据因此从「直接调 configForScope」迁移为「把该 agent 的全部分层交给统一入口」。
+  // 分层是否真的生效由上面那条（入口内部必须有 cwdOfAgent + configForScope）守。
   assert.match(
     loop,
-    /configForScope\(\s*config,\s*cwdOfAgent\(agent\),\s*workspaceId,\s*sessionOverridesOrNull\(sessionId\)\s*\)/,
-    '编译必须发生在循环体内、按该 agent 的**全部分层**解析 —— 少一层就等于那一层被全局值盖掉'
+    /resolvePromptForAgent\(\s*config,\s*agent,\s*workspaceId,\s*sessionOverridesOrNull\(sessionId\)\s*\)/,
+    '注入必须走统一入口，并传该 agent 的**全部分层** —— 少一层就等于那一层被全局值盖掉'
   )
   // 分层不是摆设：workspaceId 必须真的来自索引，否则参数永远传 null、上一条断言照样过。
   assert.match(
@@ -3641,10 +3681,12 @@ check('工作区绑定：注入通道逐 agent 分层解析，不共用一份全
   )
   // 逐 agent 编译不得以破坏可观测性为代价（与上面那条断言同一组契约）
   assert.ok(/delivered\+\+/.test(body) && /failed\+\+/.test(body), '仍应如实统计成功与失败数')
+  // 0.13.0 起「合成配置 → 编译」收进了统一入口，所以判据改为：
+  // 先调入口拿到 resolved，再从 resolved 取 prompt（而不是另编译一份全局文本）。
   assert.match(
     body,
-    /configForScope\([\s\S]{0,200}?\)\.config[\s\S]{0,160}?const prompt = compilePrompt\(perAgent\)/,
-    '应当先合成该会话的配置、再编译（顺序反了等于还是全局文本）'
+    /const resolved = resolvePromptForAgent\([\s\S]{0,240}?const prompt = resolved\.prompt/,
+    '应当先经统一入口合成该会话的配置、再取它的 prompt（顺序反了等于还是全局文本）'
   )
   // 快照的框定语也随该会话的语言：`promptTextOf(config)` 留在循环外也是同一个错 ——
   // 全局英文 + 工作区中文人设时，说明文字仍是英文。所以按**整个函数体**判，不只判循环内。
@@ -3653,7 +3695,9 @@ check('工作区绑定：注入通道逐 agent 分层解析，不共用一份全
     false,
     '注入文本的框定语必须按每会话生效配置取文案，不得按全局语言'
   )
-  assert.match(body, /promptTextOf\(perAgent\)/, '框定语应由该会话生效配置取文案（promptTextOf(perAgent)）')
+  // 0.13.0 起实参从 perAgent 变成统一入口返回的 resolved.config（同一个语义：
+  // 「这个会话生效的那份配置」），判据随之更新。
+  assert.match(body, /promptTextOf\(resolved\.config\)/, '框定语应由该会话生效配置取文案（promptTextOf(resolved.config)）')
 })
 
 check('工作区绑定：合成配置只覆盖人设字段，全局总开关不被覆盖', () => {
@@ -3725,8 +3769,8 @@ check('0.9.0-b 工作区层：sessionId → workspaceId 索引接入，且失败
   )
   assert.match(
     opts,
-    /configForScope\(\s*snap\.value\s*,\s*cwdOfAgent\(agent\)\s*,\s*workspaceId\s*,/,
-    'configForScope 必须收到 workspaceId（第三个参数）—— 漏传就退化成只有 cwd 回退'
+    /resolvePromptForAgent\(\s*snap\.value\s*,\s*agent\s*,\s*workspaceId\s*,/,
+    'resolvePromptForAgent 必须收到 workspaceId（第三个参数）—— 漏传就退化成只有 cwd 回退'
   )
   // 反向：索引未命中时要能退化，不能因为查不到就抛错
   assert.match(opts, /\|\|\s*null/, '索引未命中必须退化成 null（走 cwd 回退），不得抛错')
@@ -4446,16 +4490,17 @@ check('0.9.0-d hook 顺序：所有 hook 都在组件顶层提前 return 之前'
 check('0.9.0-c 会话层：装配走内存缓存，回收只认 sessionPersistence', () => {
   // 同 0.9.0-b 的教训：纯函数层测好了不等于接上了。这组守**接线**。
 
-  // ① 装配路径必须把会话覆盖传进 configForScope（第四个参数）
+  // ① 装配路径必须把会话覆盖传给统一解析入口（第四个参数）
   const opts = stripComments(extractObject(indexSource, 'spCtx.systemPrompt.section('))
-  // 正则不能用 `[^)]*` 跨越参数里的括号（`cwdOfAgent(agent)` 就有 `)`）。
-  // 改为从调用名开始取一段，再要求 workspaceId 与 sessionOverride 按序出现。
-  const callMatch = opts.match(/configForScope\([\s\S]{0,200}?\)\n/)
-  assert.ok(callMatch, '找不到 configForScope 的调用')
+  // 0.13.0 起装配走 resolvePromptForAgent，判据随之迁移；守的语义没变：
+  // workspaceId 与会话覆盖必须**按序**传下去，漏传后者会让会话层永不生效。
+  // 正则不能用 `[^)]*` 跨越参数里的括号。
+  const callMatch = opts.match(/resolvePromptForAgent\([\s\S]{0,240}?\)\n/)
+  assert.ok(callMatch, '找不到 resolvePromptForAgent 的调用')
   assert.match(
     callMatch[0],
     /workspaceId[\s\S]{0,60}sessionOverride/,
-    'configForScope 的调用应依次传入 workspaceId 与会话覆盖 —— 漏传 sessionOverride 则会话层永不生效'
+    'resolvePromptForAgent 的调用应依次传入 workspaceId 与会话覆盖 —— 漏传 sessionOverride 则会话层永不生效'
   )
   assert.match(opts, /sessionOverridesOrNull\(/, '装配必须查会话覆盖缓存')
   // 反向：装配里绝不能读盘（同步调用，返回 Promise 会被当成提示词文本）

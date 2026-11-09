@@ -46,6 +46,10 @@ window.__ModuleLoader__.load({
     const { jsx: h, jsxs: hs, Fragment } = require('react/jsx-runtime')
     const React = require('react')
     const ui = require('@deepseek-ai/dsh-client-ui-primitives')
+    // 自绘下拉要用的两个宿主组件。取不到就各自降级（见 SoulSelect）：
+    // 宁可样式退回原生，也不要因为一个缺失的导出把整个设置页崩掉。
+    const HostMenu = ui && ui.Menu ? ui.Menu : null
+    const HostChevronDown = ui && ui.IconChevronDownOutlineRegular ? ui.IconChevronDownOutlineRegular : null
 
     // 包装：把多余的参数收集成 props.children，避免直接调用 h(type, props, child)
     // 时被当成 key 参数。
@@ -61,7 +65,7 @@ window.__ModuleLoader__.load({
     // -------------------------------------------------------------------------
 
     const NS = 'soul'
-    const VERSION = '0.12.0'
+    const VERSION = '0.13.0'
     const INITIAL = {
       enabled: true,
       nickname: '',
@@ -80,6 +84,10 @@ window.__ModuleLoader__.load({
       quoteAsContext: false,
       // 输入框「个性化已启用」快捷开关是否显示：默认开（最常用的入口）
       showQuickToggle: true,
+      // 子代理是否继承主代理的人设：默认开（= 与旧行为一致，升级不静默改变）
+      subagentInheritPersona: true,
+      // 关闭继承时，子代理统一使用的预设名；null = 完全无人设
+      subagentPersona: null,
       // 侧栏「人设总览」入口开关（Issue #3）：默认关，不强制占用侧栏位置
       showOverviewInSidebar: false,
       // 输入框光轨（v0.6.0）：Agent 回复中时输入框边框的流光动效
@@ -482,6 +490,12 @@ window.__ModuleLoader__.load({
         // 默认 true 的开关必须用 !== false：写成 === true 会让「字段缺席」
         // 被当成「用户关闭」，老配置升级后入口会凭空消失。
         s.showQuickToggle = config.showQuickToggle !== false
+        // 默认 true 的开关同样用 !== false 兜「字段缺席」
+        s.subagentInheritPersona = config.subagentInheritPersona !== false
+        // 默认人设名：空串与 null 都当「没有」，界面只认一种空态
+        s.subagentPersona = typeof config.subagentPersona === 'string' && config.subagentPersona.length > 0
+          ? config.subagentPersona
+          : null
         s.quoteAsContext = config.quoteAsContext === true
         s.showOverviewInSidebar = config.showOverviewInSidebar === true
         s.trailEnabled = config.trailEnabled !== false
@@ -920,12 +934,57 @@ window.__ModuleLoader__.load({
       // 参数组（光轨的颜色 / 速度 / 粗细 / 示例）如果贴住分隔线会显得挤。
       // 这里补 16px —— 与开关行自身的 padding 同一节奏，不另立一套间距。
       '.soul-trail-detail{margin-top:16px}',
+      '.soul-trail-detail .soul-field-row{border-bottom:none;padding:8px 0}',
+      // 子代理下拉紧跟在开关行之后，与光轨参数组同一节奏
       '.soul-field label{display:block;margin-bottom:8px;font-size:12px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       // 与上面的 label 同形，但用于「没有对应控件」的分组标题（如光轨示例预览）：
       // 那种位置写 <label> 会是一个指向空的标签，语义错误
       '.soul-field-label{display:block;margin-bottom:8px;font-size:12px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       // 控件：边框换宿主卡片描边色、圆角用 sm(8px)，与宿主输入控件一致
-      '.soul-field select,.soul-field textarea,.soul-field input[type=text]{width:100%;padding:8px 12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px;box-sizing:border-box}',
+      '.soul-field textarea,.soul-field input[type=text]{width:100%;padding:8px 12px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px;box-sizing:border-box}',
+      // 下拉框：**逐值对齐宿主设置页的标准下拉**（`dsh-client-ui-settings-models` 的 `.input`
+      // + `.selectInput` 两条规则）：高 32px、.5px border-l4、radius-md、14px/22px、白底、
+      // 自绘 12px 箭头（right 12px center）、max-width 240px。
+      // appearance:none 之后必须自带箭头 —— 否则在 Chrome 里会变成一个没有任何提示的方框。
+      '.soul-field select,.soul-history-retention select,.soul-bindings-new select,.soul-bindings-select{box-sizing:border-box;appearance:none;height:36px;padding:0 36px 0 14px;border:none;border-radius:var(--dsw-radius-md);background-color:var(--dsw-alias-bg-module-platform);background-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2714%27 height=%2714%27 viewBox=%270 0 16 16%27 fill=%27none%27%3E%3Cpath d=%27M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6%27 stroke=%27%2381858C%27 stroke-width=%271%27/%3E%3C/svg%3E");background-position:right 14px center;background-repeat:no-repeat;background-size:14px 14px;color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;line-height:22px;cursor:pointer;flex:none;width:auto;max-width:240px}',
+      // 悬停与宿主 selector 一致
+      '.soul-field select:hover,.soul-history-retention select:hover,.soul-bindings-new select:hover,.soul-bindings-select:hover{background-color:var(--dsw-alias-interactive-bg-hover)}',
+      // 选择型设置行：**左文字、右下拉**（对齐宿主 PreferenceRow 的布局）。
+      // 宿主是 `.row{padding:16px 0;border-bottom:.5px solid border-l2;display:flex;align-items:center;gap:8px}`
+      // + `.title{font-size:14px;line-height:22px;label-primary}` + `.selector{flex:none}`。
+      // 行布局：**左文字（两行）+ 右控件**，对齐宿主 `PreferenceRow` 的 `.row`。
+      //
+      // 用 grid 而不是 flex —— 两次实测踩到的坑：
+      //   ① 宿主 Menu 会在 trigger 外面包一层 span，那层的 display 我们控制不了；
+      //      flex 下它若是 inline，`margin-left:auto` 直接无效 ⇒ 右边界参差不齐。
+      //   ② `max-width:55%` 在**宽度 auto** 的父级里会塌成很小的值 ⇒ 第一行被压成「高...」。
+      // `minmax(0,1fr) auto` 把第二列天然推到右侧（与子元素 display 无关），
+      // `minmax(0,1fr)` 保证左侧文字不会被长下拉挤没。
+      '.soul-field-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:24px;padding:16px 0;margin-bottom:0;width:100%;border-bottom:.5px solid var(--dsw-alias-border-l2)}',
+      '.soul-field-row .soul-select-anchor{grid-column:2;justify-self:end}',
+      // 左侧两行：标题（14/22 label-primary）+ 说明（12/18 label-tertiary）。
+      // 宿主 PreferenceRow 的 `.rowText / .title / .desc` 就是这套值；我们把原来的
+      // ⓘ tooltip 换成可见说明 —— 说明本身就短，藏进 tooltip 反而让人非点不可。
+      '.soul-field-row>label{grid-column:1;flex:1;min-width:0;padding-right:48px;margin-bottom:0;display:flex;flex-direction:column;align-items:flex-start;gap:4px;font-size:14px;font-weight:400;line-height:22px;color:var(--dsw-alias-label-primary)}',
+      '.soul-field-row-desc{font-size:12px;font-weight:400;line-height:18px;color:var(--dsw-alias-label-tertiary)}',
+      // 堆叠块（自定义指令）：控件占满整行，但标题与上面的选择行同一套规格。
+      // 顶部留 16px —— 上一行有 border-bottom，紧贴会让分隔线压在标题上。
+      '.soul-field-stacked{padding-top:16px;margin-bottom:0}',
+      '.soul-field-stacked>label{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-bottom:8px;font-size:14px;font-weight:400;line-height:22px;color:var(--dsw-alias-label-primary)}',
+      // 上限用固定 px（不用百分比）：auto 宽度的父级里百分比会塌。
+      // 自绘下拉的触发按钮：逐值对齐宿主 PreferenceRow 的 `.selector`
+      // （36 / border:none / padding 0 14 / radius-md / bg-module-platform / 14-22）。
+      // 用后代选择器而不是 `>`：宿主 Menu 会在 trigger 外面包一层 span（anchor wrapper），
+      // 结构不再是「行 → select」。
+      ".soul-select-trigger{box-sizing:border-box;display:inline-flex;align-items:center;gap:12px;height:36px;padding:0 14px;border:none;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;line-height:22px;cursor:pointer;flex:none;width:auto;text-align:left}",
+      ".soul-select-trigger:hover{background:var(--dsw-alias-interactive-bg-hover)}",
+      ".soul-select-trigger:disabled{opacity:.6;cursor:default}",
+      ".soul-select-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".soul-select-chevron{flex:none}",
+      // 设置行里的下拉：限宽，避免长选项把左侧标题挤没
+      ".soul-field-row .soul-select-trigger{min-width:120px;max-width:280px}",
+      ".soul-history-retention .soul-select-trigger{min-width:112px}",
+      ".soul-bindings-new .soul-select-trigger{min-width:120px}",
       '.soul-field select option{color:var(--dsw-alias-label-primary)}',
       '.soul-section{color-scheme:light}',
       'body[data-ds-dark-theme] .soul-section{color-scheme:dark}',
@@ -1339,7 +1398,12 @@ window.__ModuleLoader__.load({
       '.soul-error{margin-top:8px;padding:10px 12px;background:var(--dsw-alias-interactive-bg-hover-danger,rgba(236,19,19,.05));border:.5px solid var(--dsw-alias-state-error-primary);border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;width:100%;box-sizing:border-box}',
       '.soul-hint{position:relative;display:inline-flex;align-items:center;margin-left:6px;color:var(--dsw-alias-label-secondary);cursor:help;vertical-align:middle}',
       '.soul-hint:hover{color:var(--dsw-alias-label-primary)}',
-      '.soul-hint-tip{position:absolute;bottom:calc(100% + 8px);left:0;padding:8px 10px;background:var(--dsw-alias-bg-module-platform);border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);font-size:12px;font-weight:400;line-height:1.5;color:var(--dsw-alias-label-primary);white-space:normal;width:max-content;max-width:260px;text-align:left;opacity:0;visibility:hidden;transition:opacity .15s ease;pointer-events:none;z-index:9999;box-shadow:var(--dsw-shadow-lv3,0 4px 12px rgba(0,0,0,0.15))}',
+      // 定位：**右边缘对齐图标**（right:0），向左展开。
+      //
+      // 原来是 left:0（向右展开）：`width:max-content` 能撑到 260px，而问号经常挂在
+      // 句子末尾（也就是容器右侧）—— 向右展开必然冲出容器，撑出横向滚动条（用户实测）。
+      // 向左展开时溢出发生在左侧，LTR 下不会增加 scrollWidth，因此不会再出现滚动条。
+      '.soul-hint-tip{position:absolute;bottom:calc(100% + 8px);right:0;padding:8px 10px;background:var(--dsw-alias-bg-module-platform);border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);font-size:12px;font-weight:400;line-height:1.5;color:var(--dsw-alias-label-primary);white-space:normal;width:max-content;max-width:min(260px,80vw);text-align:left;opacity:0;visibility:hidden;transition:opacity .15s ease;pointer-events:none;z-index:9999;box-shadow:var(--dsw-shadow-lv3,0 4px 12px rgba(0,0,0,0.15))}',
       '.soul-hint:hover .soul-hint-tip{opacity:1;visibility:visible}',
       // 键盘聚焦同样要能拿到说明：只有 :hover 的话，键盘 / 读屏用户永远看不到提示
       '.soul-hint:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px;border-radius:3px}',
@@ -1841,7 +1905,7 @@ window.__ModuleLoader__.load({
       // 下拉不撑满整行 —— 它是容量参数，不是表单主字段，铺满会显得比记录本身还重。
       '.soul-history-retention{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
       '.soul-history-retention label{margin:0;flex:none;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
-      '.soul-history-retention select{flex:none;width:auto;min-width:112px;padding:4px 8px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px}',
+      '.soul-history-retention select{min-width:112px}',
       '.soul-history-retention select:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.soul-history-retention select:disabled{opacity:.6}',
       // 下拉右侧的问号提示沿用设置页的 SoulHint；这里只压掉它的上边距以对齐这一行
@@ -1926,7 +1990,7 @@ window.__ModuleLoader__.load({
       '.soul-bindings-new > *{flex:none}',
       '.soul-bindings-new input{flex:1 1 auto;min-width:0}',
       // 人设下拉不许被压到看不见：flex:none + 固定最小宽度
-      '.soul-bindings-new select{flex:none;width:auto;min-width:120px}',
+      '.soul-bindings-new select{min-width:120px}',
       // 降级提示：与 .soul-status 同色同字号，贴在选择器原位（说明为什么按钮不见了）
       '.soul-bindings-hint{margin:-2px 0 8px 0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       // 列表：与 .soul-history-list 同规格（紧凑、无项目符号）
@@ -1939,7 +2003,7 @@ window.__ModuleLoader__.load({
       '.soul-bindings-dir{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary)}',
       '.soul-bindings-here{flex:none;padding:0 6px;border-radius:var(--dsw-radius-sm);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent);color:var(--dsw-alias-brand-primary);font-size:11px;line-height:18px}',
       '.soul-bindings-bad{flex:none;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px}',
-      '.soul-bindings-select{flex:none;width:auto;min-width:96px;max-width:160px}',
+      '.soul-bindings-select{min-width:96px;max-width:160px}',
       // 解绑的「待确认」态：只染文字颜色（宿主按钮的底色/悬停不动，避免旧的全黑问题）
       '.soul-bindings-act-armed{color:var(--dsw-alias-state-error-primary)}',
       // 未绑定回落行：虚线框＝「这是规则、不是一条记录」
@@ -1997,10 +2061,13 @@ window.__ModuleLoader__.load({
       'quick.toggleFailed': '保存失败，请重试',
       'group.aboutYou': '关于你',
       'field.nickname': '用户昵称',
+      'hint.nickname': 'Agent 在回复里用来称呼你。',
       'field.nicknamePlaceholder': '输入你的昵称，回复时会称呼你',
       'field.occupation': '用户职业',
+      'hint.occupation': '帮助 Agent 判断你的技术背景与提问角度。',
       'field.occupationPlaceholder': '例如：软件工程师、学生、产品经理',
       'field.bio': '用户介绍',
+      'hint.bio': '一句话背景，让回答更贴合你的处境。',
       'field.bioPlaceholder': '简单介绍自己，让回复更贴合你的背景',
       'group.traits': '特质',
       // 「我在这里改了，为什么那个会话没变」的答案。形态照「人设预设」那一区：
@@ -2012,20 +2079,20 @@ window.__ModuleLoader__.load({
       'traits.scopeNote': '这里保存的特质不会作用于绑定了人设的工作区或目录。',
       'traits.scopeNoteMore': '优先级：会话覆盖 > 工作区绑定 > 目录绑定 > 全局设置。绑定是部分覆盖，只接管那个人设声明过的字段；「关于你」（昵称、职业、介绍）不在绑定范围内，永远用这里的值。',
       'field.style': '回复风格和语调',
-      'hint.style': '设置 Agent 回复你的风格和语调。这不会影响 Agent 的功能。',
+      'hint.style': '设置 Agent 回复你的风格和语调，不影响功能。',
       'field.headingLists': '标题和列表',
-      'hint.headingLists': '在回复风格和语调的基础上选择额外的自定义特质项。控制回答中标题和列表的使用程度。',
+      'hint.headingLists': '控制回答中标题和列表的使用程度。',
       'field.emoji': '表情符号',
-      'hint.emoji': '在回复风格和语调的基础上选择额外的自定义特质项。控制表情符号的使用程度。',
+      'hint.emoji': '控制回答中表情符号的使用程度。',
       'field.tables': '表格',
-      'hint.tables': '在回复风格和语调的基础上选择额外的自定义特质项。控制回答中表格的使用程度。',
+      'hint.tables': '控制回答中表格的使用程度。',
       'field.replyLength': '回复长度',
       'field.activePersonaName': '最近使用的预设',
-      'hint.replyLength': '控制回答的篇幅。选「适中」时不额外约束，由 Agent 自行判断。',
+      'hint.replyLength': '控制回答篇幅；「适中」不额外约束，由 Agent 自行判断。',
       'field.language': '输出语言',
-      'hint.language': '设置 Agent 回复你使用的语言，同时影响 /soul 命令的输出语言。',
+      'hint.language': '全局开关：决定回复语言与提示词语种，不属于角色特征，不进预设。',
       'field.instructions': '自定义指令',
-      'hint.instructions': '补充角色、习惯等个性化要求。建议不要重复设置回复风格和语调类似的话术，以免与上方选项冲突。',
+      'hint.instructions': '补充角色、习惯等个性化要求；避免与上方的风格设置重复。',
       'field.instructionsPlaceholder': '输入自定义指令，可以是其他行为、回复风格和语调等偏好设置',
       'group.personas': '人设预设',
       'personas.save': '保存当前为预设',
@@ -2216,6 +2283,11 @@ window.__ModuleLoader__.load({
       'hint.showOverviewInSidebar': '默认关闭，不占用侧栏位置；打开后侧栏才会出现图标。想进入总览时，也可以在插件详情页里打开。',
       'action.openOverview': '打开人设总览',
       'field.showQuickToggle': '显示输入框快捷开关',
+      'field.subagentInheritPersona': '子代理继承人设',
+      'hint.subagentInheritPersona': '子代理是你派出去干活的助手，不是聊天的对象。默认沿用你当前的人设；关掉后它不再带任何性格与称呼，只按任务本身工作。',
+      'field.subagentPersona': '子代理默认人设',
+      'hint.subagentPersona': '关闭继承后子代理默认无人设；想让它们统一带一张卡就在这里选。',
+      'option.subagentPersonaNone': '无（不带人设）',
       'hint.showQuickToggle': '输入框左侧的「个性化已启用」按钮，点一下就能开关个性化，不必进设置页。关掉后该按钮不显示，只能从设置页切换。',
       'hint.overviewEntry': '在插件详情页直接打开人设总览面板 —— 侧边栏关闭该入口后，这里是常驻的去处。',
       'quote.actionFloat': '引用这段',
@@ -2452,29 +2524,32 @@ window.__ModuleLoader__.load({
       'quick.toggleFailed': 'Save failed, please retry',
       'group.aboutYou': 'About you',
       'field.nickname': 'Nickname',
+      'hint.nickname': 'Hint: how the agent addresses you in replies.',
       'field.nicknamePlaceholder': 'Your nickname — the agent will address you by it',
       'field.occupation': 'Occupation',
+      'hint.occupation': 'Helps the agent judge your background and angle.',
       'field.occupationPlaceholder': 'e.g. software engineer, student, product manager',
       'field.bio': 'Bio',
+      'hint.bio': 'A line of context so answers fit your situation.',
       'field.bioPlaceholder': 'A short introduction so replies fit your background',
       'group.traits': 'Traits',
       'traits.scopeNote': 'Traits saved here do not apply to workspaces or directories that have a persona bound.',
       'traits.scopeNoteMore': 'Precedence: session override > workspace binding > directory binding > global settings. A binding is partial — it takes over only the fields that persona actually declares. "About you" (nickname, occupation, bio) falls outside that scope and always comes from here.',
       'field.style': 'Reply style & tone',
-      'hint.style': "Sets the style and tone the agent uses when replying to you. It does not affect the agent's capabilities.",
+      'hint.style': 'Sets the reply style & tone; functional behavior is unaffected.',
       'field.headingLists': 'Headings & lists',
-      'hint.headingLists': 'An extra trait layered on top of style & tone. Controls how much answers rely on headings and lists.',
+      'hint.headingLists': 'Controls how much answers rely on headings and lists.',
       'field.emoji': 'Emoji',
-      'hint.emoji': 'An extra trait layered on top of style & tone. Controls how many emojis answers use.',
+      'hint.emoji': 'Controls how much emoji appears in replies.',
       'field.tables': 'Tables',
-      'hint.tables': 'An extra trait layered on top of style & tone. Controls how much answers rely on tables.',
+      'hint.tables': 'Controls how much tables appear in replies.',
       'field.replyLength': 'Reply length',
       'field.activePersonaName': 'Last used persona',
-      'hint.replyLength': 'Controls how long answers are. "Balanced" adds no constraint and lets the agent decide.',
+      'hint.replyLength': 'Controls reply length; "Balanced" adds no constraint and lets the agent decide.',
       'field.language': 'Output language',
-      'hint.language': 'Sets the language the agent replies in; also affects the /soul command output.',
+      'hint.language': 'Global switch: reply language and prompt language. Not a persona trait; presets do not store it.',
       'field.instructions': 'Custom instructions',
-      'hint.instructions': 'Extra persona or habit requirements. Avoid repeating wording similar to the style & tone option above to prevent conflicts.',
+      'hint.instructions': 'Extra persona or habit requirements. Avoid duplicating the style settings above.',
       'field.instructionsPlaceholder': 'Custom instructions — other behaviors, style or tone preferences',
       'group.personas': 'Personas',
       'personas.save': 'Save current as persona',
@@ -2642,6 +2717,11 @@ window.__ModuleLoader__.load({
       'hint.showOverviewInSidebar': 'Off by default so the sidebar stays uncluttered; turning it on adds the icon. You can also open the overview from the plugin detail page.',
       'action.openOverview': 'Open persona overview',
       'field.showQuickToggle': 'Show composer quick toggle',
+      'field.subagentInheritPersona': 'Subagents inherit persona',
+      'hint.subagentInheritPersona': 'Subagents are helpers you send out to do work, not chat partners. By default they reuse your persona; turn this off and they carry no personality or nickname at all — just the task.',
+      'field.subagentPersona': 'Default subagent persona',
+      'hint.subagentPersona': 'With inheritance off, subagents have no persona by default; pick one to give them all a shared character.',
+      'option.subagentPersonaNone': 'None (no persona)',
       'hint.showQuickToggle': 'The "Personalization enabled" button left of the composer toggles personalization in one click, without opening Settings. When hidden, you can only switch it from Settings.',
       'hint.overviewEntry': 'Opens the persona overview panel right from the plugin detail page — a permanent way in when the sidebar entry is hidden.',
       'quote.actionFloat': 'Quote this',
@@ -2913,8 +2993,8 @@ window.__ModuleLoader__.load({
     //     并防抖到最后一个合法值才提交（非法值不发请求，否则整单 400）。
     //   · EXTERNALLY_MANAGED —— 由别的界面就地管理，这张表单连草稿都不持有。
     const ABOUT_FIELD_KEYS = ['nickname', 'occupation', 'bio']
-    const TRAIT_FIELD_KEYS = ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'language', 'customInstructions']
-    const IMMEDIATE_FIELD_KEYS = ['enabled', 'requireToolConfirmation', 'showQuickToggle', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth']
+    const TRAIT_FIELD_KEYS = ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'customInstructions']
+    const IMMEDIATE_FIELD_KEYS = ['enabled', 'requireToolConfirmation', 'showQuickToggle', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'subagentInheritPersona', 'subagentPersona', 'language']
     // 表单以草稿持有、需要点保存才落盘的字段（dirty 检测与分区保存载荷共用）。
     const FORM_FIELD_KEYS = [...ABOUT_FIELD_KEYS, ...TRAIT_FIELD_KEYS]
 
@@ -2976,7 +3056,10 @@ window.__ModuleLoader__.load({
       historyMaxEntries: 'history.maxEntries',
       // 最近一次「使用预设」实际点的名字（0.9.0-p）：切预设同样要留痕，
       // 否则变更记录里它显示成裸键名。
-      activePersonaName: 'field.activePersonaName'
+      activePersonaName: 'field.activePersonaName',
+      // 子代理相关的两个字段同样是被审计的配置项：改它会留一条记录
+      subagentInheritPersona: 'field.subagentInheritPersona',
+      subagentPersona: 'field.subagentPersona'
     }
 
     // 与 lib/history.mjs 的 HISTORY_SOURCES 对齐；认不出的来源原样显示。
@@ -3049,6 +3132,73 @@ window.__ModuleLoader__.load({
      * @param props.hint      可选：ⓘ 提示文案
      * @param props.onChange  收到**布尔值**（不是事件对象）
      */
+    // 自绘下拉：弹层交给宿主的 Menu 渲染。
+    //
+    // 为什么不用原生 <select>：它的**弹出层由浏览器 / 系统绘制** —— CSS 只能碰
+    // option 的 color / background，圆角、阴影、行高、选中态、间距全都改不了，
+    // 与设置页其余部分明显不是一套（用户实测反馈「下拉展示那个弹窗样式不统一」）。
+    // 宿主自己的下拉（chat 的 PreferenceRow）就是 button + Menu，这里对齐同一套。
+    //
+    // 降级链：宿主没导出 Menu ⇒ 退回原生 select（样式不统一，但功能与无障碍都在）。
+    function SoulSelect(props) {
+      const { id, value, options, onChange, disabled, title, className, ariaLabel } = props
+      const [open, setOpen] = React.useState(false)
+      const list = Array.isArray(options) ? options : []
+      const current = list.find((opt) => opt.value === value)
+
+      if (HostMenu === null) {
+        return e('select', {
+          id,
+          value,
+          disabled: disabled === true,
+          title,
+          onChange: (ev) => onChange(ev.target.value)
+        }, ...list.map((opt) => e('option', { key: opt.value, value: opt.value }, opt.label)))
+      }
+
+      const chevron = HostChevronDown
+        ? e(HostChevronDown, { className: 'soul-select-chevron' })
+        : e('svg', {
+            className: 'soul-select-chevron',
+            width: 14, height: 14, viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true
+          },
+            e('path', { d: 'M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6', stroke: 'currentColor', strokeWidth: 1 })
+          )
+
+      // 触发按钮的 id 挂在 button 上：`<label htmlFor>` 仍能聚焦到它（无障碍不丢）
+      const trigger = e('button', {
+        type: 'button',
+        id,
+        disabled: disabled === true,
+        title,
+        className: 'soul-select-trigger' + (className ? ' ' + className : ''),
+        'aria-label': ariaLabel,
+        'aria-haspopup': 'menu',
+        'aria-expanded': open,
+        onClick: () => setOpen((prev) => !prev)
+      },
+        e('span', { className: 'soul-select-label' }, current ? current.label : ''),
+        chevron
+      )
+
+      return e(HostMenu, {
+        open,
+        anchor: trigger,
+        items: list.map((opt) => ({ id: opt.value, label: opt.label })),
+        selectedId: value,
+        onSelect: (next) => {
+          setOpen(false)
+          onChange(next)
+        },
+        onClose: () => setOpen(false),
+        align: 'end',
+        portal: true,
+        // 宿主会在 trigger 外面包一层 span（anchor wrapper）。不约束它的话，那层
+        // 会把行内剩余宽度吃掉，trigger 就贴在左侧、右边留一大片空白（用户实测截图）。
+        className: 'soul-select-anchor'
+      })
+    }
+
     function SoulSwitch(props) {
       const { id, checked, labelText, hint, onChange } = props
       const on = checked === true
@@ -3406,19 +3556,18 @@ window.__ModuleLoader__.load({
         // 记录为空 / 读取失败时也照常渲染 —— 容量参数与「当前有几条」无关。
         e('div', { className: 'soul-history-retention' },
           e('label', { htmlFor: 'soul-historyMaxEntries' }, t('history.maxEntries')),
-          e('select', {
+          e(SoulSelect, {
             id: 'soul-historyMaxEntries',
             value: String(savedRetention),
             disabled: retentionPending,
-            onChange: (ev) => { void changeRetention(Number(ev.target.value)) }
-          },
-            ...HISTORY_MAX_ENTRIES_OPTIONS.map((count) => e('option', {
-              key: count,
-              value: String(count)
-            }, count === HISTORY_MAX_ENTRIES_DEFAULT
-              ? t('history.maxEntriesDefault', { count: String(count) })
-              : t('history.maxEntriesOption', { count: String(count) })))
-          ),
+            options: HISTORY_MAX_ENTRIES_OPTIONS.map((count) => ({
+              value: String(count),
+              label: count === HISTORY_MAX_ENTRIES_DEFAULT
+                ? t('history.maxEntriesDefault', { count: String(count) })
+                : t('history.maxEntriesOption', { count: String(count) })
+            })),
+            onChange: (next) => { void changeRetention(Number(next)) }
+          }),
           e(SoulHint, { text: t('history.maxEntriesHint') })
         ),
         // 结果提示：成功绿字 / 失败红字，与设置页同一套形态（宿主 savedNotice 语义）
@@ -6769,11 +6918,12 @@ window.__ModuleLoader__.load({
           pickerFailed && e('div', { className: 'soul-bindings-hint' }, t('bindings.pickerUnavailable')),
           e('div', { className: 'soul-bindings-new' },
             e('label', { htmlFor: 'soul-bindings-persona' }, t('bindings.persona')),
-            e('select', {
+            e(SoulSelect, {
               id: 'soul-bindings-persona',
               value: effectiveDraftPersona,
-              onChange: (ev) => setDraftPersona(ev.target.value)
-            }, names.map((name) => e('option', { key: name, value: name }, name))),
+              options: names.map((name) => ({ value: name, label: name })),
+              onChange: (next) => setDraftPersona(next)
+            }),
             // variant 用 outline，**不用 primary**：primary 是实心主色
             // （浅色主题下 ≈ 黑底），hover 再压一层就更黑 —— 用户实测「全黑」。
             // outline 是描边按钮，hover 底色由宿主的 button token 决定，
@@ -6830,15 +6980,13 @@ window.__ModuleLoader__.load({
                                 t('bindings.invalid', { name: invalidName })),
                               // 失效引用也画在下拉里（作为唯一选项）：让用户看到「现在写的是谁」，
                               // 而不是看见一个空下拉、以为这条记录没有值
-                              e('select', {
+                              e(SoulSelect, {
                                 className: 'soul-bindings-select',
                                 value,
-                                'aria-label': t('bindings.persona'),
-                                onChange: (ev) => { void handleRebind(dir, ev.target.value) }
-                              },
-                                isInvalid && e('option', { value }, invalidName),
-                                names.map((name) => e('option', { key: name, value: name }, name))
-                              ),
+                                ariaLabel: t('bindings.persona'),
+                                options: [...(isInvalid ? [{ value, label: invalidName }] : []), ...names.map((name) => ({ value: name, label: name }))],
+                                onChange: (next) => { void handleRebind(dir, next) }
+                              }),
                               e(ui.Button, {
                                 // 待确认态靠文案已能区分（「确认解绑…」），
                                 // 红色描边是增强：className 若不透传也不影响可用性。
@@ -6880,7 +7028,7 @@ window.__ModuleLoader__.load({
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, subagentInheritPersona, subagentPersona, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
 
       // —— 草稿字段（「关于你」/「特质」）的本地值 ——
       //
@@ -6895,7 +7043,6 @@ window.__ModuleLoader__.load({
       const [localEmoji, setLocalEmoji] = React.useState(emoji)
       const [localTables, setLocalTables] = React.useState(tables)
       const [localReplyLength, setLocalReplyLength] = React.useState(replyLength)
-      const [localLanguage, setLocalLanguage] = React.useState(language || 'zh')
       const [localInstructions, setLocalInstructions] = React.useState(customInstructions)
       // trailColor 是 IMMEDIATE 里唯一保留本地值的字段：十六进制框要允许非法中间态
       // （打字过程中必然出现 `#679`），合法值防抖后再提交 —— 见下方防抖 effect。
@@ -7030,7 +7177,7 @@ window.__ModuleLoader__.load({
       // 回填范围 = 草稿字段 + trailColor（IMMEDIATE 里唯一有本地值的）。
       // 其余即时字段不在这里：它们直接读 store，写了就生效，没有「本地值等回填」这回事。
       const formKeys = [...FORM_FIELD_KEYS, 'trailColor']
-      const localValues = { nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions, trailColor: localTrailColor }
+      const localValues = { nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, customInstructions: localInstructions, trailColor: localTrailColor }
       const serverValues = { nickname: nickname || '', occupation: occupation || '', bio: bio || '', style, headingLists, emoji, tables, replyLength, language: language || 'zh', customInstructions, trailColor: trailColor || TRAIL_COLOR_FALLBACK }
       const lastSyncRef = React.useRef(null)
       // 判断某字段是否被用户动过：与「上次同步的快照」比。没有快照（首帧）时
@@ -7060,7 +7207,6 @@ window.__ModuleLoader__.load({
         setLocalEmoji(next.emoji)
         setLocalTables(next.tables)
         setLocalReplyLength(next.replyLength)
-        setLocalLanguage(next.language)
         setLocalInstructions(next.customInstructions)
         setLocalTrailColor(next.trailColor)
         // 依赖与 serverValues 的来源一致；localValues/sameValue 每次渲染都是新的，
@@ -7084,7 +7230,7 @@ window.__ModuleLoader__.load({
         ? a.trim() === b.trim()
         : a === b)
       const savedMap = { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions }
-      const localMap = { nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, language: localLanguage, customInstructions: localInstructions }
+      const localMap = { nickname: localNickname, occupation: localOccupation, bio: localBio, style: localStyle, headingLists: localHeadingLists, emoji: localEmoji, tables: localTables, replyLength: localReplyLength, customInstructions: localInstructions }
       // **分区 dirty**：哪一区还没存，就在哪一区的标题和按钮上各说各话。
       // 底部那个全局按钮删掉之后，只看一个全局 dirty 已经不够用了。
       const dirtyAbout = ABOUT_FIELD_KEYS.some((key) => !sameValue(savedMap[key], localMap[key]))
@@ -7281,7 +7427,6 @@ window.__ModuleLoader__.load({
         setLocalEmoji(src.emoji || 'default')
         setLocalTables(src.tables || 'default')
         setLocalReplyLength(src.replyLength || 'normal')
-        setLocalLanguage(src.language || 'zh')
         setLocalInstructions(src.customInstructions || '')
         setLocalTrailColor(src.trailColor || TRAIL_COLOR_FALLBACK)
       }
@@ -7493,9 +7638,16 @@ window.__ModuleLoader__.load({
       const aboutSummary = (aboutFilled > 0 ? `${aboutFilled}/3 ${t('accordion.filled')}` : t('accordion.empty')) + unsavedMark(dirtyAbout)
       const traitsSummary = t(`style.${localStyle}`) + unsavedMark(dirtyTraits)
       // 失败时摘要也要区分（折叠状态下用户只看得到这一行）
+      // 摘要 = 「N 个预设」+「当前生效的是哪个」。
+      //
+      // activePersona 由服务端 `resolveActivePersonaName` 算出（personas 接口的 activeName）：
+      // 优先用记住的名字，**且必须仍与当前配置逐字段匹配**才认 —— 用户改了任一特质就自动
+      // 脱离该预设（此时服务端回 null）。所以这里不需要再做判断：null 就是不显示。
       const personasSummary = personasError
         ? t('accordion.loadFailed')
-        : (personas === null ? t('status.loading') : `${Object.keys(personas).length} ${t('accordion.personas')}`)
+        : (personas === null
+            ? t('status.loading')
+            : `${Object.keys(personas).length} ${t('accordion.personas')}${activePersona ? ` · ${activePersona}` : ''}`)
       // 工作区绑定摘要：折叠态只看得到这一行，所以要先说「读没读出来」，
       // 再说条数。null = 还没拉过（本分组懒加载，展开前一直是 null）⇒ 显示空态文案，
       // 不显示「0 条」—— 那会把「没加载」误报成「一条都没有」。
@@ -7510,7 +7662,6 @@ window.__ModuleLoader__.load({
             : (Object.keys(bindings).length === 0
                 ? t('bindings.empty')
                 : t('bindings.count', { count: String(Object.keys(bindings).length), max: Number.isFinite(bindingsMax) ? String(bindingsMax) : '—' })))
-      const toolSummary = requireToolConfirmation === true ? t('accordion.on') : t('accordion.off')
       const promptSummary = promptText.length > 0
         ? t(promptIsDraft ? 'prompt.summaryDraft' : 'prompt.summaryChars', { n: String(promptText.length) })
         : (enabled ? t('prompt.summaryEnabled') : t('prompt.summaryDisabled'))
@@ -7551,8 +7702,11 @@ window.__ModuleLoader__.load({
             open: openSection === 'about',
             onToggle: toggleSection('about')
           },
-            e('div', { className: 'soul-field' },
-              e('label', { htmlFor: 'soul-nickname' }, t('field.nickname')),
+            e('div', { className: 'soul-field soul-field-stacked' },
+              e('label', { htmlFor: 'soul-nickname' },
+                t('field.nickname'),
+                e('span', { className: 'soul-field-row-desc' }, t('hint.nickname'))
+              ),
               e('input', {
                 type: 'text',
                 id: 'soul-nickname',
@@ -7561,8 +7715,11 @@ window.__ModuleLoader__.load({
                 placeholder: t('field.nicknamePlaceholder')
               })
             ),
-            e('div', { className: 'soul-field' },
-              e('label', { htmlFor: 'soul-occupation' }, t('field.occupation')),
+            e('div', { className: 'soul-field soul-field-stacked' },
+              e('label', { htmlFor: 'soul-occupation' },
+                t('field.occupation'),
+                e('span', { className: 'soul-field-row-desc' }, t('hint.occupation'))
+              ),
               e('input', {
                 type: 'text',
                 id: 'soul-occupation',
@@ -7571,8 +7728,11 @@ window.__ModuleLoader__.load({
                 placeholder: t('field.occupationPlaceholder')
               })
             ),
-            e('div', { className: 'soul-field' },
-              e('label', { htmlFor: 'soul-bio' }, t('field.bio')),
+            e('div', { className: 'soul-field soul-field-stacked' },
+              e('label', { htmlFor: 'soul-bio' },
+                t('field.bio'),
+                e('span', { className: 'soul-field-row-desc' }, t('hint.bio'))
+              ),
               e('textarea', {
                 id: 'soul-bio',
                 className: 'soul-textarea-sm',
@@ -7598,88 +7758,72 @@ window.__ModuleLoader__.load({
             open: openSection === 'traits',
             onToggle: toggleSection('traits')
           },
-            e('div', { className: 'soul-field' },
+            e('div', { className: 'soul-field soul-field-row' },
               e('label', { htmlFor: 'soul-style' },
                 t('field.style'),
-                e(SoulHint, { text: t('hint.style') })
+                e('span', { className: 'soul-field-row-desc' }, t('hint.style'))
               ),
-              e('select', {
+              e(SoulSelect, {
                 id: 'soul-style',
                 value: localStyle,
-                onChange: (ev) => setLocalStyle(ev.target.value)
-              },
-                ...styleOptions.map(opt => e('option', { key: opt.value, value: opt.value }, opt.label))
-              )
+                options: styleOptions,
+                onChange: (next) => setLocalStyle(next)
+              })
             ),
-            e('div', { className: 'soul-field' },
+            e('div', { className: 'soul-field soul-field-row' },
               e('label', { htmlFor: 'soul-headingLists' },
                 t('field.headingLists'),
-                e(SoulHint, { text: t('hint.headingLists') })
+                e('span', { className: 'soul-field-row-desc' }, t('hint.headingLists'))
               ),
-              e('select', {
+              e(SoulSelect, {
                 id: 'soul-headingLists',
                 value: localHeadingLists,
-                onChange: (ev) => setLocalHeadingLists(ev.target.value)
-              },
-                ...headingListsOptions.map(opt => e('option', { key: opt.value, value: opt.value }, opt.label))
-              )
+                options: headingListsOptions,
+                onChange: (next) => setLocalHeadingLists(next)
+              })
             ),
-            e('div', { className: 'soul-field' },
+            e('div', { className: 'soul-field soul-field-row' },
               e('label', { htmlFor: 'soul-emoji' },
                 t('field.emoji'),
-                e(SoulHint, { text: t('hint.emoji') })
+                e('span', { className: 'soul-field-row-desc' }, t('hint.emoji'))
               ),
-              e('select', {
+              e(SoulSelect, {
                 id: 'soul-emoji',
                 value: localEmoji,
-                onChange: (ev) => setLocalEmoji(ev.target.value)
-              },
-                ...emojiOptions.map(opt => e('option', { key: opt.value, value: opt.value }, opt.label))
-              )
+                options: emojiOptions,
+                onChange: (next) => setLocalEmoji(next)
+              })
             ),
-            e('div', { className: 'soul-field' },
+            e('div', { className: 'soul-field soul-field-row' },
               e('label', { htmlFor: 'soul-tables' },
                 t('field.tables'),
-                e(SoulHint, { text: t('hint.tables') })
+                e('span', { className: 'soul-field-row-desc' }, t('hint.tables'))
               ),
-              e('select', {
+              e(SoulSelect, {
                 id: 'soul-tables',
                 value: localTables,
-                onChange: (ev) => setLocalTables(ev.target.value)
-              },
-                ...tablesOptions.map(opt => e('option', { key: opt.value, value: opt.value }, opt.label))
-              )
+                options: tablesOptions,
+                onChange: (next) => setLocalTables(next)
+              })
             ),
-            e('div', { className: 'soul-field' },
+            e('div', { className: 'soul-field soul-field-row' },
               e('label', { htmlFor: 'soul-replyLength' },
                 t('field.replyLength'),
-                e(SoulHint, { text: t('hint.replyLength') })
+                e('span', { className: 'soul-field-row-desc' }, t('hint.replyLength'))
               ),
-              e('select', {
+              e(SoulSelect, {
                 id: 'soul-replyLength',
                 value: localReplyLength,
-                onChange: (ev) => setLocalReplyLength(ev.target.value)
-              },
-                ...replyLengthOptions.map(opt => e('option', { key: opt.value, value: opt.value }, opt.label))
-              )
+                options: replyLengthOptions,
+                onChange: (next) => setLocalReplyLength(next)
+              })
             ),
-            e('div', { className: 'soul-field' },
-              e('label', { htmlFor: 'soul-language' },
-                t('field.language'),
-                e(SoulHint, { text: t('hint.language') })
-              ),
-              e('select', {
-                id: 'soul-language',
-                value: localLanguage,
-                onChange: (ev) => setLocalLanguage(ev.target.value)
-              },
-                ...LANGUAGE_OPTIONS.map(opt => e('option', { key: opt.value, value: opt.value }, opt.label))
-              )
-            ),
-            e('div', { className: 'soul-field' },
+            // 自定义指令是**堆叠块**（标题在上、textarea 占满整行），不是左右两列 ——
+            // 但标题/说明的字号与颜色必须与上面那些选择行一致（用户指出过不一致）。
+            e('div', { className: 'soul-field soul-field-stacked' },
               e('label', { htmlFor: 'soul-instructions' },
                 t('field.instructions'),
-                e(SoulHint, { text: t('hint.instructions') })
+                e('span', { className: 'soul-field-row-desc' }, t('hint.instructions'))
               ),
               e('textarea', {
                 id: 'soul-instructions',
@@ -8040,16 +8184,38 @@ window.__ModuleLoader__.load({
           // （47 项）与 verify-e2e-prompt 的 R1–R13 守着。
 
           e(SoulAccordion, {
-            id: 'soul-tools',
+            // 刻意**不给摘要**：这一组有 8 个互不相关的设置项（语言 / 确认模式 / 快捷开关 /
+          // 子代理继承 / 引用 / 侧栏总览 / 光轨…），任何单一摘要都会误导。原先它报的是
+          // 「人设变更确认」这一个开关的状态，折叠时显示成一个没有主语的「未开启」——
+          // 用户直接问「这是啥」。关于你 / 特质 / 人设预设那三组的摘要是「当前值」，
+          // 有明确所指，可以留。
+          id: 'soul-tools',
             title: t('group.tool'),
-            summary: toolSummary,
-            open: openSection === 'tools',
+              open: openSection === 'tools',
             onToggle: toggleSection('tools')
           },
             // 这一组没有保存按钮：每一项都是即时字段，onChange 直接落盘（见 saveImmediate）。
             // 判据是「这一格的值改了，用户期望它什么时候开始生效」—— 开关类答案是「立刻」，
             // 而底部那个整份提交的全局按钮让「立刻」变成了「要点一下才算」，是这次拆分的起因。
             e('div', { className: 'soul-field-note' }, t('hint.immediateApply')),
+
+            // 输出语言：**全局开关，不是角色特征**。
+            //
+            // 它决定两件事：① 用哪套提示词文案（中/英）；② 要求模型用哪种语言回答。
+            // 两件都该对所有 agent 生效（含子代理），与被派出去的角色无关；也正因为它
+            // 不属于人设，预设里不再保存它（见 PERSONA_FIELDS）。
+            e('div', { className: 'soul-field soul-field-row soul-language' },
+              e('label', { htmlFor: 'soul-language' },
+                t('field.language'),
+                e('span', { className: 'soul-field-row-desc' }, t('hint.language'))
+              ),
+              e(SoulSelect, {
+                id: 'soul-language',
+                value: language,
+                options: LANGUAGE_OPTIONS,
+                onChange: (next) => void saveImmediate('language', next)
+              })
+            ),
 
             e(SoulSwitch, {
               id: 'soul-toolConfirm',
@@ -8069,6 +8235,32 @@ window.__ModuleLoader__.load({
               checked: showQuickToggle !== false,
               onChange: (next) => void saveImmediate('showQuickToggle', next)
             }),
+
+            // 子代理（spawn 出去干活的助手）是否继承主代理的人设。
+            //
+            // 默认开 = 与旧行为完全一致；关掉之后子代理不再带任何性格与称呼，
+            // 只按任务本身工作（解析链见 lib/subagent-scope.mjs）。
+            e(SoulSwitch, {
+              id: 'soul-subagentInheritPersona',
+              labelText: t('field.subagentInheritPersona'),
+              hint: t('hint.subagentInheritPersona'),
+              checked: subagentInheritPersona !== false,
+              onChange: (next) => void saveImmediate('subagentInheritPersona', next)
+            }),
+
+            // 只在关闭继承时有意义：此时子代理默认完全无人设，可另行指定一张统一的卡。
+            subagentInheritPersona === false && e('div', { className: 'soul-field soul-field-row soul-subagent-persona' },
+              e('label', { htmlFor: 'soul-subagentPersona' },
+                t('field.subagentPersona'),
+                e('span', { className: 'soul-field-row-desc' }, t('hint.subagentPersona'))
+              ),
+              e(SoulSelect, {
+                id: 'soul-subagentPersona',
+                value: subagentPersona || '',
+                options: [{ value: '', label: t('option.subagentPersonaNone') }, ...Object.keys(personas || {}).map((name) => ({ value: name, label: name }))],
+                onChange: (next) => void saveImmediate('subagentPersona', next)
+              }),
+            ),
 
             // 引用作为上下文：独立开关，关掉只影响引用，人设照常工作。
             e(SoulSwitch, {
@@ -8140,25 +8332,23 @@ window.__ModuleLoader__.load({
                   ? e('div', { className: 'soul-field-warn' }, t('trail.colorInvalid'))
                   : null
               ),
-              e('div', { className: 'soul-field' },
+              e('div', { className: 'soul-field soul-field-row' },
                 e('label', { htmlFor: 'soul-trailSpeed' }, t('trail.speed')),
-                e('select', {
+                e(SoulSelect, {
                   id: 'soul-trailSpeed',
                   value: trailSpeed || 'slow',
-                  onChange: (ev) => void saveImmediate('trailSpeed', ev.target.value)
-                },
-                  ...TRAIL_SPEED_VALUES.map((value) => e('option', { key: value, value }, t(`trail.speed.${value}`)))
-                )
+                  options: TRAIL_SPEED_VALUES.map((v) => ({ value: v, label: t('trail.speed.' + v) })),
+                  onChange: (next) => void saveImmediate('trailSpeed', next)
+                })
               ),
-              e('div', { className: 'soul-field' },
+              e('div', { className: 'soul-field soul-field-row' },
                 e('label', { htmlFor: 'soul-trailWidth' }, t('trail.width')),
-                e('select', {
+                e(SoulSelect, {
                   id: 'soul-trailWidth',
                   value: trailWidth || 'thin',
-                  onChange: (ev) => void saveImmediate('trailWidth', ev.target.value)
-                },
-                  ...TRAIL_WIDTH_VALUES.map((value) => e('option', { key: value, value }, t(`trail.width.${value}`)))
-                )
+                  options: TRAIL_WIDTH_VALUES.map((v) => ({ value: v, label: t('trail.width.' + v) })),
+                  onChange: (next) => void saveImmediate('trailWidth', next)
+                })
               ),
               e('div', { className: 'soul-field' },
                 // 预览示例不是表单控件，没有可关联的 id —— 用 label 会是「指向空的标签」，
@@ -8182,7 +8372,12 @@ window.__ModuleLoader__.load({
         // 独立一行在个性化区块里突兀，而折叠标题旁挂 hover 又说不到点上
         //（它解释的是展开后的东西）。这里不再渲染任何 history 状态，渲染成本为零。
 
-        e(SoulAccordion, {
+        // 关闭个性化时这两栏都没有意义，直接不渲染：
+        //   · 提示词预览：编译结果为空，展示「（空）」只增加噪音；
+        //   · 高级选项（重置默认）：它回答的是「把已生效的配置推倒重来」，
+        //     而关掉个性化之后本来就没有生效配置。
+        // 重置仍可从 `/soul reset` 命令执行（命令与界面是两条独立入口）。
+        enabled && e(SoulAccordion, {
           id: 'soul-prompt',
           title: t(promptIsDraft ? 'prompt.titleDraft' : 'prompt.title'),
           summary: promptSummary,
@@ -8212,7 +8407,7 @@ window.__ModuleLoader__.load({
         //   ③ 它不属于任何内容分区（关于你 / 特质 / 交互），留在页尾就是一条孤零零的红按钮。
         // 位置选在预览之后：那是用户读完成本才会往下走的地方，也是「我想知道现在到底生效了什么」
         // 与「我想推倒重来」天然相邻的位置。
-        e(SoulAccordion, {
+        enabled && e(SoulAccordion, {
           id: 'soul-advanced',
           title: t('group.advanced'),
           summary: t('button.reset'),

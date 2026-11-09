@@ -45,7 +45,7 @@ import { assertCount } from './lib/skip-report.mjs'
 
 const root = mkdtempSync(join(tmpdir(), 'dsh-soul-bindings-'))
 // 断言条数写死：新增/删除用例时数字必须一起改（见 skip-report.mjs 的约定 3）。
-const EXPECTED_ASSERTIONS = 47
+const EXPECTED_ASSERTIONS = 48
 
 // Windows 语义与 POSIX 语义各一份，两套都在这台机器上跑 —— 平台相关的分支
 // 因此不可能因为「我这里恰好是 Windows」而蒙混过关。
@@ -546,6 +546,25 @@ await check('lib/bindings.mjs 复用 lib/store.mjs 的 IO 原语，不另造一�
   assert.match(text, /import \{[^}]*writeConfigFile[^}]*\} from '\.\/store\.mjs'/)
   assert.match(text, /import \{[^}]*moveAsideConfigFile[^}]*\} from '\.\/store\.mjs'/)
   assert.ok(!/writeFile\(/.test(text), '原子写只有一处实现（store.mjs），这里不得直接 writeFile')
+})
+
+await check('UNC 路径不解析真实路径（realpath 会向远端发起 SMB 并送出 NTLM 哈希）', async () => {
+  // Windows 上对 `\\server\share` 调 fs.realpath 会先建立 SMB 连接、做 NTLM 认证 ——
+  // 攻击者只要让某条绑定指向自己的机器，用 Responder 就能收哈希离线破解或中继。
+  // realpath 在这里的唯一用途是消掉符号链接与 `..`，而前缀匹配是纯文本比较，
+  // 所以对 UNC 跳过它既堵住哈希外泄，又不影响「绑定共享盘目录」这个正常用法。
+  const opts = { sep: '\\', caseInsensitive: true }
+  let calls = 0
+  const spy = async (p) => { calls += 1; return p }
+
+  const unc = await resolveDirIdentity('\\\\attacker.example\\share\\proj', opts, spy)
+  assert.equal(calls, 0, 'UNC 不得调用 realpath（Windows 会因此送出 NTLM 哈希）')
+  assert.equal(unc, '\\\\attacker.example\\share\\proj', 'UNC 应原样返回规范化结果，功能不受影响')
+
+  // 反向防空过：普通盘符路径**仍然**要真实化（消符号链接的能力没被一刀切掉）
+  calls = 0
+  await resolveDirIdentity('D:\\proj\\sub', opts, spy)
+  assert.equal(calls, 1, '普通路径仍应调用 realpath')
 })
 
 if (!assertCount('verify-bindings', passed, EXPECTED_ASSERTIONS)) process.exit(1)

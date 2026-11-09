@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 109
+const EXPECTED_ASSERTIONS = 118
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -209,6 +209,44 @@ function findAll(tree, predicate) {
 }
 
 /**
+ * 取一个「下拉」的读/写视图。
+ *
+ * 0.13.0 起下拉是**自绘**的：`button.soul-select-trigger` + 宿主 `Menu`（弹层由宿主
+ * 渲染，样式才与设置页其余部分统一）。只有「宿主没导出 Menu」的降级路径还留原生
+ * `<select>`。断言层不该绑死其中一种，所以统一经这个 helper 访问：
+ *   · value   —— 当前值（自绘从 `Menu.selectedId` 读，原生从 `select.value` 读）
+ *   · options —— `[{ value, label }]`（自绘从 `Menu.items` 读，原生从 `<option>` 读）
+ *   · choose  —— 选中某一项（等价于用户在弹层里点了它 / 原生触发 change）
+ * 找不到返回 null，调用方据此断言「前置条件成立」。
+ */
+function soulSelect(tree, id) {
+  const menu = findAll(tree, (node) => node.type === 'ui-menu'
+    && node.props
+    && node.props.anchor
+    && node.props.anchor.props
+    && node.props.anchor.props.id === id)[0]
+  if (menu) {
+    return {
+      kind: 'menu',
+      node: menu,
+      value: menu.props.selectedId,
+      options: (menu.props.items || []).map((item) => ({ value: item.id, label: item.label })),
+      choose: async (next) => { menu.props.onSelect(next) }
+    }
+  }
+  const native = findAll(tree, (node) => node.type === 'select' && node.props && node.props.id === id)[0]
+  if (!native) return null
+  return {
+    kind: 'native',
+    node: native,
+    value: native.props.value,
+    options: findAll(native, (node) => node.type === 'option')
+      .map((option) => ({ value: option.props.value, label: option.props.children })),
+    choose: async (next) => { await native.props.onChange({ target: { value: next } }) }
+  }
+}
+
+/**
  * 按**类名 token 精确匹配**取元素。
  *
  * 不要用 `className.includes('soul-persona-card')` 这种子串匹配：它同时命中
@@ -377,7 +415,11 @@ function loadClient(routes, options = {}) {
         // 同一个宿主组件）。桩成可识别元素，断言才能验证「真的用了宿主组件」，
         // 而不是只验证「降级路径的原生 checkbox 还在」。
         Switch: 'ui-switch',
-        IconAgentPresetOutlineRegular: 'ui-icon-persona'
+        IconAgentPresetOutlineRegular: 'ui-icon-persona',
+        // 自绘下拉：弹层用宿主的 Menu（与设置页其余下拉同一套卡片）。
+        // 桩成可识别元素标记，断言才能验证「真的用了宿主组件」而不是降级成原生 select。
+        Menu: 'ui-menu',
+        IconChevronDownOutlineRegular: 'ui-icon-chevron-down'
       }
       // 白名单校验：访问未声明的名字一律返回 undefined（与真实宿主一致），
       // 宿主真实存在的图标名白名单。
@@ -389,7 +431,7 @@ function loadClient(routes, options = {}) {
       //   只在访问未定义属性时才会触发 ⇒ ReferenceError（比它想报的错还难懂）。
       //   因为平时只访问 shimmed 里已有的属性，这个坑一直没显形。
       //   新增宿主图标时补进这个集合。
-      const ICON_WHITELIST = new Set(['IconAgentPresetOutlineRegular'])
+      const ICON_WHITELIST = new Set(['IconAgentPresetOutlineRegular', 'IconChevronDownOutlineRegular'])
 
       // 并大声报错 —— 让「用了宿主没有的图标名」在测试期就暴露，
       // 而不是等它在浏览器里把整个区块崩掉。
@@ -1790,9 +1832,9 @@ try {
     assert.equal(dirtyHint.length, 0, '不应出现「未保存的更改」提示')
     // ④ 编辑某字段后 dirty 仍应正常亮起（确认按字段判断没有把保护一并去掉）。
     //    特质区此刻已经展开（上面 openAccordion 进来的），直接改风格下拉。
-    const styleSelects = findAll(tree1, (n) => n.type === 'select')
-    assert.ok(styleSelects.length > 0, '应存在风格下拉框（前置条件）')
-    await styleSelects[0].props.onChange({ target: { value: 'roast' } })
+    const styleCtl = soulSelect(tree1, 'soul-style')
+    assert.ok(styleCtl, '应存在风格下拉框（前置条件）')
+    await styleCtl.choose('roast')
     const tree2 = await renderSettings(world)
     const saveBtn2 = findAll(tree2, (n) => n.type === 'ui-button' && textOf(n) === world.dicts.zh['button.saveTraits'])
     assert.equal(
@@ -1806,7 +1848,7 @@ try {
     //    （判断力验证实测 ②③ 漏网）。
     //    注意：不要指望 fake timer 的轮询自己跑 —— settle 不推进 timerQueue，
     //    直接调 loadConfig 才是确定性的等价写入。
-    await styleSelects[0].props.onChange({ target: { value: 'casual' } })   // 用户正在编辑 style
+    await styleCtl.choose('casual')   // 用户正在编辑 style
     // 外部写入（轮询的等价物）必须真的改变 store —— effect 的依赖是 store 值，
     // 若 loadConfig 返回与 store 相同的值，effect 根本不跑，变异（无条件跟随）
     // 就探测不到差异（判断力验证实测 ②③ 漏网的原因）。这里模拟「别处把风格
@@ -1819,10 +1861,10 @@ try {
     // （测试台的 set 只标记 dirty，下一帧 render() 才提交；单帧树读到的是旧值）
     await renderSettings(world)
     const treePolled = await renderSettings(world)
-    const polledSelects = findAll(treePolled, (n) => n.type === 'select')
-    assert.ok(polledSelects.length > 0, '轮询后仍应有风格下拉框（前置条件）')
+    const polledCtl = soulSelect(treePolled, 'soul-style')
+    assert.ok(polledCtl, '轮询后仍应有风格下拉框（前置条件）')
     assert.equal(
-      polledSelects[0].props.value,
+      polledCtl.value,
       'casual',
       '用户正在编辑的字段不得被外部写入覆盖（无条件跟随 store 会把它改回 store 值）'
     )
@@ -3267,21 +3309,21 @@ await check('C20 点叠层侧边卡只翻页、不翻面（整面点击必须限
 
     // ② 详情页的变更记录区块里必须有它
     let detail = await renderDetailSettled(world)
-    const selects = findAll(detail, (n) => n.type === 'select' && n.props.id === 'soul-historyMaxEntries')
-    assert.equal(selects.length, 1, `详情页应恰好一个保留条数下拉，实际 ${selects.length}`)
-    assert.equal(selects[0].props.value, '200', '初始值应来自配置（默认 200）')
+    const retentionCtl = soulSelect(detail, 'soul-historyMaxEntries')
+    assert.ok(retentionCtl, '详情页应恰好一个保留条数下拉')
+    assert.equal(retentionCtl.value, '200', '初始值应来自配置（默认 200）')
     // 档位完整（50 / 100 / 200 / 500），否则用户没法把窗口调大
-    const options = findAll(selects[0], (n) => n.type === 'option').map((n) => n.props.value)
+    const options = retentionCtl.options.map((option) => option.value)
     assert.deepEqual(options, ['50', '100', '200', '500'], `档位应为四档，实际 ${JSON.stringify(options)}`)
 
     // ③ 改一次就落盘，不用等设置页那个保存按钮
-    await selects[0].props.onChange({ target: { value: '500' } })
+    await retentionCtl.choose('500')
     detail = await renderDetailSettled(world)
     assert.equal(posts.length, 1, `改一次应恰好发一次保存请求，实际 ${posts.length}`)
     // 只发这一个字段：整份配置回传会覆盖掉别的标签页刚改的东西
     assert.deepEqual(posts[0], { historyMaxEntries: 500 }, `请求体只该带这一个字段，实际 ${JSON.stringify(posts[0])}`)
-    const after = findAll(detail, (n) => n.type === 'select' && n.props.id === 'soul-historyMaxEntries')[0]
-    assert.equal(after.props.value, '500', '成功后下拉应停在新值上')
+    const afterCtl = soulSelect(detail, 'soul-historyMaxEntries')
+    assert.equal(afterCtl.value, '500', '成功后下拉应停在新值上')
     const okText = findAllByClass(detail, 'soul-saved-notice')
     assert.equal(okText.length, 1, '成功后应有一行绿字')
     assert.equal(textOf(okText[0]), zh['history.maxEntriesSaved'].replace('{count}', '500'))
@@ -3728,11 +3770,16 @@ await check('C57 改绑/解绑是文字按钮：规格照抄宿主设置-模型�
   assert.ok(/state-error-primary/.test(danger), '删除按钮应为红字（宿主 dangerButton 同款）')
   const dangerHover = rule('soul-ws-btn-danger:hover:not\\(:disabled\\)')
   assert.ok(/interactive-bg-hover-danger/.test(dangerHover), '删除悬停应为 danger 浅红底（宿主同款）')
-  // 必须是文字按钮：不得再引用任何图标组件
-  assert.equal(
-    /ui\.Icon\w+/.test(source),
-    false,
-    '工作区按钮应为文字按钮 —— 不得引用 ui.Icon*（图标名还在宿主模块表里踩过 #130）'
+  // 必须是文字按钮：工作区那一块不得引用图标组件。
+  //
+  // ⚠️ 原先这里是**全文**扫描 `/ui\.Icon\w+/`。0.13.0 给自绘下拉加了 chevron
+  //（`ui.IconChevronDownOutlineRegular`）之后，这条就变成误报了 —— 判据得钉住
+  //「哪些用途是允许的」，而不是「全文一个都不许有」。
+  const iconNames = [...new Set([...source.matchAll(/ui\.Icon\w+/g)].map((m) => m[0]))]
+  assert.deepEqual(
+    iconNames,
+    ['ui.IconChevronDownOutlineRegular'],
+    'ui.Icon* 只应出现在自绘下拉的 chevron 上（工作区按钮必须是文字按钮）'
   )
   // 文案必须还在（文字按钮的核心：靠文字表达动作）
   assert.ok(/workspaces\.rebind/.test(source) && /workspaces\.unbindArmed/.test(source), '按钮文案应保留')
@@ -5614,14 +5661,14 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.ok(textCols.length >= 1, '开关必须有 .soul-toggle-text 文字列')
     assert.match(source, /className: 'soul-toggle-title'/, '标题必须有独立类名（14px 标题层级）')
 
-    // 源码层面：设置页的 7 个开关必须都走 SoulSwitch（别漏掉某个还用原生 checkbox）
-    // 7 = 启用 / 人设变更确认 / 显示快捷开关 / 引用作为上下文 / 侧栏总览 / 输入框光轨
-    //     + 存为预设弹层里的「保存后立即应用」
+    // 源码层面：设置页的 8 个开关必须都走 SoulSwitch（别漏掉某个还用原生 checkbox）
+    // 8 = 启用 / 人设变更确认 / 显示快捷开关 / 子代理继承人设 / 引用作为上下文
+    //     / 侧栏总览 / 输入框光轨 + 存为预设弹层里的「保存后立即应用」
     // 那一个原来是**全站唯一漏网**的原生 checkbox：它自绘一行、说明文字 flex:none，
     // 在 380px 弹层里把标题挤成「一个字一行」，而且拿不到 .soul-toggle 那套
     // appearance:none 重绘 —— 用户就是指着这个弹窗说要「和其他地方统一」。
     const soulSwitchUses = (source.match(/e\(SoulSwitch, \{/g) || []).length
-    assert.equal(soulSwitchUses, 7, `应有 7 处使用 SoulSwitch，实际 ${soulSwitchUses}`)
+    assert.equal(soulSwitchUses, 8, `应有 8 处使用 SoulSwitch，实际 ${soulSwitchUses}`)
 
     // 每个开关都要有无障碍标签（宿主 Switch 用 label 而非可见文字）
     for (const sw of switches) {
@@ -5779,7 +5826,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
   // 删掉之后，「点这一区的按钮就只动这一区」成了新的不变量；它在界面上几乎看不出来
   // —— 只有请求体不会骗人。
   const ABOUT_KEYS = ['bio', 'nickname', 'occupation']
-  const TRAIT_KEYS = ['customInstructions', 'emoji', 'headingLists', 'language', 'replyLength', 'style', 'tables']
+  const TRAIT_KEYS = ['customInstructions', 'emoji', 'headingLists', 'replyLength', 'style', 'tables']
   const configPosts = () => fetchCalls.filter((c) => c.path === '/api/soul/config' && c.method === 'POST')
   const byText = (tree, label) => findAll(tree, (n) => n.type === 'ui-button' && textOf(n) === label)
 
@@ -5796,9 +5843,9 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.ok(nick, '缺少昵称输入框（前置条件）')
     await nick.props.onChange({ target: { value: '连长' } })
     const tTraits = await openAccordion(world, 'soul-traits')
-    const style = findAll(tTraits, (n) => n.type === 'select' && n.props && n.props.id === 'soul-style')[0]
-    assert.ok(style, '缺少风格下拉框（前置条件）')
-    await style.props.onChange({ target: { value: 'roast' } })
+    const styleCtl2 = soulSelect(tTraits, 'soul-style')
+    assert.ok(styleCtl2, '缺少风格下拉框（前置条件）')
+    await styleCtl2.choose('roast')
 
     const tAbout2 = await openAccordion(world, 'soul-about')
     const btnAbout = byText(tAbout2, world.dicts.zh['button.saveAbout'])
@@ -5850,9 +5897,9 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.equal(world.controller.store.getSnapshot().showQuickToggle, false, 'store 必须跟上（不跟就是只改了界面）')
 
     // 光轨的速度/宽度是下拉，同属即时字段
-    const speed = findAll(tree, (n) => n.type === 'select' && n.props && n.props.id === 'soul-trailSpeed')[0]
+    const speed = soulSelect(tree, 'soul-trailSpeed')
     assert.ok(speed, '缺少光轨速度下拉框（前置条件）')
-    await speed.props.onChange({ target: { value: 'fast' } })
+    await speed.choose('fast')
     await renderSettingsSettled(world)
     assert.deepEqual(configPosts()[1].body, { trailSpeed: 'fast' }, '光轨速度也必须即时且单字段提交')
   })
@@ -6016,6 +6063,243 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       const en = world.dicts.en[key]
       assert.ok(typeof en === 'string' && en.length > 0, `缺英文文案 ${key}`)
       assert.equal(/[一-鿿]/.test(en), false, `英文文案 ${key} 夹了中文字符：${en}`)
+    }
+  })
+
+  await check('C116 下拉触发器逐项对齐宿主 PreferenceRow 的 .selector（胶囊）', async () => {
+    // 宿主实现：`dsh-client-ui-chat` 的 `PreferenceRow.module.css`。抄的是**值**不是类名
+    // （宿主用 CSS module，hash 名不可依赖）。
+    //
+    // 0.13.0 起下拉是**自绘**的（button + 宿主 Menu），原生 <select> 只在
+    // 「宿主没导出 Menu」的降级路径里出现 —— 所以钉的规则名从 `select` 换成了
+    // `.soul-select-trigger`。
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    const rule = source.match(/\.soul-select-trigger\{[^}]*\}/)
+    assert.ok(rule, '缺少 .soul-select-trigger 的样式规则')
+    const css = rule[0]
+    const expectations = [
+      [/height:36px/, '高度 36px（宿主 .selector）'],
+      [/border:none/, '无边框（宿主 .selector）'],
+      [/border-radius:var\(--dsw-radius-md\)/, '圆角 radius-md'],
+      [/background:var\(--dsw-alias-bg-module-platform\)/, '灰底 bg-module-platform'],
+      [/font-size:14px/, '字号 14px'],
+      [/line-height:22px/, '行高 22px'],
+      [/padding:0 14px/, '左右内边距 14px'],
+      [/gap:12px/, '文字与 chevron 间距 12px'],
+      [/display:inline-flex/, '行内 flex（文字 + 图标一行）'],
+
+    ]
+    for (const [re, label] of expectations) assert.match(css, re, '缺少：' + label)
+    // 限宽单独一条规则（只有设置行需要一个上限；历史保留 / 绑定按各自 min-width 走）
+    assert.match(source, /\.soul-field-row \.soul-select-trigger\{min-width:120px;max-width:280px\}/, '设置行下拉应限宽（固定 px：百分比在 auto 宽度的父级里会塌）')
+    // 悬停与宿主一致
+    assert.match(source, /\.soul-select-trigger:hover[^}]*interactive-bg-hover/, '悬停应用 interactive-bg-hover')
+    // 文字超长要省略，不能溢出胶囊
+    assert.match(source, /\.soul-select-label\{[^}]*text-overflow:ellipsis/, '选中项文字超长应省略')
+  })
+
+  await check('C117 下拉一律走自绘 SoulSelect（原生 select 只保留降级路径）', async () => {
+    // 原生 <select> 的**弹出层由浏览器绘制** —— CSS 只能碰 option 的 color/background，
+    // 圆角、阴影、行高、选中态、间距全都改不了，与设置页其余部分明显不是一套
+    //（用户实测反馈「下拉展示那个弹窗样式不统一」）。所以统一换成宿主 Menu。
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    const soulSelects = source.match(/e\(SoulSelect, \{/g) || []
+    assert.ok(soulSelects.length >= 12, '自绘下拉应覆盖统计/绑定/特质/语言/子代理/光轨，实际 ' + soulSelects.length)
+    // 反向：原生 select 只允许出现在 SoulSelect 自己的降级分支里（恰好一处）
+    const natives = source.match(/e\('select', \{/g) || []
+    assert.equal(natives.length, 1, '原生 select 只应出现在降级路径，实际 ' + natives.length + ' 处')
+    // 降级分支必须在 HostMenu === null 之下 —— 否则「有 Menu 却还画原生 select」
+    assert.match(source, /if \(HostMenu === null\) \{[\s\S]{0,400}?e\('select'/, '降级分支必须挂在 HostMenu 判空之下')
+    // 弹层必须 portal + 右对齐（宿主 PreferenceRow 的用法），否则会被设置页容器裁掉
+    assert.match(source, /portal: true/, 'Menu 必须 portal（避免被祖先 overflow 裁掉）')
+    assert.match(source, /align: 'end'/, 'Menu 应与宿主一致右对齐')
+  })
+
+  await check('C118 设置行与堆叠块的说明都是可见文字（左两行），不是 ⓘ tooltip', async () => {
+    // 宿主 `PreferenceRow` 的左侧是 `.rowText → .title + .desc` —— **两行可见文字**；
+    // 我们原来把说明藏进 ⓘ tooltip，用户看截图后要求对齐宿主：说明本身很短，
+    // 藏起来反而让人非点不可。
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    const rows = source.match(/className: 'soul-field soul-field-row[^']*'/g) || []
+    assert.ok(rows.length >= 7, '设置行应至少 7 处（5 特质 + 语言 + 子代理），实际 ' + rows.length)
+    // 每一条说明都渲染成可见 span（7 处使用 + 1 处 CSS 定义）
+    // 11 = 7 个选择行（5 特质 + 语言 + 子代理）+ 自定义指令 + 「关于你」三字段
+    const descUses = (source.match(/className: 'soul-field-row-desc'/g) || []).length
+    assert.equal(descUses, 11, '可见说明应覆盖 7 个选择行 + 2 个堆叠块（含关于你三字段），实际 ' + descUses)
+    // 反向：这些行里不得再有 ⓘ（SoulHint）。逐行开窗判断，避免跨块误判。
+    // 逐块判断，不能简单开窗 —— 实测 20 行窗口会越界到**后面那行** textarea 的 ⓘ
+    //（自定义指令行保留 tooltip 是对的），报出两处误报。用括号配平取真实块边界。
+    const lines = source.split('\n')
+    const offenders = []
+    lines.forEach((line, index) => {
+      if (!line.includes("className: 'soul-field soul-field-row")) return
+      let depth = 0
+      let block = ''
+      for (let k = index; k < Math.min(index + 40, lines.length); k += 1) {
+        block += lines[k] + '\n'
+        for (const ch of lines[k]) {
+          if (ch === '(') depth += 1
+          else if (ch === ')') depth -= 1
+        }
+        if (depth === 0) break
+      }
+      if (block.includes('e(SoulHint')) offenders.push(index + 1)
+    })
+    assert.deepEqual(offenders, [], '这些下拉行仍用 ⓘ 藏说明：' + offenders.join(', '))
+  })
+
+  await check('C119 设置行右侧控件必须靠右（anchor wrapper 不吃剩余宽度）', async () => {
+    // 用户实测截图报的错位：下拉挤在行的中间偏左、右侧一大片空白。
+    // 根因是宿主 Menu 会在 trigger 外面包一层 span（anchor wrapper）—— 它不设约束时
+    // 会吃掉行内剩余宽度，trigger 就在那层里左对齐。
+    // 参考实现是「交互与界面」那组开关行（`.soul-toggle`）：space-between + 24px 间距。
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    // ⚠️ 不能用 `/\.soul-field-row\{[^}]*\}/` 取「第一条」—— `.soul-trail-detail
+    //   .soul-field-row{border-bottom:none}` 也含这个片段，会先命中它（实测报错）。
+    //
+    // 布局必须是 **grid**：flex + `margin-left:auto` 依赖 wrapper 是 flex item，而宿主
+    // 那层 span 的 display 我们控制不了 —— 实测右边界参差不齐（735/658/640/605/665）。
+    const row = source.match(/\.soul-field-row\{[^}]*display:grid[^}]*\}/)
+    assert.ok(row, '设置行必须是 grid 布局（flex 修不好右对齐，实测两次）')
+    assert.match(row[0], /grid-template-columns:minmax\(0,1fr\) auto/, '第一列占满、第二列表内容宽度')
+    assert.match(row[0], /gap:24px/, '间距应与开关行一致（24px）')
+    const anchor = source.match(/\.soul-field-row \.soul-select-anchor\{[^}]*\}/)
+    assert.ok(anchor, '缺少 .soul-select-anchor 规则（wrapper 必须落到第二列）')
+    assert.match(anchor[0], /grid-column:2/, 'wrapper 必须显式落到第二列')
+    assert.match(anchor[0], /justify-self:end/, 'wrapper 必须在第二列内靠右')
+    // 百分比上限是踩过的坑：auto 宽度的父级里会塌
+    assert.equal(/\.soul-field-row \.soul-select-trigger\{[^}]*max-width:\s*min\(/.test(source), false,
+      '    trigger 的上限不能用百分比（父级宽度 auto 时会塌成很窄）'.trim())
+    // 反向：Menu 必须真的收到这个 className（规则存在但没传 = 无效）
+    assert.match(source, /className: 'soul-select-anchor'/, 'Menu 必须收到 soul-select-anchor 类')
+  })
+
+  await check('C120 堆叠块的标题规格与选择行一致，且与上一行留出间距', async () => {
+    // 用户实测指出：自定义指令紧贴上一行（「回复长度」）的分隔线，而且它的标题还是
+    // 12px 次要色小标签 —— 与上面 7 行的 14px 主色标题明显不是一套。
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    // 4 处：自定义指令 + 「关于你」三字段（昵称 / 职业 / 介绍）
+    const stacked = source.match(/className: 'soul-field soul-field-stacked'/g) || []
+    assert.equal(stacked.length, 4, '堆叠块应覆盖自定义指令与关于你三字段，实际 ' + stacked.length)
+    const block = source.match(/\.soul-field-stacked\{[^}]*\}/)
+    assert.ok(block, '缺少 .soul-field-stacked 规则')
+    assert.match(block[0], /padding-top:16px/, '上方要留出与选择行一致的 16px 间距')
+    const label = source.match(/\.soul-field-stacked>label\{[^}]*\}/)
+    assert.ok(label, '缺少 .soul-field-stacked>label 规则')
+    assert.match(label[0], /font-size:14px/, '标题字号应与选择行一致（14px，不是 12px 小标签）')
+    assert.match(label[0], /label-primary/, '标题颜色应为主色（与选择行一致）')
+    assert.match(label[0], /flex-direction:column/, '标题与说明应分两行')
+  })
+
+  await check('C121 关闭个性化后，「当前生效提示词」与「高级选项」两栏不再渲染', async () => {
+    // 用户实测：关掉总开关之后这两栏还在，而它们此时都没有意义 ——
+    // 提示词编译结果为空（展示「（空）」只是噪音），重置也谈不上「把生效的配置回默认」。
+    const world = await boot()
+    // 桩必须像宿主一样**回读刚落盘的配置**：默认那份固定返回 CONFIG（enabled: true），
+    // 于是关掉总开关后 store 又被改回去，断言测到的是桩的答案而不是实现
+    //（C111 里踩过同一个坑，这里同样处理）。
+    world.routes['/api/soul/config'] = (call) => (call.method === 'GET'
+      ? { ok: true, config: { ...CONFIG } }
+      : { ok: true, config: { ...CONFIG, ...(call.body || {}) }, changed: Object.keys(call.body || {}) })
+    const zh = world.dicts.zh
+    // SoulAccordion 的 id 不落成 DOM id，只用于触发器的 aria-controls —— 按它定位，
+    // 而且不依赖「分组是否展开」（soul-prompt 默认是折叠的）。
+    const has = (tree, id) => findAll(tree, (n) => n.type === 'button'
+      && n.props && n.props['aria-controls'] === `${id}-body`).length > 0
+    // ① 反向前置：开启时两栏确实在（否则「关闭后没有」可能本来就成立）
+    let tree = await renderSettingsSettled(world)
+    assert.ok(has(tree, 'soul-prompt'), '开启时应显示「当前生效提示词」')
+    assert.ok(has(tree, 'soul-advanced'), '开启时应显示「高级选项」')
+    // ② 关掉总开关（即时字段，点一下即落盘）
+    const sw = findAll(tree, (n) => n.type === 'ui-switch' && n.props && n.props.label === zh['toggle.enabled'])[0]
+    assert.ok(sw, '缺少总开关（前置条件）')
+    await sw.props.onChange(false)
+    tree = await renderSettingsSettled(world)
+    // ③ 两栏必须消失
+    assert.equal(has(tree, 'soul-prompt'), false, '关闭后不应显示「当前生效提示词」')
+    assert.equal(has(tree, 'soul-advanced'), false, '关闭后不应显示「高级选项」')
+    // ④ 校正期望：关闭后**整个表单分区**都收起，只留总开关 —— 这是既有设计
+    //   （`enabled && e(Fragment, ...)` 包住了所有分区：不编辑不生效的配置）。
+    //   用户报的正是「其余都收起了，只有提示词预览与高级选项两栏还在」。
+    assert.equal(has(tree, 'soul-about'), false, '关闭后「关于你」也应收起（既有设计）')
+    // 反向防空过：总开关本身必须还在，否则用户没法再打开
+    assert.equal(findAll(tree, (n) => n.type === 'ui-switch' && n.props && n.props.label === zh['toggle.enabled']).length, 1,
+      '  关闭后总开关必须仍在（唯一的入口）'.trim())
+  })
+
+  await check('C122 「交互与界面」分组不显示摘要（8 个设置项无法用一句话概括）', async () => {
+    // 用户实测问「交互与界面后面那个『未开启』是啥」—— 那是「人设变更确认」这一个开关
+    // 的状态，被当成整组摘要显示：既没有主语，也概括不了同组的另外 7 项。
+    const world = await boot()
+    const tree = await renderSettingsSettled(world)
+    const trigger = findAll(tree, (n) => n.type === 'button' && n.props && n.props['aria-controls'] === 'soul-tools-body')[0]
+    assert.ok(trigger, '缺少「交互与界面」折叠触发器（前置条件）')
+    const spans = findAll(trigger, (n) => n.props && n.props.className === 'soul-accordion-summary')
+    assert.equal(spans.length, 1, '摘要 span 结构仍在（只是内容为空，便于以后按需填）')
+    assert.equal(textOf(spans[0]), '', '「交互与界面」不该有摘要文字')
+    // 反向防空过：其它分组的摘要必须保留（不是把所有摘要都删了）
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    const kept = source.match(/summary: \w+Summary/g) || []
+    assert.equal(kept.length, 4, '关于你 / 特质 / 人设预设 / 提示词 四组摘要应保留，实际 ' + kept.length)
+  })
+
+  await check('C123 「人设预设」摘要带上当前生效的人设；没人设时不显示', async () => {
+    // 用户要求：摘要除了「11 个预设」，还要说清「现在用的是哪一个」；没用就不显示。
+    //
+    // 数据来自服务端 `resolveActivePersonaName`（personas 接口的 activeName）：它优先用
+    // 记住的名字，但**必须仍与当前配置逐字段匹配**才认 —— 用户改了任一特质就自动脱离，
+    // 此时返回 null。所以客户端不需要再判断，null 即不显示。
+    const world = await boot()
+    const summaryOf = (tree) => {
+      const trigger = findAll(tree, (n) => n.type === 'button' && n.props && n.props['aria-controls'] === 'soul-personas-body')[0]
+      assert.ok(trigger, '缺少「人设预设」折叠触发器（前置条件）')
+      return textOf(findAll(trigger, (n) => n.props && n.props.className === 'soul-accordion-summary')[0])
+    }
+    // ① 有人设：数量 + 名字
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: { 幽默风趣: { style: 'humorous', builtin: true }, 严谨工程: { style: 'professional', builtin: true } },
+      activeName: '幽默风趣'
+    })
+    await world.controller.loadPersonas()
+    let tree = await renderSettingsSettled(world)
+    let summary = summaryOf(tree)
+    assert.match(summary, /2\s*个预设/, '应显示预设数量，实际「' + summary + '」')
+    assert.ok(summary.includes('幽默风趣'), '有人设时摘要应带上名字，实际「' + summary + '」')
+    // ② 无人设：只有数量，不带分隔符也不带名字
+    world.routes['/api/soul/personas'] = () => ({
+      ok: true,
+      personas: { 严谨工程: { style: 'professional', builtin: true } },
+      activeName: null
+    })
+    await world.controller.loadPersonas()
+    tree = await renderSettingsSettled(world)
+    summary = summaryOf(tree)
+    assert.match(summary, /1\s*个预设/, '应显示预设数量')
+    assert.equal(summary.includes('·'), false, '没人设时不该出现分隔符，实际「' + summary + '」')
+    assert.equal(summary.includes('严谨工程'), false, '没人设时不该显示任何名字')
+  })
+
+  await check('C124 问号提示框向左展开（不得撑出横向滚动条）', async () => {
+    // 用户实测：产出说明那条（「这里保存的特质不会作用于绑定了人设的工作区或目录」）
+    // hover 时出现横向滚动条。根因是 `left:0` —— 问号挂在句子末尾（容器右侧），
+    // 提示框却向右展开 `max-content`（最高 260px）⇒ 必然冲出容器。
+    //
+    // 所有问号共用 `.soul-hint-tip`，所以改一处即覆盖「特质」与「人设预设」两处的说明。
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    const rule = source.match(/\.soul-hint-tip\{[^}]*\}/)
+    assert.ok(rule, '缺少 .soul-hint-tip 规则')
+    assert.match(rule[0], /right:0/, '提示框应右边缘对齐图标（向左展开）')
+    assert.equal(/[^-]left:0/.test(rule[0]), false, '不得再向右展开（那是横向滚动条的根因）')
+    assert.match(rule[0], /max-width:min\(260px,80vw\)/, '要有宽度上限（窄窗口也不溢出）')
+    assert.match(rule[0], /white-space:normal/, '超长说明要换行而不是撑宽')
+    // 反向：两处被点名的说明确实都走这个共用组件
+    for (const key of ['traits.scopeNoteMore', 'personas.hintDetail']) {
+      // 要找**使用处** `t('key')`，不是字典里的定义处 `'key':`（那边当然没有组件）
+      const i = source.indexOf("t('" + key + "')")
+      assert.ok(i > 0, '文案 ' + key + ' 没有被任何地方使用')
+      const window = source.slice(i - 260, i + 20)
+      assert.ok(window.includes('SoulHint'), key + ' 应走共用的 SoulHint（否则改了也不生效）')
     }
   })
 

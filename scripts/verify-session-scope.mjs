@@ -37,7 +37,7 @@ import {
   writeSessionScope
 } from '../lib/session-scope.mjs'
 
-const EXPECTED_ASSERTIONS = 23
+const EXPECTED_ASSERTIONS = 24
 
 let passed = 0
 async function check(name, fn) {
@@ -429,6 +429,24 @@ await check('sidecar 记下用户实际点选的预设名（不靠字段反查�
   assert.equal(legacy.personaName, null, '老 sidecar 没有该字段时应为 null（调用方退回反查）')
   assert.equal(legacy.failure, null, '老 sidecar 仍应能正常解析')
   assert.ok(legacy.override, '老 sidecar 的覆盖项不该丢')
+})
+
+await check('会话覆盖的**值**也要过白名单（原先只校验键名）', () => {
+  // 只校验键名等于把任意 JSON 放进配置：
+  //   · 对象值 ⇒ compilePrompt 里 `(... || '').trim()` 拿到对象（truthy 绕过 ||）⇒
+  //     TypeError，该会话**每一轮装配都失败**；
+  //   · 5000 字 ⇒ 绕过 2000 上限，超长文本直接进系统提示词。
+  assert.equal(sanitizeSessionOverride({ customInstructions: { a: 1 } }).override, null, '对象值必须丢弃')
+  assert.equal(sanitizeSessionOverride({ customInstructions: 'A'.repeat(5000) }).override, null, '超长文本必须丢弃')
+  assert.equal(sanitizeSessionOverride({ style: '不存在的风格' }).override, null, '非法枚举必须丢弃')
+  assert.equal(sanitizeSessionOverride({ language: 'cn' }).override, null, '非法语言必须丢弃')
+  // 反向：合法值必须原样保留 —— 否则「修好了」的代价是把功能也关了
+  assert.deepEqual(sanitizeSessionOverride({ style: 'humorous' }).override, { style: 'humorous' })
+  assert.deepEqual(sanitizeSessionOverride({ language: 'en' }).override, { language: 'en' })
+  // 混合：只留合法的，其余进 dropped
+  const mixed = sanitizeSessionOverride({ style: 'humorous', language: 'cn', customInstructions: { a: 1 } })
+  assert.deepEqual(mixed.override, { style: 'humorous' })
+  assert.deepEqual(mixed.dropped.slice().sort(), ['customInstructions', 'language'])
 })
 
 if (!assertCount('verify-session-scope', passed, EXPECTED_ASSERTIONS)) process.exit(1)

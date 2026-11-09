@@ -27,12 +27,12 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
   - Emoji: `default`, `more` (frequent emoji usage), `less` (minimal emoji usage)
   - Tables: `default`, `more` (prefer tables for comparisons and multi-field data), `less` (avoid tables; use lists or paragraphs)
 - Reply length preference: `concise` (key points only), `normal` (no extra constraint, default), `detailed` (expand background, steps and reasoning)
-- Output language (agent reply language + `/soul` command output language): Chinese or English
+- Output language (agent reply language + `/soul` command output language): Chinese or English. It is a **global switch**, not a persona trait — so presets do not store it, and subagents follow it too (turning off inheritance does not change the language)
 - The compiled system prompt follows the output language (English descriptions when `language=en`)
 - Custom instructions
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
 - Named personas: 7 built-in personas (Socratic Questioner / Minimalist / Senior Architect / Teaching Explainer / Strict Code Reviewer / Brainstorm Partner / Self-Driven Collaborator — shipped with the plugin, cannot be deleted) plus your own named personas, switched with one click (save / use / list / delete, in both the Web UI and slash commands); each row summarises the style and every dimension that differs from its default
-- Personas cover the **agent's personality only**: switching a persona never touches **"About you"** (nickname / occupation / bio describe *you*, not how the agent talks). Built-in and self-saved personas behave identically — saving a persona snapshots style / traits / reply length / reply language / custom instructions, never the identity fields; full-config snapshots written by earlier versions are stripped on read
+- Personas cover the **agent's personality only**: switching a persona never touches **"About you"** (nickname / occupation / bio describe *you*, not how the agent talks). Built-in and self-saved personas behave identically — saving a persona snapshots style / traits / reply length / custom instructions — never the identity fields, and never the output language (a global switch); full-config snapshots written by earlier versions are stripped on read
 - Scope precedence: **session override > workspace binding > directory binding > global settings > defaults**. A binding is a **partial** override — it takes over only the fields that persona actually declares, so saving in the global **Traits** section will not change a workspace that has a persona bound. "About you" is never in scope: it always comes from the global config. Neither can any layer turn off `enabled`. The note sits under the Traits section's save buttons as a short hint line, with the detail behind the ⓘ next to it.
 - **Soul persona overview** (sidebar panel, **off by default** — turn it on in Settings → "Show persona overview in sidebar"; while off it takes no sidebar space, and the "Open persona overview" button still opens it): see at a glance which persona is active globally, and whether each workspace / session overrides it. Three blocks: **Current** (switch the global persona in place) · **Workspaces** (rebind a broken binding in place; expand to list that workspace's sessions) · **Presets** (read-only list; add/edit/delete stays in Settings). Click a session row to jump straight to that session; the panel refreshes automatically when persona or bindings change elsewhere
 - The overview uses the same session scope as the sidebar: registry members − archived − subagent sessions, and the "N sessions" count follows the same rule (archived ones excluded). Sessions that never had a conversation are labelled "(empty session · no conversation yet)" and collapsed by default, with a toggle to show them
@@ -126,7 +126,7 @@ dsh plugin --profile <profile> update dsh-soul
 
 ![Settings page (upper part): About you & start of Traits](./screenshots/image0.png)
 
-**Settings page (Traits + Output language + Custom instructions)**
+**Settings page (Traits + Custom instructions)**
 
 ![Settings page (lower part): Traits, Output language & Custom instructions](./screenshots/image1.png)
 
@@ -140,7 +140,25 @@ dsh plugin --profile <profile> update dsh-soul
 
 ## Usage
 
-After starting DSH, open the **Personalization** section on the settings page. **About-you** and **Traits** each have their own save button that submits only that section; the **Interaction & UI** group (confirmation mode, quick toggle, quote, sidebar overview, input trail) applies immediately with no save needed. **Reset to defaults** lives under **Advanced** and asks for a second confirmation.
+After starting DSH, open the **Personalization** section on the settings page. **About-you** and **Traits** each have their own save button that submits only that section; the **Interaction & UI** group (confirmation mode, quick toggle, subagent inheritance, output language, quote, sidebar overview, input trail) applies immediately with no save needed. **Reset to defaults** lives under **Advanced** and asks for a second confirmation.
+
+### Subagent personas
+
+Subagents (the helpers DSH sends out to do work) reuse your persona by default. If you want them
+to carry no personality or nickname at all, turn off **"Subagents inherit persona"** under
+**Interaction & UI** — they will then work from the task alone.
+
+When one task needs different roles (one edits code, one reviews it), the main agent can assign a
+persona per subagent — no need to touch this settings page:
+
+- **Queue before spawning**: `set_subagent_persona({ persona: 'Strict code reviewer', pending: true })`
+  then spawn — the subagent is born with that role (spawning is task-in-hand, so setting it
+  afterwards is a race).
+- **Target a running subagent**: `set_subagent_persona({ session, customInstructions: 'Only flag issues' })`.
+- Only subagents **you spawned and that are still running** can be targeted; once one has ended its
+  persona cannot change — a persona is assembled once, when the subagent starts.
+
+### Slash commands
 
 Slash commands are also available:
 
@@ -190,7 +208,7 @@ Example:
 }
 ```
 
-Your own personas are stored in the same file under the `personas` field: name → persona field snapshot (style / traits / reply length / reply language / custom instructions) + `updatedAt`. **A persona never contains "About you"** (nickname / occupation / bio) — those describe you, and switching a persona only changes how the agent talks. This is enforced structurally by `PROFILE_FIELDS` and `PERSONA_FIELDS` in `lib/config.mjs`: snapshotting, applying, ★ matching and on-disk normalisation all go through the `PERSONA_FIELDS` allow-list, so built-in and self-saved personas behave the same way. Persona library changes never touch the active config; a persona is applied to the config (and synced to sessions) only when used. Built-in personas are not persisted — they live in `lib/personas.mjs` — and listing / applying / match detection all go through the merged view of built-ins plus your own; on a name collision the built-in wins, and a built-in name can neither be saved over nor deleted.
+Your own personas are stored in the same file under the `personas` field: name → persona field snapshot (style / traits / reply length / custom instructions) + `updatedAt`. **A persona never contains "About you"** (nickname / occupation / bio) — those describe you, and switching a persona only changes how the agent talks. This is enforced structurally by `PROFILE_FIELDS` and `PERSONA_FIELDS` in `lib/config.mjs`: snapshotting, applying, ★ matching and on-disk normalisation all go through the `PERSONA_FIELDS` allow-list, so built-in and self-saved personas behave the same way. Persona library changes never touch the active config; a persona is applied to the config (and synced to sessions) only when used. Built-in personas are not persisted — they live in `lib/personas.mjs` — and listing / applying / match detection all go through the merged view of built-ins plus your own; on a name collision the built-in wins, and a built-in name can neither be saved over nor deleted.
 
 Composer light trail fields: `trailEnabled` (on/off, default `true`), `trailColor` (6-digit hex, stored uppercase, default `#679EFE`), `trailSpeed` (`slow` / `normal` / `fast`, default `slow`), `trailWidth` (`thin` / `normal` / `thick`, default `thin`). These are appearance-only: they are persisted but never enter the system prompt and never trigger a session injection.
 
@@ -233,6 +251,22 @@ agent.inject(createUserMessage({
 > Why both are needed: **with channel 1 alone, changing the persona mid-conversation was measured not to take effect on the next turn** (channel 2 was removed on that assumption during 0.7.1 development, then rolled back verbatim). `npm run verify:host` and `npm run verify:e2e` pin each channel down in place; re-run them after every DSH upgrade.
 
 **Diagnostics.** Both channels fail silently with the same symptom — "I changed the config and nothing happened" — so the plugin records delivery honestly: the delivery line at the end of `/soul show`, `GET /api/soul/status`, and the banner on the settings page (`configError` = the config **cannot be read**; `deliveryWarning` = it **cannot be delivered** to active sessions).
+
+## Security boundary
+
+**Deployment model: single user, single instance.** The plugin's auditing and isolation both assume "one DSH owned by one user, listening on `127.0.0.1`." The host `webServer` binds loopback only by default — that is a security **precondition**, not an option. If you set it to `0.0.0.0` and expose it on a LAN, anyone who can reach the port can:
+
+- read the config: nickname / occupation / bio / custom instructions (`GET /api/soul/config`);
+- rewrite every session's persona, or inject arbitrary text into system prompts (`POST /api/soul/config`);
+- wipe the audit trail (`POST /api/soul/history/clear`).
+
+Multi-user shared-instance isolation is **out of scope** — use reverse-proxy auth, or keep one `DSH_HOME` per user.
+
+**Defenses that are part of this plugin (0.13.0):**
+
+- **CSRF guard**: every write endpoint requires `Content-Type: application/json` and rejects `Sec-Fetch-Site: cross-site`. The cross-site `text/plain` "simple request" (no CORS preflight) is therefore blocked.
+- **UNC paths are not resolved**: calling `fs.realpath` on `\\server\share` sends the current user's NTLM hash (Windows); bindings skip realpath for UNC entirely.
+- **Sensitive file permissions**: session sidecars and the change log contain personal data, kept under `$DSH_HOME`. On POSIX, ensure the directory is not `0777`; on a multi-account machine, tighten the `$DSH_HOME` ACL.
 
 ## License
 
