@@ -41,6 +41,15 @@ import {
 // scripts/verify-config.mjs проверяет «блоков tables/replyLength ровно 2» и parity
 // zh/en, поэтому третий язык внутри литералов сломал бы вендорский тест.
 import { PROMPT_TEXT_RU, COMMAND_MESSAGES_RU } from './lib/prompt-ru.mjs'
+// fork(ru): локализация встроенных пресетов — только на компиляции промпта и в
+// отображении. Ключи, записи BUILTIN_PERSONAS, activePersonaName, bindings и assets
+// остаются каноническими (design t23), поэтому русские имена никогда не попадают
+// в конфиг, audit или URL картинки.
+import {
+  builtinInstructionForLanguage,
+  builtinPersonaPresentationRu,
+  builtinPresentationMap
+} from './lib/personas-ru.mjs'
 import {
   bindingsPathFor,
   bindingRefusal,
@@ -803,7 +812,18 @@ function compilePrompt(config) {
 
   const T = promptTextOf(config)
   // 自定义指令是**用户可控的长文本**，直接拼进 `[角色设定]` 等于允许它自带段头。
-  const identity = sanitizePromptText(config.customInstructions || '').trim()
+  //
+  // fork(ru): при language='ru' встроенный пресет подменяется русским переводом
+  // ТОЛЬКО если сохранённый текст побайтно равен текущему вендорскому (см.
+  // lib/personas-ru.mjs). Пользовательский текст возвращается как есть; sanitize
+  // применяется уже к выбранному результату — до него сравниваются канонические строки.
+  // Поле читаем явно и передаём helper'у: `config.customInstructions` остаётся видимым
+  // для контракта verify-config («что читает компилятор» = PROMPT_FIELD_KEYS клиента),
+  // а подмена на русский происходит внутри helper'а и только для встроенного пресета.
+  const storedInstructions = config.customInstructions
+  const identity = sanitizePromptText(
+    builtinInstructionForLanguage({ ...config, customInstructions: storedInstructions }) || ''
+  ).trim()
   const profile = buildUserProfile(config, T)
   const behavior = buildBehavior(config, T)
 
@@ -864,8 +884,23 @@ function compileSubagentPrompt(config, personaName) {
   // 查表与 ★ 标注，从没进过提示词。
   // 两条来源都是用户可控：自定义指令是人写的长文本，预设名也会被原样嵌进
   // `你正在扮演「${name}」` 这句里 —— 都过一遍防伪处理（段头转义 + 控制字符剥离）。
-  const authored = sanitizePromptText(config.customInstructions || '').trim()
-  const safePersonaName = personaName ? sanitizePromptText(personaName).replace(/\n/g, ' ') : ''
+  // fork(ru): то же правило, что в compilePrompt (единый механизм для scope/subagent).
+  const storedInstructions = config.customInstructions
+  const authored = sanitizePromptText(
+    builtinInstructionForLanguage({ ...config, customInstructions: storedInstructions }) || ''
+  ).trim()
+  // Русское имя подставляется ТОЛЬКО в текст подсказки для ru-промпта; сам personaName
+  // в резолвинге, очередях и audit остаётся каноническим ключом.
+  //
+  // Обе строки проходят одну и ту же защиту: ключ — санитайзом ниже (вендорский контракт
+  // «预设名必须过防伪处理»), русское имя — таким же sanitize перед подстановкой.
+  const keyDisplayName = personaName ? sanitizePromptText(personaName).replace(/\n/g, ' ') : ''
+  const ruDisplayName = config && config.language === 'ru'
+    ? (builtinPersonaPresentationRu(personaName) || {}).displayName
+    : undefined
+  const safePersonaName = ruDisplayName
+    ? sanitizePromptText(ruDisplayName).replace(/\n/g, ' ')
+    : keyDisplayName
   const identity = authored || (safePersonaName ? T.subagentIdentityHint(safePersonaName) : '')
   const profile = buildUserProfile(config, T)
   const behavior = buildBehavior(config, T)
@@ -2250,6 +2285,18 @@ function resolveActivePersonaName(config) {
   return findActivePersonaName(config)
 }
 
+// Отображаемое имя пресета для текстов команд.
+//
+// fork(ru): у встроенного пресета при language='ru' печатаем «Русское имя [ключ]»:
+// имя делает сообщение читаемым, ключ в скобках сохраняет однозначность — команды
+// (`/soul use`) принимают ТОЛЬКО канонический ключ, и его видно в выводе для копирования.
+// Для пользовательских пресетов, неизвестных имён и языков en/zh возвращается имя как есть.
+function personaDisplayName(config, name) {
+  if (!config || config.language !== 'ru' || typeof name !== 'string') return name
+  const presentation = builtinPersonaPresentationRu(name)
+  return presentation ? `${presentation.displayName} [${name}]` : name
+}
+
 // 应用一个预设条目：过白名单 → 写队列合并。
 //
 // **必须回报被丢弃的字段**：normalizePersonas 只按字段名过滤、不校验取值，所以磁盘上
@@ -2299,7 +2346,14 @@ async function applyPersonaEntry(ctx, entry, personaName) {
 
 // 预设库的对外视图（内置 + 用户）与当前命中项，供三个路由的响应复用。
 function personaLibrary(config) {
-  return { personas: mergePersonas(config.personas), activeName: resolveActivePersonaName(config) }
+  // fork(ru): `personas`/`activeName` — побайтово прежние (канонические ключи и записи).
+  // Русское представление едет отдельным top-level полем: клиент выбирает по своей
+  // UI-локали, старый клиент поле игнорирует, записи не загрязняются метаданными.
+  return {
+    personas: mergePersonas(config.personas),
+    activeName: resolveActivePersonaName(config),
+    builtinI18n: { ru: builtinPresentationMap() }
+  }
 }
 
 // 人设预设 HTTP 路由：列表 / 保存 / 使用 / 删除。
@@ -4704,7 +4758,9 @@ function registerCommands(ctx) {
               `${t.tablesLabel}=${t.traitNames[config.tables] || config.tables}`,
               `${t.replyLengthLabel}=${t.replyLengthNames[config.replyLength] || config.replyLength}`
             ].join(t.listSep)
-            const instructions = config.customInstructions || t.notSet
+            // fork(ru): показываем текст, который реально уйдёт в промпт — для встроенного
+            // пресета при language='ru' это русский перевод (compile-time), хранение не меняется.
+            const instructions = builtinInstructionForLanguage(config) || t.notSet
             // 预设数量用**合并视图**（内置 + 用户），与 /soul list 和 Web UI 一致：
             // 此前只数 config.personas（磁盘上的用户预设），于是同一个「人设预设」
             // 在 show 里显示 2、在 list 里显示 9。
@@ -4755,7 +4811,7 @@ function registerCommands(ctx) {
             const personaName = sanitizePersonaName(rest)
             if (!personaName) return { kind: 'error', text: t.saveUsage }
             if (isBuiltinPersona(personaName)) {
-              return { kind: 'error', text: t.builtinSaveBlocked(personaName) }
+              return { kind: 'error', text: t.builtinSaveBlocked(personaDisplayName(config, personaName)) }
             }
             // 重复门禁（0.9.0-q），与 HTTP 路径同一判据
             {
@@ -4785,17 +4841,19 @@ function registerCommands(ctx) {
             // 非法字段不再被静默丢弃：applied=0 ⇒ 报错；有部分非法 ⇒ 明示被跳过的字段。
             const { changed, invalid, applied } = await applyPersonaEntry(ctx, entry, personaName)
             const fieldsText = invalid.join(t.listSep)
+            // Имя — только для показа; applyPersonaEntry/resolvePersona работают с ключом выше.
+            const shownName = personaDisplayName(config, personaName)
             // 预设未声明任何字段（applied=0 且 invalid=0）不是错误，是「无可应用内容」
             if (invalid.length > 0 && applied === 0) {
-              return { kind: 'error', text: t.useAllInvalid(personaName, fieldsText) }
+              return { kind: 'error', text: t.useAllInvalid(shownName, fieldsText) }
             }
             if (invalid.length > 0) {
-              return { kind: 'success', text: t.usePartial(personaName, fieldsText) }
+              return { kind: 'success', text: t.usePartial(shownName, fieldsText) }
             }
             if (changed.length === 0) {
-              return { kind: 'success', text: t.useUnchanged(personaName) }
+              return { kind: 'success', text: t.useUnchanged(shownName) }
             }
-            return { kind: 'success', text: t.useDone(personaName) }
+            return { kind: 'success', text: t.useDone(shownName) }
           }
 
           if (first === 'list') {
@@ -4815,7 +4873,9 @@ function registerCommands(ctx) {
               // 覆盖了几个人格维度：这才是「应用这个预设会改变多少东西」的有效信息。
               const covers = declaredPersonaKeys(entry).length
               const mark = entry.builtin ? ` [${t.builtinName}]` : ''
-              return `${personaName === activeName ? '✔ ' : '• '}${personaName}${mark} ｜ ${t.styleLabel}=${styleText} ｜ ${t.listCovers(covers)}`
+              // fork(ru): отображаемое имя; ключ остаётся рядом в скобках — строка пригодна
+              // для копирования в `/soul use <ключ>`.
+              return `${personaName === activeName ? '✔ ' : '• '}${personaDisplayName(config, personaName)}${mark} ｜ ${t.styleLabel}=${styleText} ｜ ${t.listCovers(covers)}`
             })
             return { kind: 'success', text: `${t.listTitle} [${names.length}]\n${lines.join('\n')}` }
           }
@@ -4824,7 +4884,7 @@ function registerCommands(ctx) {
             const personaName = sanitizePersonaName(rest)
             if (!personaName) return { kind: 'error', text: t.delUsage }
             if (isBuiltinPersona(personaName)) {
-              return { kind: 'error', text: t.builtinDeleteBlocked(personaName) }
+              return { kind: 'error', text: t.builtinDeleteBlocked(personaDisplayName(config, personaName)) }
             }
             if (!hasOwn(config.personas || {}, personaName)) {
               return { kind: 'error', text: t.personaMissing(personaName) }
