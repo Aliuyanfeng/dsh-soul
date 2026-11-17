@@ -4242,7 +4242,11 @@ check('0.9.0-l 会话卡牌：只留插画，无渐变遮罩、无压图文字',
   assert.match(cardFor, /soul-persona-card-pos/, '位置指示 i/n 应保留')
   assert.match(cardFor, /soul-session-card-star/, '生效标记 ★ 应保留')
   // 可访问名
-  assert.match(cardFor, /'aria-label': name/, '纯图形的卡必须有 aria-label（可访问名）')
+  //
+  // fork(ru): 允许 `'aria-label': labelOf(name)` — доступное имя локализуется для
+  // встроенных пресетов при ru-UI (t26), но обязано оставаться производным от имени
+  // карточки. Инвариант тот же: карточка без aria-label по-прежнему падает.
+  assert.match(cardFor, /'aria-label': (?:labelOf\()?name/, '纯图形的卡必须有 aria-label（可访问名）')
   // ★ 的位置：左下（右上被 i/n 占、左上被内置徽标占）
   const cssBlock = client.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
   const star = cssBlock.match(/\.soul-session-card-star\{([^}]*)\}/)?.[1] ?? ''

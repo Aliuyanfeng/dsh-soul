@@ -66,6 +66,90 @@ window.__ModuleLoader__.load({
 
     const NS = 'soul'
     const VERSION = '0.13.0'
+
+    // -------------------------------------------------------------------------
+    // UI-локаль и ru-представление встроенных пресетов (t26)
+    // -------------------------------------------------------------------------
+    //
+    // Источник языка интерфейса — уже обязательный сервис `locale` (статический
+    // inject ['slots','locale']). Держим собственный маленький store вместо чтения
+    // snapshot в каждом рендере: компонентам нужна реактивность на переключение
+    // языка, а React-хук хоста живёт в другом пакете и не гарантирован.
+    //
+    // Fallback 'en' до attach — важно для Node-харнесса (scripts/verify-client.mjs):
+    // без locale face компонент вёл бы себя как при вендорском en, ровно как раньше.
+    const uiLocaleStore = (() => {
+      let snapshot = { active: 'en' }
+      const listeners = new Set()
+      return {
+        getSnapshot: () => snapshot,
+        setSnapshot(next) {
+          snapshot = next && typeof next === 'object' ? next : { active: 'en' }
+          for (const fn of [...listeners]) {
+            try { fn() } catch (_e) { /* подписчик не должен ломать переключение */ }
+          }
+        },
+        subscribe(fn) {
+          listeners.add(fn)
+          return () => { listeners.delete(fn) }
+        }
+      }
+    })()
+
+    // React.useSyncExternalStore есть в React 18; в клиентском垫片 (verify-client) его
+    // может не быть. Выбор делаем **один раз на уровне модуля**: условный вызов hook'а
+    // запрещён правилами хуков, а без него снапшот просто читается при рендере.
+    const useSyncExternalStoreImpl = typeof React.useSyncExternalStore === 'function'
+      ? React.useSyncExternalStore
+      : (_subscribe, getSnapshot) => getSnapshot()
+
+    // Приводим активную локаль к базовому языку: 'ru', 'ru-RU' → 'ru'.
+    const baseUiLocaleOf = (active) => {
+      const base = String(active || 'en').toLowerCase().split(/[-_]/)[0]
+      return base === 'ru' || base === 'zh' ? base : 'en'
+    }
+
+    function useUiLocale() {
+      const snapshot = useSyncExternalStoreImpl(
+        uiLocaleStore.subscribe, uiLocaleStore.getSnapshot, uiLocaleStore.getSnapshot
+      )
+      return baseUiLocaleOf(snapshot && snapshot.active)
+    }
+
+    // Метаданные ru-представления встроенного пресета: own-property lookup по карте хоста.
+    const builtinPresentationOf = (key, builtinI18n, locale) => {
+      if (locale !== 'ru' || typeof key !== 'string') return null
+      if (!builtinI18n || typeof builtinI18n !== 'object') return null
+      const ru = builtinI18n.ru
+      if (!ru || typeof ru !== 'object' || !Object.prototype.hasOwnProperty.call(ru, key)) return null
+      const meta = ru[key]
+      return meta && typeof meta === 'object' ? meta : null
+    }
+
+    // Отображаемое имя пресета: русское — только у встроенного и только при ru-UI.
+    // Ключ остаётся ключом: он уходит в state.selectedPersona, React key, onClick,
+    // payload и URL картинки; меняется лишь текст, который видит человек.
+    const personaLabelOf = (key, entry, locale, builtinI18n) => {
+      if (!entry || entry.builtin !== true) return key
+      const meta = builtinPresentationOf(key, builtinI18n, locale)
+      return meta && typeof meta.displayName === 'string' && meta.displayName !== '' ? meta.displayName : key
+    }
+
+    // Временная копия записи для рендера: ru-инструкции встроенного пресета.
+    // Исходная запись не мутируется и никогда не уходит в apply/payload.
+    const personaDisplayEntryOf = (key, entry, locale, builtinI18n) => {
+      if (!entry || entry.builtin !== true) return entry
+      const meta = builtinPresentationOf(key, builtinI18n, locale)
+      if (!meta || typeof meta.customInstructions !== 'string' || meta.customInstructions === '') return entry
+      return { ...entry, customInstructions: meta.customInstructions }
+    }
+
+    // Описание пресета по локали (у вендорских записей поля description нет — вернётся '').
+    const personaDescriptionOf = (key, entry, locale, builtinI18n) => {
+      const meta = entry && entry.builtin === true ? builtinPresentationOf(key, builtinI18n, locale) : null
+      if (meta && typeof meta.description === 'string') return meta.description
+      return typeof (entry || {}).description === 'string' ? entry.description : ''
+    }
     const INITIAL = {
       enabled: true,
       nickname: '',
@@ -98,6 +182,10 @@ window.__ModuleLoader__.load({
       // 人设预设库与当前匹配项（GET /api/soul/personas 带回）
       personas: null,
       activePersona: null,
+      // ru-представление встроенных пресетов из GET /api/soul/personas (аддитивное поле
+      // builtinI18n, отдаёт хост с t25). Пустой объект = старый хост без локализации ⇒
+      // показываем канонические имена, как вендор. Ключи пресетов здесь НЕ меняются.
+      builtinI18n: {},
       // 预设列表请求失败的原因（成功时清空）。用于把「加载中」与「加载失败」区分开
       personasError: null,
       // 会话作用域解析结果：sessionId → { activePersona, source, workspaceTitle, ... }。
@@ -580,6 +668,23 @@ window.__ModuleLoader__.load({
         return await this.postJSON('/api/soul/personas', null, { method: 'GET' })
       }
 
+      // Запись ответа с пресетами в store: personas/activeName + аддитивная карта
+      // ru-представления встроенных пресетов.
+      //
+      // Почему отдельным методом: ответы /personas, /save и /delete несут библиотеку,
+      // /use — нет (только config). Отсутствующее поле НЕ должно стирать уже полученную
+      // карту, иначе после «использовать» имена на секунду откатывались бы к ключам.
+      applyPersonaPayload(s, payload) {
+        if (!payload || typeof payload !== 'object') return
+        if ('personas' in payload) {
+          s.personas = samePersonas(s.personas, payload.personas) ? s.personas : payload.personas
+        }
+        if ('activeName' in payload) s.activePersona = payload.activeName
+        if (payload.builtinI18n && typeof payload.builtinI18n === 'object') {
+          s.builtinI18n = payload.builtinI18n
+        }
+      }
+
       // 拉取预设列表并写入 store。
       //
       // 从 SoulSettings 组件**下沉**到这里：全局轮询（apply 层）与设置页都要用它，
@@ -591,8 +696,8 @@ window.__ModuleLoader__.load({
           this.store.update((s) => {
             // 内容相同就保留旧引用：每 2s 轮询都会重新解析出**新对象**，若直接赋值，
             // store 的浅比较永远判为「变了」⇒ 去重失效，整页仍每 2s 白重渲染。
-            s.personas = samePersonas(s.personas, payload.personas) ? s.personas : payload.personas
-            s.activePersona = payload.activeName
+            // （这层去重留在 helper 里，见 applyPersonaPayload。）
+            this.applyPersonaPayload(s, payload)
             // 拉取成功：清掉上一次的失败痕迹（否则失败后即便恢复，提示会一直挂着）
             s.personasError = null
           })
@@ -611,7 +716,9 @@ window.__ModuleLoader__.load({
       async savePersona(name, draft = null) {
         const body = { name }
         if (draft && typeof draft === 'object') body.draft = draft
-        return await this.postJSON('/api/soul/personas/save', body)
+        const payload = await this.postJSON('/api/soul/personas/save', body)
+        if (!this.disposed) this.store.update((s) => { this.applyPersonaPayload(s, payload) })
+        return payload
       }
 
       async usePersona(name) {
@@ -619,6 +726,8 @@ window.__ModuleLoader__.load({
         if (!this.disposed) {
           this.store.update(s => {
             this.applyConfig(s, payload.config)
+            // /use не несёт библиотеку — helper не тронет уже полученную карту.
+            this.applyPersonaPayload(s, payload)
             // 清掉上一轮的失败提示：该端点不返回 deliveryWarning，此前一旦上一轮
             // 保存失败过，切预设成功后红色错误条会一直挂着。
             s.error = null
@@ -628,7 +737,9 @@ window.__ModuleLoader__.load({
       }
 
       async deletePersona(name) {
-        return await this.postJSON('/api/soul/personas/delete', { name })
+        const payload = await this.postJSON('/api/soul/personas/delete', { name })
+        if (!this.disposed) this.store.update((s) => { this.applyPersonaPayload(s, payload) })
+        return payload
       }
 
       // —— 变更记录（0.8.0）——
@@ -3743,6 +3854,11 @@ window.__ModuleLoader__.load({
       const sessionId = typeof props.sessionId === 'string' && props.sessionId !== '' ? props.sessionId : null
       // 全局 store：预设列表、配置都在这里（与设置页同一份）。
       const state = useSoulController((state) => state)
+      // UI-локаль и ru-карта встроенных пресетов — только для отображения (t26).
+      // Ключи не меняются: они остаются в selectedPersona, payload и URL картинки.
+      const uiLocale = useUiLocale()
+      const labelOf = (name) => personaLabelOf(name, state.personas ? state.personas[name] : null, uiLocale, state.builtinI18n)
+      const displayEntryOf = (name) => personaDisplayEntryOf(name, state.personas ? state.personas[name] : null, uiLocale, state.builtinI18n)
 
       // 本会话的解析结果**独立于全局 store**：一份覆盖只对它所属的会话有意义，
       // 塞进全局 store 会让两个会话的 tab 互相串味。
@@ -3823,7 +3939,7 @@ window.__ModuleLoader__.load({
           // 点了后者却显示前者。把名字一起传过去，反查就退化成兜底而不是唯一依据。
           const payload = await controller.saveSessionScope(sessionId, overrides, personaName)
           setView(payload)
-          setNotice(t('session.applied', { name: personaName }))
+          setNotice(t('session.applied', { name: labelOf(personaName) }))
         } catch (err) {
           setError(messageOf(err))
         } finally {
@@ -3906,9 +4022,12 @@ window.__ModuleLoader__.load({
       })()
 
       const hasOverride = view.override !== null && view.override !== undefined
-      const activePersona = typeof view.activePersona === 'string' && view.activePersona !== ''
+      // t26: различаем **ключ** и **подпись**. Ключ (`activePersonaKey`) идёт в сравнения
+      // («эта карточка сейчас в работе»), подпись (`activePersona`) — только в текст.
+      const activePersonaKey = typeof view.activePersona === 'string' && view.activePersona !== ''
         ? view.activePersona
-        : t('session.noPersona')
+        : null
+      const activePersona = activePersonaKey ? labelOf(activePersonaKey) : t('session.noPersona')
 
       // —— 卡牌网格 ——
       //
@@ -3932,7 +4051,7 @@ window.__ModuleLoader__.load({
       const cardFor = (name, offset) => {
         const entry = state.personas ? state.personas[name] : null
         const builtin = !!(entry && entry.builtin)
-        const isEffective = hasOverride && activePersona === name
+        const isEffective = hasOverride && activePersonaKey === name
         return e('div', {
           key: name,
           className: 'soul-session-card',
@@ -3951,8 +4070,10 @@ window.__ModuleLoader__.load({
           //
           // 无障碍名仍然要：卡面已无可见文字（0.9.0-l 移除了遮罩与压图标题），
           // 纯图形元素必须有可访问名，读屏用户才知道这是哪张卡。
-          'aria-label': name,
-          title: isEffective ? `${name}（${t('session.chipInUse')}）` : name
+          // 可访问名/подсказка — отображаемое имя (ru для встроенных при ru-UI),
+          // тогда как key карточки, data-* и onClick остаются каноническим ключом.
+          'aria-label': labelOf(name),
+          title: isEffective ? `${labelOf(name)}（${t('session.chipInUse')}）` : labelOf(name)
         },
           e('div', { className: 'soul-persona-art' },
             e(PersonaArt, {
@@ -4034,10 +4155,10 @@ window.__ModuleLoader__.load({
         }
         const entry = state.personas ? state.personas[name] : null
         const builtin = !!(entry && entry.builtin)
-        const isEffective = hasOverride && activePersona === name
+        const isEffective = hasOverride && activePersonaKey === name
         return e(Fragment, null,
           e('div', { className: 'soul-session-detail-head' },
-            e('span', { className: 'soul-session-detail-name' }, name),
+            e('span', { className: 'soul-session-detail-name' }, labelOf(name)),
             builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin')),
             isEffective && e('span', { className: 'soul-session-badge' }, t('session.chipInUse'))
           ),
@@ -4048,7 +4169,8 @@ window.__ModuleLoader__.load({
             ))
           ),
           e('div', { className: 'soul-persona-back-label' }, t('personas.customInstructions')),
-          e('div', { className: 'soul-persona-fulltext' }, personaFullTextOf(entry, t)),
+          // ru-инструкции встроенного пресета — из карты хоста, только для показа.
+          e('div', { className: 'soul-persona-fulltext' }, personaFullTextOf(displayEntryOf(name), t)),
           e('div', { className: 'soul-session-detail-actions' },
             e('button', {
               type: 'button',
@@ -4086,8 +4208,8 @@ window.__ModuleLoader__.load({
             // 特质突出点（0.9.0-ab）：非默认的维度摘要，跟在名称后的小字。
             // personaRowMetaOf 的输出正是"风格 + 偏离默认值的维度" —— 与卡面
             // 摘要同源。无匹配预设（自定义配置）时不显示。
-            activePersona && state.personas && state.personas[activePersona] && e('span', { className: 'soul-session-current-traits' },
-              ` · ${personaRowMetaOf(state.personas[activePersona], t)}`)
+            activePersonaKey && state.personas && state.personas[activePersonaKey] && e('span', { className: 'soul-session-current-traits' },
+              ` · ${personaRowMetaOf(state.personas[activePersonaKey], t)}`)
           ),
           e('div', { className: 'soul-session-current-source' }, sourceText)
         ),
@@ -4249,6 +4371,9 @@ window.__ModuleLoader__.load({
       const onOwnDetailPage = isOwnPluginDetailPage(subject)
 
       const state = useSoulController((state) => state)
+      // Отображаемые имена встроенных пресетов (t26); ключи остаются в payload.
+      const uiLocale = useUiLocale()
+      const labelOf = (name) => personaLabelOf(name, state.personas ? state.personas[name] : null, uiLocale, state.builtinI18n)
       const [view, setView] = React.useState(null)
       const [error, setError] = React.useState(null)
       const [notice, setNotice] = React.useState(null)
@@ -4303,7 +4428,7 @@ window.__ModuleLoader__.load({
           const payload = await controller.saveWorkspacePersona(workspace.workspaceId, persona)
           setView(payload)
           setPicking(null)
-          setNotice(t('workspaces.applied', { name: persona, title: workspace.title || workspace.path }))
+          setNotice(t('workspaces.applied', { name: labelOf(persona), title: workspace.title || workspace.path }))
         } catch (err) {
           setError(messageOf(err))
         } finally {
@@ -4367,14 +4492,14 @@ window.__ModuleLoader__.load({
               e('div', { className: 'soul-ws-title' }, title),
               e('code', { className: 'soul-ws-path', title: ws.path }, ws.path),
               ws.invalidPersona && e('div', { className: 'soul-ws-invalid' },
-                e('span', null, t('workspaces.invalid', { name: ws.persona || '' })),
+                e('span', null, t('workspaces.invalid', { name: ws.persona ? labelOf(ws.persona) : '' })),
                 e('span', { className: 'soul-status' }, t('workspaces.invalidHint')))
             ),
             e('div', { className: 'soul-ws-actions' },
               // 已绑定：显示当前人设名 + 改绑 / 解绑
               ws.bound
                 ? e(Fragment, null,
-                  e('span', { className: 'soul-ws-persona' }, ws.persona || t('workspaces.bound')),
+                  e('span', { className: 'soul-ws-persona' }, ws.persona ? labelOf(ws.persona) : t('workspaces.bound')),
                   // 0.9.0-ao：**文字按钮**，规格照抄宿主设置-模型页的「编辑 / 删除」。
                   //
                   // 上一版我误抄成了 .iconButton（图标按钮）—— 那是宿主页面里另一处
@@ -4423,7 +4548,7 @@ window.__ModuleLoader__.load({
                   className: 'soul-session-chip',
                   disabled: busy,
                   onClick: () => { void bind(ws, name) }
-                }, name))
+                }, labelOf(name)))
               )
             )
           )
@@ -4668,6 +4793,7 @@ window.__ModuleLoader__.load({
       //
       // 现在 store 是单一数据源：saveSessionScope / clearSessionScope 成功后把服务端
       // 返回的解析结果写进 store ⇒ 所有看它的地方一起刷新，不必各自轮询。
+      const uiLocale = useUiLocale()
       const scopeView = (state.sessionScopes && state.sessionScopes[String(sessionId)]) || null
       // 请求是否失败过：失败时不得静默退回全局值（那会重现"界面说 A、模型用 B"的割裂）
       const [scopeFailed, setScopeFailed] = React.useState(false)
@@ -4700,12 +4826,16 @@ window.__ModuleLoader__.load({
       // 关闭个性化时不显示（人设此刻不生效，挂名字会误导）
       if (!enabled) return null
 
+      // t26: подпись показывает отображаемое имя (ru-имя встроенного при ru-UI);
+      // state.activePersona/scope остаются каноническими ключами.
+      const labelOf = (name) => personaLabelOf(name, state.personas ? state.personas[name] : null, uiLocale, state.builtinI18n)
       const activePersona = state.activePersona
       const scopeActive = scopeView && typeof scopeView.activePersona === 'string' && scopeView.activePersona !== ''
         ? scopeView.activePersona
         : null
       const displayPersona = scopeActive
-        || (scopeFailed ? t('quick.scopeUnknown') : (activePersona || t('quick.custom')))
+        ? labelOf(scopeActive)
+        : (scopeFailed ? t('quick.scopeUnknown') : (activePersona ? labelOf(activePersona) : t('quick.custom')))
       const scopeTag = (() => {
         if (!scopeView) return null
         if (scopeView.source === 'session') return t('quick.scopeSession')
@@ -5671,6 +5801,9 @@ window.__ModuleLoader__.load({
       const { controller, useSoulController } = props
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((s) => s)
+      // t26: отображаемые имена встроенных пресетов; ключи остаются в onClick/payload/URL.
+      const uiLocale = useUiLocale()
+      const labelOf = (name) => personaLabelOf(name, state.personas ? state.personas[name] : null, uiLocale, state.builtinI18n)
 
       // 宿主 uiWorkspace 可能晚于本包装载：订阅它，到了再让会话行可点。
       // 服务缺席时行照常显示，只是不带可点样式 —— 不给「点不动的按钮」。
@@ -6219,8 +6352,8 @@ window.__ModuleLoader__.load({
         const pill = w.bound
           ? (invalid
               ? e('span', { className: 'soul-ov-pill soul-ov-pill-bad' },
-                  t('ov.invalid', { name: w.persona === null ? '' : w.persona }))
-              : e('span', { className: 'soul-ov-pill' }, w.persona === null ? '' : w.persona))
+                  t('ov.invalid', { name: w.persona === null ? '' : labelOf(w.persona) }))
+              : e('span', { className: 'soul-ov-pill' }, w.persona === null ? '' : labelOf(w.persona)))
           : e('span', { className: 'soul-ov-pill soul-ov-pill-inherit' }, t('ov.inheritGlobal'))
 
         return e('div', { key: `ws-${id}` },
@@ -6272,7 +6405,7 @@ window.__ModuleLoader__.load({
                     : 'soul-ov-picker-item',
                   disabled: rebindBusy,
                   onClick: (ev) => { ev.stopPropagation(); void rebindWorkspace(id, name) }
-                }, name)),
+                }, labelOf(name))),
             rebindError !== null && e('span', { className: 'soul-ov-picker-error' }, rebindError)),
 
           // 展开区：该工作区下的活动会话
@@ -6319,7 +6452,7 @@ window.__ModuleLoader__.load({
                 : 'soul-ov-picker-item',
               disabled: switchBusy,
               onClick: () => { void switchGlobalPersona(choice) }
-            }, choice)),
+            }, labelOf(choice))),
             switchError !== null &&
               e('span', { className: 'soul-ov-picker-error' }, switchError)),
           e('div', { className: 'soul-ov-current' },
@@ -6581,6 +6714,8 @@ window.__ModuleLoader__.load({
     function useSessionRowPersona(props) {
       const { useSoulController, controller } = props
       const state = useSoulController((s) => s)
+      // Отображаемое имя для badge/hover: ru-имя встроенного пресета при ru-UI, иначе ключ.
+      const uiLocale = useUiLocale()
       const enabled = state.enabled === true
 
       // sessionId 的两种注入形态都接住：
@@ -6609,16 +6744,19 @@ window.__ModuleLoader__.load({
       const persona = row && typeof row.persona === 'string' && row.persona !== ''
         ? row.persona
         : null
-      return { enabled, sessionId, persona }
+      // label — только для показа; persona (ключ) остаётся для логики и ссылок.
+      const label = persona ? personaLabelOf(persona, state.personas ? state.personas[persona] : null, uiLocale, state.builtinI18n) : null
+      return { enabled, sessionId, persona, label }
     }
 
     function SoulSessionPersonaBadge(props) {
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
-      const { enabled, persona } = useSessionRowPersona(props)
+      const { enabled, persona, label: personaLabel } = useSessionRowPersona(props)
       // 无会话 / 人设未知 / 个性化关闭 ⇒ 不渲染（不占 hover 位）
       if (!enabled || !persona) return null
 
-      const label = t('sidebar.personaTip', { name: persona })
+      // Подсказка показывает отображаемое имя (ru-имя встроенного пресета при ru-UI).
+      const label = t('sidebar.personaTip', { name: personaLabel || persona })
 
       // 气泡用**宿主自己的 Tooltip**（0.9.0-ak），参数照抄宿主的行尾按钮
       // （PinSessionRowButton）：side bottom / align end / delayMs 500 / portal。
@@ -6661,7 +6799,7 @@ window.__ModuleLoader__.load({
     // 卡片只在打开时挂载 ⇒ 这里的取数是真正的按需，不占常驻开销。
     function SoulSessionPersonaHover(props) {
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
-      const { enabled, persona } = useSessionRowPersona(props)
+      const { enabled, persona, label: personaLabel } = useSessionRowPersona(props)
       if (!enabled || !persona) return null
       // 结构照抄宿主同槽位住户（ui-schedule 的 SessionScheduleHover）：
       // 一行 = 图标容器 + 说明 + 主体值，行高/字号/间距都与宿主卡片一致。
@@ -6669,7 +6807,7 @@ window.__ModuleLoader__.load({
         e('span', { className: 'soul-hover-persona-icon', 'aria-hidden': true },
           soulMask({ width: 12, height: 12 })),
         e('span', { className: 'soul-hover-persona-label' }, t('sidebar.personaRow')),
-        e('span', { className: 'soul-hover-persona-name', title: persona }, persona)
+        e('span', { className: 'soul-hover-persona-name', title: personaLabel || persona }, personaLabel || persona)
       )
     }
 
@@ -7050,6 +7188,14 @@ window.__ModuleLoader__.load({
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
       const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, subagentInheritPersona, subagentPersona, trailEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
+
+      // t26: отображаемые имена/инструкции встроенных пресетов при ru-UI.
+      // Объявлено в самом начале: сводки группы и тосты выше по коду уже используют
+      // labelOf, и объявление ниже давало TDZ (Cannot access 'labelOf' before init).
+      // Ключи остаются ключами (selectedPersona, React key, payload, URL картинки).
+      const uiLocale = useUiLocale()
+      const labelOf = (name) => personaLabelOf(name, personas ? personas[name] : null, uiLocale, state.builtinI18n)
+      const displayEntryOf = (name) => personaDisplayEntryOf(name, personas ? personas[name] : null, uiLocale, state.builtinI18n)
 
       // —— 草稿字段（「关于你」/「特质」）的本地值 ——
       //
@@ -7492,13 +7638,13 @@ window.__ModuleLoader__.load({
             if (invalid.length > 0) {
               showError(t('toast.personaPartial', { fields: invalid.join(', ') }))
             } else {
-              showSavedNotice(t('notice.personaSavedAndApplied', { name }))
+              showSavedNotice(t('notice.personaSavedAndApplied', { name: labelOf(name) }))
             }
           } else {
             // 回退表单到已保存配置（见 revertDraftToSaved）。
             revertDraftToSaved()
             await loadPersonas()
-            showSavedNotice(t('notice.personaSaved', { name }))
+            showSavedNotice(t('notice.personaSaved', { name: labelOf(name) }))
           }
 
           setPersonaName('')
@@ -7533,7 +7679,7 @@ window.__ModuleLoader__.load({
 
           setShowUpdatePersona(false)
           await loadPersonas()
-          showSavedNotice(t('notice.personaUpdated', { name }))
+          showSavedNotice(t('notice.personaUpdated', { name: labelOf(name) }))
         } catch (err) {
           showError(messageOf(err))
         }
@@ -7551,7 +7697,7 @@ window.__ModuleLoader__.load({
             // 成功提示走内联绿字（对齐宿主 savedNotice）；无变化也照报
             showSavedNotice(payload && payload.unchanged
               ? t('notice.personaUnchanged')
-              : t('notice.personaUsed', { name }))
+              : t('notice.personaUsed', { name: labelOf(name) }))
           }
           // 预览刷新交由下方 effect 统一驱动（保存 / 重置 / 应用预设都会改变
         // promptDraftKey 或 promptDirty，effect 自会带上最新闭包重编译）
@@ -7577,7 +7723,7 @@ window.__ModuleLoader__.load({
         try {
           await controller.deletePersona(name)
           await loadPersonas()
-          showSavedNotice(t('notice.personaDeleted', { name }))
+          showSavedNotice(t('notice.personaDeleted', { name: labelOf(name) }))
         } catch (err) {
           showError(messageOf(err))
         }
@@ -7668,7 +7814,7 @@ window.__ModuleLoader__.load({
         ? t('accordion.loadFailed')
         : (personas === null
             ? t('status.loading')
-            : `${Object.keys(personas).length} ${t('accordion.personas')}${activePersona ? ` · ${activePersona}` : ''}`)
+            : `${Object.keys(personas).length} ${t('accordion.personas')}${activePersona ? ` · ${labelOf(activePersona)}` : ''}`)
       // 工作区绑定摘要：折叠态只看得到这一行，所以要先说「读没读出来」，
       // 再说条数。null = 还没拉过（本分组懒加载，展开前一直是 null）⇒ 显示空态文案，
       // 不显示「0 条」—— 那会把「没加载」误报成「一条都没有」。
@@ -7993,7 +8139,7 @@ window.__ModuleLoader__.load({
                             // 名称与摘要压在图上
                             e('div', { className: 'soul-persona-art-title' },
                               e('span', { className: 'soul-persona-name' },
-                                e('span', { className: 'soul-persona-label' }, name === activePersona ? `★ ${name}` : name),
+                                e('span', { className: 'soul-persona-label' }, name === activePersona ? `★ ${labelOf(name)}` : labelOf(name)),
                                 // 作用域标注：设置页的「使用」写的是**全局**（settings.section
                                 // 拿不到 sessionId，这是宿主槽位契约决定的）。标出来是为了
                                 // 避免用户以为「在这里点了使用 = 只影响这个项目」——
@@ -8005,7 +8151,7 @@ window.__ModuleLoader__.load({
                           ),
                           e('div', { className: 'soul-persona-body' },
                             // 效果栏：卡牌的核心信息（这个预设会怎么回答）
-                            e('div', { className: 'soul-persona-eff' }, personaEffectText(entry)),
+                            e('div', { className: 'soul-persona-eff' }, personaEffectText(displayEntryOf(name))),
                             e('div', { className: 'soul-persona-actions' },
                               // 当前生效的人设：按钮文字变「使用中」+ 描边式样式（区别于实心主色），
                               // 一眼就能看出哪张卡是当前配置。名称前的 ★ 保留，双重标识互相强化。
@@ -8056,7 +8202,7 @@ window.__ModuleLoader__.load({
                           }
                         },
                           e('div', { className: 'soul-persona-back-head' },
-                            e('span', { className: 'soul-persona-back-name' }, name),
+                            e('span', { className: 'soul-persona-back-name' }, labelOf(name)),
                             builtin && e('span', { className: 'soul-persona-badge' }, t('personas.builtin'))
                           ),
                           e('div', { className: 'soul-persona-dims' },
@@ -8066,7 +8212,7 @@ window.__ModuleLoader__.load({
                             ))
                           ),
                           e('div', { className: 'soul-persona-back-label' }, t('personas.customInstructions')),
-                          e('div', { className: 'soul-persona-fulltext' }, personaFullText(entry)),
+                          e('div', { className: 'soul-persona-fulltext' }, personaFullText(displayEntryOf(name))),
                           // 底部按钮行：「返回」+「删除」（仅自建卡）。
                           // 「删除」从正面移到这里（用户反馈正面三钮拥挤、夹缝观感差）：
                           // 背面是「查看 / 管理」语境，删除放这里语义顺；且底部本就是
@@ -8089,7 +8235,7 @@ window.__ModuleLoader__.load({
                                 ? 'soul-persona-action soul-persona-danger soul-persona-danger-armed'
                                 : 'soul-persona-action soul-persona-danger soul-persona-back-del',
                               'data-armed': pendingDelete === name ? 'true' : 'false',
-                              title: t('personas.confirmDelete', { name }),
+                              title: t('personas.confirmDelete', { name: labelOf(name) }),
                               // 必须 stopPropagation：卡背整面点击=返回，
                               // 不挡住的话「确认删除」会被返回动作打断（翻回正面、看不到提示）
                               onClick: (ev) => {
@@ -8129,7 +8275,7 @@ window.__ModuleLoader__.load({
                             className: 'soul-persona-dot',
                             'data-active': i === index ? 'true' : 'false',
                             'aria-selected': i === index ? 'true' : 'false',
-                            'aria-label': `${n}（${i + 1}/${total}）`,
+                            'aria-label': `${labelOf(n)}（${i + 1}/${total}）`,
                             onClick: () => go(i)
                           }))
                         ),
@@ -8530,7 +8676,7 @@ window.__ModuleLoader__.load({
                   disabled: saving,
                   onClick: () => { void handleUpdatePersona(name) }
                 },
-                  e('span', { className: 'soul-update-name' }, name),
+                  e('span', { className: 'soul-update-name' }, labelOf(name)),
                   // 标出「当前生效」的那个：覆盖它之后 ★ 不会变（字段本来就一样），
                   // 覆盖别的预设会改变那个预设的内容 —— 用户该知道这一点。
                   name === activePersona && e('span', { className: 'soul-update-badge' }, t('personas.active'))
@@ -8740,6 +8886,17 @@ window.__ModuleLoader__.load({
           return () => {}
         }
       }, 'dsh-soul: dictionaries')
+
+      // UI-локаль для отображаемых имён встроенных пресетов (t26): собственный snapshot
+      // + подписка с teardown. Глобальных listener'ов не оставляем — отписка в cleanup.
+      ctx.effect(() => {
+        const face = ctx.locale
+        if (!face || typeof face.getSnapshot !== 'function') return undefined
+        uiLocaleStore.setSnapshot(face.getSnapshot())
+        if (typeof face.subscribe !== 'function') return undefined
+        const off = face.subscribe(() => uiLocaleStore.setSnapshot(face.getSnapshot()))
+        return () => { off() }
+      }, 'dsh-soul: ui locale snapshot')
 
       // —— 全局轮询：让**不打开设置页**时底栏也能跟上宿主侧的变化 ——
       //
