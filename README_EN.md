@@ -27,8 +27,8 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
   - Emoji: `default`, `more` (frequent emoji usage), `less` (minimal emoji usage)
   - Tables: `default`, `more` (prefer tables for comparisons and multi-field data), `less` (avoid tables; use lists or paragraphs)
 - Reply length preference: `concise` (key points only), `normal` (no extra constraint, default), `detailed` (expand background, steps and reasoning)
-- Output language (agent reply language + `/soul` command output language): Chinese or English. It is a **global switch**, not a persona trait — so presets do not store it, and subagents follow it too (turning off inheritance does not change the language)
-- The compiled system prompt follows the output language (English descriptions when `language=en`)
+- Output language (agent reply language + `/soul` command output language): Chinese, English or Russian. It is a **global switch**, not a persona trait — so presets do not store it, and subagents follow it too (turning off inheritance does not change the language). Russian **interface** text comes from a separate overlay plugin; without it the settings page falls back to Chinese, while the agent already replies in Russian
+- The compiled system prompt follows the output language (English / Russian descriptions when `language=en` / `ru`)
 - Custom instructions
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
 - Named personas: 7 built-in personas (Socratic Questioner / Minimalist / Senior Architect / Teaching Explainer / Strict Code Reviewer / Brainstorm Partner / Self-Driven Collaborator — shipped with the plugin, cannot be deleted) plus your own named personas, switched with one click (save / use / list / delete, in both the Web UI and slash commands); each row summarises the style and every dimension that differs from its default

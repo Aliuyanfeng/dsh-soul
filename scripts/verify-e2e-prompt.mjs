@@ -42,7 +42,7 @@ import { PROFILE_FIELDS, PERSONA_FIELDS } from '../lib/config.mjs'
 // 会随用例增减漂移，这里不重新抄一遍 —— 真值由 assertCount 在跑完后对账）。
 // 本轮 +6：S11–S16 读的是**注入通道**收到的文本与显示侧报出的名字（S1–S6 只读装配
 // 通道，而这两条通道曾经用不同的解析函数，只测一条就等于没测）。
-const EXPECTED_ASSERTIONS = 138
+const EXPECTED_ASSERTIONS = 140
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -618,6 +618,25 @@ async function scenario(entry) {
       'E40 GET 豁免（读请求不受 CSRF 约束）',
       csrfGet.status === 200,
       'status=' + csrfGet.status
+    )
+
+
+    // —— 俄语输出语言（0.13.x）——
+    //
+    // 键集对齐（verify-config）只证明「表是完整的」，不证明「表接上了线」。这两条走真实
+    // preview 路由，验证 promptTextOf 的 ru 分支与 buildBehavior 的 replyLanguage.ru 都生效：
+    // 段头换成俄语、并且明确要求用俄语回答。
+    const ruPreview = await callRoute(ctx, '/api/soul/prompt/preview', { language: 'ru', customInstructions: 'Проверка' })
+    const ruPrompt = String(ruPreview.body?.prompt || '')
+    push(
+      'E41 language=ru 编译出俄语段头（promptTextOf 的 ru 分支生效）',
+      ruPrompt.includes('[Правила выполнения]') && !ruPrompt.includes('[执行规则]'),
+      '片段: ' + JSON.stringify(ruPrompt.slice(0, 120))
+    )
+    push(
+      'E42 language=ru 明确要求用俄语回答（replyLanguage.ru 生效）',
+      ruPrompt.includes('Отвечай по-русски'),
+      '片段: ' + JSON.stringify(ruPrompt.slice(-160))
     )
 
   } finally {

@@ -51,7 +51,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 173
+const EXPECTED_ASSERTIONS = 175
 
 let passed = 0
 const failures = []
@@ -177,11 +177,22 @@ function extractCall(source, anchor) {
   return ''
 }
 
-// 取某个具名文案表内 zh / en 各自的键集（表名 → 在表内定位 `zh: {` / `en: {`）。
-function tableLangKeys(source, tableName, lang) {
+// 取某个具名文案表内 zh / en 的**文本块**（表名 → 在表内定位 `zh: {` / `en: {`）。
+function langTableText(source, tableName, lang) {
   const at = source.indexOf(`const ${tableName} = {`)
-  if (at === -1) return new Set()
-  return objectKeys(extractObject(source.slice(at), lang === 'zh' ? 'zh: {' : 'en: {'))
+  if (at === -1) return ''
+  return extractObject(source.slice(at), lang === 'zh' ? 'zh: {' : 'en: {')
+}
+
+// 取某个具名文案表内 zh / en 各自的键集。
+function tableLangKeys(source, tableName, lang) {
+  return objectKeys(langTableText(source, tableName, lang))
+}
+
+// 取「独立模块」里导出表的键集。俄语表在 lib/prompt-ru.mjs，没有 zh:/en: 子层，
+// 锚点直接用 `export const ... = {`。
+function localeModuleKeys(source, anchor) {
+  return objectKeys(extractObject(source, anchor))
 }
 
 console.log('migrateConfig')
@@ -343,6 +354,17 @@ check('migrateConfig：personas 归一化透传，缺省时保持缺席；确认
 console.log('特质：表格 / 回复长度')
 
 const indexSource = readFileSync(new URL('../index.mjs', import.meta.url), 'utf8')
+
+// 俄语文案表自 0.14.0 起在独立模块里（vendored 的 PROMPT_TEXT / COMMAND_MESSAGES 仍是
+// {zh, en} 两块，见下方「块数量」断言）。读取失败不抛 ENOENT，而是留空串交给断言报错 ——
+// 「文件被删」应当是这条检查红，而不是整个脚本崩在 readFileSync。
+const promptRuSource = (() => {
+  try {
+    return readFileSync(new URL('../lib/prompt-ru.mjs', import.meta.url), 'utf8')
+  } catch {
+    return ''
+  }
+})()
 // 断言一律对**去注释后**的源码做匹配：注释里写一句 // const VERSION = '0.0.0' 或
 // // await writeConfigFile(...) 就能骗过裸正则（M5 类，变异实验实测可绕过）。
 // stripComments 长度保持不变，因此位置与字符串内容都不受影响。
@@ -2775,7 +2797,7 @@ check('版本号不新增需手工同步的常量（唯一来源 package.json）
 
 // ---------- 双语文案与校验链完整性 ----------
 
-check('host 双语文案表逐键对齐（PROMPT_TEXT / COMMAND_MESSAGES）', () => {
+check('host 文案表逐键对齐（PROMPT_TEXT / COMMAND_MESSAGES：zh / en / ru）', () => {
   for (const table of ['PROMPT_TEXT', 'COMMAND_MESSAGES']) {
     const zh = tableLangKeys(indexSource, table, 'zh')
     const en = tableLangKeys(indexSource, table, 'en')
@@ -2785,6 +2807,88 @@ check('host 双语文案表逐键对齐（PROMPT_TEXT / COMMAND_MESSAGES）', ()
       [...en].sort(),
       `${table} 的 zh / en 必须逐键对齐（少一个键就是另一种语言下少一句话）`
     )
+  }
+
+  // 俄语表在独立模块 lib/prompt-ru.mjs 里：**必须覆盖 en 的全集**。
+  // 少一个键 = 俄语用户那里少一句话，而且运行时不会报错 —— 这正是本检查存在的理由。
+  assert.ok(promptRuSource !== '', 'lib/prompt-ru.mjs 应存在（俄语文案表）')
+
+  const enPrompt = tableLangKeys(indexSource, 'PROMPT_TEXT', 'en')
+  const ruPrompt = localeModuleKeys(promptRuSource, 'export const PROMPT_TEXT_RU = {')
+  assert.ok(ruPrompt.size > 10, `PROMPT_TEXT_RU 键数异常：${ruPrompt.size}`)
+  assert.deepEqual(
+    [...enPrompt].filter((key) => !ruPrompt.has(key)).sort(),
+    [],
+    'PROMPT_TEXT_RU 必须覆盖 PROMPT_TEXT.en 的所有键（缺键 = 俄语下少一句话且不报错）'
+  )
+  // 允许 ru 比 en 多出的键**只有一个**：replyLanguage.ru。选中该表时 language 恒为 ru，
+  // 保留 zh/en 两个键只是为了让键集与 en 对齐（en 侧同理有 zh/en 两个）。
+  assert.deepEqual(
+    [...ruPrompt].filter((key) => !enPrompt.has(key)).sort(),
+    ['ru'],
+    'PROMPT_TEXT_RU 只允许比 en 多出 replyLanguage.ru 这一个键'
+  )
+
+  const enCommand = tableLangKeys(indexSource, 'COMMAND_MESSAGES', 'en')
+  const ruCommand = localeModuleKeys(promptRuSource, 'export const COMMAND_MESSAGES_RU = {')
+  assert.ok(ruCommand.size > 10, `COMMAND_MESSAGES_RU 键数异常：${ruCommand.size}`)
+  assert.deepEqual(
+    [...enCommand].sort(),
+    [...ruCommand].sort(),
+    'COMMAND_MESSAGES_RU 必须与 en 逐键对齐'
+  )
+})
+
+check('每种输出语言都有对应的文案表与 replyLanguage 条目', () => {
+  // buildBehavior 取 `T.replyLanguage[config.language]`，而 T 由 `promptTextOf(config)`
+  // 按**同一个** language 选出 —— 所以每张表只需要「自己那种语言」的条目；跨语言的键是
+  // 冗余的（ru 表额外保留 zh/en 只为让键集与 en 对齐，不参与编译）。
+  //
+  // 真正的失败模式是「往 LANGUAGE_VALUES 加了语言，却没写那张表的
+  // replyLanguage.<自己>」：那样整句「用某语言回答」会被静默跳过，Agent 按默认语言
+  // 说话，界面上看不出任何异常。
+  const sources = {
+    zh: langTableText(indexSource, 'PROMPT_TEXT', 'zh'),
+    en: langTableText(indexSource, 'PROMPT_TEXT', 'en'),
+    ru: extractObject(promptRuSource, 'export const PROMPT_TEXT_RU = {')
+  }
+  for (const lang of LANGUAGE_VALUES) {
+    const text = sources[lang]
+    assert.ok(
+      typeof text === 'string' && text !== '',
+      `LANGUAGE_VALUES 含 ${lang}，但找不到对应的文案表（新增语言必须同时提供 promptTextOf 的分支与文案表）`
+    )
+    const reply = objectKeys(extractObject(text, 'replyLanguage: {'))
+    assert.ok(
+      reply.has(lang),
+      `${lang} 的文案表缺少 replyLanguage.${lang}（该语言不会被要求，且不会报错）`
+    )
+  }
+})
+
+check('每种语言的文案表覆盖全部枚举取值（风格 / 特质 / 篇幅）', () => {
+  // 'default'（特质）与 'normal'（篇幅）的语义是「不追加任何说明」，表里本就没有对应键。
+  const NO_TEXT = new Set(['default', 'normal'])
+  const groups = [
+    ['styles', STYLE_VALUES],
+    ['headingLists', TRAIT_VALUES],
+    ['emoji', TRAIT_VALUES],
+    ['tables', TRAIT_VALUES],
+    ['replyLength', REPLY_LENGTH_VALUES]
+  ]
+  const tables = [
+    ['zh', langTableText(indexSource, 'PROMPT_TEXT', 'zh')],
+    ['en', langTableText(indexSource, 'PROMPT_TEXT', 'en')],
+    ['ru', extractObject(promptRuSource, 'export const PROMPT_TEXT_RU = {')]
+  ]
+  for (const [name, text] of tables) {
+    for (const [field, values] of groups) {
+      const keys = objectKeys(extractObject(text, `${field}: {`))
+      for (const value of values) {
+        if (NO_TEXT.has(value)) continue
+        assert.ok(keys.has(value), `${name} 的 ${field} 缺少 ${value}（该取值下不会追加任何说明）`)
+      }
+    }
   }
 })
 
