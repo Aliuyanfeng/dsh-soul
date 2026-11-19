@@ -2944,10 +2944,11 @@ window.__ModuleLoader__.load({
     // Без него кнопка с русской подписью не совпадёт по textContent (см. sync() ниже)
     // и иконка навигации осталась бы штатной «шестерёнкой».
     //
-    // ⚠️ 实情核对（0.13.x）：当前 DSH 浏览器端只装 zh / en 两种界面语言
-    //（`@deepseek-ai/dsh-client-locale` 的 `LOCALE_IDS = ["zh","en"]`），且上面提到的
-    // overlay 插件并未发布到 npm。所以这个俄语字面量在 zh / en 界面下**不会命中** ——
-    // 保留它只是「宿主将来支持 ru UI 时免改」的前向兼容，不是当前生效路径。
+    // ⚠️ 实情核对（0.13.x）：宿主**内置**界面语言只有 zh / en（`LOCALE_IDS`），俄语要靠
+    // 语言包插件 `addLanguage({ id: 'ru', fallback: 'en' })` 才能被选中；上面提到的
+    // overlay 插件（dsh-soul-ru-lang）并未随宿主分发、也未发布到 npm。因此在未安装俄语
+    // 语言包时，这个字面量不会命中（界面语言恒为 zh / en）—— 它是对该语言包
+    // `ru['nav.label']` 的前向契约，不是当前生效路径。
     const NAV_LABELS = new Set([zh['nav.label'], en['nav.label'], 'Персонализация'])
 
     // 组件内翻译回退：渲染器未注入 t 时使用中文词典（保证组件可独立渲染/测试）
