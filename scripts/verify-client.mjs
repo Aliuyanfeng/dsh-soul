@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 124
+const EXPECTED_ASSERTIONS = 125
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -6444,6 +6444,33 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const call = fetchCalls.find(c => c.path === '/api/soul/personas/use' && c.method === 'POST')
     assert.ok(call)
     assert.equal(call.body.name, '极简主义者')
+  })
+
+  await check('C131 人设说明正文跟随「输出语言」，不受界面语言影响（口径与 /soul show 一致）', async () => {
+    // 卡面「效果栏」与详情页「自定义指令」显示的是**模型实际会收到的文本**。
+    // 之前按 UI locale 取：界面=ru + 输出=zh 时面板显示俄译、提示词却是规范原文，
+    // 界面等于在说谎。这条把口径钉死：俄译只在输出语言=ru 时出现。
+    const render = async (language) => {
+      const world = await boot({}, personaFixture(), { locale: 'ru' })
+      const cfg = { ...CONFIG, language }
+      // 覆盖 GET/POST 两条分支：只改 store 会被下一次 refresh 按路由返回值覆盖回去。
+      world.routes['/api/soul/config'] = (call) => (call.method === 'GET'
+        ? { ok: true, config: { ...cfg }, configError: null, deliveryWarning: null }
+        : { ok: true, config: { ...cfg }, changed: [] })
+      await renderSettings(world)
+      world.controller.store.update((s) => { s.language = language })
+      return textOf(await openPersonaCards(world))
+    }
+
+    const whenZh = await render('zh')
+    const whenRu = await render('ru')
+    assert.ok(whenRu.includes('РУССКИЕ ПРАВИЛА'), '输出=ru 时说明应显示俄译')
+    assert.equal(
+      whenZh.includes('РУССКИЕ ПРАВИЛА'),
+      false,
+      '输出=zh 时不得显示俄译 —— 界面语言不该决定提示词文本'
+    )
+    assert.ok(whenZh.includes('CANONICAL'), '输出=zh 时应显示规范原文')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
