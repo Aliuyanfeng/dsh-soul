@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 118
+const EXPECTED_ASSERTIONS = 119
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -6304,6 +6304,27 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       const window = source.slice(i - 260, i + 20)
       assert.ok(window.includes('SoulHint'), key + ' 应走共用的 SoulHint（否则改了也不生效）')
     }
+  })
+
+  await check('C125 locale 词典注册必须容错（被语言包抢占时不拖垮整个客户端）', async () => {
+    // 宿主对同一 (ns, locale) 第二次 register 会抛 "already has locale"。
+    // 现实场景：dsh-soul-ru-lang 这类语言包会先注册 ru；将来若 dsh-soul 自己也提供 ru，
+    // 两边就会撞车。注册失败只该让界面文案回退成 key，绝不该让整个客户端 apply 抛错 ——
+    // 那会把设置页、侧栏图标、输入框光轨一起带走。
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    const call = source.match(
+      /ctx\.effect\(\(\) => \{[\s\S]{0,500}?ctx\.locale\.register\(NS, \{ zh, en \}\)[\s\S]{0,700}?\}, 'dsh-soul: dictionaries'\)/
+    )
+    assert.ok(call, 'locale 注册应包在 effect 的 try 里（不能裸调 register）')
+    assert.match(call[0], /try \{/, 'locale 注册必须在 try 里')
+    assert.match(call[0], /catch \(error\)/, 'locale 注册必须有 catch')
+    assert.match(call[0], /return \(\) => \{\}/, 'catch 必须返回空 disposer（effect 契约）')
+    // 反向：裸调用形态不得存在（防止重构时退回）
+    assert.equal(
+      /ctx\.effect\(\(\) => ctx\.locale\.register\(NS, \{ zh, en \}\), 'dsh-soul: dictionaries'\)/.test(source),
+      false,
+      '不得退回裸调用形态'
+    )
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

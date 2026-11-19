@@ -8727,7 +8727,19 @@ window.__ModuleLoader__.load({
       ctx.effect(() => () => {
         controller.dispose()
       }, 'dsh-soul: browser lifecycle')
-      ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-soul: dictionaries')
+      // 词典注册失败不应拖垮整个客户端：宿主或另一个语言包（例如 dsh-soul-ru-lang）
+      // 可能已经抢先注册了同一 (ns, locale)，宿主会抛 "already has locale"。
+      // 缺词典的后果只是这些文案回退成 key 本身，绝不该让设置页整块崩掉。
+      ctx.effect(() => {
+        try {
+          return ctx.locale.register(NS, { zh, en })
+        } catch (error) {
+          if (typeof console !== 'undefined' && console.warn) {
+            console.warn('[dsh-soul] locale.register 失败（界面文案回退为 key）:', error)
+          }
+          return () => {}
+        }
+      }, 'dsh-soul: dictionaries')
 
       // —— 全局轮询：让**不打开设置页**时底栏也能跟上宿主侧的变化 ——
       //
