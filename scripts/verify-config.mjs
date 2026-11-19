@@ -8,6 +8,8 @@
 // 零依赖，直接 `node scripts/verify-config.mjs` 运行。
 
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { CANONICAL_FINGERPRINTS_RU } from '../lib/personas-ru.mjs'
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
@@ -51,7 +53,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 175
+const EXPECTED_ASSERTIONS = 176
 
 let passed = 0
 const failures = []
@@ -5254,6 +5256,16 @@ check('「N 个会话」必须与列表口径一致（不得用注册表原始�
     assert.ok(block.includes('preview: quotes.map'), '必须带摘要（不返回引用全文）')
     assert.ok(block.includes('sessionId: key.slice(0, 8)'), 'sessionId 必须脱敏（只给前缀）')
   })
+
+check('RU built-in translations match the current canonical instruction revision (SHA256)', () => {
+  const names = builtinPersonaNames()
+  assert.equal(names.length, 7, 'Update the RU translation inventory when built-ins change')
+  assert.deepEqual(Object.keys(CANONICAL_FINGERPRINTS_RU).sort(), [...names].sort(), 'RU fingerprint keys must cover exactly all built-ins')
+  for (const name of names) {
+    const actual = createHash('sha256').update(BUILTIN_PERSONAS[name].customInstructions, 'utf8').digest('hex')
+    assert.equal(actual, CANONICAL_FINGERPRINTS_RU[name], `${name}: canonical instructions changed; review the RU translation and update its fingerprint`)
+  }
+})
 
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)
 

@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 119
+const EXPECTED_ASSERTIONS = 124
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -467,6 +467,12 @@ function loadClient(routes, options = {}) {
   // 返回的是一个可 unload 的 fiber；这里只记录已触发次数与卸载函数。
   captured.injected = []
   captured.uiWorkspaceAbsent = options.uiWorkspace === null
+  let localeSnapshot = { active: options.locale || 'en' }
+  const localeListeners = new Set()
+  captured.setLocale = (active) => {
+    localeSnapshot = { active }
+    for (const listener of [...localeListeners]) listener()
+  }
   const ctx = {
     provide: (name, value) => { captured.provide[name] = value },
     effect: (fn) => { const dispose = fn(); if (typeof dispose === 'function') captured.sections.push({ dispose }) },
@@ -483,6 +489,8 @@ function loadClient(routes, options = {}) {
       })
     },
     locale: {
+      getSnapshot: () => localeSnapshot,
+      subscribe: (fn) => { localeListeners.add(fn); return () => localeListeners.delete(fn) },
       register: (_ns, dicts) => { captured.dicts = dicts },
       bind: () => (key, params) => interpolate((captured.dicts?.zh || {})[key] ?? key, params)
     },
@@ -6325,6 +6333,117 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       false,
       '不得退回裸调用形态'
     )
+  })
+
+
+  // Additive RU persona regressions: exercise the actual loader, locale face and fetch bodies.
+  const personaFixture = () => ({
+    ok: true,
+    personas: {
+      '极简主义者': { builtin: true, style: 'efficient', customInstructions: 'CANONICAL' },
+      'Мой пресет': { style: 'casual', customInstructions: 'USER TEXT' }
+    },
+    activeName: '极简主义者',
+    builtinI18n: { ru: { '极简主义者': { displayName: 'Минималист', description: 'Коротко по делу', customInstructions: 'РУССКИЕ ПРАВИЛА' } } }
+  })
+  const openPersonaCards = async (world) => {
+    const closed = await renderSettings(world)
+    const trigger = findAll(closed, n => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.personas']))[0]
+    assert.ok(trigger, 'persona section trigger')
+    await trigger.props.onClick()
+    return await renderSettings(world)
+  }
+
+  const sessionPersonaTree = async (world) => {
+    world.routes['/api/soul/session-scope'] = () => ({ ok: true, sessionId: 'ru-test', override: null, source: 'global', activePersona: null })
+    const slot = world.captured.sections.find(s => s.options && s.options.name === 'conversation.view')
+    const props = { ...slot.options.inject('ru-test'), useSoulController: selector => selector(world.controller.store.getSnapshot()), t: (k, p) => interpolate(world.dicts.zh[k] || k, p) }
+    await world.runtime.settle({ type: slot.component, props })
+    for (let i = 0; i < 8; i++) await new Promise(r => drainTick(r))
+    return world.runtime.settle({ type: slot.component, props })
+  }
+
+  await check('C126 en/zh builtin card accessible name stays the canonical key', async () => {
+    for (const locale of ['en', 'zh']) {
+      const world = await boot({}, personaFixture(), { locale })
+      const tree = await sessionPersonaTree(world)
+      const cards = findAll(tree, n => n.props && n.props['aria-label'])
+      const builtin = cards.find(n => n.props['aria-label'] === '极简主义者')
+      assert.ok(builtin, `${locale}: canonical aria-label required, not an arbitrary labelOf result`)
+      assert.equal(builtin.props.title, '极简主义者')
+      assert.ok(!textOf(tree).includes('Минималист'), `${locale}: Russian display name must not leak`)
+    }
+  })
+
+  await check('C127 ru builtin label translates but custom names and source entries do not', async () => {
+    const payload = personaFixture()
+    const original = JSON.stringify(payload.personas)
+    const world = await boot({}, payload, { locale: 'ru' })
+    const tree = await openPersonaCards(world)
+    assert.ok(textOf(tree).includes('Минималист'))
+    assert.ok(textOf(tree).includes('Мой пресет'), 'custom name must remain verbatim')
+    assert.equal(JSON.stringify(payload.personas), original, 'presentation must not mutate API entries')
+    assert.equal(world.controller.store.getSnapshot().personas['极简主义者'].customInstructions, 'CANONICAL')
+  })
+
+  await check('C128 save/use/delete requests carry canonical keys, never translated labels', async () => {
+    const world = await boot({}, personaFixture(), { locale: 'ru' })
+    for (const operation of ['save', 'use', 'delete']) world.routes[`/api/soul/personas/${operation}`] = () => ({ ...personaFixture(), config: { ...CONFIG }, changed: [] })
+    await world.controller.savePersona('极简主义者')
+    await world.controller.usePersona('极简主义者')
+    await world.controller.deletePersona('极简主义者')
+    for (const operation of ['save', 'use', 'delete']) {
+      const calls = fetchCalls.filter(c => c.path === `/api/soul/personas/${operation}` && c.method === 'POST')
+      assert.equal(calls.length, 1)
+      assert.equal(calls[0].body.name, '极简主义者', `${operation}: actual fetch body must preserve the key`)
+      assert.ok(!JSON.stringify(calls[0].body).includes('Минималист'))
+    }
+  })
+
+  await check('C129 locale face ru/en switching updates labels without changing use payload or canonical entry', async () => {
+    const fixture = personaFixture()
+    delete fixture.personas['Мой пресет']
+    fixture.activeName = null
+    const world = await boot({}, fixture, { locale: 'ru' })
+    let tree = await openPersonaCards(world)
+    const label = value => textOf(tree).includes(value)
+    assert.ok(label('Минималист'))
+    world.captured.setLocale('en')
+    tree = await renderSettings(world)
+    assert.ok(label('极简主义者'), 'locale face notification must reach uiLocaleStore')
+    world.captured.setLocale('ru')
+    tree = await renderSettings(world)
+    assert.ok(label('Минималист'))
+    world.routes['/api/soul/personas/use'] = () => ({ ok: true, config: { ...CONFIG }, changed: [] })
+    const button = findAll(tree, n => n.type === 'button' && textOf(n) === world.dicts.zh['personas.use'])[0]
+    assert.ok(button, 'real handleUsePersona button')
+    await button.props.onClick()
+    await renderSettingsSettled(world)
+    const call = fetchCalls.find(c => c.path === '/api/soul/personas/use' && c.method === 'POST')
+    assert.ok(call, 'handleUsePersona must issue a fetch')
+    assert.equal(call.body.name, '极简主义者')
+    assert.equal(world.controller.store.getSnapshot().personas['极简主义者'].customInstructions, 'CANONICAL')
+  })
+
+  await check('C130 ru overview switchGlobalPersona sends canonical key from translated picker', async () => {
+    const world = await boot({}, personaFixture(), { locale: 'ru' })
+    world.routes['/api/soul/overview'] = () => ({ ok: true, globalPersona: null, enabled: true, personas: { builtin: [], custom: [] }, workspaces: [], sessions: [] })
+    world.routes['/api/soul/personas/use'] = () => ({ ok: true, config: { ...CONFIG }, changed: [] })
+    const element = overviewElement(world, world.dicts.zh)
+    let tree = await world.runtime.settle(element)
+    for (let i = 0; i < 8; i++) await new Promise(r => drainTick(r))
+    tree = await world.runtime.settle(element)
+    const switcher = findAllByClass(tree, 'soul-ov-switch')[0]
+    assert.ok(switcher)
+    await switcher.props.onClick()
+    tree = await world.runtime.settle(element)
+    const target = findAllByClass(tree, 'soul-ov-picker-item').find(n => textOf(n) === 'Минималист')
+    assert.ok(target, 'picker should render Russian name')
+    await target.props.onClick()
+    for (let i = 0; i < 12; i++) await new Promise(r => drainTick(r))
+    const call = fetchCalls.find(c => c.path === '/api/soul/personas/use' && c.method === 'POST')
+    assert.ok(call)
+    assert.equal(call.body.name, '极简主义者')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
