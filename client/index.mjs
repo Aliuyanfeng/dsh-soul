@@ -2938,7 +2938,12 @@ window.__ModuleLoader__.load({
     }
 
     // 图标替换匹配的导航文案（词典中 nav.label 的全部语言取值）
-    const NAV_LABELS = new Set([zh['nav.label'], en['nav.label']])
+    // fork(ru): русского словаря в клиенте НЕТ — он живёт в overlay-плагине
+    // (dsh-soul-ru-lang, ctx.locale.register('dsh-soul', 'ru', …)). Поэтому русская
+    // подпись добавлена литералом — это контрактное значение ru['nav.label'] из overlay.
+    // Без него кнопка с русской подписью не совпадёт по textContent (см. sync() ниже)
+    // и иконка навигации осталась бы штатной «шестерёнкой».
+    const NAV_LABELS = new Set([zh['nav.label'], en['nav.label'], 'Персонализация'])
 
     // 组件内翻译回退：渲染器未注入 t 时使用中文词典（保证组件可独立渲染/测试）
     function makeFallbackT(dict) {
@@ -2964,7 +2969,7 @@ window.__ModuleLoader__.load({
     // 回复长度偏好（与宿主 lib/config.mjs 的 REPLY_LENGTH_VALUES 对齐）
     const REPLY_LENGTH_VALUES = ['concise', 'normal', 'detailed']
     // 输出语言（与宿主 lib/config.mjs 的 LANGUAGE_VALUES 对齐）
-    const LANGUAGE_VALUES = ['zh', 'en']
+    const LANGUAGE_VALUES = ['zh', 'en', 'ru']
 
     // 预设行摘要只显示「与默认值不同」的字段——若把 10 个字段全列出来，每行都是
     // 一长串「默认 / 适中」，反而看不出两个预设到底差在哪。默认值须与宿主
@@ -2983,10 +2988,11 @@ window.__ModuleLoader__.load({
       tables: 'default',
       language: 'zh'
     }
-    // 输出语言选项（两种 UI 语言下均自解释，不进词典）
+    // 输出语言选项（各 UI 语言下均自解释，不进词典）
     const LANGUAGE_OPTIONS = [
       { value: 'zh', label: '中文' },
-      { value: 'en', label: 'English' }
+      { value: 'en', label: 'English' },
+      { value: 'ru', label: 'Русский' }
     ]
 
     // 设置页字段的三种交互形态。**分组边界就是保存边界**，动 UI 之前先读这段。
