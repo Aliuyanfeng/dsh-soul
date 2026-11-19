@@ -144,12 +144,21 @@ window.__ModuleLoader__.load({
       return { ...entry, customInstructions: meta.customInstructions }
     }
 
-    // Описание пресета по локали (у вендорских записей поля description нет — вернётся '').
-    const personaDescriptionOf = (key, entry, locale, builtinI18n) => {
-      const meta = entry && entry.builtin === true ? builtinPresentationOf(key, builtinI18n, locale) : null
-      if (meta && typeof meta.description === 'string') return meta.description
-      return typeof (entry || {}).description === 'string' ? entry.description : ''
-    }
+    // Эффективный текст промпта пресета — то, что реально получит модель.
+    //
+    // Почему отдельно от personaDisplayEntryOf: у одного и того же пресета два разных
+    // потребителя. displayName/описание — навигация по интерфейсу, они идут по UI-локали
+    // (personaLabelOf). А блок «свои инструкции» и текст на карточке — это содержимое
+    // промпта, и его язык определяется **языком ответа** (config.language): при UI=ru и
+    // output=zh модель получает канонический текст, значит и панель должна показывать
+    // канонический, иначе интерфейс врёт о происхождении текста (item 3 ревью PR #7).
+    //
+    // builtinPresentationOf отдаёт ru-метаданные только для locale === 'ru', поэтому
+    // передача языка ответа даёт ровно нужное поведение: ru → перевод, en/zh → канон.
+    // Пользовательский (не builtin) пресет возвращается как есть; черновик формы
+    // (draft customInstructions) этим хелпером не обрабатывается вовсе.
+    const personaPromptEntryOf = (key, entry, outputLanguage, builtinI18n) =>
+      personaDisplayEntryOf(key, entry, outputLanguage, builtinI18n)
     const INITIAL = {
       enabled: true,
       nickname: '',
@@ -3858,7 +3867,8 @@ window.__ModuleLoader__.load({
       // Ключи не меняются: они остаются в selectedPersona, payload и URL картинки.
       const uiLocale = useUiLocale()
       const labelOf = (name) => personaLabelOf(name, state.personas ? state.personas[name] : null, uiLocale, state.builtinI18n)
-      const displayEntryOf = (name) => personaDisplayEntryOf(name, state.personas ? state.personas[name] : null, uiLocale, state.builtinI18n)
+      // См. personaPromptEntryOf: содержимое инструкций — по языку ответа, не по UI-локали.
+      const promptEntryOf = (name) => personaPromptEntryOf(name, state.personas ? state.personas[name] : null, state.language, state.builtinI18n)
 
       // 本会话的解析结果**独立于全局 store**：一份覆盖只对它所属的会话有意义，
       // 塞进全局 store 会让两个会话的 tab 互相串味。
@@ -4170,7 +4180,7 @@ window.__ModuleLoader__.load({
           ),
           e('div', { className: 'soul-persona-back-label' }, t('personas.customInstructions')),
           // ru-инструкции встроенного пресета — из карты хоста, только для показа.
-          e('div', { className: 'soul-persona-fulltext' }, personaFullTextOf(displayEntryOf(name), t)),
+          e('div', { className: 'soul-persona-fulltext' }, personaFullTextOf(promptEntryOf(name), t)),
           e('div', { className: 'soul-session-detail-actions' },
             e('button', {
               type: 'button',
@@ -7195,7 +7205,8 @@ window.__ModuleLoader__.load({
       // Ключи остаются ключами (selectedPersona, React key, payload, URL картинки).
       const uiLocale = useUiLocale()
       const labelOf = (name) => personaLabelOf(name, personas ? personas[name] : null, uiLocale, state.builtinI18n)
-      const displayEntryOf = (name) => personaDisplayEntryOf(name, personas ? personas[name] : null, uiLocale, state.builtinI18n)
+      // Содержимое инструкций — по языку ответа (config.language), см. personaPromptEntryOf.
+      const promptEntryOf = (name) => personaPromptEntryOf(name, personas ? personas[name] : null, language, state.builtinI18n)
 
       // —— 草稿字段（「关于你」/「特质」）的本地值 ——
       //
@@ -8151,7 +8162,7 @@ window.__ModuleLoader__.load({
                           ),
                           e('div', { className: 'soul-persona-body' },
                             // 效果栏：卡牌的核心信息（这个预设会怎么回答）
-                            e('div', { className: 'soul-persona-eff' }, personaEffectText(displayEntryOf(name))),
+                            e('div', { className: 'soul-persona-eff' }, personaEffectText(promptEntryOf(name))),
                             e('div', { className: 'soul-persona-actions' },
                               // 当前生效的人设：按钮文字变「使用中」+ 描边式样式（区别于实心主色），
                               // 一眼就能看出哪张卡是当前配置。名称前的 ★ 保留，双重标识互相强化。
@@ -8212,7 +8223,7 @@ window.__ModuleLoader__.load({
                             ))
                           ),
                           e('div', { className: 'soul-persona-back-label' }, t('personas.customInstructions')),
-                          e('div', { className: 'soul-persona-fulltext' }, personaFullText(displayEntryOf(name))),
+                          e('div', { className: 'soul-persona-fulltext' }, personaFullText(promptEntryOf(name))),
                           // 底部按钮行：「返回」+「删除」（仅自建卡）。
                           // 「删除」从正面移到这里（用户反馈正面三钮拥挤、夹缝观感差）：
                           // 背面是「查看 / 管理」语境，删除放这里语义顺；且底部本就是
