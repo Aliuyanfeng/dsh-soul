@@ -27,7 +27,8 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
   - 表情符号：`default`（默认）、`more`（增强，使用较多表情符号）、`less`（减弱，尽量减少使用表情符号）
   - 表格：`default`（默认）、`more`（增强，呈现对比或多字段信息时优先使用表格）、`less`（减弱，避免表格、改用列表或段落）
 - 回复长度偏好：`concise`（简洁，只讲要点、不展开）、`normal`（适中，不额外约束，默认）、`detailed`（详尽，充分展开背景、步骤与推理）
-- 选择输出语言（Agent 回复语言 + `/soul` 命令输出语言）：中文 / English / Русский。它是**全局开关**，不属于角色特征：不进预设，子代理同样遵守它（关掉继承也不会改语言）。它决定**提示词与回复**用哪种语言；**设置页界面文案**是另一层：宿主**内置**语言只有中文和英文，俄语界面需要单独的 overlay 语言包插件通过宿主 locale API（`addLanguage({ id: 'ru', fallback: 'en' })` + `register('dsh-soul', 'ru', …)`）提供 —— 本仓库不含该插件，也未发布，所以现阶段设置页仍是中文 / 英文
+- 选择输出语言（Agent 回复语言 + `/soul` 命令输出语言）：中文 / English / Русский。它是**全局开关**，不属于角色特征：不进预设，子代理同样遵守它（关掉继承也不会改语言）。它决定**提示词与回复**用哪种语言
+  - **界面文案是另一层，与输出语言无关**：宿主 DSH ≥ 0.2.2 自带俄语界面（运行时经 `addLanguage` 追加 ja / es / fr / de / ru / pt）；本插件自己的文案（设置页、侧栏，约 400 个键）由 overlay 语言包 [`dsh-soul-ru-lang`](https://github.com/zznobzz/dsh-soul-ru-lang#readme) 提供，未安装时回退中文 / 英文（见[安装](#安装)）
 - 提示词随输出语言本地化：`language=en` / `language=ru` 时 system prompt 使用英文 / 俄文描述
 - 输入自定义指令
 - Agent 可调用工具 `set_persona`，让模型在对话中直接调整人设
@@ -99,6 +100,21 @@ dsh plugin --profile <profile> update dsh-soul
     - id: soul
       name: dsh-soul
 ```
+
+### 可选：俄语界面
+
+宿主的俄语界面从 DSH **0.2.2** 起内置（运行时经 `addLanguage` 追加 ja / es / fr / de / ru / pt），不需要额外安装。**本插件自己的**界面文案（设置页、侧栏，约 400 个键）由单独的 overlay 语言包提供：
+
+```powershell
+dsh plugin --profile <profile> add dsh-soul-ru-lang
+# 或直接从 GitHub 安装
+dsh plugin --profile <profile> add github:zznobzz/dsh-soul-ru-lang
+```
+
+- npm：<https://www.npmjs.com/package/dsh-soul-ru-lang>（0.1.0）
+- 仓库、兼容性、维护与发版说明：<https://github.com/zznobzz/dsh-soul-ru-lang#readme>
+
+不装也能正常使用：俄语界面下本插件的文案会回退中文 / 英文。**Agent 的回复语言不受此影响** —— 那由「输出语言」决定，不需要任何额外插件。
 
 ## 兼容性
 

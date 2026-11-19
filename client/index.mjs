@@ -2944,11 +2944,12 @@ window.__ModuleLoader__.load({
     // Без него кнопка с русской подписью не совпадёт по textContent (см. sync() ниже)
     // и иконка навигации осталась бы штатной «шестерёнкой».
     //
-    // ⚠️ 实情核对（0.13.x）：宿主**内置**界面语言只有 zh / en（`LOCALE_IDS`），俄语要靠
-    // 语言包插件 `addLanguage({ id: 'ru', fallback: 'en' })` 才能被选中；上面提到的
-    // overlay 插件（dsh-soul-ru-lang）并未随宿主分发、也未发布到 npm。因此在未安装俄语
-    // 语言包时，这个字面量不会命中（界面语言恒为 zh / en）—— 它是对该语言包
-    // `ru['nav.label']` 的前向契约，不是当前生效路径。
+    // ⚠️ 前提核对（实测）：宿主 DSH ≥ 0.2.2 的 `dsh-client-locale` 会经 `addLanguage`
+    // 追加 ja / es / fr / de / ru / pt，「界面语言 = ru」是**真实可选**的。
+    // 本仓库不含 `soul` 命名空间的 ru 词典 —— 它由 overlay 语言包 dsh-soul-ru-lang
+    //（npm `dsh-soul-ru-lang@0.1.0` / `github:zznobzz/dsh-soul-ru-lang`）通过
+    // `register('soul', 'ru', …)` 提供。装了它并把界面切到 ru 时，这个字面量就会命中；
+    // 没装时 `soul` 的文案回退 zh / en，字面量不命中（导航图标保持默认齿轮）。
     const NAV_LABELS = new Set([zh['nav.label'], en['nav.label'], 'Персонализация'])
 
     // 组件内翻译回退：渲染器未注入 t 时使用中文词典（保证组件可独立渲染/测试）

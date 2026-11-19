@@ -27,7 +27,8 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
   - Emoji: `default`, `more` (frequent emoji usage), `less` (minimal emoji usage)
   - Tables: `default`, `more` (prefer tables for comparisons and multi-field data), `less` (avoid tables; use lists or paragraphs)
 - Reply length preference: `concise` (key points only), `normal` (no extra constraint, default), `detailed` (expand background, steps and reasoning)
-- Output language (agent reply language + `/soul` command output language): Chinese, English or Russian. It is a **global switch**, not a persona trait — so presets do not store it, and subagents follow it too (turning off inheritance does not change the language). It localizes the **prompt and the replies**; the **settings UI** is a separate layer: the host ships only Chinese and English as **built-in** languages, so Russian UI requires a separate overlay language-pack plugin using the host locale API (`addLanguage({ id: 'ru', fallback: 'en' })` + `register('dsh-soul', 'ru', …)`) — that plugin is not in this repository and is not published, so the settings UI stays Chinese/English for now
+- Output language (agent reply language + `/soul` command output language): Chinese, English or Russian. It is a **global switch**, not a persona trait — so presets do not store it, and subagents follow it too (turning off inheritance does not change the language). It localizes the **prompt and the replies**
+  - **UI text is a separate layer, unrelated to the output language:** DSH ≥ 0.2.2 ships a Russian UI (it appends ja / es / fr / de / ru / pt at runtime via `addLanguage`); this plugin's own strings (settings page, sidebar, ~400 keys) come from the overlay language pack [`dsh-soul-ru-lang`](https://github.com/zznobzz/dsh-soul-ru-lang#readme) — without it they fall back to Chinese/English (see [Installation](#installation))
 - The compiled system prompt follows the output language (English / Russian descriptions when `language=en` / `ru`)
 - Custom instructions
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
@@ -101,6 +102,21 @@ The plugin is registered via `cordis.patch.yml`:
     - id: soul
       name: dsh-soul
 ```
+
+### Optional: Russian UI
+
+The host's Russian UI ships with DSH **0.2.2** (it appends ja / es / fr / de / ru / pt at runtime via `addLanguage`), so nothing extra is needed for the DSH chrome. **This plugin's own** UI strings (settings page, sidebar, ~400 keys) come from a separate overlay language pack:
+
+```powershell
+dsh plugin --profile <profile> add dsh-soul-ru-lang
+# or straight from GitHub
+dsh plugin --profile <profile> add github:zznobzz/dsh-soul-ru-lang
+```
+
+- npm: <https://www.npmjs.com/package/dsh-soul-ru-lang> (0.1.0)
+- Repo, compatibility, maintenance and release process: <https://github.com/zznobzz/dsh-soul-ru-lang#readme>
+
+Everything works without it — this plugin's strings simply fall back to Chinese/English under a Russian UI. **The agent's reply language is unaffected**: that is driven by "Output language" and needs no extra plugin.
 
 ## Compatibility
 
