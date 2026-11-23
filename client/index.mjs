@@ -104,9 +104,13 @@ window.__ModuleLoader__.load({
       : (_subscribe, getSnapshot) => getSnapshot()
 
     // Приводим активную локаль к базовому языку: 'ru', 'ru-RU' → 'ru'.
+    // ja добавлен для подписей встроенных пресетов (builtinI18n.ja): словарь самого
+    // интерфейса — по-прежнему zh/en (ru приходит из overlay-пакета), поэтому при ja
+    // только имена/описания пресетов берутся из ja-таблицы, остальной текст показывает
+    // хост (как и для любого языка без overlay-пакета).
     const baseUiLocaleOf = (active) => {
       const base = String(active || 'en').toLowerCase().split(/[-_]/)[0]
-      return base === 'ru' || base === 'zh' ? base : 'en'
+      return base === 'ru' || base === 'zh' || base === 'ja' ? base : 'en'
     }
 
     function useUiLocale() {
@@ -116,17 +120,21 @@ window.__ModuleLoader__.load({
       return baseUiLocaleOf(snapshot && snapshot.active)
     }
 
-    // Метаданные ru-представления встроенного пресета: own-property lookup по карте хоста.
+    // Метаданные локализованного представления встроенного пресета: own-property lookup
+    // по карте хоста builtinI18n[locale]. Карта приходит отдельными ключами по языкам
+    // (ru / ja), поэтому выбор языка — это просто выбор ключа: en/zh и старый хост без
+    // поля попадают в «нет метаданных» и показывают канонические имена.
     const builtinPresentationOf = (key, builtinI18n, locale) => {
-      if (locale !== 'ru' || typeof key !== 'string') return null
+      if (typeof locale !== 'string' || typeof key !== 'string') return null
       if (!builtinI18n || typeof builtinI18n !== 'object') return null
-      const ru = builtinI18n.ru
-      if (!ru || typeof ru !== 'object' || !Object.prototype.hasOwnProperty.call(ru, key)) return null
-      const meta = ru[key]
+      const table = builtinI18n[locale]
+      if (!table || typeof table !== 'object' || !Object.prototype.hasOwnProperty.call(table, key)) return null
+      const meta = table[key]
       return meta && typeof meta === 'object' ? meta : null
     }
 
-    // Отображаемое имя пресета: русское — только у встроенного и только при ru-UI.
+    // Отображаемое имя пресета: локализованное — только у встроенного и только когда
+    // для текущего UI-языка есть таблица.
     // Ключ остаётся ключом: он уходит в state.selectedPersona, React key, onClick,
     // payload и URL картинки; меняется лишь текст, который видит человек.
     const personaLabelOf = (key, entry, locale, builtinI18n) => {
@@ -135,7 +143,7 @@ window.__ModuleLoader__.load({
       return meta && typeof meta.displayName === 'string' && meta.displayName !== '' ? meta.displayName : key
     }
 
-    // Временная копия записи для рендера: ru-инструкции встроенного пресета.
+    // Временная копия записи для рендера: локализованные инструкции встроенного пресета.
     // Исходная запись не мутируется и никогда не уходит в apply/payload.
     const personaDisplayEntryOf = (key, entry, locale, builtinI18n) => {
       if (!entry || entry.builtin !== true) return entry
@@ -153,8 +161,9 @@ window.__ModuleLoader__.load({
     // output=zh модель получает канонический текст, значит и панель должна показывать
     // канонический, иначе интерфейс врёт о происхождении текста (item 3 ревью PR #7).
     //
-    // builtinPresentationOf отдаёт ru-метаданные только для locale === 'ru', поэтому
-    // передача языка ответа даёт ровно нужное поведение: ru → перевод, en/zh → канон.
+    // builtinPresentationOf отдаёт метаданные только для того языка, который ему передали
+    // и для которого хост прислал таблицу (ru / ja), поэтому передача языка ответа даёт
+    // ровно нужное поведение: ru → перевод, ja → перевод, en/zh → канон.
     // Пользовательский (не builtin) пресет возвращается как есть; черновик формы
     // (draft customInstructions) этим хелпером не обрабатывается вовсе.
     const personaPromptEntryOf = (key, entry, outputLanguage, builtinI18n) =>
@@ -3057,20 +3066,447 @@ window.__ModuleLoader__.load({
       'hint.trail': 'While the agent is replying, a light trail runs along the composer border. Pick a swatch, use the color picker, or type a hex value (e.g. #679EFE).'
     }
 
-    // 图标替换匹配的导航文案（词典中 nav.label 的全部语言取值）
-    // fork(ru): русского словаря в клиенте НЕТ — он живёт в overlay-плагине
-    // (dsh-soul-ru-lang, ctx.locale.register('dsh-soul', 'ru', …)). Поэтому русская
-    // подпись добавлена литералом — это контрактное значение ru['nav.label'] из overlay.
-    // Без него кнопка с русской подписью не совпадёт по textContent (см. sync() ниже)
-    // и иконка навигации осталась бы штатной «шестерёнкой».
-    //
-    // ⚠️ 前提核对（实测）：宿主 DSH ≥ 0.2.2 的 `dsh-client-locale` 会经 `addLanguage`
-    // 追加 ja / es / fr / de / ru / pt，「界面语言 = ru」是**真实可选**的。
-    // 本仓库不含 `soul` 命名空间的 ru 词典 —— 它由 overlay 语言包 dsh-soul-ru-lang
-    //（npm `dsh-soul-ru-lang@0.1.0` / `github:zznobzz/dsh-soul-ru-lang`）通过
-    // `register('soul', 'ru', …)` 提供。装了它并把界面切到 ru 时，这个字面量就会命中；
-    // 没装时 `soul` 的文案回退 zh / en，字面量不命中（导航图标保持默认齿轮）。
-    const NAV_LABELS = new Set([zh['nav.label'], en['nav.label'], 'Персонализация'])
+    // ja 词典：本仓库自行翻译（0.16.0）。键集与键序必须与 zh 完全一致（verify-client
+    // 逐键比对，缺一个或错一个就红）。术语沿用宿主的日语用词：セッション / ワークスペース /
+    // プリセット / スキル / サブエージェント；「人设」译作「ペルソナ」。
+    const ja = {
+      'nav.label': 'パーソナライズ',
+      'nav.panelLabel': 'Soul ペルソナ概要',
+      'settings.title': 'パーソナライズ設定',
+      'accordion.filled': '項目入力済み',
+      'accordion.empty': '未入力',
+      // 分组摘要在「拉取失败」时的显示（折叠态下用户只看得到这一行）
+      'accordion.loadFailed': '読み込み失敗',
+      'accordion.personas': '件のプリセット',
+      'accordion.on': 'オン',
+      'accordion.off': 'オフ',
+      'toggle.enabled': 'パーソナライズを有効にする',
+      'quick.enable': 'パーソナライズをオン',
+      'quick.disable': 'パーソナライズをオフ',
+      'quick.statusEnabled': 'パーソナライズは有効',
+      'quick.custom': 'カスタム',
+      'quick.statusDisabled': 'パーソナライズは無効',
+      // 快捷开关保存失败时的兜底文案（有服务端 error 时优先显示它）
+      'quick.toggleFailed': '保存できませんでした。もう一度お試しください',
+      'group.aboutYou': 'あなたについて',
+      'field.nickname': 'ニックネーム',
+      'hint.nickname': 'Agent が返答であなたを呼ぶときの名前です。',
+      'field.nicknamePlaceholder': 'ニックネームを入力すると、返答でその名前で呼ばれます',
+      'field.occupation': '職業',
+      'hint.occupation': 'Agent があなたの技術的な背景や質問の角度を判断する手がかりになります。',
+      'field.occupationPlaceholder': '例：ソフトウェアエンジニア、学生、プロダクトマネージャー',
+      'field.bio': '自己紹介',
+      'hint.bio': '一言の背景で、返答があなたの状況に合いやすくなります。',
+      'field.bioPlaceholder': '簡単な自己紹介。返答があなたの背景に合いやすくなります',
+      'group.traits': '特性',
+      // 「我在这里改了，为什么那个会话没变」的答案：只陈述优先级，不假装知道当前会话
+      'traits.scopeNote': 'ここで保存した特性は、ペルソナをバインドしたワークスペースやディレクトリには適用されません。',
+      'traits.scopeNoteMore': '優先順位：セッションの上書き > ワークスペースのバインド > ディレクトリのバインド > グローバル設定。バインドは部分的な上書きで、そのペルソナが宣言した項目だけを引き継ぎます。「あなたについて」（ニックネーム・職業・自己紹介）はバインドの対象外で、常にここの値が使われます。',
+      'field.style': '返答のスタイルと語調',
+      'hint.style': 'Agent が返答するときのスタイルと語調を設定します。機能には影響しません。',
+      'field.headingLists': '見出しとリスト',
+      'hint.headingLists': '返答での見出しとリストの使用量を調整します。',
+      'field.emoji': '絵文字',
+      'hint.emoji': '返答での絵文字の使用量を調整します。',
+      'field.tables': '表',
+      'hint.tables': '返答での表の使用量を調整します。',
+      'field.replyLength': '返答の長さ',
+      'field.activePersonaName': '最後に使ったプリセット',
+      'hint.replyLength': '返答の長さを調整します。「標準」は追加の制約をせず、Agent が自分で判断します。',
+      'field.language': '出力言語',
+      'hint.language': 'グローバルスイッチ：返答の言語とプロンプトの言語を決めます。ペルソナの特性ではなく、プリセットには含まれません。',
+      'field.instructions': 'カスタム指示',
+      'hint.instructions': '役割や習慣などの個別の要望を補足します。上のスタイル設定と重複しないようにしてください。',
+      'field.instructionsPlaceholder': 'カスタム指示を入力。動作や返答のスタイル・語調などの好みを指定できます',
+      'group.personas': 'ペルソナプリセット',
+      'personas.save': '現在の設定をプリセットとして保存',
+      // 入口移出预设列表，跟着「特质」走（方案 A）；省略号表示点开会再问一步（名字）
+      'personas.saveAs': 'グローバルプリセットとして保存…',
+      // 更新到全局预设（0.9.0-s）：与「存为全局预设」并列 —— 前者覆盖已有，后者新建
+      'personas.updateTo': 'グローバルプリセットを更新',
+      'personas.updateNone': '更新できる自作プリセットがまだありません。内蔵プリセットは変更できません。',
+      'personas.updateCovers': '「あなたについて」以外のペルソナ項目（スタイル・特性・長さ・指示）を選んだプリセットに書き込みます。',
+      'personas.updateExcludes': 'ニックネーム・職業・自己紹介は含まれません —— これらはプリセットの対象外です。',
+      'notice.personaUpdated': 'プリセット「{name}」を更新しました。',
+      'personas.saveNameLabel': '新しいプリセット名',
+      'personas.saveConfirm': '保存',
+      'personas.saveCovers': '保存する内容：返答のスタイルと語調、特性、返答の長さ、出力言語、カスタム指示',
+      'personas.saveExcludes': '含まれないもの：ニックネーム、職業、自己紹介（これらは「あなたについて」に属し、プリセットは変更しません）',
+      'personas.confirmDeleteShort': '削除しますか？',
+      // —— 卡背（详情面）——
+      'personas.details': '詳細',
+      'personas.flipBack': '戻る',
+      'personas.dims': 'ペルソナの項目',
+      'personas.customInstructions': 'カスタム指示',
+      'personas.dimDefault': 'デフォルト',
+      'personas.noCustomInstructions': 'このペルソナには追加のカスタム指示がありません',
+      'personas.savePlaceholder': 'プリセット名（1〜30 文字）',
+      'personas.use': '使う',
+      'personas.active': '使用中',
+      'personas.delete': '削除',
+      'personas.prev': '前のプリセット',
+      'personas.next': '次のプリセット',
+      'personas.confirmDelete': 'プリセット「{name}」を削除しますか？',
+      'personas.empty': 'プリセットがまだありません。現在の設定を保存するとワンクリックで切り替えられます',
+      // 列表拉取失败（此前是空 catch ⇒ 界面会永远停在「加载中...」）
+      'personas.loadFailed': 'ペルソナプリセットの読み込みに失敗しました：{reason}',
+      'personas.builtin': '内蔵',
+      'personas.drift': '現在の設定はどのプリセットとも一致していません。',
+      'personas.driftAction': '新しいプリセットとして保存',
+      'personas.hint': 'プリセットは Agent のペルソナだけを含みます。あなたのニックネームと自己紹介はプリセットを切り替えても変わりません。',
+      'personas.hintDetail': 'プリセットにはスタイル、特性（見出しとリスト / 絵文字 / 表）、返答の長さ、出力言語、カスタム指示が含まれます。「あなたについて」のニックネーム・職業・自己紹介は含まれません。内蔵プリセットはプラグインに同梱され、削除できません。',
+      'style.professional': '専門的で厳密',
+      'style.casual': '自然でくだけた',
+      'style.humorous': 'ユーモアのある',
+      'style.roast': '辛口ツッコミ',
+      'style.efficient': '効率的で簡潔',
+      'trait.headingLists.default': 'デフォルト',
+      'trait.headingLists.more': '強め（見出しとリストで整理する）',
+      'trait.headingLists.less': '弱め（段落の文章を多めにする）',
+      'trait.emoji.default': 'デフォルト',
+      'trait.emoji.more': '強め（絵文字を多めに使う）',
+      'trait.emoji.less': '弱め（絵文字を最小限にする）',
+      'trait.tables.default': 'デフォルト',
+      'trait.tables.more': '強め（比較や複数項目は表を優先する）',
+      'trait.tables.less': '弱め（表を使わず、リストや段落にする）',
+      'trait.replyLength.concise': '簡潔（要点だけを示す）',
+      'trait.replyLength.normal': '標準（追加の制約なし）',
+      'trait.replyLength.detailed': '詳細（背景と推論まで十分に展開する）',
+      // 预设行摘要用的短标签（trait.* 的完整说明太长，一行放不下）
+      'meta.replyLength.concise': '簡潔',
+      'meta.replyLength.detailed': '詳細',
+      'meta.headingLists.more': 'リスト多め',
+      'meta.headingLists.less': 'リスト少なめ',
+      'meta.emoji.more': '絵文字多め',
+      'meta.emoji.less': '絵文字少なめ',
+      'meta.tables.more': '表多め',
+      'meta.tables.less': '表少なめ',
+      'meta.language.zh': '中国語',
+      'meta.language.en': '英語',
+      // —— 工作区绑定（0.8.1）——
+      'group.bindings': 'ワークスペースのバインド',
+      'bindings.hint': 'バインドが覚えるのはセッションではなくディレクトリです。バインドしたディレクトリ（サブディレクトリを含む）で開いたセッションは自動でこのペルソナを使います。保存するとすぐにアクティブなセッションへ反映され、他のディレクトリには影響しません。',
+      // 当前会话目录卡
+      'bindings.currentTitle': '現在のセッションのディレクトリ',
+      'bindings.noSession': 'アクティブなセッションがないため、「今どれが使われているか」を表示できません。',
+      'bindings.noCwd': 'このセッションには作業ディレクトリがないため、どのバインドも該当しません —— グローバル設定が使われます。',
+      'bindings.effective': '適用中のペルソナ',
+      'bindings.source': '適用元',
+      'bindings.sourceGlobal': 'グローバル設定（バインドのないディレクトリはすべてこれに従います）',
+      'bindings.sourceInherited': '{dir}（親ディレクトリから継承）',
+      'bindings.choose': 'ディレクトリを選択…',
+      'bindings.manualLabel': 'ディレクトリのパス',
+      'bindings.manualPlaceholder': '絶対パスを貼り付けてください。例：D:\\プロジェクトA',
+      'bindings.bindDir': 'バインド',
+      // 结果提示：就地在分组内显示绿字/红字（与变更记录同款，不用 toast）
+      'bindings.needDir': 'ディレクトリを入力するか、「ディレクトリを選択…」を押してください。',
+      'bindings.bound': 'バインドしました：{dir} → {name}',
+      'bindings.unbound': 'バインドを解除しました：{dir}',
+      'bindings.unbindMissing': 'このバインドはすでに一覧にありません（別の場所で削除された可能性があります）。再読み込みしてください。',
+      'bindings.pickerUnavailable': 'この接続方法ではシステムのディレクトリ選択を開けません。パスを手動で貼り付けてください。',
+      'bindings.moreSessions': 'ほかに {count} 件のアクティブなセッション',
+      // 绑定列表
+      'bindings.listTitle': 'バインド済みのディレクトリ',
+      'bindings.loading': '読み込み中...',
+      'bindings.loadFailed': 'ワークスペースのバインドを読み込めません：{reason}',
+      'bindings.empty': 'まだどのディレクトリもバインドしていません。',
+      'bindings.count': '全 {count} 件 · 最大 {max} 件',
+      'bindings.here': '現在のディレクトリ',
+      'bindings.persona': '使用するペルソナ',
+      'bindings.unbind': 'バインド解除',
+      'bindings.unbindArmed': '解除しますか？',
+      'bindings.invalid': 'ペルソナ「{name}」は存在しません',
+      'bindings.invalidHint': 'このバインドは反映されません。バインドし直すか解除してください。',
+      'bindings.dropped': '{count} 件の無効な行を無視しました。',
+      'bindings.warning': 'バインド一覧が不完全かもしれません：{reason}',
+      'bindings.maxPath': 'パスの上限は {max} 文字です。',
+      'bindings.fallback': 'バインドのないディレクトリはグローバル設定を使用',
+      'bindings.change': '変更',
+      // —— 会话级人设（0.9.0-d）——
+      'session.tabLabel': 'ペルソナ',
+      'session.title': 'このセッションのペルソナ',
+      'session.current': '現在の適用中',
+      'session.workspace': '所属ワークスペース',
+      'session.workspaceUnknown': 'どのワークスペースにも属していません',
+      'session.source.global': 'グローバル設定',
+      'session.source.workspace': 'ワークスペース「{name}」',
+      'session.source.directory': 'ディレクトリのバインド',
+      'session.source.session': 'このセッションの一時的な上書き',
+      'session.noPersona': 'カスタム（どのプリセットとも一致しません）',
+      'session.overrideTitle': '一時的に変更',
+      'session.overrideHint': 'このセッションだけに影響します。新しいセッションはワークスペースまたはグローバル設定に従います。',
+      'session.pickPersona': 'プリセットに変更…',
+      'session.customOverrides': 'カスタム項目',
+      'session.clear': 'このセッションの一時的なペルソナを解除',
+      'session.cleared': 'このセッションの一時的なペルソナを解除しました。上位の設定に従います。',
+      'session.applied': 'このセッションを「{name}」に変更しました。',
+      'session.loading': '読み込み中...',
+      'session.loadFailed': 'このセッションのペルソナを読み込めません：{reason}',
+      'session.applyFailed': '設定に失敗しました：{reason}',
+      'session.noOverrides': '一時的な上書きはありません。',
+      'session.badge': '上書きあり',
+      // 输入框标签的来源层级：告诉用户「现在这个人设是哪一层定的」
+      'quick.scopeSession': 'このセッションの上書き',
+      'quick.scopeWorkspace': 'ワークスペース「{name}」',
+      'quick.scopeDirectory': 'ディレクトリのバインド',
+      'quick.scopeGlobal': 'グローバル設定',
+      'quick.scopeUnknown': 'セッションの状態が不明',
+      // 设置页预设行的作用域标注：设置页没有会话上下文，写的是**全局**
+      'personas.scopeGlobal': 'グローバル',
+      // 卡面按钮：与设置页「使用 / 使用中」同一套语义，只是措辞更贴会话语境
+      'session.useCard': 'これを使う',
+      'session.pickHint': '左のカードをクリックすると、ここにそのペルソナの全体が表示されます。',
+      'session.chipInUse': '使用中',
+      // —— 工作区人设（详情页，0.9.0-e）——
+      'workspaces.title': 'ワークスペースのペルソナ',
+      'workspaces.count': '{bound} / {total} バインド済み',
+      'workspaces.hint': 'ワークスペースのペルソナはそのワークスペースのセッションにだけ適用されます。バインドのないものはグローバル設定に従います。',
+      'workspaces.unbound': '未バインド',
+      'workspaces.bind': 'ペルソナをバインド',
+      'workspaces.rebind': 'バインドし直す',
+      'workspaces.unbind': 'バインドを解除',
+      'workspaces.unbindArmed': '解除しますか？',
+      'workspaces.empty': 'ワークスペースがまだありません。サイドバーの「ワークスペースを追加」のあと、ここに戻ってペルソナを設定してください。',
+      'workspaces.loading': '読み込み中...',
+      'workspaces.loadFailed': 'ワークスペースを読み込めません：{reason}',
+      'workspaces.serverProblem': 'ホストのサービスを利用できません：{reason}',
+      'workspaces.invalid': 'ペルソナ「{name}」は存在しません',
+      'workspaces.invalidHint': 'このバインドは反映されません。バインドし直すか解除してください。',
+      'workspaces.applied': '「{name}」を「{title}」にバインドしました。',
+      'workspaces.unbindDone': '「{title}」のペルソナのバインドを解除しました。',
+      'workspaces.applyFailed': '設定に失敗しました：{reason}',
+      'workspaces.pickPersona': 'ペルソナを選択',
+      // —— 会话覆盖清理（0.9.0-f）——
+      'sessions.title': 'セッションの上書き',
+      'sessions.hint': 'セッションで一時的に変更したペルソナ。セッションが消えたあと 30 日間は様子を見て、戻らなければ整理します。',
+      'sessions.scanning': '確認中…',
+      'sessions.scanFailed': '確認を完了できません：{reason}',
+      'sessions.scanIncomplete': 'ホストからセッション一覧が提供されていないため、今回は何も判定しません —— 「見えない」は「削除済み」ではありません。',
+      'sessions.summary': '全 {total} 件 · 経過観察 {markable} · 整理可能 {collectable} · 破損 {quarantine}',
+      'sessions.collect': '整理可能な項目を削除',
+      'sessions.collectArmed': '{count} 件を削除しますか？',
+      'sessions.collected': '{count} 件を削除しました。',
+      'sessions.nothing': '整理できる項目はありません。',
+      'sessions.previewHint': 'プレビューでは何も削除されません。確認してから実際に削除します。',
+      'group.tool': '操作と画面',
+      'field.toolConfirm': 'ペルソナ変更時に確認する',
+      'field.quoteAsContext': '引用をコンテキストとして使う',
+      'hint.quoteAsContext': 'デフォルトはオフ。DSH 公式の「メッセージ引用」機能（返答内のテキストを選択 → 引用をクリックすると、入力欄に引用ブロックとして挿入され、表示・編集できる）が組み込まれているため、そちらの利用を推奨します。この項目をオンにすると、引用はメッセージ本文に入らず、実行時コンテキストとして次のリクエストでモデルに届きます。',
+      'field.showOverviewInSidebar': 'サイドバーにペルソナ概要を表示',
+      'hint.showOverviewInSidebar': 'デフォルトはオフで、サイドバーの場所を取りません。オンにするとサイドバーにアイコンが表示されます。概要はプラグインの詳細ページからも開けます。',
+      'action.openOverview': 'ペルソナ概要を開く',
+      'field.showQuickToggle': '入力欄のクイック切り替えを表示',
+      'field.subagentInheritPersona': 'サブエージェントがペルソナを継承',
+      'hint.subagentInheritPersona': 'サブエージェントは作業を任せる助手で、会話の相手ではありません。デフォルトでは現在のペルソナを引き継ぎます。オフにすると性格も呼び方も持たず、タスクそのものに集中します。',
+      'field.subagentPersona': 'サブエージェントの既定ペルソナ',
+      'hint.subagentPersona': '継承をオフにするとサブエージェントは既定でペルソナを持ちません。共通のプリセットを持たせたい場合はここで選びます。',
+      'option.subagentPersonaNone': 'なし（ペルソナを持たない）',
+      'hint.showQuickToggle': '入力欄の左にある「パーソナライズは有効」ボタンで、設定ページを開かずにオン・オフできます。オフにするとこのボタンは表示されず、設定ページからのみ切り替えられます。',
+      'hint.overviewEntry': 'プラグインの詳細ページからペルソナ概要を直接開けます —— サイドバーの入口をオフにしても、ここは常に使えます。',
+      'quote.actionFloat': 'この部分を引用',
+      'quote.sentBadge': '{count} 件の選択テキスト',
+      'quote.sentItem': '引用{index}：{text}',
+      'quote.queueMark': '引用あり',
+      'quote.queueMarkHint': 'この待機中のメッセージは送信時に現在の引用を含みます',
+      'quote.actionHint': '返答内のテキストを選択してここを押すと、コンテキストとして次のリクエストでモデルに届きます',
+      'quote.dockTitle': '引用（{count}）',
+      'quote.clear': 'クリア',
+      'quote.remove': 'この引用を削除',
+      'hint.toolConfirm': 'オンにすると、Agent がペルソナを変更するとき入力欄に承認パネルが表示されます（Enter で許可 / Esc で拒否）。セッションの承認経路が使えない場合（ポリシーが never）は確認待ちの提案になり、/soul confirm で処理します —— その場合はこのスイッチをオフにすることをおすすめします。そうしないと変更のたびにコマンド入力が必要です。',
+      // —— 变更记录（0.8.0）——
+      'group.history': '変更履歴',
+      'history.empty': '変更履歴はまだありません。',
+      'history.loading': '読み込み中...',
+      'history.loadFailed': '変更履歴を読み込めません：{reason}',
+      'history.summary': '直近 {count} 件 · 最大 {max} 件',
+      'history.prev': '前へ',
+      'history.next': '次へ',
+      'history.pageInfo': '{page} / {total} ページ · 全 {count} 件',
+      'history.clear': '履歴を消去',
+      'history.clearArmed': '消去しますか？',
+      'history.clearDone': '変更履歴 {count} 件を消去しました。',
+      // 按钮用「撤销」而不是「恢复」：点一条记录的结果是**把这一次改动撤掉**（连同它之后的）
+      'history.restore': 'この変更を元に戻す',
+      'history.restoreArmed': '元に戻しますか？',
+      'history.restoreDone': '{count} 件の変更を元に戻しました。',
+      'history.restoreUnchanged': '元に戻す前に、これらの変更は後続の変更で既に戻されています。',
+      'history.restorePreset': 'このプリセットを復元',
+      'history.restorePresetDone': 'プリセット「{name}」を復元しました。',
+      'history.restorePresetSkipped': '「{name}」は復元しませんでした：{reason}',
+      'history.skip.exists': '同じ名前のプリセットが既にあります',
+      'history.skip.builtin': '内蔵プリセットです',
+      'history.skip.invalid-name': '名前が不正です',
+      'history.restoreSkippedNote': '{count} 件を復元し、{skipped} 件は復元しませんでした。',
+      'history.diverged': '履歴と現在の設定が一致しないため、元に戻せません。設定ファイルが手で編集された可能性があります。',
+      'history.warning': '履歴が不完全かもしれません：{reason}',
+      'history.footer': 'ペルソナ設定を元に戻します。プリセットライブラリには影響しません。',
+      'history.fields': '対象 {fields}',
+      'history.field.from': '変更前',
+      'history.field.to': '変更後',
+      'history.personasAdded': 'プリセットを追加 {names}',
+      'history.personasRemoved': 'プリセットを削除 {names}',
+      'history.personasUpdated': 'プリセットを上書き {names}',
+      // —— label：条目的人类可读上下文（0.8.0 打磨）——
+      'history.labelSuffix': '：{label}',
+      'history.source.web': 'Web から保存',
+      'history.source.command': 'スラッシュコマンド',
+      'history.source.tool': 'Agent ツール',
+      'history.source.service': 'プラグインからの呼び出し',
+      'history.source.persona': 'プリセットを適用',
+      'history.source.rollback': '元に戻す',
+      'history.source.restorePersona': 'プリセットを復元',
+      // —— 变更记录：列表渲染补充（0.8.0-d）——
+      'history.summaryCount': '直近 {count} 件',
+      'history.entryHint': '変更は元に戻せます',
+      'history.entryHintMore': '変更履歴はプラグインの詳細ページ（プラグイン管理 → インストール済み → dsh-soul）にあります。ある変更とそれ以降のすべてを元に戻す、削除したプリセットの復元、履歴の消去は、すべてそこで行えます。',
+      // —— 变更记录保留条数（0.8.0 打磨）——
+      'history.maxEntries': '保持件数',
+      'history.maxEntriesHint': '変更履歴を最大何件保持するか。超えた分は古いものから自動で破棄されます。件数が多いほど、元に戻せる範囲が広がります。',
+      'history.maxEntriesDefault': '{count} 件（デフォルト）',
+      'history.maxEntriesOption': '{count} 件',
+      'history.maxEntriesSaved': '保持件数を {count} 件に変更しました。',
+      'history.timeJustNow': 'たった今',
+      'history.timeMinutes': '{count} 分前',
+      'history.timeHours': '{count} 時間前',
+      'history.timeDays': '{count} 日前',
+      // 空值必须显式画出来：留空会被读成「渲染坏了」
+      'history.valueEmpty': '（なし）',
+      'history.emptyFields': '変更された項目はありません',
+      // 分区保存：按钮文字点名存的是哪一区
+      'button.saveAbout': '「あなたについて」を保存',
+      'button.saveTraits': '特性を保存',
+      'notice.savedAbout': '「あなたについて」を保存しました。',
+      'notice.savedTraits': '「特性」を保存しました。',
+      'group.advanced': '詳細オプション',
+      'hint.immediateApply': 'このグループの変更はすぐに反映されます。保存を押す必要はありません。',
+      'hint.reset': 'すべてのペルソナ項目と画面項目を一度にデフォルトへ戻し、すぐに書き込みます。',
+      'reset.confirmTitle': 'デフォルトに戻しますか？',
+      'reset.confirmBody': '「あなたについて」「特性」「操作と画面」の設定がすべてデフォルトに戻ります。',
+      'reset.confirmKeeps': 'プリセットライブラリとセッション履歴には影響しません。',
+      'reset.confirmDraft': 'フォームに未保存の編集があります。リセットは保存済みの設定だけを変更し、それらの編集はフォームに残ります。',
+      'reset.confirmButton': 'リセットする',
+      'status.unsavedShort': '未保存',
+      'trail.colorInvalid': '色は 6 桁の 16 進数（例：#679EFE）で指定してください。今は保存されていません。',
+      'button.saving': '保存中...',
+      'button.cancel': 'キャンセル',
+      'button.reset': 'デフォルトに戻す',
+      'status.loading': '読み込み中...',
+      'status.unsaved': '未保存の変更があります',
+      // —— 内联绿字（对齐宿主模型设置页的 savedNotice）——
+      'notice.saved': '設定を保存しました。',
+      'notice.noChanges': '設定に変更はありません。',
+      'notice.reset': 'デフォルトに戻しました。',
+      'notice.resetRecovered': 'デフォルトに戻しました（壊れた設定はバックアップ済み）。',
+      'notice.personaSaved': 'プリセット「{name}」を保存しました。',
+      'notice.personaSavedAndApplied': 'プリセット「{name}」を保存して適用しました。',
+      'personas.applyAfterSave': '保存後すぐに適用',
+      'sidebar.personaTip': 'ペルソナ：{name}',
+      'sidebar.personaRow': 'ペルソナ',
+      // —— 侧栏「Soul 人设总览」面板 ——
+      'ov.title': 'Soul ペルソナ概要',
+      'ov.current': '適用中',
+      'ov.global': 'グローバル設定',
+      'ov.managePersonas': 'プリセットを管理',
+      'ov.workspaces': 'ワークスペースのバインド',
+      'ov.wsCount': '{count} 件のワークスペース · 最近のアクティブ順',
+      'ov.openDetail': 'プラグインの詳細ページを開く',
+      'ov.inheritGlobal': 'グローバルに従う',
+      'ov.invalid': 'ペルソナ「{name}」は存在しません',
+      'ov.fix': '修復',
+      'ov.fixTitle': 'ペルソナを選んでバインドし直す',
+      'ov.rebindPick': 'バインド先：',
+      'ov.switch': '切り替え ▾',
+      'ov.switchClose': '閉じる ▴',
+      'ov.switchTitle': 'グローバルペルソナを変更',
+      'ov.switchPick': '切り替え先：',
+      'ov.rebindNoPresets': '使えるペルソナがありません',
+      'ov.sessionsCount': '{count} 件のセッション',
+      'ov.presets': 'プリセットライブラリ',
+      'ov.customGroup': '自作（{count}）',
+      'ov.builtinGroup': '内蔵（{count}）',
+      'ov.saveAs': 'プリセットとして保存…',
+      'ov.manage': '管理',
+      'ov.loading': '読み込み中…',
+      'ov.loadFailed': '概要を読み込めません：{reason}',
+      'ov.emptyWorkspaces': 'ホストからワークスペースが返されませんでした。',
+      'ov.sessionOverride': 'このセッションの上書き',
+      'ov.sessionFollowWs': 'ワークスペースに従う',
+      'ov.sessionFollowUpper': '上位の設定に従う',
+      'ov.untitledSession': '（名前のないセッション）',
+      'ov.blankSession': '（空のセッション · 会話未開始）',
+      'ov.showBlank': '空のセッション {count} 件を表示',
+      'ov.hideBlank': '空のセッション {count} 件を隠す',
+      'ov.unassigned': 'ワークスペースに属さないセッション',
+      'ov.noteActivity': 'アクティブなセッションのみ表示します（ホストの agents.list() の範囲）。ワークスペース行のセッション数はワークスペースのレジストリに由来するため、開いていないセッションを含むことがあります。',
+      'ov.noteActivityUnknown': 'セッションの時刻を読めないため、アクティブ順に並べられません。',
+      'ov.noteInvalid': '無効なバインドで「修復」を押すとプラグインの詳細ページが開きます —— そこで有効なペルソナにバインドし直せます。',
+      'ov.justNow': 'たった今',
+      'ov.minutesAgo': '{n} 分前',
+      'ov.hoursAgo': '{n} 時間前',
+      'ov.daysAgo': '{n} 日前',
+      'ov.neverActive': 'セッションなし',
+      'ov.customName': 'カスタム',
+      'ov.moreSessions': 'さらに {count} 件の古いセッション',
+      'ov.openSessionTitle': 'メインビューでこのセッションを開く',
+      'ov.openNoService': '移動できません：この接続ではワークスペースサービスを取得できません',
+      'ov.openFailed': 'セッションを開けません：{reason}',
+      'ov.openErrorDismiss': '通知を閉じる',
+      'ov.gcTitle': 'セッションの上書きの整理',
+      'ov.gcCheck': '確認',
+      'ov.gcRecheck': '再確認',
+      'ov.presetsHint': 'プリセットの追加・変更・削除は「設定 → パーソナライズ → ペルソナプリセット」で行います。',
+      'ov.filterArchivedMissing': 'アーカイブ状態を読めないため、アーカイブ済みのセッションが表示されることがあります。',
+      'ov.filterChildrenMissing': 'サブエージェントのセッション情報を読めないため、セッションが多く表示されることがあります。',
+      'ov.countMatchesSidebar': 'サイドバーに表示されるセッションのみ（アーカイブとサブエージェントのセッションは除外）。',
+      'ov.noteActivityHint': '展開するとそのワークスペースのアクティブなセッションが見られます。',
+      'personas.applyAfterSaveHint': 'チェックしない場合、現在の設定は変わりません（フォームは保存済みの設定に戻ります）',
+      'notice.personaUsed': 'プリセット「{name}」を適用しました。',
+      'notice.personaUnchanged': 'プリセットは現在の設定と一致しています。',
+      'notice.personaDeleted': 'プリセット「{name}」を削除しました。',
+      // 以下错误类仍走 toast（打断性提示）
+      'toast.saved': '✅ 設定を保存しました',
+      'toast.noChanges': '✅ 設定に変更はありません',
+      'toast.reset': '✅ デフォルトに戻しました',
+      'toast.resetRecovered': '✅ デフォルトに戻しました（壊れた設定はバックアップ済み）',
+      'toast.resetFailed': '❌ リセットに失敗しました',
+      'toast.personaSaved': '✅ プリセットを保存しました',
+      'toast.personaUsed': '✅ プリセットを適用しました',
+      // 预设含非法取值时服务端只应用合法部分，被跳过的字段必须回报
+      'toast.personaPartial': '⚠ プリセットの一部のみ適用しました。次の項目は値が不正なためスキップしました：{fields}',
+      'toast.personaUnchanged': 'ℹ プリセットは現在の設定と一致しています',
+      'toast.personaDeleted': '✅ プリセットを削除しました',
+      'prompt.title': '現在有効なプロンプト',
+      'prompt.summaryEnabled': '有効',
+      'prompt.summaryDisabled': '無効',
+      'prompt.summaryChars': '{n} 文字',
+      'prompt.loading': 'プロンプトを読み込み中...',
+      'prompt.empty': '（パーソナライズが無効のため、プロンプトは空です）',
+      'prompt.chars': '現在の文字数：{n}',
+      'prompt.titleDraft': '保存後に有効になるプロンプト',
+      'prompt.summaryDraft': '{n} 文字 · 未保存',
+      'prompt.invalid': '次の項目は検証に通らず、このプレビューに含まれていません：{fields}',
+      'common.listSep': '、',
+      'toast.saveFailed': '❌ 保存に失敗しました。設定を確認してください',
+      'trail.enable': '入力欄の光の軌跡を有効にする',
+      'trail.color': '光の軌跡の色',
+      'trail.speed': '流れる速さ',
+      'trail.speed.slow': '遅い',
+      'trail.speed.normal': '標準',
+      'trail.speed.fast': '速い',
+      'trail.width': '光の軌跡の太さ',
+      'trail.width.thin': '細い',
+      'trail.width.normal': '標準',
+      'trail.width.thick': '太い',
+      'trail.preview': '表示例',
+      'trail.previewText': 'Agent が返答している間、入力欄の枠に光の軌跡が流れます',
+      'hint.trail': 'Agent が返信している間、入力欄の枠に沿って光の軌跡が流れます。色見本を押すか、カラーピッカーを使うか、16 進数の色（例：#679EFE）を直接入力してください。'
+    }
+
+    // 图标替换匹配的导航文案（词典中 nav.label 的全部语言取值）。
+    // 直接取词典值，不写死译文 —— 字面量一旦跟不上译文，图标替换就会静默失效。
+    // es / fr / de / pt 尚无词典：这些界面语言下插件文案回退 zh / en，这里也就只有
+    // 已内置语言的取值，未命中时保持宿主默认齿轮。
+    const NAV_LABELS = new Set([zh['nav.label'], en['nav.label'], ja['nav.label']])
 
     // 组件内翻译回退：渲染器未注入 t 时使用中文词典（保证组件可独立渲染/测试）
     function makeFallbackT(dict) {
@@ -8885,19 +9321,27 @@ window.__ModuleLoader__.load({
       ctx.effect(() => () => {
         controller.dispose()
       }, 'dsh-soul: browser lifecycle')
-      // 词典注册失败不应拖垮整个客户端：宿主或另一个语言包（例如 dsh-soul-ru-lang）
-      // 可能已经抢先注册了同一 (ns, locale)，宿主会抛 "already has locale"。
-      // 缺词典的后果只是这些文案回退成 key 本身，绝不该让设置页整块崩掉。
-      ctx.effect(() => {
+      // 词典注册：**zh/en 一对，其余每门语言各自一个 effect**。
+      //
+      // 宿主对同一 (ns, locale) 第二次 register 会抛 "already has locale"，而且是
+      // 「先全量校验、再写入」：一次调用里只要有一门语言重复，整次调用一条都不写。
+      // 所以把附加语言和 zh / en 塞进同一个 register 是危险的 —— 任何一个外部语言包
+      // 先占了某门语言，中文用户也会一起失去词典。
+      //
+      // 拆开之后失败域是「一门语言」：撞车只丢那一门（谁先注册谁生效），其余照常。
+      // 注册失败只该让文案回退，绝不该让整个客户端 apply 抛错。
+      const registerDicts = (dicts) => {
         try {
-          return ctx.locale.register(NS, { zh, en })
+          return ctx.locale.register(NS, dicts)
         } catch (error) {
           if (typeof console !== 'undefined' && console.warn) {
             console.warn('[dsh-soul] locale.register 失败（界面文案回退为 key）:', error)
           }
           return () => {}
         }
-      }, 'dsh-soul: dictionaries')
+      }
+      ctx.effect(() => registerDicts({ zh, en }), 'dsh-soul: dictionaries (zh/en)')
+      ctx.effect(() => registerDicts({ ja }), 'dsh-soul: dictionaries (ja)')
 
       // UI-локаль для отображаемых имён встроенных пресетов (t26): собственный snapshot
       // + подписка с teardown. Глобальных listener'ов не оставляем — отписка в cleanup.

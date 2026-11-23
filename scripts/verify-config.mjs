@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { CANONICAL_FINGERPRINTS_RU } from '../lib/personas-ru.mjs'
+import { BUILTIN_PERSONAS_JA, CANONICAL_FINGERPRINTS_JA, builtinInstructionForLanguageJa } from '../lib/personas-ja.mjs'
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
@@ -53,7 +54,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 176
+const EXPECTED_ASSERTIONS = 178
 
 let passed = 0
 const failures = []
@@ -621,12 +622,15 @@ check('变更记录条数：设置页下拉选项全部落在合法区间内，�
   assert.match(clientText, /const HISTORY_MAX_ENTRIES_DEFAULT = 200/, '客户端默认值必须与 lib/config.mjs 一致')
 })
 
-check('变更记录条数：config 双语文案键齐全，且 UI 真的用了它', () => {
+check('变更记录条数：四语文案键齐全，且 UI 真的用了它', () => {
   const clientText = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+  const dicts = clientDictLocales().length
+  assert.ok(dicts >= 2, '至少要有 zh / en 两门词典')
   for (const key of ['history.maxEntries', 'history.maxEntriesHint', 'history.maxEntriesDefault', 'history.maxEntriesOption']) {
-    // 中英各一份：漏一份会让 makeFallbackT 把裸键名渲染到屏幕上
+    // 每门内置语言各一份：漏一份会让 makeFallbackT 或宿主的 fallback 链
+    // 把裸键名渲染到屏幕上
     const hits = clientText.split(`'${key}':`).length - 1
-    assert.equal(hits, 2, `文案键 ${key} 应为中英各一份，实际 ${hits} 份`)
+    assert.equal(hits, dicts, `文案键 ${key} 应为 ${dicts} 份（${clientDictLocales().join('/')}）各一份，实际 ${hits} 份`)
   }
   assert.match(clientText, /id: 'soul-historyMaxEntries'/, '设置页必须有这个下拉的 id（label 的 htmlFor 指向它）')
   assert.match(clientText, /htmlFor: 'soul-historyMaxEntries'/, 'label 必须关联到控件，否则点标签不会聚焦')
@@ -1028,6 +1032,21 @@ console.log('\n前后端契约一致性')
 const clientSource = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 const clientCode = stripComments(clientSource)
 
+// 客户端内置了几门界面语言词典 —— 由源码里实际存在的 `const <locale> = {` 决定。
+// 为什么按「实际存在」而不是写死数量：语言是一门一门加上来的，写死数字会让每加一种
+// 语言都去改一堆与语义无关的计数断言；而「这个键在每门语言里各有一份」这个语义
+// 本来就和门数无关。
+//
+// 自己读文件而不是复用后面的 `clientSource`：这个函数在脚本前半段（早于那个 const
+// 初始化）就会被调用，引用它会踩 TDZ。
+function clientDictLocales() {
+  const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+  return ['zh', 'en', 'ru', 'ja'].filter(
+    (locale) => new RegExp('^    const ' + locale + ' = \\{', 'm').test(source)
+  )
+}
+
+
 // 真实 @deepseek-ai/dsh-tools（若本机可解析）：用于行为层校验 set_persona 的 schema。
 // ESM 顶层 await；解析不到（CI / 未装 DSH）时为 null，行为层以 skipNote 报告。
 //
@@ -1099,7 +1118,7 @@ check('客户端摘要覆盖的字段集合固定', () => {
   assert.deepEqual(fields, ['emoji', 'headingLists', 'language', 'replyLength', 'tables'])
 })
 
-check('客户端为内置预设提供中英双语文案键', () => {
+check('客户端为内置预设提供四语文案键', () => {
   const keys = [
     'personas.builtin',
     'personas.hint',
@@ -1114,9 +1133,10 @@ check('客户端为内置预设提供中英双语文案键', () => {
     'meta.language.zh',
     'meta.language.en'
   ]
+  const dicts = clientDictLocales().length
   for (const key of keys) {
     const hits = clientSource.split(`'${key}':`).length - 1
-    assert.equal(hits, 2, `${key} 应在 zh / en 各出现一次，实际 ${hits} 次`)
+    assert.equal(hits, dicts, `${key} 应在 ${clientDictLocales().join(' / ')} 各出现一次，实际 ${hits} 次`)
   }
 })
 
@@ -1129,7 +1149,9 @@ check('「人设变更需确认」提示如实描述审批面板与完全权限�
   //   ② 通道不可用（策略 never）时退化为文本确认
   //   ③ 完全权限下建议关闭本开关 —— 因为此时面板不会出现、每次都要手输命令
   const all = [...clientSource.matchAll(/'hint\.toolConfirm':\s*'([^']*)'/g)].map((m) => m[1])
-  assert.equal(all.length, 2, `hint.toolConfirm 应中英各一份，实际 ${all.length} 份`)
+  // 词典按 zh / en / ru / ja 的书写顺序排列，这里只校验中英两种措辞 ——
+  // 其余语言的译文由 verify-client 的键集 / 占位符门禁兜住，不在这里重复判断语义。
+  assert.equal(all.length, clientDictLocales().length, `hint.toolConfirm 应在每门语言各一份，实际 ${all.length} 份`)
   const [zh, en] = all
   // ① 审批面板
   assert.match(zh, /审批面板/, '中文提示应说明主路径是审批面板（否则用户不知道会弹面板）')
@@ -2241,10 +2263,11 @@ check('提示词预览的编译入口唯一（避免重复请求与过期闭包�
   )
 })
 
-check('提示词预览新增文案键中英各一份', () => {
+check('提示词预览新增文案键四份齐全', () => {
+  const dicts = clientDictLocales().length
   for (const key of ['prompt.titleDraft', 'prompt.summaryDraft', 'prompt.invalid']) {
     const hits = clientSource.split(`'${key}':`).length - 1
-    assert.equal(hits, 2, `${key} 应在 zh / en 各出现一次，实际 ${hits} 次`)
+    assert.equal(hits, dicts, `${key} 应在 ${clientDictLocales().join(' / ')} 各出现一次，实际 ${hits} 次`)
   }
 })
 
@@ -5300,6 +5323,59 @@ check('RU built-in translations match the current canonical instruction revision
     const actual = createHash('sha256').update(BUILTIN_PERSONAS[name].customInstructions, 'utf8').digest('hex')
     assert.equal(actual, CANONICAL_FINGERPRINTS_RU[name], `${name}: canonical instructions changed; review the RU translation and update its fingerprint`)
   }
+})
+
+check('JA built-in translations match the current canonical instruction revision (SHA256)', () => {
+  const names = builtinPersonaNames()
+  assert.equal(names.length, 7, 'Update the JA translation inventory when built-ins change')
+  assert.deepEqual(Object.keys(CANONICAL_FINGERPRINTS_JA).sort(), [...names].sort(), 'JA fingerprint keys must cover exactly all built-ins')
+  for (const name of names) {
+    const actual = createHash('sha256').update(BUILTIN_PERSONAS[name].customInstructions, 'utf8').digest('hex')
+    assert.equal(actual, CANONICAL_FINGERPRINTS_JA[name], `${name}: canonical instructions changed; review the JA translation and update its fingerprint`)
+  }
+})
+
+check('JA 译文是日语：7 条齐全、含假名、无换行、不超字段上限', () => {
+  const names = builtinPersonaNames()
+  assert.deepEqual(Object.keys(BUILTIN_PERSONAS_JA), names, 'JA 表的键与顺序必须与 BUILTIN_PERSONAS 一致')
+  // 汉字在日文与中文里码位相同，无法靠码位判定；假名是唯一可靠的「这是日语」信号。
+  // 整段一个假名都没有，基本就是漏翻的中文原文 —— 这正是 0.15.0 里被明确记为
+  // 已知限制的那种状态，不能再悄悄回来。
+  const kana = /[\u3040-\u30ff]/
+  for (const name of names) {
+    const entry = BUILTIN_PERSONAS_JA[name]
+    for (const field of ['displayName', 'description', 'customInstructions']) {
+      const value = entry[field]
+      assert.equal(typeof value, 'string', `${name}.${field} 必须是字符串`)
+      assert.ok(value.trim().length > 0, `${name}.${field} 不得为空`)
+      assert.ok(!/[\n\r\uFEFF]/.test(value), `${name}.${field} 不得含换行或 BOM`)
+      assert.ok(kana.test(value), `${name}.${field} 不含假名 —— 疑似仍是中文原文`)
+    }
+    assert.notEqual(entry.customInstructions, BUILTIN_PERSONAS[name].customInstructions, `${name}: 译文不得等于原文`)
+    assert.ok(
+      entry.customInstructions.length <= FIELD_LIMITS.customInstructions,
+      `${name}: 译文 ${entry.customInstructions.length} 字超出 customInstructions 上限 ${FIELD_LIMITS.customInstructions}`
+    )
+  }
+
+  // 替换规则本身：只在 ja 且逐字节等于内置原文时生效。
+  const canonical = BUILTIN_PERSONAS['极简主义者'].customInstructions
+  assert.equal(
+    builtinInstructionForLanguageJa({ language: 'ja', customInstructions: canonical, activePersonaName: '极简主义者' }),
+    BUILTIN_PERSONAS_JA['极简主义者'].customInstructions,
+    'ja + 内置原文 必须换成日语译文'
+  )
+  assert.equal(
+    builtinInstructionForLanguageJa({ language: 'zh', customInstructions: canonical, activePersonaName: '极简主义者' }),
+    canonical,
+    '输出语言不是 ja 时不得替换'
+  )
+  const userText = '用户自己写的指令'
+  assert.equal(
+    builtinInstructionForLanguageJa({ language: 'ja', customInstructions: userText, activePersonaName: null }),
+    userText,
+    '用户改写的指令永远不得被译文覆盖'
+  )
 })
 
 if (!assertCount('verify-config', passed, EXPECTED_ASSERTIONS)) process.exit(1)

@@ -136,13 +136,16 @@ check('设置页不再放「打开人设总览」按钮（已迁到详情页）'
   const hits = (clientCode.match(/selectPanel\(OVERVIEW_PANEL_ID\)/g) || []).length
   assert.equal(hits, 1, `selectPanel(OVERVIEW_PANEL_ID) 应只在详情页组件里出现一次，实际 ${hits}`)
 })
-check('中英词典都有该字段的 label + hint + 按钮文案', () => {
+check('每门内置语言都有该字段的 label + hint + 按钮文案', () => {
   // 词典定义形态是 `      'key': '文案',`（行首缩进 + 冒号）。
   // 不能只数 'key' 的出现次数：AUDIT_FIELDS 表和 t('key') 调用也会命中。
   for (const key of ['field.showOverviewInSidebar', 'hint.showOverviewInSidebar', 'action.openOverview']) {
     const def = new RegExp("^\\s*'" + key.replace('.', '\\.') + "':\\s*'", 'gm')
     const hits = (client.match(def) || []).length
-    assert.equal(hits, 2, `${key} 应在 zh/en 词典各定义一次，实际 ${hits}`)
+    // 门数由源码里实际存在的词典决定，加语言时不必回来改数字。
+    const dicts = ['zh', 'en', 'ru', 'ja'].filter((locale) =>
+      new RegExp('^    const ' + locale + ' = \{', 'm').test(client))
+    assert.equal(hits, dicts.length, `${key} 应在 ${dicts.join('/')} 词典各定义一次，实际 ${hits}`)
   }
 })
 check('host 侧 NON_PROMPT_FIELDS 自动覆盖新字段（不参与提示词）', () => {

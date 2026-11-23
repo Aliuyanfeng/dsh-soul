@@ -54,6 +54,14 @@ import {
   builtinPersonaPresentationRu,
   builtinPresentationMap
 } from './lib/personas-ru.mjs'
+// fork(ja): 内蔵プリセットの日本語訳。仕組みは ru と同一で、データだけが別
+// （共通ロジックは lib/personas-i18n.mjs）。キーは同じくベンダー中国語名のままで、
+// 日本語名は表示とプロンプトの差し替えにしか現れない。
+import {
+  builtinInstructionForLanguageJa,
+  builtinPersonaPresentationJa,
+  builtinPresentationMapJa
+} from './lib/personas-ja.mjs'
 import {
   bindingsPathFor,
   bindingRefusal,
@@ -809,6 +817,22 @@ async function readJsonBody(req) {
 
 // ==================== 提示词编译器 ====================
 
+// 内置人设本地化的语种分发。每个语种模块内部已经按 language 自检（不匹配就原样
+// 返回用户文本），所以这里只需把当前语言对应的模块问一遍；未列出的语言返回原文。
+// 为什么集中成两个函数：调用点有四处（主提示词、子代理提示词、命令回显、展示名），
+// 每处各写一次 if 就等于让新增语种时漏掉其中一处 —— 而漏掉不会报错，只会让
+// 「某处说中文、某处说日语」这种不一致悄悄存在。
+function localizedInstruction(config) {
+  if (config && config.language === 'ja') return builtinInstructionForLanguageJa(config)
+  return builtinInstructionForLanguage(config)
+}
+
+function localizedPresentation(language, name) {
+  if (language === 'ja') return builtinPersonaPresentationJa(name)
+  if (language === 'ru') return builtinPersonaPresentationRu(name)
+  return null
+}
+
 // Prompt Compiler：将身份（自定义指令）、用户背景与行为（风格/特质/语言）
 // 按 config.language 对应的文案表编译为 system prompt。
 function compilePrompt(config) {
@@ -828,7 +852,7 @@ function compilePrompt(config) {
   // а подмена на русский происходит внутри helper'а и только для встроенного пресета.
   const storedInstructions = config.customInstructions
   const identity = sanitizePromptText(
-    builtinInstructionForLanguage({ ...config, customInstructions: storedInstructions }) || ''
+    localizedInstruction({ ...config, customInstructions: storedInstructions }) || ''
   ).trim()
   const profile = buildUserProfile(config, T)
   const behavior = buildBehavior(config, T)
@@ -893,19 +917,19 @@ function compileSubagentPrompt(config, personaName) {
   // fork(ru): то же правило, что в compilePrompt (единый механизм для scope/subagent).
   const storedInstructions = config.customInstructions
   const authored = sanitizePromptText(
-    builtinInstructionForLanguage({ ...config, customInstructions: storedInstructions }) || ''
+    localizedInstruction({ ...config, customInstructions: storedInstructions }) || ''
   ).trim()
-  // Русское имя подставляется ТОЛЬКО в текст подсказки для ru-промпта; сам personaName
-  // в резолвинге, очередях и audit остаётся каноническим ключом.
+  // Локализованное имя подставляется ТОЛЬКО в текст подсказки для своего языка (ru / ja);
+  // сам personaName в резолвинге, очередях и audit остаётся каноническим ключом.
   //
   // Обе строки проходят одну и ту же защиту: ключ — санитайзом ниже (вендорский контракт
-  // «预设名必须过防伪处理»), русское имя — таким же sanitize перед подстановкой.
+  // «预设名必须过防伪处理»), локализованное имя — таким же sanitize перед подстановкой.
   const keyDisplayName = personaName ? sanitizePromptText(personaName).replace(/\n/g, ' ') : ''
-  const ruDisplayName = config && config.language === 'ru'
-    ? (builtinPersonaPresentationRu(personaName) || {}).displayName
+  const localizedDisplayName = config
+    ? (localizedPresentation(config.language, personaName) || {}).displayName
     : undefined
-  const safePersonaName = ruDisplayName
-    ? sanitizePromptText(ruDisplayName).replace(/\n/g, ' ')
+  const safePersonaName = localizedDisplayName
+    ? sanitizePromptText(localizedDisplayName).replace(/\n/g, ' ')
     : keyDisplayName
   const identity = authored || (safePersonaName ? T.subagentIdentityHint(safePersonaName) : '')
   const profile = buildUserProfile(config, T)
@@ -2293,13 +2317,14 @@ function resolveActivePersonaName(config) {
 
 // Отображаемое имя пресета для текстов команд.
 //
-// fork(ru): у встроенного пресета при language='ru' печатаем «Русское имя [ключ]»:
-// имя делает сообщение читаемым, ключ в скобках сохраняет однозначность — команды
-// (`/soul use`) принимают ТОЛЬКО канонический ключ, и его видно в выводе для копирования.
-// Для пользовательских пресетов, неизвестных имён и языков en/zh возвращается имя как есть.
+// fork(ru)/fork(ja): у встроенного пресета при language='ru' / 'ja' печатаем
+// «Локализованное имя [ключ]»: имя делает сообщение читаемым, ключ в скобках сохраняет
+// однозначность — команды (`/soul use`) принимают ТОЛЬКО канонический ключ, и его видно
+// в выводе для копирования. Для пользовательских пресетов, неизвестных имён и языков
+// en/zh возвращается имя как есть.
 function personaDisplayName(config, name) {
-  if (!config || config.language !== 'ru' || typeof name !== 'string') return name
-  const presentation = builtinPersonaPresentationRu(name)
+  if (!config || typeof name !== 'string') return name
+  const presentation = localizedPresentation(config.language, name)
   return presentation ? `${presentation.displayName} [${name}]` : name
 }
 
@@ -2352,13 +2377,13 @@ async function applyPersonaEntry(ctx, entry, personaName) {
 
 // 预设库的对外视图（内置 + 用户）与当前命中项，供三个路由的响应复用。
 function personaLibrary(config) {
-  // fork(ru): `personas`/`activeName` — побайтово прежние (канонические ключи и записи).
-  // Русское представление едет отдельным top-level полем: клиент выбирает по своей
-  // UI-локали, старый клиент поле игнорирует, записи не загрязняются метаданными.
+  // fork(ru)/fork(ja): `personas`/`activeName` — 与之前逐字节相同（规范键与条目）。
+  // 本地化表现走单独的顶层字段 builtinI18n：客户端按自己的 UI 语言选 key，旧客户端
+  // 直接忽略这个字段，条目本身不会被本地化元数据污染。
   return {
     personas: mergePersonas(config.personas),
     activeName: resolveActivePersonaName(config),
-    builtinI18n: { ru: builtinPresentationMap() }
+    builtinI18n: { ru: builtinPresentationMap(), ja: builtinPresentationMapJa() }
   }
 }
 
@@ -4766,9 +4791,10 @@ function registerCommands(ctx) {
               `${t.tablesLabel}=${t.traitNames[config.tables] || config.tables}`,
               `${t.replyLengthLabel}=${t.replyLengthNames[config.replyLength] || config.replyLength}`
             ].join(t.listSep)
-            // fork(ru): показываем текст, который реально уйдёт в промпт — для встроенного
-            // пресета при language='ru' это русский перевод (compile-time), хранение не меняется.
-            const instructions = builtinInstructionForLanguage(config) || t.notSet
+            // fork(ru)/fork(ja): показываем текст, который реально уйдёт в промпт — для
+            // встроенного пресета при language='ru' / 'ja' это перевод (compile-time),
+            // хранение не меняется.
+            const instructions = localizedInstruction(config) || t.notSet
             // 预设数量用**合并视图**（内置 + 用户），与 /soul list 和 Web UI 一致：
             // 此前只数 config.personas（磁盘上的用户预设），于是同一个「人设预设」
             // 在 show 里显示 2、在 list 里显示 9。

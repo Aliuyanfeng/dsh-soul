@@ -27,7 +27,11 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 125
+const EXPECTED_ASSERTIONS = 128
+
+// 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
+// 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
+const EXPECTED_DICT_LOCALES = ['zh', 'en', 'ja']
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -491,7 +495,9 @@ function loadClient(routes, options = {}) {
     locale: {
       getSnapshot: () => localeSnapshot,
       subscribe: (fn) => { localeListeners.add(fn); return () => localeListeners.delete(fn) },
-      register: (_ns, dicts) => { captured.dicts = dicts },
+      // 真实宿主把每次 register 的 locale 合并进同一个命名空间；插件现在按语言
+      // 分多次注册（zh/en 一对 + ru + ja），所以这里也必须合并而不是覆盖。
+      register: (_ns, dicts) => { captured.dicts = { ...(captured.dicts || {}), ...dicts } },
       bind: () => (key, params) => interpolate((captured.dicts?.zh || {})[key] ?? key, params)
     },
     slots: {
@@ -5644,7 +5650,12 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 「推荐优先使用官方功能」骗过（实测漏检两次）。
     assert.match(zhLine[1], /官方[^。；]{0,12}内置/, '中文提示必须写明「官方已内置」，否则用户不知道有更合适的入口')
     assert.match(zhLine[1], /消息引用/, '中文提示必须写出官方功能名「消息引用」，否则用户找不到它')
-    assert.ok(enLine && enLine.length === 2, '中英词典应各有一条 hint.quoteAsContext')
+    const dictCount = ['zh', 'en', 'ru', 'ja'].filter((locale) =>
+      new RegExp('^    const ' + locale + ' = \\{', 'm').test(source)).length
+    assert.ok(
+      enLine && enLine.length === dictCount,
+      `每门内置语言（共 ${dictCount} 门）应各有一条 hint.quoteAsContext，实际 ${enLine ? enLine.length : 0} 条`
+    )
     assert.ok(enLine.some((l) => /official/i.test(l)), '英文提示必须提到 official')
 
     // ③ 默认关闭后，浮动引用控件默认不出现（严格 === true 判定）
@@ -6314,27 +6325,90 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     }
   })
 
-  await check('C125 locale 词典注册必须容错（被语言包抢占时不拖垮整个客户端）', async () => {
-    // 宿主对同一 (ns, locale) 第二次 register 会抛 "already has locale"。
-    // 现实场景：dsh-soul-ru-lang 这类语言包会先注册 ru；将来若 dsh-soul 自己也提供 ru，
-    // 两边就会撞车。注册失败只该让界面文案回退成 key，绝不该让整个客户端 apply 抛错 ——
-    // 那会把设置页、侧栏图标、输入框光轨一起带走。
+  await check('C125 locale 词典注册按语言隔离：zh/en 一对，ru / ja 各自一个 effect', async () => {
+    // 宿主对同一 (ns, locale) 第二次 register 会抛 "already has locale"，而且是
+    // 「先全量校验、再写入」：一次调用里只要有一门语言重复，整次一条都不写。
+    // 因此 ru / ja 必须各自单独 register —— 外部语言包（dsh-soul-ru-lang）撞车时
+    // 只该丢那一门，不能连 zh/en 一起拖下水。
     const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
-    const call = source.match(
-      /ctx\.effect\(\(\) => \{[\s\S]{0,500}?ctx\.locale\.register\(NS, \{ zh, en \}\)[\s\S]{0,700}?\}, 'dsh-soul: dictionaries'\)/
-    )
-    assert.ok(call, 'locale 注册应包在 effect 的 try 里（不能裸调 register）')
-    assert.match(call[0], /try \{/, 'locale 注册必须在 try 里')
-    assert.match(call[0], /catch \(error\)/, 'locale 注册必须有 catch')
-    assert.match(call[0], /return \(\) => \{\}/, 'catch 必须返回空 disposer（effect 契约）')
-    // 反向：裸调用形态不得存在（防止重构时退回）
-    assert.equal(
-      /ctx\.effect\(\(\) => ctx\.locale\.register\(NS, \{ zh, en \}\), 'dsh-soul: dictionaries'\)/.test(source),
-      false,
-      '不得退回裸调用形态'
-    )
+
+    const helper = source.match(/const registerDicts = \(dicts\) => \{[\s\S]{0,600}?\n      \}/)
+    assert.ok(helper, '缺少 registerDicts 辅助函数')
+    assert.match(helper[0], /try \{/, 'registerDicts 必须在 try 里注册')
+    assert.match(helper[0], /ctx\.locale\.register\(NS, dicts\)/, 'registerDicts 必须走 ctx.locale.register')
+    assert.match(helper[0], /catch \(error\)/, 'registerDicts 必须有 catch')
+    assert.match(helper[0], /return \(\) => \{\}/, 'catch 必须返回空 disposer（effect 契约）')
+
+    // 逐条检查每一次 register：要么单门附加语言，要么 zh/en 成对。
+    // 写成「按实际调用集合检查」而不是点名 ru / ja —— 加语言时不需要回来改断言。
+    const langListOf = (call) => call.replace(/[{}]/g, ' ').split(/[^a-z]+/).filter(Boolean)
+    const calls = [...source.matchAll(/ctx\.effect\(\(\) => registerDicts\((\{[^}]*\})\),/g)].map((m) => m[1])
+    assert.ok(calls.length >= 2, '至少要有「zh/en 一对」与「每门附加语言一个」两组注册')
+    const pair = calls.find((call) => langListOf(call).includes('zh'))
+    assert.ok(pair && langListOf(pair).includes('en'), 'zh / en 必须成对注册（宿主要求两个内置 locale 齐全）')
+    for (const call of calls) {
+      const langs = langListOf(call)
+      const isPair = langs.length === 2 && langs.includes('zh') && langs.includes('en')
+      assert.ok(
+        langs.length >= 1 && (langs.length === 1 || isPair),
+        `一次 register 只能含一门语言（zh / en 成对除外），否则撞车会连坐：${call}`
+      )
+    }
   })
 
+  await check('C134 各门界面语言词典键集与占位符一致，日语不是中文原文', async () => {
+    // 内置多语言之后，最容易出的不是崩溃而是「某门语言少了几个键」——宿主会沿
+    // fallback 链退回 en，界面上静默变英文，没有任何报错。这条把键集钉死。
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    const dictOf = (locale) => {
+      const start = source.indexOf('    const ' + locale + ' = {')
+      assert.ok(start > 0, '找不到词典：' + locale)
+      const laterStarts = EXPECTED_DICT_LOCALES
+        .map((other) => source.indexOf('    const ' + other + ' = {', start + 1))
+        .filter((at) => at > start)
+      const navAt = source.indexOf('    // 图标替换匹配的导航文案', start)
+      const end = Math.min(...[...laterStarts, navAt].filter((at) => at > start))
+      const body = source.slice(start, end)
+      const from = body.indexOf('{')
+      const to = body.lastIndexOf('}')
+      return new Function('return (' + body.slice(from, to + 1) + ')')()
+    }
+    const dicts = {}
+    for (const locale of EXPECTED_DICT_LOCALES) dicts[locale] = dictOf(locale)
+    const zh = dicts.zh
+    const ja = dicts.ja
+    const keys = Object.keys(zh)
+    assert.equal(keys.length, 401, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+
+    // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
+    for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
+      const dict = dicts[name]
+      assert.deepEqual(Object.keys(dict), keys, `${name} 词典的键集或键序与 zh 不一致`)
+    }
+
+    const placeholders = (text) => [...String(text).matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort()
+    // 日中同形的短标签：这些不是漏翻，是两种语言本来就写一样（保存 / 使用中 / 引用…）。
+    // 新增条目若要和中文完全相同，必须显式加进这里 —— 这道摩擦就是这道门的意义。
+    const JA_SAME_AS_ZH = new Set([
+      'personas.saveConfirm', 'personas.active', 'session.chipInUse', 'quote.sentItem',
+      'quote.dockTitle', 'history.labelSuffix', 'status.unsavedShort', 'button.saving',
+      'ov.manage', 'common.listSep'
+    ])
+    for (const key of keys) {
+      const base = placeholders(zh[key])
+      for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
+        const dict = dicts[name]
+        const value = dict[key]
+        assert.equal(typeof value, 'string', `${name}.${key} 必须是字符串`)
+        assert.ok(value.trim().length > 0, `${name}.${key} 不得为空`)
+        assert.ok(!/[\n\r\uFEFF]/.test(value), `${name}.${key} 不得含换行或 BOM`)
+        assert.deepEqual(placeholders(value), base, `${name}.${key} 的占位符与 zh 不一致（会导致 {n} 原样显示）`)
+      }
+      if (!JA_SAME_AS_ZH.has(key)) {
+        assert.notEqual(ja[key], zh[key], `${key} 的日语与中文完全相同 —— 多半是漏翻（确实同形请加入 JA_SAME_AS_ZH）`)
+      }
+    }
+  })
 
   // Additive RU persona regressions: exercise the actual loader, locale face and fetch bodies.
   const personaFixture = () => ({
@@ -6344,7 +6418,10 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       'Мой пресет': { style: 'casual', customInstructions: 'USER TEXT' }
     },
     activeName: '极简主义者',
-    builtinI18n: { ru: { '极简主义者': { displayName: 'Минималист', description: 'Коротко по делу', customInstructions: 'РУССКИЕ ПРАВИЛА' } } }
+    builtinI18n: {
+      ru: { '极简主义者': { displayName: 'Минималист', description: 'Коротко по делу', customInstructions: 'РУССКИЕ ПРАВИЛА' } },
+      ja: { '极简主义者': { displayName: 'ミニマリスト', description: '要点だけ。', customInstructions: '日本語のルール' } }
+    }
   })
   const openPersonaCards = async (world) => {
     const closed = await renderSettings(world)
@@ -6469,6 +6546,58 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       whenZh.includes('РУССКИЕ ПРАВИЛА'),
       false,
       '输出=zh 时不得显示俄译 —— 界面语言不该决定提示词文本'
+    )
+    assert.ok(whenZh.includes('CANONICAL'), '输出=zh 时应显示规范原文')
+  })
+
+  await check('C132 ja UI 显示日语内置名，键与请求体仍是规范名，其他语言不泄漏日语', async () => {
+    const payload = personaFixture()
+    const original = JSON.stringify(payload.personas)
+    const world = await boot({}, payload, { locale: 'ja' })
+    world.routes['/api/soul/personas/use'] = () => ({ ...personaFixture(), config: { ...CONFIG }, changed: [] })
+
+    const tree = await openPersonaCards(world)
+    assert.ok(textOf(tree).includes('ミニマリスト'), 'ja UI 必须显示日语名')
+    assert.ok(textOf(tree).includes('Мой пресет'), '用户预设名必须原样显示')
+    assert.equal(JSON.stringify(payload.personas), original, '展示层不得改写 API 条目')
+    assert.equal(world.controller.store.getSnapshot().personas['极简主义者'].customInstructions, 'CANONICAL')
+
+    // 请求体仍走规范键。
+    await world.controller.usePersona('极简主义者')
+    const call = fetchCalls.find(c => c.path === '/api/soul/personas/use' && c.method === 'POST')
+    assert.ok(call, 'usePersona 必须发出请求')
+    assert.equal(call.body.name, '极简主义者')
+    assert.ok(!JSON.stringify(call.body).includes('ミニマリスト'))
+
+    // 反向：en / zh 下不得出现日语名（与 C126 同一口径）。
+    for (const locale of ['en', 'zh']) {
+      const other = await boot({}, personaFixture(), { locale })
+      const otherTree = await sessionPersonaTree(other)
+      assert.equal(textOf(otherTree).includes('ミニマリスト'), false, `${locale}: 日语名不得泄漏`)
+    }
+  })
+
+  await check('C133 日语人设说明跟随「输出语言」，界面语言只决定名称', async () => {
+    // 与 C131 同一口径，换成 ja：界面=ja + 输出=zh 时面板必须显示规范原文，
+    // 否则界面会谎报模型实际收到的文本。
+    const render = async (language) => {
+      const world = await boot({}, personaFixture(), { locale: 'ja' })
+      const cfg = { ...CONFIG, language }
+      world.routes['/api/soul/config'] = (call) => (call.method === 'GET'
+        ? { ok: true, config: { ...cfg }, configError: null, deliveryWarning: null }
+        : { ok: true, config: { ...cfg }, changed: [] })
+      await renderSettings(world)
+      world.controller.store.update((s) => { s.language = language })
+      return textOf(await openPersonaCards(world))
+    }
+
+    const whenJa = await render('ja')
+    const whenZh = await render('zh')
+    assert.ok(whenJa.includes('日本語のルール'), '输出=ja 时说明应显示日语译文')
+    assert.equal(
+      whenZh.includes('日本語のルール'),
+      false,
+      '输出=zh 时不得显示日语译文 —— 界面语言不该决定提示词文本'
     )
     assert.ok(whenZh.includes('CANONICAL'), '输出=zh 时应显示规范原文')
   })
