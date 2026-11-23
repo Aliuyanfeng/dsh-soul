@@ -420,13 +420,13 @@ const PROMPT_TEXT = {
   }
 }
 
-// 按配置选择文案表（未知语言回退中文）
-// fork(ru): 俄语表在 lib/prompt-ru.mjs，不放进 PROMPT_TEXT（见文件顶部 import 处的说明）。
-// fork(ja): 日语表同理，在 lib/prompt-ja.mjs。
+// 按配置选择文案表（未知语言回退中文）。
+//
+// 真正的映射在文件下方的 PROMPT_TABLES 注册表里（必须排在 COMMAND_MESSAGES 之后，
+// 因为它引用了那张表）。这里只做一次查表 —— 分支式写法（if language === 'ru' …）
+// 每加一种语言要改两处，漏一处不会报错，只会让某条通道悄悄说中文。
 function promptTextOf(config) {
-  if (config && config.language === 'ru') return PROMPT_TEXT_RU
-  if (config && config.language === 'ja') return PROMPT_TEXT_JA
-  return PROMPT_TEXT[config && config.language === 'en' ? 'en' : 'zh']
+  return promptTableOf(config && config.language).text
 }
 
 // 用户可控文本进提示词前的**防伪处理**。
@@ -4712,12 +4712,35 @@ const COMMAND_MESSAGES = {
   }
 }
 
-// fork(ru): то же, что promptTextOf — русская таблица команд в lib/prompt-ru.mjs.
-// fork(ja): то же — японская таблица команд в lib/prompt-ja.mjs.
+// ==================== 文案表注册表 ====================
+//
+// 一门语言一条记录，是**唯一**需要为新语种改动的地方（表本身放 lib/prompt-<lang>.mjs，
+// zh/en 仍留在本文件的 vendored 字面量里 —— 宿主的「tables / replyLength 恰好两个块」
+// 断言要求如此）。promptTextOf / commandMessages 只做查表，不再有语言分支。
+//
+// 契约（scripts/verify-config.mjs 逐条钉住）：
+//   - 键集合必须与 LANGUAGE_VALUES 一一对应：加了枚举没加表 → 该语言静默说中文；
+//     加了表没加枚举 → 用户永远选不到它；
+//   - 每张表必须覆盖 PROMPT_TEXT.en 的全部键，只允许额外多一个 replyLanguage.<自己>。
+const PROMPT_TABLES = {
+  zh: { text: PROMPT_TEXT.zh, messages: COMMAND_MESSAGES.zh },
+  en: { text: PROMPT_TEXT.en, messages: COMMAND_MESSAGES.en },
+  ru: { text: PROMPT_TEXT_RU, messages: COMMAND_MESSAGES_RU },
+  ja: { text: PROMPT_TEXT_JA, messages: COMMAND_MESSAGES_JA }
+}
+
+// 未知语言（或原型链上的键名，如 'constructor'）都落到这里。
+const PROMPT_FALLBACK_LANGUAGE = 'zh'
+
+function promptTableOf(language) {
+  return Object.prototype.hasOwnProperty.call(PROMPT_TABLES, language)
+    ? PROMPT_TABLES[language]
+    : PROMPT_TABLES[PROMPT_FALLBACK_LANGUAGE]
+}
+
+// /soul 命令回显的文案表（与 promptTextOf 共用同一张注册表）。
 function commandMessages(config) {
-  if (config.language === 'ru') return COMMAND_MESSAGES_RU
-  if (config.language === 'ja') return COMMAND_MESSAGES_JA
-  return COMMAND_MESSAGES[config.language === 'en' ? 'en' : 'zh']
+  return promptTableOf(config.language).messages
 }
 
 // /soul 子命令关键字（命中走子命令；否则整体视为昵称）

@@ -42,7 +42,7 @@ import { PROFILE_FIELDS, PERSONA_FIELDS } from '../lib/config.mjs'
 // 会随用例增减漂移，这里不重新抄一遍 —— 真值由 assertCount 在跑完后对账）。
 // 本轮 +6：S11–S16 读的是**注入通道**收到的文本与显示侧报出的名字（S1–S6 只读装配
 // 通道，而这两条通道曾经用不同的解析函数，只测一条就等于没测）。
-const EXPECTED_ASSERTIONS = 140
+const EXPECTED_ASSERTIONS = 142
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -629,7 +629,7 @@ async function scenario(entry) {
     const ruPreview = await callRoute(ctx, '/api/soul/prompt/preview', { language: 'ru', customInstructions: 'Проверка' })
     const ruPrompt = String(ruPreview.body?.prompt || '')
     push(
-      'E41 language=ru 编译出俄语段头（promptTextOf 的 ru 分支生效）',
+      'E41 language=ru 编译出俄语段头（PROMPT_TABLES 查表生效）',
       ruPrompt.includes('[Правила выполнения]') && !ruPrompt.includes('[执行规则]'),
       '片段: ' + JSON.stringify(ruPrompt.slice(0, 120))
     )
@@ -637,6 +637,23 @@ async function scenario(entry) {
       'E42 language=ru 明确要求用俄语回答（replyLanguage.ru 生效）',
       ruPrompt.includes('Отвечай по-русски'),
       '片段: ' + JSON.stringify(ruPrompt.slice(-160))
+    )
+
+    // —— 日语输出语言（0.15.0）——
+    //
+    // 同一条真实链路再走一遍。它同时是「文案表注册表」的验收点：取表改成查表之后，
+    // 每一门语言都必须仍然接在 preview 端点上，而不是只有键集对齐通过。
+    const jaPreview = await callRoute(ctx, '/api/soul/prompt/preview', { language: 'ja', customInstructions: '確認' })
+    const jaPrompt = String(jaPreview.body?.prompt || '')
+    push(
+      'E43 language=ja 编译出日语段头（PROMPT_TABLES 查表生效）',
+      jaPrompt.includes('[実行ルール]') && !jaPrompt.includes('[执行规则]'),
+      '片段: ' + JSON.stringify(jaPrompt.slice(0, 120))
+    )
+    push(
+      'E44 language=ja 明确要求用日语回答（replyLanguage.ja 生效）',
+      jaPrompt.includes('日本語で回答'),
+      '片段: ' + JSON.stringify(jaPrompt.slice(-160))
     )
 
   } finally {

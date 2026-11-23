@@ -377,6 +377,25 @@ const promptJaSource = (() => {
     return ''
   }
 })()
+
+// 「独立模块承载的语种表」清单一处定义，两处使用（键集对齐 + replyLanguage 覆盖）。
+// 加一种语言 = 在 lib/ 加一个模块 + 在 index.mjs 的 PROMPT_TABLES 加一行 + 这里加一行。
+const LOCALIZED_PROMPT_TABLES = [
+  {
+    lang: 'ru',
+    file: 'lib/prompt-ru.mjs',
+    source: promptRuSource,
+    textExport: 'export const PROMPT_TEXT_RU = {',
+    commandExport: 'export const COMMAND_MESSAGES_RU = {'
+  },
+  {
+    lang: 'ja',
+    file: 'lib/prompt-ja.mjs',
+    source: promptJaSource,
+    textExport: 'export const PROMPT_TEXT_JA = {',
+    commandExport: 'export const COMMAND_MESSAGES_JA = {'
+  }
+]
 // 断言一律对**去注释后**的源码做匹配：注释里写一句 // const VERSION = '0.0.0' 或
 // // await writeConfigFile(...) 就能骗过裸正则（M5 类，变异实验实测可绕过）。
 // stripComments 长度保持不变，因此位置与字符串内容都不受影响。
@@ -2843,58 +2862,31 @@ check('host 文案表逐键对齐（PROMPT_TEXT / COMMAND_MESSAGES：zh / en / r
     )
   }
 
-  // 俄语表在独立模块 lib/prompt-ru.mjs 里：**必须覆盖 en 的全集**。
-  // 少一个键 = 俄语用户那里少一句话，而且运行时不会报错 —— 这正是本检查存在的理由。
-  assert.ok(promptRuSource !== '', 'lib/prompt-ru.mjs 应存在（俄语文案表）')
-
   const enPrompt = tableLangKeys(indexSource, 'PROMPT_TEXT', 'en')
-  const ruPrompt = localeModuleKeys(promptRuSource, 'export const PROMPT_TEXT_RU = {')
-  assert.ok(ruPrompt.size > 10, `PROMPT_TEXT_RU 键数异常：${ruPrompt.size}`)
-  assert.deepEqual(
-    [...enPrompt].filter((key) => !ruPrompt.has(key)).sort(),
-    [],
-    'PROMPT_TEXT_RU 必须覆盖 PROMPT_TEXT.en 的所有键（缺键 = 俄语下少一句话且不报错）'
-  )
-  // 允许 ru 比 en 多出的键**只有一个**：replyLanguage.ru。选中该表时 language 恒为 ru，
-  // 保留 zh/en 两个键只是为了让键集与 en 对齐（en 侧同理有 zh/en 两个）。
-  assert.deepEqual(
-    [...ruPrompt].filter((key) => !enPrompt.has(key)).sort(),
-    ['ru'],
-    'PROMPT_TEXT_RU 只允许比 en 多出 replyLanguage.ru 这一个键'
-  )
-
   const enCommand = tableLangKeys(indexSource, 'COMMAND_MESSAGES', 'en')
-  const ruCommand = localeModuleKeys(promptRuSource, 'export const COMMAND_MESSAGES_RU = {')
-  assert.ok(ruCommand.size > 10, `COMMAND_MESSAGES_RU 键数异常：${ruCommand.size}`)
-  assert.deepEqual(
-    [...enCommand].sort(),
-    [...ruCommand].sort(),
-    'COMMAND_MESSAGES_RU 必须与 en 逐键对齐'
-  )
+  for (const { lang, file, source, textExport, commandExport } of LOCALIZED_PROMPT_TABLES) {
+    assert.ok(source !== '', `${file} 应存在（${lang} 文案表）`)
 
-  // 日语表（lib/prompt-ja.mjs）适用同一套保证，措辞与 ru 保持一致。
-  assert.ok(promptJaSource !== '', 'lib/prompt-ja.mjs 应存在（日语文案表）')
+    // 少一个键 = 该语言下少一句话，而且运行时不会报错 —— 这正是这段检查存在的理由。
+    const prompt = localeModuleKeys(source, textExport)
+    assert.ok(prompt.size > 10, `${textExport} 键数异常：${prompt.size}`)
+    assert.deepEqual(
+      [...enPrompt].filter((key) => !prompt.has(key)).sort(),
+      [],
+      `${textExport} 必须覆盖 PROMPT_TEXT.en 的所有键（缺键 = ${lang} 下少一句话且不报错）`
+    )
+    // 允许比 en 多出的键只有一个：replyLanguage.<自己>。其余语言的对应键只是为了让
+    // 键集与 en 对齐，不参与编译。
+    assert.deepEqual(
+      [...prompt].filter((key) => !enPrompt.has(key)).sort(),
+      [lang],
+      `${textExport} 只允许比 en 多出 replyLanguage.${lang} 这一个键`
+    )
 
-  const jaPrompt = localeModuleKeys(promptJaSource, 'export const PROMPT_TEXT_JA = {')
-  assert.ok(jaPrompt.size > 10, `PROMPT_TEXT_JA 键数异常：${jaPrompt.size}`)
-  assert.deepEqual(
-    [...enPrompt].filter((key) => !jaPrompt.has(key)).sort(),
-    [],
-    'PROMPT_TEXT_JA 必须覆盖 PROMPT_TEXT.en 的所有键（缺键 = 日语下少一句话且不报错）'
-  )
-  assert.deepEqual(
-    [...jaPrompt].filter((key) => !enPrompt.has(key)).sort(),
-    ['ja'],
-    'PROMPT_TEXT_JA 只允许比 en 多出 replyLanguage.ja 这一个键'
-  )
-
-  const jaCommand = localeModuleKeys(promptJaSource, 'export const COMMAND_MESSAGES_JA = {')
-  assert.ok(jaCommand.size > 10, `COMMAND_MESSAGES_JA 键数异常：${jaCommand.size}`)
-  assert.deepEqual(
-    [...enCommand].sort(),
-    [...jaCommand].sort(),
-    'COMMAND_MESSAGES_JA 必须与 en 逐键对齐'
-  )
+    const command = localeModuleKeys(source, commandExport)
+    assert.ok(command.size > 10, `${commandExport} 键数异常：${command.size}`)
+    assert.deepEqual([...enCommand].sort(), [...command].sort(), `${commandExport} 必须与 en 逐键对齐`)
+  }
 })
 
 check('每种输出语言都有对应的文案表与 replyLanguage 条目', () => {
@@ -2907,15 +2899,16 @@ check('每种输出语言都有对应的文案表与 replyLanguage 条目', () =
   // 说话，界面上看不出任何异常。
   const sources = {
     zh: langTableText(indexSource, 'PROMPT_TEXT', 'zh'),
-    en: langTableText(indexSource, 'PROMPT_TEXT', 'en'),
-    ru: extractObject(promptRuSource, 'export const PROMPT_TEXT_RU = {'),
-    ja: extractObject(promptJaSource, 'export const PROMPT_TEXT_JA = {')
+    en: langTableText(indexSource, 'PROMPT_TEXT', 'en')
+  }
+  for (const { lang, source, textExport } of LOCALIZED_PROMPT_TABLES) {
+    sources[lang] = extractObject(source, textExport)
   }
   for (const lang of LANGUAGE_VALUES) {
     const text = sources[lang]
     assert.ok(
       typeof text === 'string' && text !== '',
-      `LANGUAGE_VALUES 含 ${lang}，但找不到对应的文案表（新增语言必须同时提供 promptTextOf 的分支与文案表）`
+      `LANGUAGE_VALUES 含 ${lang}，但找不到对应的文案表（新增语言要同时加模块与 PROMPT_TABLES 的一行）`
     )
     const reply = objectKeys(extractObject(text, 'replyLanguage: {'))
     assert.ok(
@@ -2923,6 +2916,31 @@ check('每种输出语言都有对应的文案表与 replyLanguage 条目', () =
       `${lang} 的文案表缺少 replyLanguage.${lang}（该语言不会被要求，且不会报错）`
     )
   }
+
+  // 注册表与语言枚举必须一一对应 —— 这是「表驱动」的直接判据：
+  //   加了枚举忘了加表 → 该语言静默说中文（用户选了也没用）；
+  //   加了表忘了加枚举 → 表永远取不到，纯死代码。
+  const registry = extractObject(indexSource, 'const PROMPT_TABLES = {')
+  assert.ok(registry !== '', 'index.mjs 缺少 PROMPT_TABLES 注册表')
+  const registered = [...registry.matchAll(/^  (\w+): \{/gm)].map((m) => m[1])
+  assert.deepEqual(
+    [...registered].sort(),
+    [...LANGUAGE_VALUES].sort(),
+    'PROMPT_TABLES 的键必须与 LANGUAGE_VALUES 完全一致'
+  )
+
+  // 反向：两个取表函数都必须是查表，不得退回 if 链 —— 那种写法每加一种语言要改两处，
+  // 漏改不会有任何报错，只会让某条通道悄悄说中文。
+  assert.match(
+    indexCode,
+    /function promptTextOf\(config\) \{\s*return promptTableOf\(/,
+    'promptTextOf 必须走 PROMPT_TABLES 注册表，不得写语言分支'
+  )
+  assert.match(
+    indexCode,
+    /function commandMessages\(config\) \{\s*return promptTableOf\(/,
+    'commandMessages 必须与 promptTextOf 共用同一张注册表'
+  )
 })
 
 check('每种语言的文案表覆盖全部枚举取值（风格 / 特质 / 篇幅）', () => {
