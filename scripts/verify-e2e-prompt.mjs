@@ -42,7 +42,7 @@ import { PROFILE_FIELDS, PERSONA_FIELDS } from '../lib/config.mjs'
 // 会随用例增减漂移，这里不重新抄一遍 —— 真值由 assertCount 在跑完后对账）。
 // 本轮 +6：S11–S16 读的是**注入通道**收到的文本与显示侧报出的名字（S1–S6 只读装配
 // 通道，而这两条通道曾经用不同的解析函数，只测一条就等于没测）。
-const EXPECTED_ASSERTIONS = 146
+const EXPECTED_ASSERTIONS = 148
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -682,6 +682,20 @@ async function scenario(entry) {
       'E48 language=fr 明确要求用法语回答（replyLanguage.fr 生效）',
       frPrompt.includes('Tu dois répondre en français'),
       '片段: ' + JSON.stringify(frPrompt.slice(-160))
+    )
+
+    // —— 德语输出语言（0.16.0）——
+    const dePreview = await callRoute(ctx, '/api/soul/prompt/preview', { language: 'de', customInstructions: 'Prüfung' })
+    const dePrompt = String(dePreview.body?.prompt || '')
+    push(
+      'E49 language=de 编译出德语段头（PROMPT_TABLES 查表生效）',
+      dePrompt.includes('[Ausführungsregeln]') && !dePrompt.includes('[执行规则]'),
+      '片段: ' + JSON.stringify(dePrompt.slice(0, 120))
+    )
+    push(
+      'E50 language=de 明确要求用德语回答（replyLanguage.de 生效）',
+      dePrompt.includes('Du musst auf Deutsch antworten'),
+      '片段: ' + JSON.stringify(dePrompt.slice(-160))
     )
 
   } finally {

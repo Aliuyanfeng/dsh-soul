@@ -49,6 +49,8 @@ import { PROMPT_TEXT_JA, COMMAND_MESSAGES_JA } from './lib/prompt-ja.mjs'
 import { PROMPT_TEXT_ES, COMMAND_MESSAGES_ES } from './lib/prompt-es.mjs'
 // fork(fr): même raison que ru / ja / es.
 import { PROMPT_TEXT_FR, COMMAND_MESSAGES_FR } from './lib/prompt-fr.mjs'
+// fork(de): gleiche Begründung wie ru / ja / es / fr.
+import { PROMPT_TEXT_DE, COMMAND_MESSAGES_DE } from './lib/prompt-de.mjs'
 // fork(ru): локализация встроенных пресетов — только на компиляции промпта и в
 // отображении. Ключи, записи BUILTIN_PERSONAS, activePersonaName, bindings и assets
 // остаются каноническими (design t23), поэтому русские имена никогда не попадают
@@ -78,6 +80,12 @@ import {
   builtinPersonaPresentationFr,
   builtinPresentationMapFr
 } from './lib/personas-fr.mjs'
+// fork(de): gleiche Mechanik; nur die Daten ändern sich.
+import {
+  builtinInstructionForLanguageDe,
+  builtinPersonaPresentationDe,
+  builtinPresentationMapDe
+} from './lib/personas-de.mjs'
 import {
   bindingsPathFor,
   bindingRefusal,
@@ -842,7 +850,8 @@ const PERSONA_LOCALIZERS = {
   ru: { presentationOf: builtinPersonaPresentationRu, instructionFor: builtinInstructionForLanguage },
   ja: { presentationOf: builtinPersonaPresentationJa, instructionFor: builtinInstructionForLanguageJa },
   es: { presentationOf: builtinPersonaPresentationEs, instructionFor: builtinInstructionForLanguageEs },
-  fr: { presentationOf: builtinPersonaPresentationFr, instructionFor: builtinInstructionForLanguageFr }
+  fr: { presentationOf: builtinPersonaPresentationFr, instructionFor: builtinInstructionForLanguageFr },
+  de: { presentationOf: builtinPersonaPresentationDe, instructionFor: builtinInstructionForLanguageDe }
 }
 
 function personaLocalizerOf(language) {
@@ -2412,7 +2421,7 @@ function personaLibrary(config) {
   return {
     personas: mergePersonas(config.personas),
     activeName: resolveActivePersonaName(config),
-    builtinI18n: { ru: builtinPresentationMap(), ja: builtinPresentationMapJa(), es: builtinPresentationMapEs(), fr: builtinPresentationMapFr() }
+    builtinI18n: { ru: builtinPresentationMap(), ja: builtinPresentationMapJa(), es: builtinPresentationMapEs(), fr: builtinPresentationMapFr(), de: builtinPresentationMapDe() }
   }
 }
 
@@ -4757,7 +4766,8 @@ const PROMPT_TABLES = {
   ru: { text: PROMPT_TEXT_RU, messages: COMMAND_MESSAGES_RU },
   ja: { text: PROMPT_TEXT_JA, messages: COMMAND_MESSAGES_JA },
   es: { text: PROMPT_TEXT_ES, messages: COMMAND_MESSAGES_ES },
-  fr: { text: PROMPT_TEXT_FR, messages: COMMAND_MESSAGES_FR }
+  fr: { text: PROMPT_TEXT_FR, messages: COMMAND_MESSAGES_FR },
+  de: { text: PROMPT_TEXT_DE, messages: COMMAND_MESSAGES_DE }
 }
 
 // 未知语言（或原型链上的键名，如 'constructor'）都落到这里。

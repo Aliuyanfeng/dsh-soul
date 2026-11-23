@@ -143,7 +143,7 @@ check('每门内置语言都有该字段的 label + hint + 按钮文案', () => 
     const def = new RegExp("^\\s*'" + key.replace('.', '\\.') + "':\\s*'", 'gm')
     const hits = (client.match(def) || []).length
     // 门数由源码里实际存在的词典决定，加语言时不必回来改数字。
-    const dicts = ['zh', 'en', 'ru', 'ja', 'es', 'fr'].filter((locale) =>
+    const dicts = ['zh', 'en', 'ru', 'ja', 'es', 'fr', 'de'].filter((locale) =>
       new RegExp('^    const ' + locale + ' = \{', 'm').test(client))
     assert.equal(hits, dicts.length, `${key} 应在 ${dicts.join('/')} 词典各定义一次，实际 ${hits}`)
   }

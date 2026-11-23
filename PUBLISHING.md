@@ -10,11 +10,11 @@
 - `dsh.bundle.patch`
 - `files`
 
-发布包应至少包含（当前 61 个文件）：
+发布包应至少包含（当前 63 个文件）：
 
 ```text
 index.mjs
-lib/*.mjs                      # config / injection / personas / personas-i18n / personas-ru / personas-ja / personas-es / personas-fr / store / history / bindings / workspace-scope / session-scope / subagent-scope / prompt-ru / prompt-ja / prompt-es / prompt-fr
+lib/*.mjs                      # config / injection / personas / personas-i18n / personas-ru / personas-ja / personas-es / personas-fr / personas-de / store / history / bindings / workspace-scope / session-scope / subagent-scope / prompt-ru / prompt-ja / prompt-es / prompt-fr / prompt-de
 client/index.mjs
 assets/icon.svg
 assets/personas/*.webp         # 7 个内置人设插画 + 1 张自建默认贴图
