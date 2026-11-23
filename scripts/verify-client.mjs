@@ -31,7 +31,7 @@ const EXPECTED_ASSERTIONS = 128
 
 // 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
 // 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
-const EXPECTED_DICT_LOCALES = ['zh', 'en', 'ru', 'ja']
+const EXPECTED_DICT_LOCALES = ['zh', 'en', 'ru', 'ja', 'es']
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5650,7 +5650,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 「推荐优先使用官方功能」骗过（实测漏检两次）。
     assert.match(zhLine[1], /官方[^。；]{0,12}内置/, '中文提示必须写明「官方已内置」，否则用户不知道有更合适的入口')
     assert.match(zhLine[1], /消息引用/, '中文提示必须写出官方功能名「消息引用」，否则用户找不到它')
-    const dictCount = ['zh', 'en', 'ru', 'ja'].filter((locale) =>
+    const dictCount = ['zh', 'en', 'ru', 'ja', 'es'].filter((locale) =>
       new RegExp('^    const ' + locale + ' = \{', 'm').test(source)).length
     assert.ok(
       enLine && enLine.length === dictCount,
@@ -6404,8 +6404,14 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
         assert.ok(!/[\n\r\uFEFF]/.test(value), `${name}.${key} 不得含换行或 BOM`)
         assert.deepEqual(placeholders(value), base, `${name}.${key} 的占位符与 zh 不一致（会导致 {n} 原样显示）`)
       }
-      if (!JA_SAME_AS_ZH.has(key)) {
-        assert.notEqual(ja[key], zh[key], `${key} 的日语与中文完全相同 —— 多半是漏翻（确实同形请加入 JA_SAME_AS_ZH）`)
+      // 任何一门语言与中文逐字相同，都说明这条没翻（符号 / 占位符本身另说：
+      // 那些 zh 里没有汉字，值相同是正常的）。日语有日中同形的短标签，走白名单。
+      for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
+        if (name === 'ja' && JA_SAME_AS_ZH.has(key)) continue
+        assert.notEqual(
+          dicts[name][key], zh[key],
+          `${name}.${key} 与中文完全相同 —— 多半是漏翻（确实同形请显式处理）`
+        )
       }
     }
   })

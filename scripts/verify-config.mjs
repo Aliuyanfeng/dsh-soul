@@ -11,6 +11,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { CANONICAL_FINGERPRINTS_RU } from '../lib/personas-ru.mjs'
 import { BUILTIN_PERSONAS_JA, CANONICAL_FINGERPRINTS_JA, builtinInstructionForLanguageJa } from '../lib/personas-ja.mjs'
+import { BUILTIN_PERSONAS_ES, CANONICAL_FINGERPRINTS_ES, builtinInstructionForLanguageEs } from '../lib/personas-es.mjs'
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
@@ -54,7 +55,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 178
+const EXPECTED_ASSERTIONS = 180
 
 let passed = 0
 const failures = []
@@ -377,6 +378,14 @@ const promptJaSource = (() => {
     return ''
   }
 })()
+// 西语文案表：与 ru / ja 同一套约定（独立模块，vendored 字面量保持 {zh, en}）。
+const promptEsSource = (() => {
+  try {
+    return readFileSync(new URL('../lib/prompt-es.mjs', import.meta.url), 'utf8')
+  } catch {
+    return ''
+  }
+})()
 
 // 「独立模块承载的语种表」清单一处定义，两处使用（键集对齐 + replyLanguage 覆盖）。
 // 加一种语言 = 在 lib/ 加一个模块 + 在 index.mjs 的 PROMPT_TABLES 加一行 + 这里加一行。
@@ -394,6 +403,13 @@ const LOCALIZED_PROMPT_TABLES = [
     source: promptJaSource,
     textExport: 'export const PROMPT_TEXT_JA = {',
     commandExport: 'export const COMMAND_MESSAGES_JA = {'
+  },
+  {
+    lang: 'es',
+    file: 'lib/prompt-es.mjs',
+    source: promptEsSource,
+    textExport: 'export const PROMPT_TEXT_ES = {',
+    commandExport: 'export const COMMAND_MESSAGES_ES = {'
   }
 ]
 // 断言一律对**去注释后**的源码做匹配：注释里写一句 // const VERSION = '0.0.0' 或
@@ -1060,7 +1076,7 @@ const clientCode = stripComments(clientSource)
 // 初始化）就会被调用，引用它会踩 TDZ。
 function clientDictLocales() {
   const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
-  return ['zh', 'en', 'ru', 'ja'].filter(
+  return ['zh', 'en', 'ru', 'ja', 'es'].filter(
     (locale) => new RegExp('^    const ' + locale + ' = \\{', 'm').test(source)
   )
 }
@@ -5393,6 +5409,63 @@ check('JA 译文是日语：7 条齐全、含假名、无换行、不超字段�
     builtinInstructionForLanguageJa({ language: 'ja', customInstructions: userText, activePersonaName: null }),
     userText,
     '用户改写的指令永远不得被译文覆盖'
+  )
+})
+
+check('ES built-in translations match the current canonical instruction revision (SHA256)', () => {
+  const names = builtinPersonaNames()
+  assert.equal(names.length, 7, 'Update the ES translation inventory when built-ins change')
+  assert.deepEqual(Object.keys(CANONICAL_FINGERPRINTS_ES).sort(), [...names].sort(), 'ES fingerprint keys must cover exactly all built-ins')
+  for (const name of names) {
+    const actual = createHash('sha256').update(BUILTIN_PERSONAS[name].customInstructions, 'utf8').digest('hex')
+    assert.equal(actual, CANONICAL_FINGERPRINTS_ES[name], `${name}: canonical instructions changed; review the ES translation and update its fingerprint`)
+  }
+})
+
+check('ES 译文无中文残留、字段完整，且只在 language=es 时替换', () => {
+  const names = builtinPersonaNames()
+  assert.deepEqual(Object.keys(BUILTIN_PERSONAS_ES), names, 'ES 表的键与顺序必须与 BUILTIN_PERSONAS 一致')
+  // 西语里出现汉字 = 漏翻的原文。与 ja 的「必须含假名」互为镜像：那边用假名证明是日语，
+  // 这边用「不含汉字」证明不是中文。
+  const han = /[\u4e00-\u9fff]/
+  for (const name of names) {
+    const entry = BUILTIN_PERSONAS_ES[name]
+    for (const field of ['displayName', 'description', 'customInstructions']) {
+      const value = entry[field]
+      assert.equal(typeof value, 'string', `${name}.${field} 必须是字符串`)
+      assert.ok(value.trim().length > 0, `${name}.${field} 不得为空`)
+      assert.ok(!/[\n\r\uFEFF]/.test(value), `${name}.${field} 不得含换行或 BOM`)
+      assert.equal(han.test(value), false, `${name}.${field} 含汉字 —— 疑似仍是中文原文`)
+    }
+    assert.notEqual(entry.customInstructions, BUILTIN_PERSONAS[name].customInstructions, `${name}: 译文不得等于原文`)
+    assert.ok(
+      entry.customInstructions.length <= FIELD_LIMITS.customInstructions,
+      `${name}: 译文 ${entry.customInstructions.length} 字超出 customInstructions 上限 ${FIELD_LIMITS.customInstructions}`
+    )
+  }
+
+  const canonical = BUILTIN_PERSONAS['极简主义者'].customInstructions
+  assert.equal(
+    builtinInstructionForLanguageEs({ language: 'es', customInstructions: canonical, activePersonaName: '极简主义者' }),
+    BUILTIN_PERSONAS_ES['极简主义者'].customInstructions,
+    'es + 内置原文 必须换成西语译文'
+  )
+  assert.equal(
+    builtinInstructionForLanguageEs({ language: 'zh', customInstructions: canonical, activePersonaName: '极简主义者' }),
+    canonical,
+    '输出语言不是 es 时不得替换'
+  )
+  const userText = '用户自己写的指令'
+  assert.equal(
+    builtinInstructionForLanguageEs({ language: 'es', customInstructions: userText, activePersonaName: null }),
+    userText,
+    '用户改写的指令永远不得被译文覆盖'
+  )
+  // 服务端把西语表现送进 API 的那一根线：加了翻译模块却忘了接 builtinI18n，
+  // 界面上永远是规范中文名 —— 而且不会有任何报错。
+  assert.ok(
+    indexSource.includes('es: builtinPresentationMapEs()'),
+    'personaLibrary 的 builtinI18n 必须带上 es'
   )
 })
 

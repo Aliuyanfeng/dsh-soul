@@ -45,6 +45,8 @@ import { PROMPT_TEXT_RU, COMMAND_MESSAGES_RU } from './lib/prompt-ru.mjs'
 // キー集合は en 版と 1:1。ja 表が持つ `replyLanguage.ja` だけが実際に到達可能で、
 // `replyLanguage.zh` / `.en` はキー集合の一致のためだけに存在する。
 import { PROMPT_TEXT_JA, COMMAND_MESSAGES_JA } from './lib/prompt-ja.mjs'
+// fork(es): 西语文案表同样独立（理由与 ru / ja 相同：vendored 的字面量必须保持 {zh, en}）。
+import { PROMPT_TEXT_ES, COMMAND_MESSAGES_ES } from './lib/prompt-es.mjs'
 // fork(ru): локализация встроенных пресетов — только на компиляции промпта и в
 // отображении. Ключи, записи BUILTIN_PERSONAS, activePersonaName, bindings и assets
 // остаются каноническими (design t23), поэтому русские имена никогда не попадают
@@ -62,6 +64,12 @@ import {
   builtinPersonaPresentationJa,
   builtinPresentationMapJa
 } from './lib/personas-ja.mjs'
+// fork(es): misma mecánica que ru / ja; solo cambian los datos.
+import {
+  builtinInstructionForLanguageEs,
+  builtinPersonaPresentationEs,
+  builtinPresentationMapEs
+} from './lib/personas-es.mjs'
 import {
   bindingsPathFor,
   bindingRefusal,
@@ -819,18 +827,30 @@ async function readJsonBody(req) {
 
 // 内置人设本地化的语种分发。每个语种模块内部已经按 language 自检（不匹配就原样
 // 返回用户文本），所以这里只需把当前语言对应的模块问一遍；未列出的语言返回原文。
-// 为什么集中成两个函数：调用点有四处（主提示词、子代理提示词、命令回显、展示名），
+// 为什么集中成注册表：调用点有四处（主提示词、子代理提示词、命令回显、展示名），
 // 每处各写一次 if 就等于让新增语种时漏掉其中一处 —— 而漏掉不会报错，只会让
 // 「某处说中文、某处说日语」这种不一致悄悄存在。
+const PERSONA_LOCALIZERS = {
+  ru: { presentationOf: builtinPersonaPresentationRu, instructionFor: builtinInstructionForLanguage },
+  ja: { presentationOf: builtinPersonaPresentationJa, instructionFor: builtinInstructionForLanguageJa },
+  es: { presentationOf: builtinPersonaPresentationEs, instructionFor: builtinInstructionForLanguageEs }
+}
+
+function personaLocalizerOf(language) {
+  return Object.prototype.hasOwnProperty.call(PERSONA_LOCALIZERS, language)
+    ? PERSONA_LOCALIZERS[language]
+    : null
+}
+
 function localizedInstruction(config) {
-  if (config && config.language === 'ja') return builtinInstructionForLanguageJa(config)
-  return builtinInstructionForLanguage(config)
+  const localizer = personaLocalizerOf(config && config.language)
+  if (localizer) return localizer.instructionFor(config)
+  return typeof config?.customInstructions === 'string' ? config.customInstructions : ''
 }
 
 function localizedPresentation(language, name) {
-  if (language === 'ja') return builtinPersonaPresentationJa(name)
-  if (language === 'ru') return builtinPersonaPresentationRu(name)
-  return null
+  const localizer = personaLocalizerOf(language)
+  return localizer ? localizer.presentationOf(name) : null
 }
 
 // Prompt Compiler：将身份（自定义指令）、用户背景与行为（风格/特质/语言）
@@ -2383,7 +2403,7 @@ function personaLibrary(config) {
   return {
     personas: mergePersonas(config.personas),
     activeName: resolveActivePersonaName(config),
-    builtinI18n: { ru: builtinPresentationMap(), ja: builtinPresentationMapJa() }
+    builtinI18n: { ru: builtinPresentationMap(), ja: builtinPresentationMapJa(), es: builtinPresentationMapEs() }
   }
 }
 
@@ -4726,7 +4746,8 @@ const PROMPT_TABLES = {
   zh: { text: PROMPT_TEXT.zh, messages: COMMAND_MESSAGES.zh },
   en: { text: PROMPT_TEXT.en, messages: COMMAND_MESSAGES.en },
   ru: { text: PROMPT_TEXT_RU, messages: COMMAND_MESSAGES_RU },
-  ja: { text: PROMPT_TEXT_JA, messages: COMMAND_MESSAGES_JA }
+  ja: { text: PROMPT_TEXT_JA, messages: COMMAND_MESSAGES_JA },
+  es: { text: PROMPT_TEXT_ES, messages: COMMAND_MESSAGES_ES }
 }
 
 // 未知语言（或原型链上的键名，如 'constructor'）都落到这里。
