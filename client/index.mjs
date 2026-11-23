@@ -11485,14 +11485,17 @@ window.__ModuleLoader__.load({
           return () => {}
         }
       }
-      // 附加语言：一门一个 effect，全部由这张表驱动。
+      // 词典注册：**一门语言一次 register，全部由这张表驱动**。
+      //
+      // 为什么不把 zh / en 合成一对：宿主 register 是「先全量校验、再写入」，一次调用里
+      // 只要有一门重复，整次一条都不写。分开之后失败域就是一门 —— 哪门撞车只丢哪门，
+      // 不会连累中文用户（zh / en 成对是 vendor 自己那份词典对象的构建期约定，不是运行时约束）。
+      //
       // **新增语种必须同时加进这里** —— 只加词典不加表，那份词典永远不会被注册，
       // 界面会静默回退成英文（0.16.0 就这么漏过一次：es / fr / de / pt 四份词典都写好了，
-      // 注册却只有 ru / ja，切到西语看到的还是英文）。现在由 verify-client 的
-      // 「每份词典都真的注册了」这条断言兜住。
-      const EXTRA_DICTS = { ru, ja, es, fr, de, pt }
-      ctx.effect(() => registerDicts({ zh, en }), 'dsh-soul: dictionaries (zh/en)')
-      for (const [locale, dict] of Object.entries(EXTRA_DICTS)) {
+      // 注册却只有 ru / ja）。现在由 verify-client 的 C125（静态）与 C135（装配后实际注册）兜住。
+      const DICTS = { zh, en, ru, ja, es, fr, de, pt }
+      for (const [locale, dict] of Object.entries(DICTS)) {
         ctx.effect(
           () => registerDicts({ [locale]: dict }),
           `dsh-soul: dictionaries (${locale})`

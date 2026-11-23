@@ -6325,7 +6325,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     }
   })
 
-  await check('C125 locale 词典注册按语言隔离：zh/en 一对，其余逐门一个 effect', async () => {
+  await check('C125 词典注册一门一次，由 DICTS 表驱动', async () => {
     // 宿主对同一 (ns, locale) 第二次 register 会抛 "already has locale"，而且是
     // 「先全量校验、再写入」：一次调用里只要有一门语言重复，整次一条都不写。
     // 因此 ru / ja 必须各自单独 register —— 外部语言包（dsh-soul-ru-lang）撞车时
@@ -6339,30 +6339,27 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.match(helper[0], /catch \(error\)/, 'registerDicts 必须有 catch')
     assert.match(helper[0], /return \(\) => \{\}/, 'catch 必须返回空 disposer（effect 契约）')
 
-    // zh / en 必须成对注册（宿主要求两个内置 locale 齐全）。
-    assert.ok(
-      source.includes("ctx.effect(() => registerDicts({ zh, en }),"),
-      '缺少 zh/en 成对注册'
-    )
-    // 其余语言由 EXTRA_DICTS 表驱动，一门一次 register —— 撞车只影响自己。
-    // 这张表同时是「有没有漏注册」的静态判据：只加词典不加表，该语言会静默回退英文。
-    const extra = source.match(/const EXTRA_DICTS = \{([^}]*)\}/)
-    assert.ok(extra, '缺少 EXTRA_DICTS 表')
-    const extraLocales = extra[1].split(',').map((v) => v.trim()).filter(Boolean)
+    // 一门语言一次 register：全部由 DICTS 表驱动。
+    // 这张表同时是「有没有漏注册」的静态判据：只加词典不加表，该语言会静默回退英文
+    // （0.16.0 的真实事故）。为什么不再让 zh/en 成对：宿主 register 是先全量校验再写入，
+    // 一次调用里只要一门重复就整条都不写 —— 分开后失败域是一门，不会连累中文。
+    const table = source.match(/const DICTS = \{([^}]*)\}/)
+    assert.ok(table, '缺少 DICTS 表')
+    const tableLocales = table[1].split(',').map((v) => v.trim()).filter(Boolean)
     assert.deepEqual(
-      [...new Set(extraLocales)].sort(),
-      EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh' && locale !== 'en').sort(),
-      'EXTRA_DICTS 必须与已内置的附加语言一一对应（漏一个 = 该语言静默回退英文）'
+      [...new Set(tableLocales)].sort(),
+      [...EXPECTED_DICT_LOCALES].sort(),
+      'DICTS 必须与已内置的词典一一对应（漏一个 = 该语言静默回退英文）'
     )
     assert.ok(
-      source.includes('for (const [locale, dict] of Object.entries(EXTRA_DICTS))'),
-      '附加语言必须逐门注册（循环），不能合并成一次 register'
+      source.includes('for (const [locale, dict] of Object.entries(DICTS))'),
+      '必须逐门注册（循环），不能合并成一次 register'
     )
     assert.ok(source.includes('registerDicts({ [locale]: dict })'), '每次 register 只能含一门语言')
     assert.equal(
-      /registerDicts\(\{ zh, en,[^}]*\}/.test(source),
+      /registerDicts\(\{ zh, en/.test(source),
       false,
-      'zh/en 的 register 不得夹带其它语言'
+      'zh / en 也不得合并注册（撞车会连坐）'
     )
   })
 
