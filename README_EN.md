@@ -28,12 +28,12 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
   - Tables: `default`, `more` (prefer tables for comparisons and multi-field data), `less` (avoid tables; use lists or paragraphs)
 - Reply length preference: `concise` (key points only), `normal` (no extra constraint, default), `detailed` (expand background, steps and reasoning)
 - Output language (agent reply language + `/soul` command output language): Chinese, English, Russian or Japanese. It is a **global switch**, not a persona trait — so presets do not store it, and subagents follow it too (turning off inheritance does not change the language). It localizes the **prompt and the replies**
-  - **UI text is a separate layer, unrelated to the output language:** DSH ≥ 0.2.2 ships a Russian UI (it appends ja / es / fr / de / ru / pt at runtime via `addLanguage`); this plugin's own strings (settings page, sidebar, ~400 keys) come from the overlay language pack [`dsh-soul-ru-lang`](https://github.com/zznobzz/dsh-soul-ru-lang#readme) — without it they fall back to Chinese/English (see [Installation](#installation))
+  - **UI text is a separate layer, unrelated to the output language:** the host UI supports zh / en / ja / es / fr / de / ru / pt since DSH 0.2.2 (the last six are appended via `addLanguage`); this plugin's own strings (settings page, sidebar, 401 keys) ship in Chinese / English / Русский / 日本語, applied as soon as you switch the host UI, with no extra plugin; under es / fr / de / pt they fall back to Chinese / English. The Russian strings were merged from the MIT pack `dsh-soul-ru-lang` (see [UI language](#ui-language))
 - The compiled system prompt follows the output language (English / Russian / Japanese descriptions when `language=en` / `ru` / `ja`)
 - Custom instructions
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
 - Named personas: 7 built-in personas (Socratic Questioner / Minimalist / Senior Architect / Teaching Explainer / Strict Code Reviewer / Brainstorm Partner / Self-Driven Collaborator — shipped with the plugin, cannot be deleted) plus your own named personas, switched with one click (save / use / list / delete, in both the Web UI and slash commands); each row summarises the style and every dimension that differs from its default
-  - **Under a Russian UI the 7 built-in personas show Russian names / descriptions / instructions** (`lib/personas-ru.mjs`). The instructions that reach the prompt follow the **output language**; the UI locale only affects display. Persona **keys stay canonical**, so switching languages never changes existing presets, bindings or session overrides
+  - **Under a Russian or Japanese UI the 7 built-in personas show names / descriptions / instructions in that language** (`lib/personas-ru.mjs` / `lib/personas-ja.mjs`, sharing the matching rules in `lib/personas-i18n.mjs`). The instructions that reach the prompt follow the **output language**; the UI locale only affects display. Persona **keys stay canonical**, so switching languages never changes existing presets, bindings or session overrides
 - Personas cover the **agent's personality only**: switching a persona never touches **"About you"** (nickname / occupation / bio describe *you*, not how the agent talks). Built-in and self-saved personas behave identically — saving a persona snapshots style / traits / reply length / custom instructions — never the identity fields, and never the output language (a global switch); full-config snapshots written by earlier versions are stripped on read
 - Scope precedence: **session override > workspace binding > directory binding > global settings > defaults**. A binding is a **partial** override — it takes over only the fields that persona actually declares, so saving in the global **Traits** section will not change a workspace that has a persona bound. "About you" is never in scope: it always comes from the global config. Neither can any layer turn off `enabled`. The note sits under the Traits section's save buttons as a short hint line, with the detail behind the ⓘ next to it.
 - **Soul persona overview** (sidebar panel, **off by default** — turn it on in Settings → "Show persona overview in sidebar"; while off it takes no sidebar space, and the "Open persona overview" button still opens it): see at a glance which persona is active globally, and whether each workspace / session overrides it. Three blocks: **Current** (switch the global persona in place) · **Workspaces** (rebind a broken binding in place; expand to list that workspace's sessions) · **Presets** (read-only list; add/edit/delete stays in Settings). Click a session row to jump straight to that session; the panel refreshes automatically when persona or bindings change elsewhere
@@ -75,7 +75,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 | `0.13.0` | **Subagent persona boundary** — inheritance toggle plus `set_subagent_persona`; the same release hardens the trust boundary (CSRF, UNC paths, confirmation before persona writes) | Released |
 | `0.14.0` | **Russian** — Русский joins the output languages, and the 7 built-in personas are localized under a Russian UI | Released |
 | `0.15.0` | **Japanese** — 日本語 joins the output languages (Japanese names / descriptions / instructions for built-in personas still pending) | Released |
-| `0.16.0` | **Complete the language set** — output languages catch up with the host's 8 built-ins (zh / en / ru / ja today; es / fr / de / pt to come), built-in personas localized per language, overlay UI language packs filled in | Planned |
+| `0.16.0` | **Complete the language set** — close the gap 0.15.0 left by localizing the built-in personas in Japanese (`lib/personas-ja.mjs`); ship the UI text for four languages inside the package (zh / en / ru / ja, Russian merged from the MIT pack, no overlay to install); keep catching up with the host's 8 output languages (es / fr / de / pt to come) | Planned |
 | Backlog | Self-evolution proposals with diff approval — the Agent proposes persona refinements and the diff goes through the approval panel | Not scheduled |
 | Backlog | Memory layer — long-term memory across sessions, isolated per persona, recalled on demand | Not scheduled |
 
@@ -113,20 +113,15 @@ The plugin is registered via `cordis.patch.yml`:
       name: dsh-soul
 ```
 
-### Optional: Russian UI
+### UI language
 
-The host's Russian UI ships with DSH **0.2.2** (it appends ja / es / fr / de / ru / pt at runtime via `addLanguage`), so nothing extra is needed for the DSH chrome. **This plugin's own** UI strings (settings page, sidebar, ~400 keys) come from a separate overlay language pack:
+The host UI has supported zh / en / ja / es / fr / de / ru / pt since DSH **0.2.2** (it appends the last six via `addLanguage` at runtime). **This plugin's own** UI strings (settings page, sidebar and friends, 401 keys) ship in four languages — **Chinese / English / Русский / 日本語**: switch the host UI to one of them and it applies immediately, with **no extra plugin to install**. Under an es / fr / de / pt UI the plugin's strings fall back to Chinese / English.
 
-```powershell
-dsh plugin --profile <profile> add dsh-soul-ru-lang
-# or straight from GitHub
-dsh plugin --profile <profile> add github:zznobzz/dsh-soul-ru-lang
-```
+> **Where the Russian strings come from**: the ru dictionary was merged from the third-party language pack [`dsh-soul-ru-lang`](https://github.com/zznobzz/dsh-soul-ru-lang) (MIT, Copyright (c) 2026 dsh-soul-ru-lang contributors) with the translations unchanged. Since 0.16.0 that pack is no longer needed; if you installed it, uninstalling is recommended — leaving it in place does no harm either, because registration is per language and the first registrant wins for that language.
+>
+> **The Japanese dictionary** is maintained in this repo (drafted in 0.16.0). All four dictionaries are key-for-key aligned, including `{placeholders}` — one missing key or a mangled placeholder turns `npm run verify` red.
 
-- npm: <https://www.npmjs.com/package/dsh-soul-ru-lang> (0.1.0)
-- Repo, compatibility, maintenance and release process: <https://github.com/zznobzz/dsh-soul-ru-lang#readme>
-
-Everything works without it — this plugin's strings simply fall back to Chinese/English under a Russian UI. **The agent's reply language is unaffected**: that is driven by "Output language" and needs no extra plugin.
+**UI language and "Output language" are two layers**: the UI language only controls the settings page and sidebar text; the language the agent answers in comes from "Output language". Neither implies the other.
 
 ## Compatibility
 
