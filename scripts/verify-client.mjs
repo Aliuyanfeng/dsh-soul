@@ -31,7 +31,7 @@ const EXPECTED_ASSERTIONS = 128
 
 // 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
 // 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
-const EXPECTED_DICT_LOCALES = ['zh', 'en', 'ru', 'ja', 'es', 'fr', 'de']
+const EXPECTED_DICT_LOCALES = ['zh', 'en', 'ru', 'ja', 'es', 'fr', 'de', 'pt']
 
 const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
@@ -5650,7 +5650,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 「推荐优先使用官方功能」骗过（实测漏检两次）。
     assert.match(zhLine[1], /官方[^。；]{0,12}内置/, '中文提示必须写明「官方已内置」，否则用户不知道有更合适的入口')
     assert.match(zhLine[1], /消息引用/, '中文提示必须写出官方功能名「消息引用」，否则用户找不到它')
-    const dictCount = ['zh', 'en', 'ru', 'ja', 'es', 'fr', 'de'].filter((locale) =>
+    const dictCount = ['zh', 'en', 'ru', 'ja', 'es', 'fr', 'de', 'pt'].filter((locale) =>
       new RegExp('^    const ' + locale + ' = \{', 'm').test(source)).length
     assert.ok(
       enLine && enLine.length === dictCount,

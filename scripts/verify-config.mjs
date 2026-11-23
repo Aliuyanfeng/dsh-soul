@@ -14,6 +14,7 @@ import { BUILTIN_PERSONAS_JA, CANONICAL_FINGERPRINTS_JA, builtinInstructionForLa
 import { BUILTIN_PERSONAS_ES, CANONICAL_FINGERPRINTS_ES, builtinInstructionForLanguageEs } from '../lib/personas-es.mjs'
 import { BUILTIN_PERSONAS_FR, CANONICAL_FINGERPRINTS_FR, builtinInstructionForLanguageFr } from '../lib/personas-fr.mjs'
 import { BUILTIN_PERSONAS_DE, CANONICAL_FINGERPRINTS_DE, builtinInstructionForLanguageDe } from '../lib/personas-de.mjs'
+import { BUILTIN_PERSONAS_PT, CANONICAL_FINGERPRINTS_PT, builtinInstructionForLanguagePt } from '../lib/personas-pt.mjs'
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
@@ -57,7 +58,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 184
+const EXPECTED_ASSERTIONS = 186
 
 let passed = 0
 const failures = []
@@ -404,6 +405,14 @@ const promptDeSource = (() => {
     return ''
   }
 })()
+// Tabela de textos em português: mesma convenção (módulo próprio, literais {zh, en} intactos).
+const promptPtSource = (() => {
+  try {
+    return readFileSync(new URL('../lib/prompt-pt.mjs', import.meta.url), 'utf8')
+  } catch {
+    return ''
+  }
+})()
 
 // 「独立模块承载的语种表」清单一处定义，两处使用（键集对齐 + replyLanguage 覆盖）。
 // 加一种语言 = 在 lib/ 加一个模块 + 在 index.mjs 的 PROMPT_TABLES 加一行 + 这里加一行。
@@ -442,6 +451,13 @@ const LOCALIZED_PROMPT_TABLES = [
     source: promptDeSource,
     textExport: 'export const PROMPT_TEXT_DE = {',
     commandExport: 'export const COMMAND_MESSAGES_DE = {'
+  },
+  {
+    lang: 'pt',
+    file: 'lib/prompt-pt.mjs',
+    source: promptPtSource,
+    textExport: 'export const PROMPT_TEXT_PT = {',
+    commandExport: 'export const COMMAND_MESSAGES_PT = {'
   }
 ]
 // 断言一律对**去注释后**的源码做匹配：注释里写一句 // const VERSION = '0.0.0' 或
@@ -1108,7 +1124,7 @@ const clientCode = stripComments(clientSource)
 // 初始化）就会被调用，引用它会踩 TDZ。
 function clientDictLocales() {
   const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
-  return ['zh', 'en', 'ru', 'ja', 'es', 'fr', 'de'].filter(
+  return ['zh', 'en', 'ru', 'ja', 'es', 'fr', 'de', 'pt'].filter(
     (locale) => new RegExp('^    const ' + locale + ' = \\{', 'm').test(source)
   )
 }
@@ -5604,6 +5620,59 @@ check('DE 译文无中文残留、字段完整，且只在 language=de 时替换
   assert.ok(
     indexSource.includes('de: builtinPresentationMapDe()'),
     'personaLibrary 的 builtinI18n 必须带上 de'
+  )
+})
+
+check('PT built-in translations match the current canonical instruction revision (SHA256)', () => {
+  const names = builtinPersonaNames()
+  assert.equal(names.length, 7, 'Update the PT translation inventory when built-ins change')
+  assert.deepEqual(Object.keys(CANONICAL_FINGERPRINTS_PT).sort(), [...names].sort(), 'PT fingerprint keys must cover exactly all built-ins')
+  for (const name of names) {
+    const actual = createHash('sha256').update(BUILTIN_PERSONAS[name].customInstructions, 'utf8').digest('hex')
+    assert.equal(actual, CANONICAL_FINGERPRINTS_PT[name], `${name}: canonical instructions changed; review the PT translation and update its fingerprint`)
+  }
+})
+
+check('PT 译文无中文残留、字段完整，且只在 language=pt 时替换', () => {
+  const names = builtinPersonaNames()
+  assert.deepEqual(Object.keys(BUILTIN_PERSONAS_PT), names, 'PT 表的键与顺序必须与 BUILTIN_PERSONAS 一致')
+  const han = /[\u4e00-\u9fff]/
+  for (const name of names) {
+    const entry = BUILTIN_PERSONAS_PT[name]
+    for (const field of ['displayName', 'description', 'customInstructions']) {
+      const value = entry[field]
+      assert.equal(typeof value, 'string', `${name}.${field} 必须是字符串`)
+      assert.ok(value.trim().length > 0, `${name}.${field} 不得为空`)
+      assert.ok(!/[\n\r\uFEFF]/.test(value), `${name}.${field} 不得含换行或 BOM`)
+      assert.equal(han.test(value), false, `${name}.${field} 含汉字 —— 疑似仍是中文原文`)
+    }
+    assert.notEqual(entry.customInstructions, BUILTIN_PERSONAS[name].customInstructions, `${name}: 译文不得等于原文`)
+    assert.ok(
+      entry.customInstructions.length <= FIELD_LIMITS.customInstructions,
+      `${name}: 译文 ${entry.customInstructions.length} 字超出 customInstructions 上限 ${FIELD_LIMITS.customInstructions}`
+    )
+  }
+
+  const canonical = BUILTIN_PERSONAS['极简主义者'].customInstructions
+  assert.equal(
+    builtinInstructionForLanguagePt({ language: 'pt', customInstructions: canonical, activePersonaName: '极简主义者' }),
+    BUILTIN_PERSONAS_PT['极简主义者'].customInstructions,
+    'pt + 内置原文 必须换成葡语译文'
+  )
+  assert.equal(
+    builtinInstructionForLanguagePt({ language: 'zh', customInstructions: canonical, activePersonaName: '极简主义者' }),
+    canonical,
+    '输出语言不是 pt 时不得替换'
+  )
+  const userText = '用户自己写的指令'
+  assert.equal(
+    builtinInstructionForLanguagePt({ language: 'pt', customInstructions: userText, activePersonaName: null }),
+    userText,
+    '用户改写的指令永远不得被译文覆盖'
+  )
+  assert.ok(
+    indexSource.includes('pt: builtinPresentationMapPt()'),
+    'personaLibrary 的 builtinI18n 必须带上 pt'
   )
 })
 
