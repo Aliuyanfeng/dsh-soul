@@ -76,11 +76,16 @@ npm pack --dry-run
 # 1. 更新版本号（遵循语义化版本；--no-git-tag-version 只改 package.json，不 commit 不打 tag）
 npm version patch --no-git-tag-version   # 或 minor / major
 
-# 2. 提交并推送（版本号 commit 也可以和其他改动合并提交）
-git add package.json
+# 2. 同步 client/index.mjs 的 `const VERSION`（标题徽标显示用）与 package.json 同版本 —— 漏改则 CI 红
+grep -n "const VERSION" client/index.mjs
+
+# 3. 提交并推送（版本号 commit 也可以和其他改动合并提交）
+git add package.json client/index.mjs
 git commit -m "chore: release v0.2.1"
 git push origin main
 ```
+
+> 第 2 步容易漏：`npm version` 只改 `package.json`，而客户端标题徽标里的版本号是硬编码常量，只能手工同步。`verify-config` 有一条断言拿它与 `package.json` 比对（并禁止再新增同类副本），所以漏改不会静默漂移 —— 会在 `npm run verify`（CI 发布门槛）阶段直接变红。
 
 #### 第二步：GitHub 网页创建 Release
 

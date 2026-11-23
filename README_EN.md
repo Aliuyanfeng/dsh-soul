@@ -69,10 +69,19 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
 | `0.7.2` | Settings-page styling aligned with the host, stacked card carousel, persona changes routed through the host's native approval panel | Released |
 | `0.8.0` | **Change audit and rollback** — every config change recorded (timestamp, source, field-level from→to), with a timeline and undo on the plugin details page | Released |
 | `0.9.0` | **Three-level config scoping** — Global → Workspace → Session: the workspace picks the persona, a session may override it, plus conservative cleanup | Released |
-| `0.10.0` | Self-evolution proposals with diff approval — the Agent proposes persona refinements and the diff goes through the approval panel | Planned |
-| `0.11.0` | Memory layer — long-term memory across sessions, isolated per persona, recalled on demand | Planned |
+| `0.10.0` | **Persona overview panel** — puts "who is in effect" on a panel: active / workspace × session cascade / preset library, switchable in place; button specs aligned with the host | Released |
+| `0.11.0` | **Quotes as context** — selected text rides along with the next request (never in the message body or history); history chips bound by message id; sidebar overview toggle | Released |
+| `0.12.0` | **Per-section saves on the settings page** — "About you" and "Traits" save independently, interaction and UI settings take effect immediately; the composer toggle can be hidden | Released |
+| `0.13.0` | **Subagent persona boundary** — inheritance toggle plus `set_subagent_persona`; the same release hardens the trust boundary (CSRF, UNC paths, confirmation before persona writes) | Released |
+| `0.14.0` | **Russian** — Русский joins the output languages, and the 7 built-in personas are localized under a Russian UI | Released |
+| `0.15.0` | **Japanese** — 日本語 joins the output languages (Japanese names / descriptions / instructions for built-in personas still pending) | Released |
+| `0.16.0` | **Complete the language set** — output languages catch up with the host's 8 built-ins (zh / en / ru / ja today; es / fr / de / pt to come), built-in personas localized per language, overlay UI language packs filled in | Planned |
+| Backlog | Self-evolution proposals with diff approval — the Agent proposes persona refinements and the diff goes through the approval panel | Not scheduled |
+| Backlog | Memory layer — long-term memory across sessions, isolated per persona, recalled on demand | Not scheduled |
 
 Design rationale lives in `docs/`; shipped changes are in [RELEASE_NOTES.md](./RELEASE_NOTES.md), the release process in [PUBLISHING.md](./PUBLISHING.md), and the troubleshooting playbook in [DEBUGGING.md](./DEBUGGING.md). The roadmap states direction, not a commitment — the order may change.
+
+> Version numbers appear only on work that has started: `0.10.0` / `0.11.0` were once reserved for self-evolution and the memory layer, but other features shipped under them, so those two are now "Backlog" without a reserved number. The next number is picked when work begins.
 
 ### Docs
 
