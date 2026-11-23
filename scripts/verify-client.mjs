@@ -6425,6 +6425,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     },
     activeName: '极简主义者',
     builtinI18n: {
+      en: { '极简主义者': { displayName: 'Minimalist', description: 'Only the essentials.', customInstructions: 'ENGLISH RULES' } },
       ru: { '极简主义者': { displayName: 'Минималист', description: 'Коротко по делу', customInstructions: 'РУССКИЕ ПРАВИЛА' } },
       ja: { '极简主义者': { displayName: 'ミニマリスト', description: '要点だけ。', customInstructions: '日本語のルール' } }
     }
@@ -6446,16 +6447,24 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     return world.runtime.settle({ type: slot.component, props })
   }
 
-  await check('C126 en/zh builtin card accessible name stays the canonical key', async () => {
-    for (const locale of ['en', 'zh']) {
-      const world = await boot({}, personaFixture(), { locale })
-      const tree = await sessionPersonaTree(world)
-      const cards = findAll(tree, n => n.props && n.props['aria-label'])
-      const builtin = cards.find(n => n.props['aria-label'] === '极简主义者')
-      assert.ok(builtin, `${locale}: canonical aria-label required, not an arbitrary labelOf result`)
-      assert.equal(builtin.props.title, '极简主义者')
-      assert.ok(!textOf(tree).includes('Минималист'), `${locale}: Russian display name must not leak`)
-    }
+  await check('C126 zh 用规范键名、en 用英文名，且互不串语言', async () => {
+    // zh：宿主不会下发 zh 表（规范原文就是中文），所以显示规范键名。
+    const zhWorld = await boot({}, personaFixture(), { locale: 'zh' })
+    const zhTree = await sessionPersonaTree(zhWorld)
+    const zhBuiltin = findAll(zhTree, n => n.props && n.props['aria-label'])
+      .find(n => n.props['aria-label'] === '极简主义者')
+    assert.ok(zhBuiltin, 'zh：aria-label 必须是规范键名')
+    assert.equal(zhBuiltin.props.title, '极简主义者')
+
+    // en：0.16.0 起有英文表（规范原文是中文，英文用户不该读到中文名）。
+    // 键仍是规范名，只有显示文本变。
+    const enWorld = await boot({}, personaFixture(), { locale: 'en' })
+    const enTree = await sessionPersonaTree(enWorld)
+    const enBuiltin = findAll(enTree, n => n.props && n.props['aria-label'])
+      .find(n => n.props['aria-label'] === 'Minimalist')
+    assert.ok(enBuiltin, 'en：应显示英文名')
+    assert.ok(!textOf(enTree).includes('Минималист'), 'en：俄语名不得泄漏')
+    assert.ok(!textOf(enTree).includes('ミニマリスト'), 'en：日语名不得泄漏')
   })
 
   await check('C127 ru builtin label translates but custom names and source entries do not', async () => {
@@ -6493,7 +6502,8 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.ok(label('Минималист'))
     world.captured.setLocale('en')
     tree = await renderSettings(world)
-    assert.ok(label('极简主义者'), 'locale face notification must reach uiLocaleStore')
+    // 0.16.0 起 en 有自己的一套人设译文；这条仍只验证「切换 locale 会重新解析标签」。
+    assert.ok(label('Minimalist'), 'locale face notification must reach uiLocaleStore')
     world.captured.setLocale('ru')
     tree = await renderSettings(world)
     assert.ok(label('Минималист'))

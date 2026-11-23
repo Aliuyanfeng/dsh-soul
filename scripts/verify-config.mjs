@@ -15,6 +15,7 @@ import { BUILTIN_PERSONAS_ES, CANONICAL_FINGERPRINTS_ES, builtinInstructionForLa
 import { BUILTIN_PERSONAS_FR, CANONICAL_FINGERPRINTS_FR, builtinInstructionForLanguageFr } from '../lib/personas-fr.mjs'
 import { BUILTIN_PERSONAS_DE, CANONICAL_FINGERPRINTS_DE, builtinInstructionForLanguageDe } from '../lib/personas-de.mjs'
 import { BUILTIN_PERSONAS_PT, CANONICAL_FINGERPRINTS_PT, builtinInstructionForLanguagePt } from '../lib/personas-pt.mjs'
+import { BUILTIN_PERSONAS_EN, CANONICAL_FINGERPRINTS_EN, builtinInstructionForLanguageEn } from '../lib/personas-en.mjs'
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
@@ -58,7 +59,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 186
+const EXPECTED_ASSERTIONS = 188
 
 let passed = 0
 const failures = []
@@ -5673,6 +5674,59 @@ check('PT 译文无中文残留、字段完整，且只在 language=pt 时替换
   assert.ok(
     indexSource.includes('pt: builtinPresentationMapPt()'),
     'personaLibrary 的 builtinI18n 必须带上 pt'
+  )
+})
+
+check('EN built-in translations match the current canonical instruction revision (SHA256)', () => {
+  const names = builtinPersonaNames()
+  assert.equal(names.length, 7, 'Update the EN translation inventory when built-ins change')
+  assert.deepEqual(Object.keys(CANONICAL_FINGERPRINTS_EN).sort(), [...names].sort(), 'EN fingerprint keys must cover exactly all built-ins')
+  for (const name of names) {
+    const actual = createHash('sha256').update(BUILTIN_PERSONAS[name].customInstructions, 'utf8').digest('hex')
+    assert.equal(actual, CANONICAL_FINGERPRINTS_EN[name], `${name}: canonical instructions changed; review the EN translation and update its fingerprint`)
+  }
+})
+
+check('EN 译文无中文残留、字段完整，且只在 language=en 时替换', () => {
+  const names = builtinPersonaNames()
+  assert.deepEqual(Object.keys(BUILTIN_PERSONAS_EN), names, 'EN 表的键与顺序必须与 BUILTIN_PERSONAS 一致')
+  const han = /[\u4e00-\u9fff]/
+  for (const name of names) {
+    const entry = BUILTIN_PERSONAS_EN[name]
+    for (const field of ['displayName', 'description', 'customInstructions']) {
+      const value = entry[field]
+      assert.equal(typeof value, 'string', `${name}.${field} 必须是字符串`)
+      assert.ok(value.trim().length > 0, `${name}.${field} 不得为空`)
+      assert.ok(!/[\n\r\uFEFF]/.test(value), `${name}.${field} 不得含换行或 BOM`)
+      assert.equal(han.test(value), false, `${name}.${field} 含汉字 —— 疑似仍是中文原文`)
+    }
+    assert.notEqual(entry.customInstructions, BUILTIN_PERSONAS[name].customInstructions, `${name}: 译文不得等于原文`)
+    assert.ok(
+      entry.customInstructions.length <= FIELD_LIMITS.customInstructions,
+      `${name}: 译文 ${entry.customInstructions.length} 字超出 customInstructions 上限 ${FIELD_LIMITS.customInstructions}`
+    )
+  }
+
+  const canonical = BUILTIN_PERSONAS['极简主义者'].customInstructions
+  assert.equal(
+    builtinInstructionForLanguageEn({ language: 'en', customInstructions: canonical, activePersonaName: '极简主义者' }),
+    BUILTIN_PERSONAS_EN['极简主义者'].customInstructions,
+    'en + 内置原文 必须换成英文译文'
+  )
+  assert.equal(
+    builtinInstructionForLanguageEn({ language: 'zh', customInstructions: canonical, activePersonaName: '极简主义者' }),
+    canonical,
+    '输出语言不是 en 时不得替换（中文仍用规范原文）'
+  )
+  const userText = '用户自己写的指令'
+  assert.equal(
+    builtinInstructionForLanguageEn({ language: 'en', customInstructions: userText, activePersonaName: null }),
+    userText,
+    '用户改写的指令永远不得被译文覆盖'
+  )
+  assert.ok(
+    indexSource.includes('en: builtinPresentationMapEn()'),
+    'personaLibrary 的 builtinI18n 必须带上 en'
   )
 })
 

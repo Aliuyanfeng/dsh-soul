@@ -94,6 +94,13 @@ import {
   builtinPersonaPresentationPt,
   builtinPresentationMapPt
 } from './lib/personas-pt.mjs'
+// fork(en): 规范原文是中文，而 en 是宿主强制内置的两种界面之一 —— 没有这一份，
+// 英文用户会在英文界面里读到中文人设名与中文指令。
+import {
+  builtinInstructionForLanguageEn,
+  builtinPersonaPresentationEn,
+  builtinPresentationMapEn
+} from './lib/personas-en.mjs'
 import {
   bindingsPathFor,
   bindingRefusal,
@@ -855,6 +862,7 @@ async function readJsonBody(req) {
 // 每处各写一次 if 就等于让新增语种时漏掉其中一处 —— 而漏掉不会报错，只会让
 // 「某处说中文、某处说日语」这种不一致悄悄存在。
 const PERSONA_LOCALIZERS = {
+  en: { presentationOf: builtinPersonaPresentationEn, instructionFor: builtinInstructionForLanguageEn },
   ru: { presentationOf: builtinPersonaPresentationRu, instructionFor: builtinInstructionForLanguage },
   ja: { presentationOf: builtinPersonaPresentationJa, instructionFor: builtinInstructionForLanguageJa },
   es: { presentationOf: builtinPersonaPresentationEs, instructionFor: builtinInstructionForLanguageEs },
@@ -2430,7 +2438,15 @@ function personaLibrary(config) {
   return {
     personas: mergePersonas(config.personas),
     activeName: resolveActivePersonaName(config),
-    builtinI18n: { ru: builtinPresentationMap(), ja: builtinPresentationMapJa(), es: builtinPresentationMapEs(), fr: builtinPresentationMapFr(), de: builtinPresentationMapDe(), pt: builtinPresentationMapPt() }
+    builtinI18n: {
+      en: builtinPresentationMapEn(),
+      ru: builtinPresentationMap(),
+      ja: builtinPresentationMapJa(),
+      es: builtinPresentationMapEs(),
+      fr: builtinPresentationMapFr(),
+      de: builtinPresentationMapDe(),
+      pt: builtinPresentationMapPt()
+    }
   }
 }
 

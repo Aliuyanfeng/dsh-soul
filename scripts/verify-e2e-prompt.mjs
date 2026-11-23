@@ -42,7 +42,7 @@ import { PROFILE_FIELDS, PERSONA_FIELDS } from '../lib/config.mjs'
 // 会随用例增减漂移，这里不重新抄一遍 —— 真值由 assertCount 在跑完后对账）。
 // 本轮 +6：S11–S16 读的是**注入通道**收到的文本与显示侧报出的名字（S1–S6 只读装配
 // 通道，而这两条通道曾经用不同的解析函数，只测一条就等于没测）。
-const EXPECTED_ASSERTIONS = 150
+const EXPECTED_ASSERTIONS = 152
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_DIR = resolve(HERE, '..')
@@ -710,6 +710,30 @@ async function scenario(entry) {
       'E52 language=pt 明确要求用葡语回答（replyLanguage.pt 生效）',
       ptPrompt.includes('Você deve responder em português'),
       '片段: ' + JSON.stringify(ptPrompt.slice(-160))
+    )
+
+    // —— 英文内置人设（0.16.0）——
+    //
+    // 规范原文是中文；英文用户不应在英文界面/英文输出下读到中文人设指令。
+    // 这里用规范原文本身作为 customInstructions，验证「逐字节匹配才翻译」这条规则
+    // 在 en 上真的接上了。
+    const canonicalMinimal = BUILTIN_PERSONAS['极简主义者'].customInstructions
+    const enBuiltinPreview = await callRoute(ctx, '/api/soul/prompt/preview', {
+      language: 'en',
+      customInstructions: canonicalMinimal
+    })
+    const enBuiltinPrompt = String(enBuiltinPreview.body?.prompt || '')
+    push(
+      'E53 language=en + 内置原文 编译出英文人设指令（且不残留中文）',
+      enBuiltinPrompt.includes('Give only the conclusion and the necessary justification')
+        && !enBuiltinPrompt.includes('只给结论和必要依据'),
+      '片段: ' + JSON.stringify(enBuiltinPrompt.slice(0, 160))
+    )
+    const zhBuiltinPreview = await callRoute(ctx, '/api/soul/prompt/preview', { language: 'zh', customInstructions: canonicalMinimal })
+    push(
+      'E54 language=zh + 内置原文 仍用规范中文（不得被英文版顶掉）',
+      String(zhBuiltinPreview.body?.prompt || '').includes('只给结论和必要依据'),
+      'zh 预览应包含中文原文'
     )
 
   } finally {
