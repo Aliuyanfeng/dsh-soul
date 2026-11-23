@@ -367,6 +367,15 @@ const promptRuSource = (() => {
     return ''
   }
 })()
+// 日语文案表同样是独立模块（理由与 ru 相同：vendored 的 PROMPT_TEXT / COMMAND_MESSAGES
+// 必须保持 {zh, en} 两块，见下方「块数量」断言）。同样留空串交给断言报错。
+const promptJaSource = (() => {
+  try {
+    return readFileSync(new URL('../lib/prompt-ja.mjs', import.meta.url), 'utf8')
+  } catch {
+    return ''
+  }
+})()
 // 断言一律对**去注释后**的源码做匹配：注释里写一句 // const VERSION = '0.0.0' 或
 // // await writeConfigFile(...) 就能骗过裸正则（M5 类，变异实验实测可绕过）。
 // stripComments 长度保持不变，因此位置与字符串内容都不受影响。
@@ -2839,6 +2848,30 @@ check('host 文案表逐键对齐（PROMPT_TEXT / COMMAND_MESSAGES：zh / en / r
     [...ruCommand].sort(),
     'COMMAND_MESSAGES_RU 必须与 en 逐键对齐'
   )
+
+  // 日语表（lib/prompt-ja.mjs）适用同一套保证，措辞与 ru 保持一致。
+  assert.ok(promptJaSource !== '', 'lib/prompt-ja.mjs 应存在（日语文案表）')
+
+  const jaPrompt = localeModuleKeys(promptJaSource, 'export const PROMPT_TEXT_JA = {')
+  assert.ok(jaPrompt.size > 10, `PROMPT_TEXT_JA 键数异常：${jaPrompt.size}`)
+  assert.deepEqual(
+    [...enPrompt].filter((key) => !jaPrompt.has(key)).sort(),
+    [],
+    'PROMPT_TEXT_JA 必须覆盖 PROMPT_TEXT.en 的所有键（缺键 = 日语下少一句话且不报错）'
+  )
+  assert.deepEqual(
+    [...jaPrompt].filter((key) => !enPrompt.has(key)).sort(),
+    ['ja'],
+    'PROMPT_TEXT_JA 只允许比 en 多出 replyLanguage.ja 这一个键'
+  )
+
+  const jaCommand = localeModuleKeys(promptJaSource, 'export const COMMAND_MESSAGES_JA = {')
+  assert.ok(jaCommand.size > 10, `COMMAND_MESSAGES_JA 键数异常：${jaCommand.size}`)
+  assert.deepEqual(
+    [...enCommand].sort(),
+    [...jaCommand].sort(),
+    'COMMAND_MESSAGES_JA 必须与 en 逐键对齐'
+  )
 })
 
 check('每种输出语言都有对应的文案表与 replyLanguage 条目', () => {
@@ -2852,7 +2885,8 @@ check('每种输出语言都有对应的文案表与 replyLanguage 条目', () =
   const sources = {
     zh: langTableText(indexSource, 'PROMPT_TEXT', 'zh'),
     en: langTableText(indexSource, 'PROMPT_TEXT', 'en'),
-    ru: extractObject(promptRuSource, 'export const PROMPT_TEXT_RU = {')
+    ru: extractObject(promptRuSource, 'export const PROMPT_TEXT_RU = {'),
+    ja: extractObject(promptJaSource, 'export const PROMPT_TEXT_JA = {')
   }
   for (const lang of LANGUAGE_VALUES) {
     const text = sources[lang]
@@ -2881,7 +2915,8 @@ check('每种语言的文案表覆盖全部枚举取值（风格 / 特质 / 篇�
   const tables = [
     ['zh', langTableText(indexSource, 'PROMPT_TEXT', 'zh')],
     ['en', langTableText(indexSource, 'PROMPT_TEXT', 'en')],
-    ['ru', extractObject(promptRuSource, 'export const PROMPT_TEXT_RU = {')]
+    ['ru', extractObject(promptRuSource, 'export const PROMPT_TEXT_RU = {')],
+    ['ja', extractObject(promptJaSource, 'export const PROMPT_TEXT_JA = {')]
   ]
   for (const [name, text] of tables) {
     for (const [field, values] of groups) {

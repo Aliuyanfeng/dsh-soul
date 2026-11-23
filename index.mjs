@@ -6,7 +6,7 @@
 //   - 行为（风格/特质/输出语言 → [回复风格]）
 //   - 执行规则（[执行规则]）
 // 固定文案按 config.language 提供：zh / en —— 本文件的 PROMPT_TEXT 文案表；
-// ru —— 独立模块 lib/prompt-ru.mjs（fork，见下方 import 处的说明）。
+// ru / ja —— 独立模块 lib/prompt-ru.mjs / lib/prompt-ja.mjs（fork，见下方 import 处的说明）。
 //
 // 功能：
 //   - 支持自定义 Agent 回复风格和语调
@@ -41,6 +41,10 @@ import {
 // scripts/verify-config.mjs проверяет «блоков tables/replyLength ровно 2» и parity
 // zh/en, поэтому третий язык внутри литералов сломал бы вендорский тест.
 import { PROMPT_TEXT_RU, COMMAND_MESSAGES_RU } from './lib/prompt-ru.mjs'
+// fork(ja): 日本語表も同じ理由で独立模块に置く（ベンダーのリテラルを {zh, en} のまま保つ）。
+// キー集合は en 版と 1:1。ja 表が持つ `replyLanguage.ja` だけが実際に到達可能で、
+// `replyLanguage.zh` / `.en` はキー集合の一致のためだけに存在する。
+import { PROMPT_TEXT_JA, COMMAND_MESSAGES_JA } from './lib/prompt-ja.mjs'
 // fork(ru): локализация встроенных пресетов — только на компиляции промпта и в
 // отображении. Ключи, записи BUILTIN_PERSONAS, activePersonaName, bindings и assets
 // остаются каноническими (design t23), поэтому русские имена никогда не попадают
@@ -410,8 +414,10 @@ const PROMPT_TEXT = {
 
 // 按配置选择文案表（未知语言回退中文）
 // fork(ru): 俄语表在 lib/prompt-ru.mjs，不放进 PROMPT_TEXT（见文件顶部 import 处的说明）。
+// fork(ja): 日语表同理，在 lib/prompt-ja.mjs。
 function promptTextOf(config) {
   if (config && config.language === 'ru') return PROMPT_TEXT_RU
+  if (config && config.language === 'ja') return PROMPT_TEXT_JA
   return PROMPT_TEXT[config && config.language === 'en' ? 'en' : 'zh']
 }
 
@@ -4682,8 +4688,10 @@ const COMMAND_MESSAGES = {
 }
 
 // fork(ru): то же, что promptTextOf — русская таблица команд в lib/prompt-ru.mjs.
+// fork(ja): то же — японская таблица команд в lib/prompt-ja.mjs.
 function commandMessages(config) {
   if (config.language === 'ru') return COMMAND_MESSAGES_RU
+  if (config.language === 'ja') return COMMAND_MESSAGES_JA
   return COMMAND_MESSAGES[config.language === 'en' ? 'en' : 'zh']
 }
 
@@ -5247,7 +5255,7 @@ function registerTools(ctx) {
           language: {
             type: 'string',
             enum: LANGUAGE_VALUES,
-            description: '回复语言：zh=简体中文，en=English，ru=русский。/ Reply language.'
+            description: '回复语言：zh=简体中文，en=English，ru=русский，ja=日本語。/ Reply language.'
           },
           headingLists: {
             type: 'string',
@@ -5458,7 +5466,7 @@ function registerTools(ctx) {
             description: '预设名：把该预设声明的人设字段整套写进去（可再用其它参数覆盖个别字段）。/ Preset name: apply every persona field the preset declares.'
           },
           style: { type: 'string', enum: STYLE_VALUES, description: '回复风格和语调。/ Reply style & tone.' },
-          language: { type: 'string', enum: LANGUAGE_VALUES, description: '输出语言：zh=简体中文，en=English，ru=русский。/ Output language.' },
+          language: { type: 'string', enum: LANGUAGE_VALUES, description: '输出语言：zh=简体中文，en=English，ru=русский，ja=日本語。/ Output language.' },
           headingLists: { type: 'string', enum: TRAIT_VALUES, description: '特质·标题和列表。/ Headings & lists.' },
           emoji: { type: 'string', enum: TRAIT_VALUES, description: '特质·表情符号。/ Emoji usage.' },
           tables: { type: 'string', enum: TRAIT_VALUES, description: '特质·表格。/ Table usage.' },

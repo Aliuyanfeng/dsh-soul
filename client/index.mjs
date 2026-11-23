@@ -3096,7 +3096,7 @@ window.__ModuleLoader__.load({
     // 回复长度偏好（与宿主 lib/config.mjs 的 REPLY_LENGTH_VALUES 对齐）
     const REPLY_LENGTH_VALUES = ['concise', 'normal', 'detailed']
     // 输出语言（与宿主 lib/config.mjs 的 LANGUAGE_VALUES 对齐）
-    const LANGUAGE_VALUES = ['zh', 'en', 'ru']
+    const LANGUAGE_VALUES = ['zh', 'en', 'ru', 'ja']
 
     // 预设行摘要只显示「与默认值不同」的字段——若把 10 个字段全列出来，每行都是
     // 一长串「默认 / 适中」，反而看不出两个预设到底差在哪。默认值须与宿主
@@ -3119,7 +3119,8 @@ window.__ModuleLoader__.load({
     const LANGUAGE_OPTIONS = [
       { value: 'zh', label: '中文' },
       { value: 'en', label: 'English' },
-      { value: 'ru', label: 'Русский' }
+      { value: 'ru', label: 'Русский' },
+      { value: 'ja', label: '日本語' }
     ]
 
     // 设置页字段的三种交互形态。**分组边界就是保存边界**，动 UI 之前先读这段。
