@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 128
+const EXPECTED_ASSERTIONS = 129
 
 // 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
 // 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
@@ -6325,7 +6325,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     }
   })
 
-  await check('C125 locale 词典注册按语言隔离：zh/en 一对，ru / ja 各自一个 effect', async () => {
+  await check('C125 locale 词典注册按语言隔离：zh/en 一对，其余逐门一个 effect', async () => {
     // 宿主对同一 (ns, locale) 第二次 register 会抛 "already has locale"，而且是
     // 「先全量校验、再写入」：一次调用里只要有一门语言重复，整次一条都不写。
     // 因此 ru / ja 必须各自单独 register —— 外部语言包（dsh-soul-ru-lang）撞车时
@@ -6339,21 +6339,31 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.match(helper[0], /catch \(error\)/, 'registerDicts 必须有 catch')
     assert.match(helper[0], /return \(\) => \{\}/, 'catch 必须返回空 disposer（effect 契约）')
 
-    // 逐条检查每一次 register：要么单门附加语言，要么 zh/en 成对。
-    // 写成「按实际调用集合检查」而不是点名 ru / ja —— 加语言时不需要回来改断言。
-    const langListOf = (call) => call.replace(/[{}]/g, ' ').split(/[^a-z]+/).filter(Boolean)
-    const calls = [...source.matchAll(/ctx\.effect\(\(\) => registerDicts\((\{[^}]*\})\),/g)].map((m) => m[1])
-    assert.ok(calls.length >= 2, '至少要有「zh/en 一对」与「每门附加语言一个」两组注册')
-    const pair = calls.find((call) => langListOf(call).includes('zh'))
-    assert.ok(pair && langListOf(pair).includes('en'), 'zh / en 必须成对注册（宿主要求两个内置 locale 齐全）')
-    for (const call of calls) {
-      const langs = langListOf(call)
-      const isPair = langs.length === 2 && langs.includes('zh') && langs.includes('en')
-      assert.ok(
-        langs.length >= 1 && (langs.length === 1 || isPair),
-        `一次 register 只能含一门语言（zh / en 成对除外），否则撞车会连坐：${call}`
-      )
-    }
+    // zh / en 必须成对注册（宿主要求两个内置 locale 齐全）。
+    assert.ok(
+      source.includes("ctx.effect(() => registerDicts({ zh, en }),"),
+      '缺少 zh/en 成对注册'
+    )
+    // 其余语言由 EXTRA_DICTS 表驱动，一门一次 register —— 撞车只影响自己。
+    // 这张表同时是「有没有漏注册」的静态判据：只加词典不加表，该语言会静默回退英文。
+    const extra = source.match(/const EXTRA_DICTS = \{([^}]*)\}/)
+    assert.ok(extra, '缺少 EXTRA_DICTS 表')
+    const extraLocales = extra[1].split(',').map((v) => v.trim()).filter(Boolean)
+    assert.deepEqual(
+      [...new Set(extraLocales)].sort(),
+      EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh' && locale !== 'en').sort(),
+      'EXTRA_DICTS 必须与已内置的附加语言一一对应（漏一个 = 该语言静默回退英文）'
+    )
+    assert.ok(
+      source.includes('for (const [locale, dict] of Object.entries(EXTRA_DICTS))'),
+      '附加语言必须逐门注册（循环），不能合并成一次 register'
+    )
+    assert.ok(source.includes('registerDicts({ [locale]: dict })'), '每次 register 只能含一门语言')
+    assert.equal(
+      /registerDicts\(\{ zh, en,[^}]*\}/.test(source),
+      false,
+      'zh/en 的 register 不得夹带其它语言'
+    )
   })
 
   await check('C134 各门界面语言词典键集与占位符一致，日语不是中文原文', async () => {
@@ -6616,6 +6626,19 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       '输出=zh 时不得显示日语译文 —— 界面语言不该决定提示词文本'
     )
     assert.ok(whenZh.includes('CANONICAL'), '输出=zh 时应显示规范原文')
+  })
+
+  await check('C135 每份内置词典都真的注册了（否则该语言静默回退英文）', async () => {
+    // 这条是 0.16.0 的一次真实事故：es / fr / de / pt 四份词典都写进了文件，
+    // 注册却只写了 ru / ja —— 切到西语仍是英文，而且没有任何报错。静态断言只能看到
+    // 「表里写了什么」，这条看的是**装配之后真的注册了什么**。
+    const world = await boot()
+    const registered = Object.keys(world.dicts || {}).sort()
+    assert.deepEqual(
+      registered,
+      [...EXPECTED_DICT_LOCALES].sort(),
+      `实际注册的语言：${registered.join('/') || '（无）'} —— 缺的那门会显示英文`
+    )
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

@@ -11485,9 +11485,19 @@ window.__ModuleLoader__.load({
           return () => {}
         }
       }
+      // 附加语言：一门一个 effect，全部由这张表驱动。
+      // **新增语种必须同时加进这里** —— 只加词典不加表，那份词典永远不会被注册，
+      // 界面会静默回退成英文（0.16.0 就这么漏过一次：es / fr / de / pt 四份词典都写好了，
+      // 注册却只有 ru / ja，切到西语看到的还是英文）。现在由 verify-client 的
+      // 「每份词典都真的注册了」这条断言兜住。
+      const EXTRA_DICTS = { ru, ja, es, fr, de, pt }
       ctx.effect(() => registerDicts({ zh, en }), 'dsh-soul: dictionaries (zh/en)')
-      ctx.effect(() => registerDicts({ ru }), 'dsh-soul: dictionaries (ru)')
-      ctx.effect(() => registerDicts({ ja }), 'dsh-soul: dictionaries (ja)')
+      for (const [locale, dict] of Object.entries(EXTRA_DICTS)) {
+        ctx.effect(
+          () => registerDicts({ [locale]: dict }),
+          `dsh-soul: dictionaries (${locale})`
+        )
+      }
 
       // UI-локаль для отображаемых имён встроенных пресетов (t26): собственный snapshot
       // + подписка с teardown. Глобальных listener'ов не оставляем — отписка в cleanup.
