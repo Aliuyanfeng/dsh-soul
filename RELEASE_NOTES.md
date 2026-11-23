@@ -30,7 +30,7 @@
 - 开启后，发送过的消息上方会留一枚「N 个已选文本片段」胶囊，hover 看引用原文。胶囊按**消息唯一 id** 绑定（`user/message` 的 `data.id` = DOM 的 `data-chat-node-key` 尾段），不随轮次迁移，也不会被后续消息顶掉
 - 排队消息不带引用：队列项数量减少时引用立即失效 —— 它只属于「我按发送的那一条」
 
-**斜杠命令**（输出语言跟随配置 `language`，中英文案）
+**斜杠命令**（输出语言跟随配置 `language`：zh / en / ru / ja）
 
 ```text
 /soul show        查看当前配置（含确认模式与预设数量）
@@ -84,6 +84,45 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 ---
 
 ## 版本历史
+
+### v0.15.0（2026-11-23）
+
+主题是**日语**：把「输出语言」从三种扩到四种（zh / en / ru / ja）。改动全部落在文案层 ——
+不新增依赖、不改存储格式、不动人设与绑定，`zh` / `en` / `ru` 三条路径逐字节不变。
+
+**新增：日语作为输出语言**
+
+- `language=ja`：system prompt 的段头与固定文案换成日语（`lib/prompt-ja.mjs`，38 条提示词 +
+  66 条命令消息），`/soul` 的命令回显同样是日语，Agent 按要求用日语回答。
+- 设置页「输出语言」下拉新增 **日本語**；`set_persona` / `set_subagent_persona` 的 `language`
+  枚举同步扩展。
+- 与 zh / en / ru 完全同构：`promptTextOf` / `commandMessages` 各多一个分支，未知语言仍回退中文。
+- 日语表放在**独立模块**，而不是往 `PROMPT_TEXT` / `COMMAND_MESSAGES` 里加第四个键：
+  `verify-config` 中「恰好两张表」「zh / en 键对齐」等既有断言因此一条都不用放宽，
+  新增检查全部是纯新增（与 v0.14.0 的俄语同一手法）。
+- 术语沿用既有英文原词（セッション / ワークスペース / プリセット / スキル / サブエージェント），
+  不做意译 —— 否则同一条提示词里会出现「セッション」与「対話」两套说法。
+
+**已知限制（本版范围）**
+
+- **内置人设没有日语本地化**：`builtinInstructionForLanguage()` 目前只认 `ru`，`language=ja`
+  时 7 个内置人设的名称 / 简介 / 指令仍是中文。v0.14.0 的俄语人设是单独一轮做的（含 SHA256
+  指纹门），日语照那条路补，属于后续版本。
+- **插件自身 UI 文案没有日语包**：`locale/` 仍是 zh / en / ru，日语用户设置页回退中文 / 英文。
+  那是 overlay 语言包那一层，与输出语言无关（同 v0.14.0 的说明）。
+
+**验证**
+
+- 四套文案表（zh / en / ru / ja）逐键对齐：`PROMPT_TEXT_JA` = en 的 38 键 + `replyLanguage.ja`，
+  `COMMAND_MESSAGES_JA` = 66 键与 en 完全一致；每种语言都有 `replyLanguage.<自己>` 且可达（`verify-config`）。
+- 日语的新检查按俄语同等强度落位：模块存在、覆盖全部 en 键、只多 `replyLanguage.ja`、命令表键对齐；
+  既有 zh / en / ru 断言未放宽一条。
+- 26 个格式化函数的参数个数与 en 表逐一对齐；无空串；6 个改动文件无零宽 / 双向控制字符。
+- 合并前 `verify-config` / `verify-client` / `verify-e2e-prompt` / `verify-trail` / `verify-nav-icon`
+  全绿，CI 的 `verify` 同样通过；`verify-live-prompt` / `verify-compat` 的失败在 base 上同样复现，
+  属本地宿主版本差异，与本版无关。
+
+贡献：@kgmkm（#8）。
 
 ### v0.14.0（2026-11-19）
 

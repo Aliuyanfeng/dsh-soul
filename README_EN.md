@@ -27,9 +27,9 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
   - Emoji: `default`, `more` (frequent emoji usage), `less` (minimal emoji usage)
   - Tables: `default`, `more` (prefer tables for comparisons and multi-field data), `less` (avoid tables; use lists or paragraphs)
 - Reply length preference: `concise` (key points only), `normal` (no extra constraint, default), `detailed` (expand background, steps and reasoning)
-- Output language (agent reply language + `/soul` command output language): Chinese, English or Russian. It is a **global switch**, not a persona trait — so presets do not store it, and subagents follow it too (turning off inheritance does not change the language). It localizes the **prompt and the replies**
+- Output language (agent reply language + `/soul` command output language): Chinese, English, Russian or Japanese. It is a **global switch**, not a persona trait — so presets do not store it, and subagents follow it too (turning off inheritance does not change the language). It localizes the **prompt and the replies**
   - **UI text is a separate layer, unrelated to the output language:** DSH ≥ 0.2.2 ships a Russian UI (it appends ja / es / fr / de / ru / pt at runtime via `addLanguage`); this plugin's own strings (settings page, sidebar, ~400 keys) come from the overlay language pack [`dsh-soul-ru-lang`](https://github.com/zznobzz/dsh-soul-ru-lang#readme) — without it they fall back to Chinese/English (see [Installation](#installation))
-- The compiled system prompt follows the output language (English / Russian descriptions when `language=en` / `ru`)
+- The compiled system prompt follows the output language (English / Russian / Japanese descriptions when `language=en` / `ru` / `ja`)
 - Custom instructions
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
 - Named personas: 7 built-in personas (Socratic Questioner / Minimalist / Senior Architect / Teaching Explainer / Strict Code Reviewer / Brainstorm Partner / Self-Driven Collaborator — shipped with the plugin, cannot be deleted) plus your own named personas, switched with one click (save / use / list / delete, in both the Web UI and slash commands); each row summarises the style and every dimension that differs from its default
