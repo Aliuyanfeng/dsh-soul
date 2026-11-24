@@ -1620,6 +1620,9 @@ window.__ModuleLoader__.load({
       '.soul-persona-dim span{flex:none;color:var(--dsw-alias-label-tertiary)}',
       '.soul-persona-dim b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-weight:500}',
       '.soul-persona-back-label{flex:none;margin-top:2px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}',
+      '.soul-persona-back-note{margin:4px 0 2px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}',
+      '.soul-language-use-ui{margin-left:8px;padding:2px 8px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;cursor:pointer}',
+      '.soul-language-use-ui:hover{text-decoration:underline}',
       // 全文：**不截断**（正面效果栏才截断）。
       // 滚动放在**这一块自己**身上（不是 face），这样「返回」按钮始终贴在卡底可见 ——
       // 实测把 overflow-y 放 face 上时，长文本会把按钮一起推出视野并被文字压住。
@@ -2637,7 +2640,10 @@ window.__ModuleLoader__.load({
       'trail.width.thick': '粗',
       'trail.preview': '效果示例',
       'trail.previewText': 'Agent 回复时，输入框边框会出现流动的光轨',
-      'hint.trail': 'Agent 回复期间，输入框边框显示沿边流动的光轨。点击色块、使用取色器，或直接填写十六进制色值（如 #679EFE）。'
+      'hint.trail': 'Agent 回复期间，输入框边框显示沿边流动的光轨。点击色块、使用取色器，或直接填写十六进制色值（如 #679EFE）。',
+      'field.languageUseUi': '改用界面语言（{language}）',
+      'hint.languageUseUi': '把输出语言设为当前的界面语言。只改这一次，之后仍可手动切换。',
+      'personas.instructionsLangNote': '指令正文按输出语言显示（当前：{language}）'
     }
 
     const en = {
@@ -3063,7 +3069,10 @@ window.__ModuleLoader__.load({
       'trail.width.thick': 'Thick',
       'trail.preview': 'Preview',
       'trail.previewText': 'While the agent is replying, a light trail runs along the composer border',
-      'hint.trail': 'While the agent is replying, a light trail runs along the composer border. Pick a swatch, use the color picker, or type a hex value (e.g. #679EFE).'
+      'hint.trail': 'While the agent is replying, a light trail runs along the composer border. Pick a swatch, use the color picker, or type a hex value (e.g. #679EFE).',
+      'field.languageUseUi': 'Use interface language ({language})',
+      'hint.languageUseUi': 'Set the output language to the current interface language. This changes it once; you can still switch manually later.',
+      'personas.instructionsLangNote': 'Instruction text follows the output language (currently: {language})'
     }
 
     // ru 词典：并入自 dsh-soul-ru-lang@0.1.0（MIT，Copyright (c) 2026 dsh-soul-ru-lang
@@ -3472,6 +3481,9 @@ window.__ModuleLoader__.load({
       'trail.preview': 'Предпросмотр',
       'trail.previewText': 'Пока агент отвечает, по рамке поля ввода бежит световой след',
       'hint.trail': 'Пока агент отвечает, по рамке поля ввода бежит световой след. Выберите образец цвета, воспользуйтесь пипеткой или введите hex-значение (например #679EFE).',
+      'field.languageUseUi': 'Использовать язык интерфейса ({language})',
+      'hint.languageUseUi': 'Установить язык ответа равным текущему языку интерфейса. Это разовое изменение, позже можно переключить вручную.',
+      'personas.instructionsLangNote': 'Текст инструкций зависит от языка ответа (сейчас: {language})'
     }
 
     // ja 词典：本仓库自行翻译（0.16.0）。键集与键序必须与 zh 完全一致（verify-client
@@ -3907,7 +3919,10 @@ window.__ModuleLoader__.load({
       'trail.width.thick': '太い',
       'trail.preview': '表示例',
       'trail.previewText': 'Agent が返答している間、入力欄の枠に光の軌跡が流れます',
-      'hint.trail': 'Agent が返信している間、入力欄の枠に沿って光の軌跡が流れます。色見本を押すか、カラーピッカーを使うか、16 進数の色（例：#679EFE）を直接入力してください。'
+      'hint.trail': 'Agent が返信している間、入力欄の枠に沿って光の軌跡が流れます。色見本を押すか、カラーピッカーを使うか、16 進数の色（例：#679EFE）を直接入力してください。',
+      'field.languageUseUi': 'インターフェース言語を使う（{language}）',
+      'hint.languageUseUi': '出力言語を現在のインターフェース言語に合わせます。今回だけで、あとから手動で切り替えられます。',
+      'personas.instructionsLangNote': '指令の本文は出力言語で表示されます（現在：{language}）'
     }
 
     // es 词典：本仓库自行翻译（0.16.0）。键集与键序必须与 zh 完全一致（verify-client
@@ -4340,7 +4355,10 @@ window.__ModuleLoader__.load({
       'trail.width.thick': 'Grueso',
       'trail.preview': 'Ejemplo',
       'trail.previewText': 'Mientras el agente responde, el borde del campo de entrada muestra una estela luminosa',
-      'hint.trail': 'Mientras el agente responde, el borde del campo de entrada muestra una estela en movimiento. Pulsa una muestra de color, usa el cuentagotas o escribe un valor hexadecimal (p. ej. #679EFE).'
+      'hint.trail': 'Mientras el agente responde, el borde del campo de entrada muestra una estela en movimiento. Pulsa una muestra de color, usa el cuentagotas o escribe un valor hexadecimal (p. ej. #679EFE).',
+      'field.languageUseUi': 'Usar el idioma de la interfaz ({language})',
+      'hint.languageUseUi': 'Fija el idioma de salida en el idioma actual de la interfaz. Solo cambia esta vez; después puedes cambiarlo a mano.',
+      'personas.instructionsLangNote': 'El texto de las instrucciones sigue el idioma de salida (ahora: {language})'
     }
 
     // fr 词典：本仓库自行翻译（0.16.0）。键集与键序必须与 zh 完全一致（verify-client
@@ -4773,7 +4791,10 @@ window.__ModuleLoader__.load({
       'trail.width.thick': 'Épaisse',
       'trail.preview': 'Exemple',
       'trail.previewText': 'Pendant que l’agent répond, le bord du champ de saisie affiche une traînée lumineuse',
-      'hint.trail': 'Pendant que l’agent répond, une traînée lumineuse parcourt le bord du champ de saisie. Clique sur un échantillon, utilise la pipette ou saisis une valeur hexadécimale (par ex. #679EFE).'
+      'hint.trail': 'Pendant que l’agent répond, une traînée lumineuse parcourt le bord du champ de saisie. Clique sur un échantillon, utilise la pipette ou saisis une valeur hexadécimale (par ex. #679EFE).',
+      'field.languageUseUi': 'Utiliser la langue de l’interface ({language})',
+      'hint.languageUseUi': 'Définit la langue de sortie sur la langue actuelle de l’interface. Changement unique ; vous pourrez la changer à la main ensuite.',
+      'personas.instructionsLangNote': 'Le texte des instructions suit la langue de sortie (actuellement : {language})'
     }
 
     // de 词典：本仓库自行翻译（0.16.0）。键集与键序必须与 zh 完全一致（verify-client
@@ -5206,7 +5227,10 @@ window.__ModuleLoader__.load({
       'trail.width.thick': 'Dick',
       'trail.preview': 'Beispiel',
       'trail.previewText': 'Während der Agent antwortet, zeigt der Rand des Eingabefelds eine Lichtspur',
-      'hint.trail': 'Während der Agent antwortet, läuft eine Lichtspur am Rand des Eingabefelds entlang. Klicke ein Farbmuster, nutze die Pipette oder gib einen Hex-Wert ein (z. B. #679EFE).'
+      'hint.trail': 'Während der Agent antwortet, läuft eine Lichtspur am Rand des Eingabefelds entlang. Klicke ein Farbmuster, nutze die Pipette oder gib einen Hex-Wert ein (z. B. #679EFE).',
+      'field.languageUseUi': 'Sprache der Oberfläche verwenden ({language})',
+      'hint.languageUseUi': 'Setzt die Ausgabesprache auf die aktuelle Oberflächensprache. Nur dieses eine Mal; später lässt sie sich weiterhin manuell umstellen.',
+      'personas.instructionsLangNote': 'Der Anweisungstext folgt der Ausgabesprache (aktuell: {language})'
     }
 
     // pt 词典：本仓库自行翻译（0.16.0）。键集与键序必须与 zh 完全一致（verify-client
@@ -5639,7 +5663,10 @@ window.__ModuleLoader__.load({
       'trail.width.thick': 'Grossa',
       'trail.preview': 'Exemplo',
       'trail.previewText': 'Enquanto o agente responde, a borda do campo de entrada mostra um rastro luminoso',
-      'hint.trail': 'Enquanto o agente responde, um rastro luminoso corre pela borda do campo de entrada. Clique em uma amostra, use o conta-gotas ou digite um valor hexadecimal (por ex. #679EFE).'
+      'hint.trail': 'Enquanto o agente responde, um rastro luminoso corre pela borda do campo de entrada. Clique em uma amostra, use o conta-gotas ou digite um valor hexadecimal (por ex. #679EFE).',
+      'field.languageUseUi': 'Usar o idioma da interface ({language})',
+      'hint.languageUseUi': 'Define o idioma de saída como o idioma atual da interface. Muda só desta vez; depois você pode trocar à mão.',
+      'personas.instructionsLangNote': 'O texto das instruções segue o idioma de saída (agora: {language})'
     }
 
     // 图标替换匹配的导航文案（词典中 nav.label 的全部语言取值）。
@@ -5703,6 +5730,12 @@ window.__ModuleLoader__.load({
       { value: 'de', label: 'Deutsch' },
       { value: 'pt', label: 'Português' }
     ]
+
+    // 语言代码 → 展示名（按钮「用界面语言（Español）」需要它）。未知代码原样返回。
+    const languageNameOf = (value) => {
+      const option = LANGUAGE_OPTIONS.find((item) => item.value === value)
+      return option ? option.label : String(value)
+    }
 
     // 设置页字段的三种交互形态。**分组边界就是保存边界**，动 UI 之前先读这段。
     //
@@ -10805,6 +10838,11 @@ window.__ModuleLoader__.load({
                             ))
                           ),
                           e('div', { className: 'soul-persona-back-label' }, t('personas.customInstructions')),
+                          // 界面语言 ≠ 输出语言时，卡名与指令正文会不同语言 —— 这不是漏翻，
+                          // 而是「正文必须显示模型实际收到的东西」。一句话把它说清楚。
+                          builtin && uiLocale !== language && e('div', { className: 'soul-persona-back-note' },
+                            t('personas.instructionsLangNote', { language: languageNameOf(language) })
+                          ),
                           e('div', { className: 'soul-persona-fulltext' }, personaFullText(promptEntryOf(name))),
                           // 底部按钮行：「返回」+「删除」（仅自建卡）。
                           // 「删除」从正面移到这里（用户反馈正面三钮拥挤、夹缝观感差）：
@@ -10974,7 +11012,16 @@ window.__ModuleLoader__.load({
                 value: language,
                 options: LANGUAGE_OPTIONS,
                 onChange: (next) => void saveImmediate('language', next)
-              })
+              }),
+              // 一次性快捷方式：把输出语言设成当前界面语言。
+              // 刻意**不做自动联动** —— 那会在切界面语言时静默写配置、产生审计与注入噪音，
+              // 多标签页还会互相覆盖。这里只在用户主动点击时改一次。
+              uiLocale !== language && LANGUAGE_OPTIONS.some((option) => option.value === uiLocale) && e('button', {
+                type: 'button',
+                className: 'soul-language-use-ui',
+                title: t('hint.languageUseUi'),
+                onClick: () => void saveImmediate('language', uiLocale)
+              }, t('field.languageUseUi', { language: languageNameOf(uiLocale) }))
             ),
 
             e(SoulSwitch, {

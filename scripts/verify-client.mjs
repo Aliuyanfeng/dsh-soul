@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 129
+const EXPECTED_ASSERTIONS = 130
 
 // 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
 // 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
@@ -6385,7 +6385,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 401, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 404, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -6635,6 +6635,47 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       registered,
       [...EXPECTED_DICT_LOCALES].sort(),
       `实际注册的语言：${registered.join('/') || '（无）'} —— 缺的那门会显示英文`
+    )
+  })
+
+  await check('C136 输出语言行提供一次性「用界面语言」按钮，且卡背注明指令语言', async () => {
+    // 界面=es、输出=zh：按钮应出现，标签带界面语言名；点击只提交 language 一个字段。
+    const world = await boot({}, personaFixture(), { locale: 'es' })
+    let tree = await renderSettings(world)
+    // 输出语言在「交互与界面」分组里，默认折叠 —— 先展开再找。
+    const groupBtn = findAll(tree, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.tool']))[0]
+    assert.ok(groupBtn, '前置条件：应存在「交互与界面」分组')
+    await groupBtn.props.onClick()
+    tree = await renderSettingsSettled(world)
+    const button = findAll(tree, (n) => n.type === 'button' && textOf(n).includes('改用界面语言'))[0]
+    assert.ok(button, '输出语言行应有「用界面语言」按钮')
+    assert.ok(textOf(button).includes('Español'), '按钮标签应带界面语言名')
+    assert.ok(String(button.props.title || '').includes('只改这一次'), 'title 应说明这是一次性操作')
+
+    await button.props.onClick()
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    const calls = fetchCalls.filter((c) => c.path === '/api/soul/config' && c.method === 'POST')
+    assert.equal(calls.length, 1, '点击应只发一次保存请求')
+    assert.deepEqual(calls[0].body, { language: 'es' }, '只提交 language，不夹带其它字段')
+
+    // 界面语言与输出语言一致时按钮不出现（没有可切的东西）。
+    const same = await boot({}, personaFixture(), { locale: 'zh' })
+    let sameTree = await renderSettings(same)
+    const sameGroupBtn = findAll(sameTree, (n) => n.type === 'button' && textOf(n).includes(same.dicts.zh['group.tool']))[0]
+    await sameGroupBtn.props.onClick()
+    sameTree = await renderSettingsSettled(same)
+    assert.equal(
+      findAll(sameTree, (n) => n.type === 'button' && textOf(n).includes('改用界面语言')).length,
+      0,
+      '界面语言 = 输出语言时不应出现该按钮'
+    )
+
+    // 卡背说明：只在「内置卡 + 界面语言 ≠ 输出语言」时出现（自建卡的正文是用户自己的话，
+    // 与语言无关，标注反而误导）。
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    assert.ok(
+      source.includes("builtin && uiLocale !== language && e('div', { className: 'soul-persona-back-note' }"),
+      '卡背说明必须带「内置 + 语言不一致」两个前提'
     )
   })
 
