@@ -59,7 +59,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 188
+const EXPECTED_ASSERTIONS = 189
 
 let passed = 0
 const failures = []
@@ -535,6 +535,19 @@ check('DEFAULT_CONFIG 含光轨默认值', () => {
   assert.equal(DEFAULT_CONFIG.trailColor, '#679EFE')
   assert.equal(DEFAULT_CONFIG.trailSpeed, 'slow')
   assert.equal(DEFAULT_CONFIG.trailWidth, 'thin')
+})
+
+// 侧栏运行指示：与光轨是一对开关，默认开启（宿主那个 14px 环太难看到）。
+// 关掉必须真的回到宿主原样，所以默认值只能是布尔，不能是 undefined ——
+// 老的配置文件里没有这个键，走 DEFAULT 时必须是 true，而不是「关」。
+check('DEFAULT_CONFIG：侧栏运行指示默认开启，脏数据回退为 true', () => {
+  assert.equal(DEFAULT_CONFIG.runIndicatorEnabled, true)
+  const { patch } = sanitizeConfig({ runIndicatorEnabled: false })
+  assert.equal(patch.runIndicatorEnabled, false, '显式 false 必须能关掉')
+  const dirty = migrateConfig({ runIndicatorEnabled: 'yes' })
+  assert.equal(dirty.runIndicatorEnabled, true, '非布尔脏数据应回退为默认 true')
+  const { errors } = sanitizeConfig({ runIndicatorEnabled: 1 })
+  assert.ok(errors.runIndicatorEnabled, '非布尔值应报错')
 })
 
 // 「引用作为上下文」默认关闭：官方 dsh-message-quotes 已内置等价交互（选中文本 → 引用，

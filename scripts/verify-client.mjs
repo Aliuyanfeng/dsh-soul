@@ -5687,7 +5687,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 在 380px 弹层里把标题挤成「一个字一行」，而且拿不到 .soul-toggle 那套
     // appearance:none 重绘 —— 用户就是指着这个弹窗说要「和其他地方统一」。
     const soulSwitchUses = (source.match(/e\(SoulSwitch, \{/g) || []).length
-    assert.equal(soulSwitchUses, 8, `应有 8 处使用 SoulSwitch，实际 ${soulSwitchUses}`)
+    assert.equal(soulSwitchUses, 9, `应有 9 处使用 SoulSwitch，实际 ${soulSwitchUses}`)
 
     // 每个开关都要有无障碍标签（宿主 Switch 用 label 而非可见文字）
     for (const sw of switches) {
@@ -6385,7 +6385,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 404, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 406, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -6683,7 +6683,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
     // ① 环：放大 + 染色 + 光晕，但**静态** —— 唯一允许动的是边框，两处同时动会吵。
-    const ring = source.match(/'\[data-row-key\] svg\[data-state="ongoing"\]\{([^}]*)\}'/)
+    const ring = source.match(/'\[data-soul-run="on"\] \[data-row-key\] svg\[data-state="ongoing"\]\{([^}]*)\}'/)
     assert.ok(ring, '缺少侧栏运行指示规则')
     assert.match(ring[1], /width:16px/, '运行中的环应放大到 16px')
     assert.match(ring[1], /var\(--soul-trail-color,#679EFE\)/, '颜色应跟随光轨并带回退')
@@ -6691,7 +6691,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.equal(/animation:/.test(ring[1]), false, '环不再呼吸：动效只能有一处')
 
     // ② 极淡 wash + 只加粗标题（静态，负责扫读）
-    const wash = source.match(/'\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)\{([^}]*)\}'/)
+    const wash = source.match(/'\[data-soul-run="on"\] \[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)\{([^}]*)\}'/)
     assert.ok(wash, '缺少运行中会话行的底色 wash')
     assert.match(wash[1], /background-image:linear-gradient/, 'wash 用 background-image 叠，避免盖掉 hover 背景')
     assert.match(wash[1], /7%,transparent/, 'wash 应很淡（7%）')
@@ -6701,7 +6701,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 角度必须由 @property 注册才能插值；整条规则包在 @supports 里，mask 不支持时
     // 退回「没有边框」，而不是变成一整块渐变盖住文字。
     assert.ok(source.includes('@property --soul-run-angle'), '角度必须注册 @property 才能做旋转插值')
-    const border = source.match(/'@supports \(mask-composite:exclude\)\{\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)::before\{([^}]*)\}\}'/)
+    const border = source.match(/'@supports \(mask-composite:exclude\)\{\[data-soul-run="on"\] \[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)::before\{([^}]*)\}\}'/)
     assert.ok(border, '缺少流光边框规则，或没包在 @supports 里（mask 不支持时会糊住整行）')
     for (const [pattern, why] of [
       [/position:absolute/, '伪元素在 flex 行里必须绝对定位，否则会占位'],
@@ -6737,6 +6737,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       .find(
         (line) =>
           line.includes('prefers-reduced-motion') &&
+          line.includes('data-soul-run="on"') &&
           line.includes('data-row-key^="session:"') &&
           line.includes('::before')
       )
@@ -6754,6 +6755,39 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       /\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)\{[^}]*box-shadow:inset 2px 0/.test(source),
       false,
       '不得再给会话行加左侧光带'
+    )
+
+    // 总闸：所有运行态样式必须挂在 [data-soul-run="on"] 下，属性由开关投射。
+    // 反向钉住「没有前缀的裸规则」—— 漏一条就等于开关关不掉那一部分。
+    assert.match(
+      source,
+      /'\[data-soul-run="on"\] \[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)>span:nth-child\(2\)\{font-weight:600\}'/,
+      '加粗也必须受开关控制'
+    )
+    assert.equal(
+      /'\[data-row-key\] svg\[data-state="ongoing"\]\{/.test(source),
+      false,
+      '不得存在不受开关控制的运行态规则（漏一条 = 关不干净）'
+    )
+    assert.match(
+      source,
+      /root\.dataset\.soulRun = snapshot\.runIndicatorEnabled === false \? 'off' : 'on'/,
+      '开关必须投射到 :root 的 data-soul-run 属性'
+    )
+    assert.match(
+      source,
+      /id: 'soul-runIndicatorEnabled'[\s\S]{0,220}checked: runIndicatorEnabled !== false/,
+      '设置页应有一个默认开启的「侧栏运行指示」开关'
+    )
+    // 与光轨开关相邻：中间不许夹其它字段（两个开关是一对，颜色/速度共用一份配置）。
+    const trailSwitchAt = source.indexOf("id: 'soul-trailEnabled'")
+    const runSwitchAt = source.indexOf("id: 'soul-runIndicatorEnabled'")
+    assert.ok(trailSwitchAt > 0 && runSwitchAt > trailSwitchAt, '新开关应排在光轨开关之后')
+    const between = source.slice(trailSwitchAt + "id: 'soul-trailEnabled'".length, runSwitchAt)
+    assert.equal(
+      (between.match(/id: 'soul-[a-zA-Z]+'/g) || []).length,
+      0,
+      '两个开关之间不得夹其它控件'
     )
 
     // 颜色投射：CSS 变量只能从 documentElement 取，缺这段则侧栏永远是默认色
