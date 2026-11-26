@@ -53,7 +53,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
   - Colour and speed read the same light-trail settings; the two switches sit next to each other on the settings page
   - Turning it off returns the row completely to the host's own look (tint, weight and border all disappear); the host's 14px status ring stays as it is
   - Under "reduce motion" the border becomes a static outline
-  - Directly under the switch there is an "Off / On" two-pane comparison; both panes are really rendered (the "On" pane hard-codes `data-soul-run="on"`, so the same four sidebar rules apply), sharing one stylesheet with the live UI. It is a **fixed illustration**: it reads neither the switch nor any config state, so toggling the switch does not change it; colour and speed still follow, because it reads the same theme variables
+  - Directly under the switch there is an "Off / On" two-pane comparison; both panes are really rendered (the "On" pane hard-codes `data-soul-run-row="on"` on the row itself, so the same four sidebar rules apply), sharing one stylesheet with the live UI. It is a **fixed illustration**: it reads neither the switch nor any config state, so toggling the switch does not change it; colour and speed still follow, because it reads the same theme variables. It uses its own attribute rather than `data-row-key`: with the switch on, the page-level `[data-soul-run="on"]` would also match a `data-row-key` row and light up the "Off" pane
 - `/soul set` key=value field updates
 - Configuration persisted to disk
 - Input validation: field whitelist, types, length limits (nickname/occupation 50, bio 500, custom instructions 2000 chars), enum and hex-color checks; invalid or oversized fields reject the whole write

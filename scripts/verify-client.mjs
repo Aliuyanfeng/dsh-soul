@@ -6683,7 +6683,9 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
     // ① 环：放大 + 染色 + 光晕，但**静态** —— 唯一允许动的是边框，两处同时动会吵。
-    const ring = source.match(/'\[data-soul-run="on"\] \[data-row-key\] svg\[data-state="ongoing"\]\{([^}]*)\}'/)
+    const ring = source.match(
+      /'\[data-soul-run="on"\] \[data-row-key\] svg\[data-state="ongoing"\],\[data-soul-run-row="on"\] svg\[data-state="ongoing"\]\{([^}]*)\}'/
+    )
     assert.ok(ring, '缺少侧栏运行指示规则')
     assert.match(ring[1], /width:16px/, '运行中的环应放大到 16px')
     assert.match(ring[1], /var\(--soul-trail-color,#679EFE\)/, '颜色应跟随光轨并带回退')
@@ -6691,7 +6693,9 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.equal(/animation:/.test(ring[1]), false, '环不再呼吸：动效只能有一处')
 
     // ② 极淡 wash + 只加粗标题（静态，负责扫读）
-    const wash = source.match(/'\[data-soul-run="on"\] \[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)\{([^}]*)\}'/)
+    const wash = source.match(
+      /'\[data-soul-run="on"\] \[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\),\[data-soul-run-row="on"\]:has\(svg\[data-state="ongoing"\]\)\{([^}]*)\}'/
+    )
     assert.ok(wash, '缺少运行中会话行的底色 wash')
     assert.match(wash[1], /background-image:linear-gradient/, 'wash 用 background-image 叠，避免盖掉 hover 背景')
     assert.match(wash[1], /7%,transparent/, 'wash 应很淡（7%）')
@@ -6701,7 +6705,9 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 角度必须由 @property 注册才能插值；整条规则包在 @supports 里，mask 不支持时
     // 退回「没有边框」，而不是变成一整块渐变盖住文字。
     assert.ok(source.includes('@property --soul-run-angle'), '角度必须注册 @property 才能做旋转插值')
-    const border = source.match(/'@supports \(mask-composite:exclude\)\{\[data-soul-run="on"\] \[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)::before\{([^}]*)\}\}'/)
+    const border = source.match(
+      /'@supports \(mask-composite:exclude\)\{\[data-soul-run="on"\] \[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)::before,\[data-soul-run-row="on"\]:has\(svg\[data-state="ongoing"\]\)::before\{([^}]*)\}\}'/
+    )
     assert.ok(border, '缺少流光边框规则，或没包在 @supports 里（mask 不支持时会糊住整行）')
     for (const [pattern, why] of [
       [/position:absolute/, '伪元素在 flex 行里必须绝对定位，否则会占位'],
@@ -6761,7 +6767,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 反向钉住「没有前缀的裸规则」—— 漏一条就等于开关关不掉那一部分。
     assert.match(
       source,
-      /'\[data-soul-run="on"\] \[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)>span:nth-child\(2\)\{font-weight:600\}'/,
+      /'\[data-soul-run="on"\] \[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)>span:nth-child\(2\),\[data-soul-run-row="on"\]:has\(svg\[data-state="ongoing"\]\)>span:nth-child\(2\)\{font-weight:600\}'/,
       '加粗也必须受开关控制'
     )
     assert.equal(
@@ -6842,8 +6848,21 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       assert.equal(previewFn.includes(banned), false, `对比图不得引用 ${banned}（它是固定示意）`)
     }
     // 两栏都必须带行键与 ongoing 环，否则那四条规则根本不会命中，预览就成了假图。
-    const rows = source.match(/'data-row-key': on \? 'session:[^']+' : 'session:[^']+'/g) || []
-    assert.equal(rows.length, 1, '对比行必须带 session: 前缀的 data-row-key')
+    // 预览行必须用**自身**锚点 [data-soul-run-row]，不能用 data-row-key ——
+    // 后者在开关打开时会被 html 上的 [data-soul-run="on"] 连带命中，导致「关闭」那一栏也亮。
+    assert.match(source, /'data-soul-run-row': on \? 'on' : 'off'/, '对比行应带自身锚点 data-soul-run-row')
+    const previewFn2 = source.slice(
+      source.indexOf('function SoulRunPreview'),
+      source.indexOf('// 输入框光轨运行时：注册在 conversation.input.overlay')
+    )
+    assert.equal(
+      previewFn2.includes("'data-row-key'"),
+      false,
+      '对比图不得伪造 data-row-key（会被页面级开关连带命中）'
+    )
+    // 四条规则都要有 [data-soul-run-row="on"] 分支，否则对比图的「开启」栏不会生效。
+    const rowBranches = source.match(/\[data-soul-run-row="on"\]/g) || []
+    assert.ok(rowBranches.length >= 5, `规则缺少自身锚点分支（只找到 ${rowBranches.length} 处）`)
     assert.match(source, /'data-state': 'ongoing'/, '对比行必须有 svg[data-state=ongoing]')
 
     // 反向：预览骨架不得自带光效。一旦把 conic-gradient / animation / 光晕写进
