@@ -369,6 +369,9 @@ window.__ModuleLoader__.load({
     const TRAIL_PRESET_COLORS = ['#679EFE', '#22C55E', '#EF4444', '#A855F7', '#06B6D4', '#F59E0B']
     const TRAIL_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
     const TRAIL_SPEED_VALUES = ['slow', 'normal', 'fast']
+    // 光轨一圈的时长。**唯一来源**：输入框光轨与侧栏「运行中」的流光边框都读它，
+    // 免得两处各写一份 3.6s / 4.8s / 2.4s，改了一处忘另一处。
+    const TRAIL_DURATIONS = { slow: '4.8s', normal: '3.6s', fast: '2.4s' }
     const TRAIL_WIDTH_VALUES = ['thin', 'normal', 'thick']
     // 最粗描边（4px）的一半：环的外盒比宿主边框盒每边外扩这么多，
     // 好让描边的外半圈也落在 SVG 自己的盒内（contain:paint 会按盒裁切）。
@@ -1259,7 +1262,7 @@ window.__ModuleLoader__.load({
       // @supports 包住：mask-composite 不被支持时整条规则不生效（退回无边框），
       // 否则伪元素会变成一整块渐变盖住文字。
       '@property --soul-run-angle{syntax:"<angle>";inherits:false;initial-value:0deg}',
-      '@supports (mask-composite:exclude){[data-row-key^="session:"]:has(svg[data-state="ongoing"])::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;background:conic-gradient(from var(--soul-run-angle),transparent 0deg,color-mix(in srgb,var(--soul-trail-color,#679EFE) 35%,transparent) 46deg,var(--soul-trail-color,#679EFE) 74deg,color-mix(in srgb,var(--soul-trail-color,#679EFE) 35%,transparent) 102deg,transparent 148deg);-webkit-mask:linear-gradient(rgb(0 0 0) 0 0) content-box,linear-gradient(rgb(0 0 0) 0 0);-webkit-mask-composite:xor;mask:linear-gradient(rgb(0 0 0) 0 0) content-box,linear-gradient(rgb(0 0 0) 0 0);mask-composite:exclude;animation:soul-run-orbit 3.2s linear infinite}}',
+      '@supports (mask-composite:exclude){[data-row-key^="session:"]:has(svg[data-state="ongoing"])::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;background:conic-gradient(from var(--soul-run-angle),transparent 0deg,color-mix(in srgb,var(--soul-trail-color,#679EFE) 35%,transparent) 46deg,var(--soul-trail-color,#679EFE) 74deg,color-mix(in srgb,var(--soul-trail-color,#679EFE) 35%,transparent) 102deg,transparent 148deg);-webkit-mask:linear-gradient(rgb(0 0 0) 0 0) content-box,linear-gradient(rgb(0 0 0) 0 0);-webkit-mask-composite:xor;mask:linear-gradient(rgb(0 0 0) 0 0) content-box,linear-gradient(rgb(0 0 0) 0 0);mask-composite:exclude;animation:soul-run-orbit var(--soul-run-duration,4.8s) linear infinite}}',
       '@keyframes soul-run-orbit{to{--soul-run-angle:360deg}}',
       // reduced-motion：光不跑，改成整圈淡描边 —— 仍看得出「这行在跑」，但不闪。
       '@media (prefers-reduced-motion:reduce){[data-row-key^="session:"]:has(svg[data-state="ongoing"])::before{animation:none;background-image:none;background-color:color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent)}}',
@@ -1821,7 +1824,7 @@ window.__ModuleLoader__.load({
       // 速度档位（整体比首版慢一档）：normal 3.6s / slow 4.8s / fast 2.4s
       // stroke-linecap 用 round：butt 会让每层末端是硬切边，多层叠加时边界
       // 锐利可见；圆头让相邻层互相咬合，尾部自然过渡。
-      '.soul-trail-layer{fill:none;stroke:var(--soul-trail-color,#679EFE);stroke-width:2.5;stroke-linecap:round;animation-name:soul-trail-run-0;animation-duration:3.6s;animation-timing-function:linear;animation-iteration-count:infinite}',
+      `.soul-trail-layer{fill:none;stroke:var(--soul-trail-color,#679EFE);stroke-width:2.5;stroke-linecap:round;animation-name:soul-trail-run-0;animation-duration:${TRAIL_DURATIONS.normal};animation-timing-function:linear;animation-iteration-count:infinite}`,
       // 每层的透明度与错位**按层数生成**，不再手写固定条数 ——
       // 层数是可调参数，写死 8 条规则会让「改层数」变成两处改、且容易漏。
       // 透明度从 1 线性降到 0.04：层数够密时，这个递减序列叠加起来就是连续渐变。
@@ -1838,8 +1841,8 @@ window.__ModuleLoader__.load({
         const offset = layer * TRAIL_LAYER_STEP
         return `@keyframes soul-trail-run-${layer}{from{stroke-dashoffset:${offset.toFixed(3)}px}to{stroke-dashoffset:${(offset - 100).toFixed(3)}px}}`
       }),
-      '[data-soul-trail-speed="slow"] .soul-trail-layer{animation-duration:4.8s}',
-      '[data-soul-trail-speed="fast"] .soul-trail-layer{animation-duration:2.4s}',
+      `[data-soul-trail-speed="slow"] .soul-trail-layer{animation-duration:${TRAIL_DURATIONS.slow}}`,
+      `[data-soul-trail-speed="fast"] .soul-trail-layer{animation-duration:${TRAIL_DURATIONS.fast}}`,
       '[data-soul-trail-width="thin"] .soul-trail-layer{stroke-width:1.5}',
       '[data-soul-trail-width="thick"] .soul-trail-layer{stroke-width:4}',
       // 显隐的兜底规则（主路径由 mountTrailRing 的 setVisible 写内联 display）
@@ -11551,14 +11554,21 @@ window.__ModuleLoader__.load({
         if (typeof document === 'undefined' || !document.documentElement) return undefined
         const root = document.documentElement
         const sync = () => {
-          const color = controller.store.getSnapshot().trailColor
+          const snapshot = controller.store.getSnapshot()
+          const color = snapshot.trailColor
           if (typeof color === 'string' && color !== '') root.style.setProperty('--soul-trail-color', color)
+          // 与输入框光轨同一个节拍：三档时长读同一张表，用户改快慢时侧栏跟着变。
+          root.style.setProperty(
+            '--soul-run-duration',
+            TRAIL_DURATIONS[snapshot.trailSpeed] || TRAIL_DURATIONS.normal
+          )
         }
         sync()
         const off = typeof controller.store.subscribe === 'function' ? controller.store.subscribe(sync) : null
         return () => {
           if (typeof off === 'function') off()
           root.style.removeProperty('--soul-trail-color')
+          root.style.removeProperty('--soul-run-duration')
         }
       }, 'dsh-soul: sidebar trail color')
       // 词典注册：**zh/en 一对，其余每门语言各自一个 effect**。

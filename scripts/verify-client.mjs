@@ -6709,9 +6709,27 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       [/padding:1px/, '边框厚度由 padding 控制（真 border 会把行撑高、进出运行态时抖动）'],
       [/conic-gradient\(from var\(--soul-run-angle\)/, '高光角度必须可动画'],
       [/mask-composite:exclude/, '必须抠掉 content-box，只留一圈边'],
-      [/animation:soul-run-orbit/, '边框应持续流动']
+      [/animation:soul-run-orbit var\(--soul-run-duration,4\.8s\) linear infinite/, '边框应与输入框光轨同节拍（读同一个时长变量）']
     ]) assert.match(border[1], pattern, why)
     assert.ok(source.includes('@keyframes soul-run-orbit'), '缺少流光关键帧')
+
+    // 节拍同源：三档时长只有一份定义，输入框光轨与侧栏边框都读它 ——
+    // 否则改了一处忘另一处，两边就会慢慢不同步。
+    assert.match(
+      source,
+      /const TRAIL_DURATIONS = \{ slow: '4\.8s', normal: '3\.6s', fast: '2\.4s' \}/,
+      '三档时长应有唯一来源 TRAIL_DURATIONS'
+    )
+    assert.equal(
+      /animation-duration:(4\.8s|3\.6s|2\.4s)/.test(source),
+      false,
+      '光轨规则里不得再硬写时长（应引用 TRAIL_DURATIONS）'
+    )
+    assert.match(
+      source,
+      /'--soul-run-duration',\s*\n?\s*TRAIL_DURATIONS\[snapshot\.trailSpeed\] \|\| TRAIL_DURATIONS\.normal/,
+      '应把当前档位时长投射到 --soul-run-duration'
+    )
 
     // 降级：减少动态效果下不流动，但改成整圈淡描边 —— 仍然看得出「在跑」。
     const reduce = source

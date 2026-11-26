@@ -99,7 +99,9 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 - **底 wash（静态）**：整行一层 7% 的光轨色。用 `background-image` 叠而不是 `background-color`，
   宿主的 hover / 选中背景不会被盖掉。
 - **标题（静态）**：只加粗行内第二个 span，时间戳与行尾按钮保持原样。
-- **流光边框（唯一动效）**：一圈 1px 的光沿行轮廓跑，3.2s 一圈，与输入框光轨同一套语言。
+- **流光边框（唯一动效）**：一圈 1px 的光沿行轮廓跑，**节拍与输入框光轨完全一致** ——
+  三档时长收敛成 `TRAIL_DURATIONS` 一处定义，光轨与侧栏边框同读，用户在设置里改
+  slow / normal / fast 时两边一起变（默认 slow = 4.8s 一圈）。
   实现是伪元素铺满 + `padding:1px` + `mask` 抠掉中间（真 border 会把 32px 的行撑高、
   进出运行态时抖一下；`border-image` 不支持行的 8px 圆角）。角度由 `@property` 注册后
   插值旋转。整条规则包在 `@supports (mask-composite:exclude)` 里：不支持时退回无边框，
