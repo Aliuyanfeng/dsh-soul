@@ -1864,6 +1864,16 @@ window.__ModuleLoader__.load({
       '.soul-trail-preview{position:relative;margin-top:6px;padding:16px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill)}',
       '.soul-trail-preview[data-soul-trail="on"]{border-color:transparent}',
       '.soul-trail-preview-text{font-size:12px;color:var(--dsw-alias-label-tertiary)}',
+      // 开关前后对比：两行迷你会话行。骨架只负责「像一行」，效果全部由侧栏那四条
+      // 真实规则提供 —— 开的一侧容器带 data-soul-run="on"，规则原样命中；关的一侧
+      // 不带属性，什么都不发生。所以这里不需要复制一份预览专用的光效样式。
+      '.soul-run-preview{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}',
+      '.soul-run-preview-pane{display:flex;flex-direction:column;gap:6px;min-width:0}',
+      '.soul-run-preview-caption{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}',
+      '.soul-run-preview-frame{padding:6px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-settings-card-fill)}',
+      '.soul-run-preview-row{position:relative;display:flex;align-items:center;gap:6px;height:32px;padding:0 8px;border-radius:var(--dsw-radius-md);color:var(--dsw-alias-label-primary);font-size:13px;line-height:1}',
+      '.soul-run-preview-ring{width:14px;height:14px;flex:none;color:var(--dsw-alias-label-tertiary)}',
+      '.soul-run-preview-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       // —— 变更记录（0.8.0）——
       // 顶部状态行 + 右侧「清空记录」：与 .soul-drift 同款（space-between），
       // 因为它也是「一句话 + 一个行动」的形态。
@@ -2676,6 +2686,10 @@ window.__ModuleLoader__.load({
       'trail.width.thin': '细',
       'trail.width.normal': '中',
       'trail.width.thick': '粗',
+      'trail.appearance': '光轨外观',
+      'runPreview.on': '开启',
+      'runPreview.off': '关闭',
+      'runPreview.title': '调整登录流程',
       'trail.preview': '效果示例',
       'trail.previewText': 'Agent 回复时，输入框边框会出现流动的光轨',
       'hint.trail': 'Agent 回复期间，输入框边框显示沿边流动的光轨。点击色块、使用取色器，或直接填写十六进制色值（如 #679EFE）。',
@@ -3107,6 +3121,10 @@ window.__ModuleLoader__.load({
       'trail.width.thin': 'Thin',
       'trail.width.normal': 'Normal',
       'trail.width.thick': 'Thick',
+      'trail.appearance': 'Trail appearance',
+      'runPreview.on': 'On',
+      'runPreview.off': 'Off',
+      'runPreview.title': 'Refactor the login flow',
       'trail.preview': 'Preview',
       'trail.previewText': 'While the agent is replying, a light trail runs along the composer border',
       'hint.trail': 'While the agent is replying, a light trail runs along the composer border. Pick a swatch, use the color picker, or type a hex value (e.g. #679EFE).',
@@ -3520,6 +3538,10 @@ window.__ModuleLoader__.load({
       'trail.width.thin': 'Тонкий',
       'trail.width.normal': 'Обычный',
       'trail.width.thick': 'Толстый',
+      'trail.appearance': 'Внешний вид дорожки',
+      'runPreview.on': 'Вкл.',
+      'runPreview.off': 'Выкл.',
+      'runPreview.title': 'Переработка входа',
       'trail.preview': 'Предпросмотр',
       'trail.previewText': 'Пока агент отвечает, по рамке поля ввода бежит световой след',
       'hint.trail': 'Пока агент отвечает, по рамке поля ввода бежит световой след. Выберите образец цвета, воспользуйтесь пипеткой или введите hex-значение (например #679EFE).',
@@ -3961,6 +3983,10 @@ window.__ModuleLoader__.load({
       'trail.width.thin': '細い',
       'trail.width.normal': '標準',
       'trail.width.thick': '太い',
+      'trail.appearance': '光跡の外観',
+      'runPreview.on': 'オン',
+      'runPreview.off': 'オフ',
+      'runPreview.title': 'ログイン処理の見直し',
       'trail.preview': '表示例',
       'trail.previewText': 'Agent が返答している間、入力欄の枠に光の軌跡が流れます',
       'hint.trail': 'Agent が返信している間、入力欄の枠に沿って光の軌跡が流れます。色見本を押すか、カラーピッカーを使うか、16 進数の色（例：#679EFE）を直接入力してください。',
@@ -4399,6 +4425,10 @@ window.__ModuleLoader__.load({
       'trail.width.thin': 'Fino',
       'trail.width.normal': 'Medio',
       'trail.width.thick': 'Grueso',
+      'trail.appearance': 'Aspecto del trazo',
+      'runPreview.on': 'Activado',
+      'runPreview.off': 'Desactivado',
+      'runPreview.title': 'Revisar el flujo de acceso',
       'trail.preview': 'Ejemplo',
       'trail.previewText': 'Mientras el agente responde, el borde del campo de entrada muestra una estela luminosa',
       'hint.trail': 'Mientras el agente responde, el borde del campo de entrada muestra una estela en movimiento. Pulsa una muestra de color, usa el cuentagotas o escribe un valor hexadecimal (p. ej. #679EFE).',
@@ -4837,6 +4867,10 @@ window.__ModuleLoader__.load({
       'trail.width.thin': 'Fine',
       'trail.width.normal': 'Moyenne',
       'trail.width.thick': 'Épaisse',
+      'trail.appearance': 'Apparence de la traînée',
+      'runPreview.on': 'Activé',
+      'runPreview.off': 'Désactivé',
+      'runPreview.title': 'Revoir le parcours de connexion',
       'trail.preview': 'Exemple',
       'trail.previewText': 'Pendant que l’agent répond, le bord du champ de saisie affiche une traînée lumineuse',
       'hint.trail': 'Pendant que l’agent répond, une traînée lumineuse parcourt le bord du champ de saisie. Clique sur un échantillon, utilise la pipette ou saisis une valeur hexadécimale (par ex. #679EFE).',
@@ -5275,6 +5309,10 @@ window.__ModuleLoader__.load({
       'trail.width.thin': 'Dünn',
       'trail.width.normal': 'Mittel',
       'trail.width.thick': 'Dick',
+      'trail.appearance': 'Aussehen der Leuchtspur',
+      'runPreview.on': 'An',
+      'runPreview.off': 'Aus',
+      'runPreview.title': 'Anmeldeablauf überarbeiten',
       'trail.preview': 'Beispiel',
       'trail.previewText': 'Während der Agent antwortet, zeigt der Rand des Eingabefelds eine Lichtspur',
       'hint.trail': 'Während der Agent antwortet, läuft eine Lichtspur am Rand des Eingabefelds entlang. Klicke ein Farbmuster, nutze die Pipette oder gib einen Hex-Wert ein (z. B. #679EFE).',
@@ -5713,6 +5751,10 @@ window.__ModuleLoader__.load({
       'trail.width.thin': 'Fina',
       'trail.width.normal': 'Média',
       'trail.width.thick': 'Grossa',
+      'trail.appearance': 'Aparência do rastro',
+      'runPreview.on': 'Ativado',
+      'runPreview.off': 'Desativado',
+      'runPreview.title': 'Revisar o fluxo de login',
       'trail.preview': 'Exemplo',
       'trail.previewText': 'Enquanto o agente responde, a borda do campo de entrada mostra um rastro luminoso',
       'hint.trail': 'Enquanto o agente responde, um rastro luminoso corre pela borda do campo de entrada. Clique em uma amostra, use o conta-gotas ou digite um valor hexadecimal (por ex. #679EFE).',
@@ -11167,9 +11209,16 @@ window.__ModuleLoader__.load({
               onChange: (next) => void saveImmediate('runIndicatorEnabled', next)
             }),
 
+            // 紧跟在开关下面：它解释的正是「这个开关打开会怎样」。
+            // 左关右开，两侧都是真实规则渲染，不是截图。
+            e(SoulRunPreview, { t }),
+
             // 用 div 而不是 Fragment：碎片没法挂 class，而这段需要一层容器来补上
             // 与上方开关行之间的间距（.soul-trail-detail 的 margin-top）。
             trailEnabled && e('div', { className: 'soul-trail-detail' },
+              // 一行小标题把下面四项明确归给「输入框光轨」—— 否则它们紧跟在
+              // 侧栏运行开关下面，看起来像是那个开关的选项。
+              e('div', { className: 'soul-field-label' }, t('trail.appearance')),
               e('div', { className: 'soul-field' },
                 e('label', { htmlFor: 'soul-trailColor' }, t('trail.color')),
                 e('div', { className: 'soul-trail-colors' },
@@ -11506,6 +11555,50 @@ window.__ModuleLoader__.load({
         e('div', { ref: anchorRef, className: 'soul-trail-anchor', 'aria-hidden': 'true' }),
         e('span', { className: 'soul-trail-preview-text' }, t('trail.previewText'))
       )
+    }
+
+    // 开关前后对比：左「关」右「开」，两行都是真实渲染。
+    //
+    // **不复制一份预览专用样式**：开的一侧容器带 data-soul-run="on"，里面就是
+    // [data-row-key^="session:"] + svg[data-state="ongoing"]，侧栏那四条规则会原样命中；
+    // 关的一侧不加属性，于是什么都不发生 —— 这就是宿主原样的近似（环由本地骨架画成灰色）。
+    // 颜色与速度读 :root 上的当前配置，所以改色板 / 改档位时这里会同步变化。
+    function SoulRunPreview(props) {
+      const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      const pane = (on) => e('div', { className: 'soul-run-preview-pane' },
+        e('span', { className: 'soul-run-preview-caption' }, t(on ? 'runPreview.on' : 'runPreview.off')),
+        e('div', {
+          className: 'soul-run-preview-frame',
+          'data-soul-run': on ? 'on' : undefined
+        },
+          e('div', {
+            className: 'soul-run-preview-row',
+            'data-row-key': on ? 'session:soul-run-preview-on' : 'session:soul-run-preview-off',
+            'aria-hidden': 'true'
+          },
+            // 环画成宿主 StateDot 那种带缺口的圆：开的一侧会被我们的规则放大染色，
+            // 关的一侧停在骨架给的 14px 灰。
+            e('svg', {
+              className: 'soul-run-preview-ring',
+              viewBox: '0 0 16 16',
+              'data-state': 'ongoing',
+              'aria-hidden': 'true',
+              focusable: 'false'
+            }, e('circle', {
+              cx: 8,
+              cy: 8,
+              r: 6,
+              fill: 'none',
+              stroke: 'currentColor',
+              strokeWidth: 1.5,
+              strokeDasharray: '30 8',
+              strokeLinecap: 'round'
+            })),
+            e('span', { className: 'soul-run-preview-title' }, t('runPreview.title'))
+          )
+        )
+      )
+      return e('div', { className: 'soul-run-preview' }, pane(false), pane(true))
     }
 
     // 输入框光轨运行时：注册在 conversation.input.overlay（输入框卡片内部）。

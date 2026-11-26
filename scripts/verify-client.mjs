@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 132
+const EXPECTED_ASSERTIONS = 133
 
 // 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
 // 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
@@ -6385,7 +6385,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 406, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 410, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -6820,6 +6820,43 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const posts = fetchCalls.filter((c) => c.path === '/api/soul/config' && c.method === 'POST')
     assert.equal(posts.length, 1, '点击应只发一次保存请求')
     assert.deepEqual(posts[0].body, { runIndicatorEnabled: false }, '只提交 runIndicatorEnabled')
+  })
+
+  await check('C139 开关对比预览：两栏真实渲染，光效不复制一份', async () => {
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+
+    // 静态：开的一侧靠容器属性触发真实规则，关的一侧不设属性。
+    assert.match(
+      source,
+      /'data-soul-run': on \? 'on' : undefined/,
+      '只有「开」的那一栏带 data-soul-run，关的一栏必须不设属性'
+    )
+    // 两栏都必须带行键与 ongoing 环，否则那四条规则根本不会命中，预览就成了假图。
+    const rows = source.match(/'data-row-key': on \? 'session:[^']+' : 'session:[^']+'/g) || []
+    assert.equal(rows.length, 1, '对比行必须带 session: 前缀的 data-row-key')
+    assert.match(source, /'data-state': 'ongoing'/, '对比行必须有 svg[data-state=ongoing]')
+
+    // 反向：预览骨架不得自带光效。一旦把 conic-gradient / animation / 光晕写进
+    // .soul-run-preview-row，预览就会与线上漂移 —— 那正是这条断言存在的理由。
+    const skeleton = source.match(/'\.soul-run-preview-row\{([^}]*)\}'/)
+    assert.ok(skeleton, '缺少对比行骨架样式')
+    for (const pattern of [/conic-gradient/, /animation:/, /drop-shadow/, /box-shadow/]) {
+      assert.equal(pattern.test(skeleton[1]), false, `对比行骨架不得自带光效：${pattern}`)
+    }
+
+    // 运行时：渲染出来确实是两栏，且只有一栏带开关属性。
+    const world = await boot()
+    let tree = await renderSettings(world)
+    const groupBtn = findAll(tree, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.tool']))[0]
+    await groupBtn.props.onClick()
+    tree = await renderSettingsSettled(world)
+
+    const frames = findAll(tree, (n) => n.props && n.props.className === 'soul-run-preview-frame')
+    assert.equal(frames.length, 2, '对比预览应有「关 / 开」两栏')
+    const withOn = frames.filter((f) => f.props['data-soul-run'] === 'on')
+    assert.equal(withOn.length, 1, '恰好一栏带 data-soul-run="on"')
+    // 两栏都在设置页里渲染出来（不是只在开关打开时才挂载）。
+    assert.ok(textOf(tree).includes(world.dicts.zh['trail.appearance']), '应有「光轨外观」小标题')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
