@@ -6851,12 +6851,8 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 预览行必须用**自身**锚点 [data-soul-run-row]，不能用 data-row-key ——
     // 后者在开关打开时会被 html 上的 [data-soul-run="on"] 连带命中，导致「关闭」那一栏也亮。
     assert.match(source, /'data-soul-run-row': on \? 'on' : 'off'/, '对比行应带自身锚点 data-soul-run-row')
-    const previewFn2 = source.slice(
-      source.indexOf('function SoulRunPreview'),
-      source.indexOf('// 输入框光轨运行时：注册在 conversation.input.overlay')
-    )
     assert.equal(
-      previewFn2.includes("'data-row-key'"),
+      previewFn.includes("'data-row-key'"),
       false,
       '对比图不得伪造 data-row-key（会被页面级开关连带命中）'
     )
@@ -6872,6 +6868,26 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     for (const pattern of [/conic-gradient/, /animation:/, /drop-shadow/, /box-shadow/]) {
       assert.equal(pattern.test(skeleton[1]), false, `对比行骨架不得自带光效：${pattern}`)
     }
+
+    // 颜色 / 速度必须取传入值，不能读 :root 上的全局变量 —— 全局那份要等落盘
+    // （trailColor 还有 600ms 防抖）才更新，照它画会慢半拍。
+    // 限定在对比图自己的函数体内：SoulTrailPreview 里也有同样的写法，
+    // 拿全源码匹配会被它顶住，变异就测不出来（实测踩过）。
+    assert.match(
+      previewFn,
+      /'--soul-trail-color': safeTrailColor\(props\.color\)/,
+      '对比图颜色应取传入值（读全局变量会慢半拍）'
+    )
+    assert.match(
+      previewFn,
+      /'--soul-run-duration': TRAIL_DURATIONS\[props\.speed\]/,
+      '对比图速度应取传入档位'
+    )
+    assert.match(
+      source,
+      /e\(SoulRunPreview, \{\s*t,[\s\S]{0,220}color: localTrailColor,[\s\S]{0,120}speed: trailSpeed/,
+      '调用点应传本地色与当前档位（与输入框示例同源）'
+    )
 
     // 环必须转，且周期与宿主 StateDot 一致（1.5s）——真实侧栏靠宿主类名在转，
     // 对比图里的假环不补这段就会僵着，看起来「不像正常的」。

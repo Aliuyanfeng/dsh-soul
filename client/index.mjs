@@ -11258,7 +11258,13 @@ window.__ModuleLoader__.load({
 
             // 紧跟在开关下面：它解释的正是「这个开关打开会怎样」。
             // 左关右开，两侧都是真实规则渲染，不是截图。
-            e(SoulRunPreview, { t }),
+            e(SoulRunPreview, {
+              t,
+              // 本地色（含拖动中的中间态）+ 当前档位：与输入框示例同一来源，
+              // 改色 / 改速度时两处同一帧变化。
+              color: localTrailColor,
+              speed: trailSpeed || 'slow'
+            }),
 
             // —— 共用外观 ——
             //
@@ -11600,9 +11606,16 @@ window.__ModuleLoader__.load({
     // **不复制一份预览专用样式**：开的一侧容器带 data-soul-run="on"，里面就是
     // [data-row-key^="session:"] + svg[data-state="ongoing"]，侧栏那四条规则会原样命中；
     // 关的一侧不加属性，于是什么都不发生 —— 这就是宿主原样的近似（环由本地骨架画成灰色）。
-    // 颜色与速度读 :root 上的当前配置，所以改色板 / 改档位时这里会同步变化。
+    // 颜色与速度从 props 来（本地色 + 当前档位），不读 :root —— 全局那份要等落盘，会慢半拍。
     function SoulRunPreview(props) {
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
+      // 颜色 / 速度**用传进来的值，不读 :root 上的全局变量**：全局那份是落盘之后
+      // 才更新的（trailColor 还有 600ms 防抖），照它画会慢半拍 —— 拖动色板时
+      // 输入框示例已经变色了，这里还是旧色。与 SoulTrailPreview 同一个口径。
+      const style = {
+        '--soul-trail-color': safeTrailColor(props.color),
+        '--soul-run-duration': TRAIL_DURATIONS[props.speed] || TRAIL_DURATIONS.normal
+      }
       const pane = (on) => e('div', { className: 'soul-run-preview-pane' },
         e('span', { className: 'soul-run-preview-caption' }, t(on ? 'runPreview.on' : 'runPreview.off')),
         e('div', {
@@ -11646,7 +11659,7 @@ window.__ModuleLoader__.load({
           )
         )
       )
-      return e('div', { className: 'soul-run-preview' },
+      return e('div', { className: 'soul-run-preview', style },
         pane(false),
         pane(true),
         e('div', { className: 'soul-run-preview-hint' }, t('runPreview.hint'))
