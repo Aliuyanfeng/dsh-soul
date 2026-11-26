@@ -5898,7 +5898,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     world.routes['/api/soul/config'] = (call) => (call.method === 'GET'
       ? { ok: true, config: { ...CONFIG } }
       : { ok: true, config: { ...CONFIG, ...(call.body || {}) }, changed: Object.keys(call.body || {}) })
-    const tree = await openAccordion(world, 'soul-tools')
+    let tree = await openAccordion(world, 'soul-tools')
     const zh = world.dicts.zh
     assert.equal('button.save' in zh, false, '全局「保存设置」文案应已删除（分区保存后它没有对应按钮了）')
     assert.equal(
@@ -5915,6 +5915,12 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.deepEqual(posts[0].body, { showQuickToggle: false }, '即时字段的载荷只能是这一格')
     assert.equal(world.controller.store.getSnapshot().showQuickToggle, false, 'store 必须跟上（不跟就是只改了界面）')
 
+    // 光轨外观默认收起（只占一行），先展开才拿得到下拉。
+    const appearanceToggle = findAll(tree, (n) => n.props && n.props.className === 'soul-trail-appearance-toggle')[0]
+    assert.ok(appearanceToggle, '缺少「光轨外观」折叠行（前置条件）')
+    await appearanceToggle.props.onClick()
+    tree = await renderSettingsSettled(world)
+
     // 光轨的速度/宽度是下拉，同属即时字段
     const speed = soulSelect(tree, 'soul-trailSpeed')
     assert.ok(speed, '缺少光轨速度下拉框（前置条件）')
@@ -5928,7 +5934,12 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 而不挡住非法值（'#aa'）更糟：宿主 sanitizeConfig 是**整单拒绝**，
     // 一次拖拽会把这段颜色的写入全打成 400。
     const world = await boot()
-    const tree = await openAccordion(world, 'soul-tools')
+    let tree = await openAccordion(world, 'soul-tools')
+    // 光轨外观默认收起，先展开才拿得到色值输入框。
+    const appearanceToggle = findAll(tree, (n) => n.props && n.props.className === 'soul-trail-appearance-toggle')[0]
+    assert.ok(appearanceToggle, '缺少「光轨外观」折叠行（前置条件）')
+    await appearanceToggle.props.onClick()
+    tree = await renderSettingsSettled(world)
     const hex = findAll(tree, (n) => n.type === 'input' && n.props && n.props.className === 'soul-trail-hex')[0]
     assert.ok(hex, '缺少十六进制色值输入框（前置条件）')
     const debounce = () => timerQueue.filter((t) => !t.repeat && t.delay === 600)
@@ -6933,9 +6944,23 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     await groupBtn.props.onClick()
     tree = await renderSettingsSettled(world)
 
+    // 外观默认收起（只占一行），先展开再找控件。
+    const toggle = findAll(tree, (n) => n.props && n.props.className === 'soul-trail-appearance-toggle')[0]
+    assert.ok(toggle, '应有可展开的「光轨外观」一行')
+    assert.equal(toggle.props['aria-expanded'], 'false', '外观默认应收起，只占一行')
+    // 收起时仍要能读到当前值：色点 + 速度 · 粗细。
+    assert.ok(textOf(toggle).includes(world.dicts.zh['trail.appearance']), '折叠行应显示标题')
+    assert.ok(
+      textOf(toggle).includes(world.dicts.zh['trail.speed.slow']) &&
+        textOf(toggle).includes(world.dicts.zh['trail.width.thin']),
+      '折叠行应显示当前速度与粗细（收起时也要读得到结论）'
+    )
+
+    await toggle.props.onClick()
+    tree = await renderSettingsSettled(world)
     assert.ok(
       findAll(tree, (n) => n.props && n.props.id === 'soul-trailColor')[0],
-      '只开侧栏时仍应能调颜色 —— 侧栏的流光用的就是这份配置'
+      '只开侧栏时，展开后仍应能调颜色 —— 侧栏的流光用的就是这份配置'
     )
     assert.equal(
       findAll(tree, (n) => n.props && n.props.className === 'soul-trail-preview').length,

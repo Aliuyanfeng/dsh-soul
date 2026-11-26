@@ -1072,6 +1072,13 @@ window.__ModuleLoader__.load({
       // 共用外观独立成一节：上方细线把它和「两个开关 + 各自示例」分开，
       // 一眼能看出它不属于其中任何一个开关。
       '.soul-trail-appearance{margin-top:18px;padding-top:14px;border-top:.5px solid var(--dsw-alias-settings-card-stroke)}',
+      '.soul-trail-appearance-toggle{display:flex;align-items:center;gap:6px;width:100%;padding:0;border:0;background:none;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;text-align:start}',
+      '.soul-trail-appearance-caret{flex:none;transition:transform .15s var(--ds-ease-in-out)}',
+      '.soul-trail-appearance-toggle[aria-expanded="true"] .soul-trail-appearance-caret{transform:rotate(90deg)}',
+      '.soul-trail-appearance-title{font-weight:500}',
+      '.soul-trail-appearance-summary{margin-inline-start:auto;display:inline-flex;align-items:center;gap:6px;color:var(--dsw-alias-label-tertiary)}',
+      '.soul-trail-appearance-dot{display:inline-block;width:10px;height:10px;border-radius:50%;box-shadow:0 0 0 .5px var(--dsw-alias-settings-card-stroke)}',
+      '.soul-trail-appearance-body{margin-top:10px}',
       '.soul-trail-appearance-hint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);margin:2px 0 10px}',
       '.soul-trail-appearance .soul-field-row{border-bottom:none;padding:8px 0}',
       // 子代理下拉紧跟在开关行之后，与光轨参数组同一节奏
@@ -9973,6 +9980,9 @@ window.__ModuleLoader__.load({
       // trailColor 是 IMMEDIATE 里唯一保留本地值的字段：十六进制框要允许非法中间态
       // （打字过程中必然出现 `#679`），合法值防抖后再提交 —— 见下方防抖 effect。
       const [localTrailColor, setLocalTrailColor] = React.useState(trailColor || TRAIL_COLOR_FALLBACK)
+      // 光轨外观默认收起：它服务两个位置，摊开时是一整块（色板 + 两个下拉），
+      // 比上面的开关行重得多。收起成一行后，当前值仍能从摘要读到。
+      const [trailAppearanceOpen, setTrailAppearanceOpen] = React.useState(false)
       // 变更记录保留条数**不再是设置页的表单字段**（0.8.1 迁到插件详情页的变更记录
       // 区块，就地改、立刻落盘）。因此它不进 localMap / savedMap / dirty ——
       // 否则「在详情页改了容量」会让设置页的保存按钮莫名亮起，且点保存会把那份
@@ -11274,7 +11284,41 @@ window.__ModuleLoader__.load({
             // 条件是「任一位置开启」而不是只看 trailEnabled：只开侧栏时也要能调色 ——
             // 否则把输入框光轨关掉，侧栏那圈流光就失去了唯一的调色入口。
             (trailEnabled || runIndicatorEnabled) && e('div', { className: 'soul-trail-appearance' },
-              e('div', { className: 'soul-field-label' }, t('trail.appearance')),
+              // 收起时只占一行：标题 + 当前值摘要（色点 · 速度 · 粗细），点开才展开控件。
+              // 摘要必须存在 —— 否则收起状态读不到「现在是什么样」，那才是真正的突兀。
+              e('button', {
+                type: 'button',
+                className: 'soul-trail-appearance-toggle',
+                'aria-expanded': trailAppearanceOpen ? 'true' : 'false',
+                onClick: () => setTrailAppearanceOpen((prev) => !prev)
+              },
+                e('svg', {
+                  className: 'soul-trail-appearance-caret',
+                  width: 12,
+                  height: 12,
+                  viewBox: '0 0 16 16',
+                  fill: 'none',
+                  'aria-hidden': 'true'
+                }, e('path', {
+                  d: 'M6 4L10 8L6 12',
+                  stroke: 'currentColor',
+                  strokeWidth: 1.4,
+                  strokeLinecap: 'round',
+                  strokeLinejoin: 'round'
+                })),
+                e('span', { className: 'soul-trail-appearance-title' }, t('trail.appearance')),
+                e('span', { className: 'soul-trail-appearance-summary' },
+                  e('span', {
+                    className: 'soul-trail-appearance-dot',
+                    style: { background: safeTrailColor(localTrailColor) },
+                    'aria-hidden': 'true'
+                  }),
+                  e('span', null,
+                    t('trail.speed.' + (trailSpeed || 'slow')) + ' · ' + t('trail.width.' + (trailWidth || 'thin'))
+                  )
+                )
+              ),
+              trailAppearanceOpen && e('div', { className: 'soul-trail-appearance-body' },
               e('div', { className: 'soul-trail-appearance-hint' }, t('hint.trailShared')),
               e('div', { className: 'soul-field' },
                 e('label', { htmlFor: 'soul-trailColor' }, t('trail.color')),
@@ -11329,6 +11373,7 @@ window.__ModuleLoader__.load({
                   options: TRAIL_WIDTH_VALUES.map((v) => ({ value: v, label: t('trail.width.' + v) })),
                   onChange: (next) => void saveImmediate('trailWidth', next)
                 })
+              )
               )
             )
           )
