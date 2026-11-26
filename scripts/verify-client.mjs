@@ -6720,6 +6720,8 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     for (const [pattern, why] of [
       [/position:absolute/, '标记必须绝对定位（行是 flex，否则会占位）'],
       [/inset-inline-start:calc\(8px \+ var\(--dsh-workspace-indent,0px\)\)/, '标记要对齐宿主的工作区缩进'],
+      [/inset-block-start:0;inset-block-end:0/, '垂直居中用 inset-block:0（50% + 负 margin 会有亚像素偏移）'],
+      [/margin-block:auto/, '垂直居中要靠 margin-block:auto 而不是写死 top'],
       [/background-color:var\(--soul-trail-color,#679EFE\)/, '标记颜色应跟随光轨'],
       [/mask-image:var\(--soul-run-mask\)/, '形状必须由变量提供（换形状 = 换变量）'],
       [/animation:var\(--soul-run-mark-anim\)/, '动画也必须由变量提供'],
