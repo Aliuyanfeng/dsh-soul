@@ -1235,6 +1235,13 @@ window.__ModuleLoader__.load({
       '.soul-session-persona-label-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       // 图标：与文字同色但略淡（图标是标识，文字是主信息）
       '.soul-session-persona-label-icon{flex:none;opacity:.75}',
+      // 运行中的侧栏会话行：宿主那个 14px 的 ongoing 环太淡（用户反馈「很不明显」）。
+      // 只改视觉、不改结构：放大到 16、染成光轨色、叠一层呼吸。选择器依赖宿主的
+      // data-row-key 与 StateDot 的 data-state —— 宿主哪天改掉这两个，规则自然失效、
+      // 退回原样，不会坏；限定在行内也避免把别处的同名状态环一起放大。
+      '[data-row-key] svg[data-state="ongoing"]{width:16px;height:16px;color:var(--soul-trail-color,#679EFE);animation:soul-session-run-breathe 1.6s ease-in-out infinite}',
+      '@keyframes soul-session-run-breathe{0%,100%{opacity:.6}50%{opacity:1}}',
+      '@media (prefers-reduced-motion:reduce){[data-row-key] svg[data-state="ongoing"]{animation:none;opacity:1}}',
       // 侧栏会话行 hover 面具徽标（0.9.0-ab）：与行内其它 hover 按钮对齐
       '.soul-sidebar-persona-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-sidebar-persona-badge-icon{display:block}',
@@ -11513,6 +11520,23 @@ window.__ModuleLoader__.load({
       ctx.effect(() => () => {
         controller.dispose()
       }, 'dsh-soul: browser lifecycle')
+      // 侧栏的「运行中」指示要跟光轨同色，但侧栏不在 React 树里，CSS 变量只能从
+      // documentElement 上取。这里把配置里的 trailColor 投射上去；CSS 侧有 #679EFE
+      // 兜底，宿主没有 document（纯 Node 测试）时直接跳过。
+      ctx.effect(() => {
+        if (typeof document === 'undefined' || !document.documentElement) return undefined
+        const root = document.documentElement
+        const sync = () => {
+          const color = controller.store.getSnapshot().trailColor
+          if (typeof color === 'string' && color !== '') root.style.setProperty('--soul-trail-color', color)
+        }
+        sync()
+        const off = typeof controller.store.subscribe === 'function' ? controller.store.subscribe(sync) : null
+        return () => {
+          if (typeof off === 'function') off()
+          root.style.removeProperty('--soul-trail-color')
+        }
+      }, 'dsh-soul: sidebar trail color')
       // 词典注册：**zh/en 一对，其余每门语言各自一个 effect**。
       //
       // 宿主对同一 (ns, locale) 第二次 register 会抛 "already has locale"，而且是

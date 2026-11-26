@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 130
+const EXPECTED_ASSERTIONS = 131
 
 // 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
 // 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
@@ -6676,6 +6676,29 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.ok(
       source.includes("builtin && uiLocale !== language && e('div', { className: 'soul-persona-back-note' }"),
       '卡背说明必须带「内置 + 语言不一致」两个前提'
+    )
+  })
+
+  await check('C137 侧栏运行指示只放大行内状态环，且颜色跟随光轨', async () => {
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    const rule = source.match(/'\[data-row-key\] svg\[data-state="ongoing"\]\{([^}]*)\}'/)
+    assert.ok(rule, '缺少侧栏运行指示规则')
+    assert.match(rule[1], /width:16px/, '运行中的环应放大到 16px')
+    assert.match(rule[1], /var\(--soul-trail-color,#679EFE\)/, '颜色应跟随光轨并带默认色回退')
+    // 反向：不得出现不限作用域的全局放大（会把连接状态等别处的环一起放大）
+    assert.equal(
+      /(^|\n)\s*'svg\[data-state="ongoing"\]\{/.test(source),
+      false,
+      '不得全局放大状态环'
+    )
+    // 颜色投射：CSS 变量只能从 documentElement 取，缺这段则侧栏永远是默认色
+    assert.ok(
+      source.includes("'dsh-soul: sidebar trail color'"),
+      '缺少把 trailColor 投射到 :root 的 effect'
+    )
+    assert.ok(
+      /setProperty\('--soul-trail-color', color\)/.test(source),
+      '应通过 setProperty 写入 --soul-trail-color'
     )
   })
 
