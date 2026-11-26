@@ -671,6 +671,26 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // 上传自建预设的插画。成功后清掉这一份的 blob 缓存 —— 否则卡片还会显示旧图。
+      async uploadPersonaArt(name, dataUrl) {
+        const payload = await this.postJSON('/api/soul/persona-art', { name, dataUrl })
+        artBlobCache.delete(personaArtUrl(name))
+        return payload
+      }
+
+      // 移除用户图，回到内置插画 / 默认贴图。
+      async removePersonaArt(name) {
+        // DELETE 也要带 JSON Content-Type：服务端 CSRF 守卫要求写方法一律如此
+        //（空对象就够了，服务端不读 body）。
+        const payload = await this.postJSON(
+          '/api/soul/persona-art/' + encodeURIComponent(name),
+          {},
+          { method: 'DELETE' }
+        )
+        artBlobCache.delete(personaArtUrl(name))
+        return payload
+      }
+
       async resetConfig() {
         if (this.disposed) return
         this.store.update(s => { s.saving = true; s.error = null })
@@ -1706,6 +1726,12 @@ window.__ModuleLoader__.load({
       // 所有卡片都出图（自建预设由宿主返回专用默认贴图）；图未就绪时露出渐变底。
       '.soul-persona-art{position:relative;width:100%;aspect-ratio:1/1;flex:none;overflow:hidden;background:linear-gradient(150deg,color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,var(--dsw-alias-bg-module-platform)),var(--dsw-alias-bg-module-platform))}',
       '.soul-persona-art-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;user-select:none}',
+      '.soul-persona-art-pick{display:flex;align-items:center;gap:10px;flex-wrap:wrap}',
+      '.soul-persona-art-pick-thumb{width:56px;height:56px;flex:none;border-radius:var(--dsw-radius-md);overflow:hidden;background:var(--dsw-alias-bg-layer-2);display:flex;align-items:center;justify-content:center}',
+      '.soul-persona-art-pick-thumb img{width:100%;height:100%;object-fit:cover;display:block}',
+      '.soul-persona-art-pick-empty{font-size:11px;color:var(--dsw-alias-label-tertiary)}',
+      '.soul-persona-art-pick input[type="file"]{font:inherit;font-size:12px;color:var(--dsw-alias-label-secondary);max-width:220px}',
+      '.soul-persona-art-pick-clear{padding:2px 8px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;cursor:pointer}',
       // 底部渐变：让压在图上的名称/摘要有足够对比度（浅色插画上白字会糊）
       '.soul-persona-art-veil{position:absolute;inset:auto 0 0 0;height:62%;background:linear-gradient(180deg,rgba(10,14,35,0),rgba(10,14,35,.62) 55%,rgba(10,14,35,.86));pointer-events:none}',
       // 名称 + 摘要压在图底部
@@ -2323,6 +2349,14 @@ window.__ModuleLoader__.load({
       'personas.updateExcludes': '不会包含昵称、职业、介绍 —— 它们不属于预设。',
       'notice.personaUpdated': '已更新预设「{name}」。',
       'personas.saveNameLabel': '新预设名称',
+      'personas.artLabel': '插画（可选）',
+      'personas.artNone': '未选择',
+      'personas.artRemove': '移除',
+      'personas.artHint': 'PNG / JPEG / WebP，建议正方形，不超过 1.5 MB。',
+      'personas.artTooLarge': '图片超过 1.5 MB',
+      'personas.artType': '只支持 PNG / JPEG / WebP',
+      'personas.artReadFailed': '读取图片失败',
+      'personas.artUploadFailed': '插画没有上传成功（预设已保存）',
       'personas.saveConfirm': '保存',
       'personas.saveCovers': '将保存：回复风格和语调、特质、回复长度、输出语言、自定义指令',
       'personas.saveExcludes': '不含：昵称、职业、介绍（这些属于「关于你」，预设不动它们）',
@@ -2793,6 +2827,14 @@ window.__ModuleLoader__.load({
       'personas.updateExcludes': 'Nickname, occupation and bio are not included — they are not part of a persona.',
       'notice.personaUpdated': 'Updated preset "{name}".',
       'personas.saveNameLabel': 'New persona name',
+      'personas.artLabel': 'Artwork (optional)',
+      'personas.artNone': 'None selected',
+      'personas.artRemove': 'Remove',
+      'personas.artHint': 'PNG / JPEG / WebP, square preferred, up to 1.5 MB.',
+      'personas.artTooLarge': 'Image is larger than 1.5 MB',
+      'personas.artType': 'Only PNG / JPEG / WebP are supported',
+      'personas.artReadFailed': 'Could not read the image',
+      'personas.artUploadFailed': 'Artwork was not uploaded (the persona was saved)',
       'personas.saveConfirm': 'Save',
       'personas.saveCovers': 'Saves: reply style & tone, traits, reply length, reply language, custom instructions',
       'personas.saveExcludes': 'Excludes: nickname, occupation, bio (those are "About you" — personas never touch them)',
@@ -3238,6 +3280,14 @@ window.__ModuleLoader__.load({
       'personas.updateExcludes': 'Никнейм, род занятий и описание не входят — они не часть персоны.',
       'notice.personaUpdated': 'Пресет «{name}» обновлён.',
       'personas.saveNameLabel': 'Имя нового пресета',
+      'personas.artLabel': 'Иллюстрация (необязательно)',
+      'personas.artNone': 'Не выбрана',
+      'personas.artRemove': 'Убрать',
+      'personas.artHint': 'PNG / JPEG / WebP, лучше квадрат, до 1,5 МБ.',
+      'personas.artTooLarge': 'Изображение больше 1,5 МБ',
+      'personas.artType': 'Поддерживаются только PNG / JPEG / WebP',
+      'personas.artReadFailed': 'Не удалось прочитать изображение',
+      'personas.artUploadFailed': 'Иллюстрация не загрузилась (пресет сохранён)',
       'personas.saveConfirm': 'Сохранить',
       'personas.saveCovers': 'Будет сохранено: стиль и тон ответов, черты, длина ответов, язык вывода, свои инструкции',
       'personas.saveExcludes': 'Не входит: никнейм, род занятий, описание (это раздел «О вас» — пресеты его не затрагивают)',
@@ -3667,6 +3717,14 @@ window.__ModuleLoader__.load({
       'personas.updateExcludes': 'ニックネーム・職業・自己紹介は含まれません —— これらはプリセットの対象外です。',
       'notice.personaUpdated': 'プリセット「{name}」を更新しました。',
       'personas.saveNameLabel': '新しいプリセット名',
+      'personas.artLabel': 'イラスト（任意）',
+      'personas.artNone': '未選択',
+      'personas.artRemove': '削除',
+      'personas.artHint': 'PNG / JPEG / WebP、正方形推奨、1.5 MB まで。',
+      'personas.artTooLarge': '画像が 1.5 MB を超えています',
+      'personas.artType': 'PNG / JPEG / WebP のみ対応しています',
+      'personas.artReadFailed': '画像を読み込めませんでした',
+      'personas.artUploadFailed': 'イラストはアップロードされませんでした（プリセットは保存済み）',
       'personas.saveConfirm': '保存',
       'personas.saveCovers': '保存する内容：返答のスタイルと語調、特性、返答の長さ、出力言語、カスタム指示',
       'personas.saveExcludes': '含まれないもの：ニックネーム、職業、自己紹介（これらは「あなたについて」に属し、プリセットは変更しません）',
@@ -4117,6 +4175,14 @@ window.__ModuleLoader__.load({
       'personas.updateExcludes': 'No incluye apodo, profesión ni autodescripción: no forman parte de los preajustes.',
       'notice.personaUpdated': 'Preajuste «{name}» actualizado.',
       'personas.saveNameLabel': 'Nombre del nuevo preajuste',
+      'personas.artLabel': 'Ilustración (opcional)',
+      'personas.artNone': 'Sin seleccionar',
+      'personas.artRemove': 'Quitar',
+      'personas.artHint': 'PNG / JPEG / WebP, preferiblemente cuadrada, hasta 1,5 MB.',
+      'personas.artTooLarge': 'La imagen supera 1,5 MB',
+      'personas.artType': 'Solo se admiten PNG / JPEG / WebP',
+      'personas.artReadFailed': 'No se pudo leer la imagen',
+      'personas.artUploadFailed': 'La ilustración no se subió (el preajuste sí se guardó)',
       'personas.saveConfirm': 'Guardar',
       'personas.saveCovers': 'Se guardará: estilo y tono, rasgos, longitud de respuesta, idioma de salida, instrucciones personalizadas',
       'personas.saveExcludes': 'No incluye: apodo, profesión ni autodescripción (forman parte de «Sobre ti» y los preajustes no los tocan)',
@@ -4567,6 +4633,14 @@ window.__ModuleLoader__.load({
       'personas.updateExcludes': 'N’inclut ni le surnom, ni la profession, ni la présentation : ils ne font pas partie des préréglages.',
       'notice.personaUpdated': 'Préréglage « {name} » mis à jour.',
       'personas.saveNameLabel': 'Nom du nouveau préréglage',
+      'personas.artLabel': 'Illustration (facultatif)',
+      'personas.artNone': 'Aucune',
+      'personas.artRemove': 'Retirer',
+      'personas.artHint': 'PNG / JPEG / WebP, de préférence carrée, jusqu’à 1,5 Mo.',
+      'personas.artTooLarge': 'L’image dépasse 1,5 Mo',
+      'personas.artType': 'Seuls PNG / JPEG / WebP sont acceptés',
+      'personas.artReadFailed': 'Impossible de lire l’image',
+      'personas.artUploadFailed': 'L’illustration n’a pas été envoyée (le préset est enregistré)',
       'personas.saveConfirm': 'Enregistrer',
       'personas.saveCovers': 'Sera enregistré : style et ton, traits, longueur de réponse, langue de sortie, instructions personnalisées',
       'personas.saveExcludes': 'Non inclus : surnom, profession, présentation (ils relèvent de « À propos de toi » et les préréglages n’y touchent pas)',
@@ -5017,6 +5091,14 @@ window.__ModuleLoader__.load({
       'personas.updateExcludes': 'Enthält keinen Spitznamen, Beruf und keine Selbstbeschreibung – sie gehören nicht zu Voreinstellungen.',
       'notice.personaUpdated': 'Voreinstellung „{name}“ aktualisiert.',
       'personas.saveNameLabel': 'Name der neuen Voreinstellung',
+      'personas.artLabel': 'Illustration (optional)',
+      'personas.artNone': 'Keine ausgewählt',
+      'personas.artRemove': 'Entfernen',
+      'personas.artHint': 'PNG / JPEG / WebP, möglichst quadratisch, bis 1,5 MB.',
+      'personas.artTooLarge': 'Das Bild ist größer als 1,5 MB',
+      'personas.artType': 'Nur PNG / JPEG / WebP werden unterstützt',
+      'personas.artReadFailed': 'Das Bild konnte nicht gelesen werden',
+      'personas.artUploadFailed': 'Die Illustration wurde nicht hochgeladen (das Preset ist gespeichert)',
       'personas.saveConfirm': 'Speichern',
       'personas.saveCovers': 'Wird gespeichert: Antwortstil und Ton, Merkmale, Antwortlänge, Ausgabesprache, benutzerdefinierte Anweisungen',
       'personas.saveExcludes': 'Nicht enthalten: Spitzname, Beruf, Selbstbeschreibung (sie gehören zu „Über dich“, Voreinstellungen ändern sie nicht)',
@@ -5467,6 +5549,14 @@ window.__ModuleLoader__.load({
       'personas.updateExcludes': 'Não inclui apelido, profissão nem autoapresentação — eles não fazem parte das predefinições.',
       'notice.personaUpdated': 'Predefinição “{name}” atualizada.',
       'personas.saveNameLabel': 'Nome da nova predefinição',
+      'personas.artLabel': 'Ilustração (opcional)',
+      'personas.artNone': 'Nenhuma selecionada',
+      'personas.artRemove': 'Remover',
+      'personas.artHint': 'PNG / JPEG / WebP, de preferência quadrada, até 1,5 MB.',
+      'personas.artTooLarge': 'A imagem passa de 1,5 MB',
+      'personas.artType': 'Só PNG / JPEG / WebP são aceitos',
+      'personas.artReadFailed': 'Não foi possível ler a imagem',
+      'personas.artUploadFailed': 'A ilustração não foi enviada (o predefinido foi salvo)',
       'personas.saveConfirm': 'Salvar',
       'personas.saveCovers': 'Será salvo: estilo e tom, características, comprimento da resposta, idioma de saída, instruções personalizadas',
       'personas.saveExcludes': 'Não inclui: apelido, profissão, autoapresentação (fazem parte de “Sobre você” e as predefinições não os alteram)',
@@ -7921,8 +8011,11 @@ window.__ModuleLoader__.load({
     // 失败也缓存（缓存的是异常），否则每次渲染都会重试一遍 401。
     const artBlobCache = new Map()
 
-    function personaArtSrc(name) {
-      const url = personaArtUrl(name)
+    function personaArtSrc(name, version) {
+      // version 只用于**缓存键**：换图后必须重新 fetch，否则 artBlobCache 会一直
+      // 返回旧 blob（同一个 URL 的 Promise 已经被缓存）。服务端对用户图返回 no-store，
+      // 但 blob 缓存是我们自己这一层，得主动换 key。
+      const url = version ? `${personaArtUrl(name)}?v=${version}` : personaArtUrl(name)
       let pending = artBlobCache.get(url)
       if (pending === undefined) {
         pending = (async () => {
@@ -7959,12 +8052,12 @@ window.__ModuleLoader__.load({
         if (typeof name !== 'string' || name === '') { setSrc(null); setFailed(true); return }
         let alive = true
         setFailed(false)
-        personaArtSrc(name).then(
+        personaArtSrc(name, props.version).then(
           (url) => { if (alive) setSrc(url) },
           () => { if (alive) { setSrc(null); setFailed(true) } }
         )
         return () => { alive = false }
-      }, [name])
+      }, [name, props.version])
       if (src !== null) {
         return e('img', {
           className,
@@ -10041,6 +10134,10 @@ window.__ModuleLoader__.load({
       // 否则「在详情页改了容量」会让设置页的保存按钮莫名亮起，且点保存会把那份
       // 详情页刚改的值当成「用户在这里的编辑」再提交一次。
       const [personaName, setPersonaName] = React.useState('')
+      // 「存为预设」弹层里选中的插画（data URL）。null = 不设置，沿用默认贴图。
+      const [personaArt, setPersonaArt] = React.useState(null)
+      // 换图后要重新取图：blob 缓存按 URL 存，URL 不变就永远是旧图。
+      const [artVersion, setArtVersion] = React.useState(0)
       // 「存为预设」的命名弹层是否打开。
       //
       // 方案 A：把「保存当前为预设」从预设列表里**移出来**，做成「保存设置」旁的同级动作，
@@ -10437,6 +10534,38 @@ window.__ModuleLoader__.load({
       // （用户实测确认的 bug）。
       //
       // 只传人设字段：预设不含「关于你」（昵称 / 职业 / 介绍），它们不属于预设。
+      // 选图：只做「读成 data URL + 客户端预检」，真正的格式/大小校验在服务端
+      // （客户端说的 MIME 不可信，服务端的 magic bytes 才是判据）。
+      const handlePickArt = async (ev) => {
+        const file = ev && ev.target && ev.target.files ? ev.target.files[0] : null
+        // 允许重复选同一个文件：不清空 value 的话第二次选同一张不会触发 change
+        if (ev && ev.target) ev.target.value = ''
+        if (!file) return
+        if (file.size > 1.5 * 1024 * 1024) {
+          showError(t('personas.artTooLarge'))
+          return
+        }
+        const dataUrl = await new Promise((resolve) => {
+          try {
+            const reader = new FileReader()
+            reader.onload = () => resolve(String(reader.result || ''))
+            reader.onerror = () => resolve(null)
+            reader.readAsDataURL(file)
+          } catch {
+            resolve(null)
+          }
+        })
+        if (!dataUrl) {
+          showError(t('personas.artReadFailed'))
+          return
+        }
+        if (!/^data:image\/(png|jpeg|webp);base64,/.test(dataUrl)) {
+          showError(t('personas.artType'))
+          return
+        }
+        setPersonaArt(dataUrl)
+      }
+
       const handleSavePersona = async () => {
         const name = personaName.trim()
         if (!name) return
@@ -10448,6 +10577,17 @@ window.__ModuleLoader__.load({
             if (key in localMap) draft[key] = localMap[key]
           }
           await controller.savePersona(name, draft)
+
+          // 预设已经存下了。插画失败**不回滚预设**（那是两件事），但要明说图没存上，
+          // 否则用户以为存了、卡片却还是默认贴图。
+          if (personaArt) {
+            try {
+              await controller.uploadPersonaArt(name, personaArt)
+              setArtVersion((prev) => prev + 1)
+            } catch {
+              showError(t('personas.artUploadFailed'))
+            }
+          }
 
           // 保存之后必须消解「已保存预设 X」与「有未保存更改」并存的矛盾（0.9.0-t）：
           // 两条提示同时出现，读起来像"我到底存没存"。
@@ -10958,6 +11098,7 @@ window.__ModuleLoader__.load({
                           e('div', { className: 'soul-persona-art' },
                             e(PersonaArt, {
                               name,
+                              version: artVersion,
                               className: 'soul-persona-art-img'
                             }),
                             // 渐变遮罩：让压在图上的名称/摘要有足够对比度
@@ -11514,7 +11655,7 @@ window.__ModuleLoader__.load({
         showSavePersona && e('div', {
           className: 'soul-modal-mask',
           role: 'presentation',
-          onClick: () => { setShowSavePersona(false); setPersonaName('') }
+          onClick: () => { setShowSavePersona(false); setPersonaName(''); setPersonaArt(null) }
         },
           e('div', {
             className: 'soul-modal',
@@ -11535,9 +11676,33 @@ window.__ModuleLoader__.load({
                 onChange: (ev) => setPersonaName(ev.target.value),
                 onKeyDown: (ev) => {
                   if (ev.key === 'Enter' && personaName.trim() && !saving) void handleSavePersona()
-                  if (ev.key === 'Escape') { setShowSavePersona(false); setPersonaName('') }
+                  if (ev.key === 'Escape') { setShowSavePersona(false); setPersonaName(''); setPersonaArt(null) }
                 }
               })
+            ),
+            // 插画（可选）：只对自建预设有效 —— 内置预设的图在包内，
+            // 服务端会拒绝覆盖（不然用户能把内置插画改掉且不知道从哪恢复）。
+            e('div', { className: 'soul-field soul-persona-art-field' },
+              e('label', { htmlFor: 'soul-persona-art-input' }, t('personas.artLabel')),
+              e('div', { className: 'soul-persona-art-pick' },
+                e('div', { className: 'soul-persona-art-pick-thumb' },
+                  personaArt
+                    ? e('img', { src: personaArt, alt: '' })
+                    : e('span', { className: 'soul-persona-art-pick-empty' }, t('personas.artNone'))
+                ),
+                e('input', {
+                  id: 'soul-persona-art-input',
+                  type: 'file',
+                  accept: 'image/png,image/jpeg,image/webp',
+                  onChange: (ev) => void handlePickArt(ev)
+                }),
+                personaArt && e('button', {
+                  type: 'button',
+                  className: 'soul-persona-art-pick-clear',
+                  onClick: () => setPersonaArt(null)
+                }, t('personas.artRemove'))
+              ),
+              e('div', { className: 'soul-modal-note' }, t('personas.artHint'))
             ),
             e('div', { className: 'soul-modal-note' },
               e('div', null, t('personas.saveCovers')),
@@ -11557,7 +11722,7 @@ window.__ModuleLoader__.load({
             }),
             e('div', { className: 'soul-modal-actions' },
               e(ui.Button, {
-                onClick: () => { setShowSavePersona(false); setPersonaName(''); setApplyAfterSave(false) }
+                onClick: () => { setShowSavePersona(false); setPersonaName(''); setPersonaArt(null); setApplyAfterSave(false) }
               }, t('button.cancel')),
               e(ui.Button, {
                 variant: 'primary',

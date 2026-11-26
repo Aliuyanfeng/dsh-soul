@@ -21,7 +21,14 @@ import { join, dirname } from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
 import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  MAX_ART_BODY_BYTES,
+  MAX_ART_BYTES,
+  USER_ART_EXT,
+  artKeyOf,
+  sniffImageMime
+} from './lib/persona-art.mjs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
   DEFAULT_CONFIG,
@@ -219,8 +226,10 @@ function pluginVersion() {
 //      客户端包从 114KB 涨到 1MB+；走路由则按需加载、可缓存。
 //   ② **缺图回退占位而不是报错**：只有部分人设配了图时，其余显示官方鲸鱼轮廓的
 //      占位图。用户看到的是「一只鲸鱼」而不是破图，且新增人设不必同时补图。
-//   ③ **只服务内置人设名**：文件名由人设名构成，必须经白名单校验 —— 否则
-//      `/api/soul/persona-art/../../package.json` 这类路径穿越能读到包内任意文件。
+//   ③ **读取从不直接拼用户输入**：用户上传的图按 sha1 命名、包内图按内置白名单查找，
+//      `/api/soul/persona-art/../../package.json` 这类路径穿越在结构上不可能发生。
+//   ④ **用户图与包内图同一条路由**：上传/移除也挂在这里（POST / DELETE），
+//      GET 先查数据目录、再回退包内 assets —— 客户端只认一个 URL。
 
 const PERSONA_ART_DIR = 'assets/personas'
 // 允许的图片扩展名（宿主对插件资源的白名单：SVG / PNG / JPEG / WebP）
@@ -249,15 +258,38 @@ function personaArtDir() {
   }
 }
 
+// ==================== 用户上传的人设插画 ====================
+//
+// 与包内 assets/personas 分开：包目录在更新时会被整体替换，而且安装目录未必可写。
+// 放数据目录（与 soul-config.json 同级），卸载插件时才由用户自己决定是否清掉。
+const SOUL_ART_DIR = 'soul-art'
+function soulArtDir() {
+  return join(process.env.DSH_HOME || join(homedir(), '.dsh'), SOUL_ART_DIR)
+}
+
+// 用户上传的那张：命中就用，压过内置插画与默认贴图。
+function resolveUserArt(name) {
+  if (typeof name !== 'string' || name === '') return null
+  const dir = soulArtDir()
+  const key = artKeyOf(name)
+  for (const [mime, ext] of Object.entries(USER_ART_EXT)) {
+    const file = join(dir, key + ext)
+    if (existsSync(file)) return { file, mime, user: true }
+  }
+  return null
+}
+
 // 解析某个内置人设的插画（返回文件名，或回退到占位图；都不可用返回 null）
 //
 // 白名单校验用 isBuiltinPersona：人设名因此只能是既定 7 个之一，不含 / 与 ..，
 // 路径穿越从结构上不可能发生（而不是靠字符串替换去猜）。
 function resolvePersonaArt(name) {
+  // 用户上传的优先：它是显式选择，应该盖过包内的内置插画与默认贴图。
+  const userArt = resolveUserArt(name)
+  if (userArt) return userArt
   const dir = personaArtDir()
   if (!dir || typeof name !== 'string') return null
-  // 自建预设没有配套插画 ⇒ 用专用默认贴图（本版只做样式调整；
-  // 允许用户上传本地图片作为插画是后续版本的功能）。
+  // 自建预设：用户上传过就用那张（在上面已经返回），否则用专用默认贴图。
   //
   // 这里**仍不接受任意名字拼路径**：只有内置名会走下面的按名查找，
   // 非内置名一律返回固定文件，路径穿越依然不可能发生。
@@ -827,7 +859,7 @@ function csrfGuard(req) {
   return null
 }
 
-async function readJsonBody(req) {
+async function readJsonBody(req, limit = MAX_BODY_BYTES) {
   // CSRF 防护（0.13.0 安全加固）：写端点必须用 JSON Content-Type + 可信来源。
   // readJsonBody 是所有「读 body 的写请求」的统一入口，守卫放这里一处覆盖全部。
   const g0 = csrfGuard(req)
@@ -837,7 +869,7 @@ async function readJsonBody(req) {
   let oversized = false
   for await (const chunk of req) {
     size += chunk.length
-    if (size > MAX_BODY_BYTES) {
+    if (size > limit) {
       oversized = true
       chunks.length = 0
       continue
@@ -845,7 +877,7 @@ async function readJsonBody(req) {
     chunks.push(chunk)
   }
   if (oversized) {
-    return { ok: false, status: 413, error: `请求体超过大小上限 ${MAX_BODY_BYTES} 字节` }
+    return { ok: false, status: 413, error: `请求体超过大小上限 ${limit} 字节` }
   }
   try {
     return { ok: true, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }
@@ -2629,41 +2661,108 @@ function registerPersonaRoutes(ctx) {
       }
     })
 
-    // 人设插画：/api/soul/persona-art/<内置人设名>
+    // 人设插画：GET /api/soul/persona-art/<名字>，POST 上传，DELETE 移除
     //
-    // 用 prefix 路由（WebRouteKind 支持 'exact' | 'prefix'）而不是 query 参数：
-    // 路径里直接带人设名，浏览器可对每个 URL 独立缓存与复用连接。
-    // 名字必须命中内置人设白名单（isBuiltinPersona），路径穿越因此不可能发生。
+    // 用 prefix 路由而不是 query 参数：路径里直接带名字，浏览器可对每个 URL 独立缓存。
+    // 读取**从不直接拼用户输入**——用户图先过 sha1、内置图先过白名单，
+    // 路径穿越在结构上不可能发生。
     wsCtx.webServer.register({
       kind: 'prefix',
       path: '/api/soul/persona-art',
       handler: async (req, res) => {
+        const sendJson = (status, body) => {
+          res.writeHead(status, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(body))
+        }
         try {
-          if (req.method !== 'GET') {
-            res.writeHead(405, { 'content-type': 'application/json' })
-            res.end(JSON.stringify({ ok: false, error: 'Method not allowed' }))
-            return
-          }
           const raw = String(req.url || '').split('?')[0]
           const name = decodeURIComponent(raw.slice('/api/soul/persona-art'.length).replace(/^\/+/, ''))
+
+          // —— 上传 ——
+          if (req.method === 'POST') {
+            const parsed = await readJsonBody(req, MAX_ART_BODY_BYTES)
+            if (!parsed.ok) { sendJson(parsed.status, { ok: false, error: parsed.error }); return }
+            const body = parsed.body || {}
+            const presetName = typeof body.name === 'string' ? body.name.trim() : ''
+            if (presetName === '' || presetName.length > PERSONA_NAME_MAX) {
+              sendJson(400, { ok: false, error: `预设名不合法（1 - ${PERSONA_NAME_MAX} 字符）` })
+              return
+            }
+            // 内置预设的插画在包内，覆盖它等于「改坏一张你没法恢复的图」
+            //（虽然 DELETE 能恢复，但那个操作在这个语境里没有意义）。
+            if (isBuiltinPersona(presetName)) {
+              sendJson(400, { ok: false, error: '内置预设的插画不可替换' })
+              return
+            }
+            const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=\s]+)$/.exec(String(body.dataUrl || ''))
+            if (!match) {
+              sendJson(400, { ok: false, error: '只接受 PNG / JPEG / WebP 的 data URL' })
+              return
+            }
+            const buf = Buffer.from(match[2].replace(/\s+/g, ''), 'base64')
+            if (buf.length === 0) { sendJson(400, { ok: false, error: '图片内容为空' }); return }
+            if (buf.length > MAX_ART_BYTES) {
+              sendJson(413, { ok: false, error: `图片超过 ${Math.round(MAX_ART_BYTES / 1024)} KB` })
+              return
+            }
+            // 以文件头为准：声明是 png、内容是别的，一律拒绝。
+            const mime = sniffImageMime(buf)
+            if (!mime) {
+              sendJson(400, { ok: false, error: '文件内容不是有效的 PNG / JPEG / WebP' })
+              return
+            }
+            const dir = soulArtDir()
+            mkdirSync(dir, { recursive: true })
+            const key = artKeyOf(presetName)
+            // 先清掉同名其它扩展名：png 换成 jpg 时旧文件必须消失，
+            // 否则 resolveUserArt 会按扩展名顺序先命中旧的那张。
+            for (const ext of Object.values(USER_ART_EXT)) {
+              try { unlinkSync(join(dir, key + ext)) } catch { /* 不存在就算了 */ }
+            }
+            writeFileSync(join(dir, key + USER_ART_EXT[mime]), buf)
+            sendJson(200, {
+              ok: true,
+              // 带 v=：换图后客户端立刻重新请求，不吃浏览器缓存
+              url: `/api/soul/persona-art/${encodeURIComponent(presetName)}?v=${Date.now()}`
+            })
+            return
+          }
+
+          // —— 移除（回到内置插画 / 默认贴图）——
+          if (req.method === 'DELETE') {
+            const g = csrfGuard(req)
+            if (g) { sendJson(g[0], { ok: false, error: g[1].error }); return }
+            if (name === '') { sendJson(400, { ok: false, error: '缺少预设名' }); return }
+            const dir = soulArtDir()
+            const key = artKeyOf(name)
+            let removed = false
+            for (const ext of Object.values(USER_ART_EXT)) {
+              try { unlinkSync(join(dir, key + ext)); removed = true } catch { /* 不存在就算了 */ }
+            }
+            sendJson(200, { ok: true, removed })
+            return
+          }
+
+          if (req.method !== 'GET') {
+            sendJson(405, { ok: false, error: 'Method not allowed' })
+            return
+          }
+
           const art = resolvePersonaArt(name)
           if (!art) {
-            // 图与占位图都没有（理论上只会在 assets 被外部删空时出现）
-            res.writeHead(404, { 'content-type': 'application/json' })
-            res.end(JSON.stringify({ ok: false, error: `没有可用的插画：${name || '(空)'}` }))
+            sendJson(404, { ok: false, error: `没有可用的插画：${name || '(空)'}` })
             return
           }
           const body = readFileSync(art.file)
           res.writeHead(200, {
             'content-type': art.mime,
             'content-length': String(body.length),
-            // 图随包发布、路径即内容标识 ⇒ 可长期缓存；换图必然伴随版本号变化
-            'cache-control': 'public, max-age=86400'
+            // 用户图不可长期缓存（换图要立刻生效，客户端还会带 v=）；包内图路径即内容标识。
+            'cache-control': art.user ? 'no-store' : 'public, max-age=86400'
           })
           res.end(body)
         } catch (err) {
-          res.writeHead(500, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ ok: false, error: String(err.message || err) }))
+          sendJson(500, { ok: false, error: String(err.message || err) })
         }
       }
     })

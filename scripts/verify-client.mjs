@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 135
+const EXPECTED_ASSERTIONS = 136
 
 // 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
 // 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
@@ -6396,7 +6396,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 418, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 426, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -6962,6 +6962,46 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       String(notice.text).includes(world.dicts.zh['toast.fieldIgnored']),
       `应提示「服务端未接受这一项」，实际：${JSON.stringify(notice.text)}`
     )
+  })
+
+  await check('C142 存为预设：可选插画，且只接受 PNG / JPEG / WebP', async () => {
+    const world = await boot()
+    const tree0 = await openAccordion(world, 'soul-traits')
+    await findAll(tree0, (n) => textOf(n) === world.dicts.zh['personas.saveAs'])[0].props.onClick()
+    const tree = await renderSettings(world)
+
+    const file = findAll(tree, (n) => n.type === 'input' && n.props && n.props.type === 'file')[0]
+    assert.ok(file, '弹层里应有选择插画的 file input')
+    assert.equal(file.props.accept, 'image/png,image/jpeg,image/webp', 'accept 必须精确到三种位图')
+    assert.equal(/svg/i.test(String(file.props.accept)), false, '不得接受 SVG（可内嵌脚本与外部引用）')
+    assert.ok(textOf(tree).includes(world.dicts.zh['personas.artHint']), '应有格式与大小说明')
+    // 初始没有选图 ⇒ 不出现「移除」
+    assert.equal(
+      findAll(tree, (n) => textOf(n) === world.dicts.zh['personas.artRemove']).length,
+      0,
+      '未选图时不应出现「移除」'
+    )
+
+    // 取图必须能按版本重新拉：blob 缓存按 URL 存，URL 不变就永远是旧图。
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    assert.match(
+      source,
+      /function personaArtSrc\(name, version\)/,
+      'personaArtSrc 必须接受版本参数（否则换图后卡片还是旧图）'
+    )
+    assert.match(source, /\?v=\$\{version\}/, '版本要进 URL，才能换掉缓存键')
+    assert.match(
+      source,
+      /async uploadPersonaArt\(name, dataUrl\)[\s\S]{0,200}postJSON\('\/api\/soul\/persona-art'/,
+      '上传应走 /api/soul/persona-art'
+    )
+    assert.match(
+      source,
+      /async removePersonaArt\(name\)[\s\S]{0,260}method: 'DELETE'/,
+      '移除应走 DELETE'
+    )
+    // 关闭弹层必须清掉选中的图，否则下次打开会带着上一次的选择
+    assert.match(source, /setShowSavePersona\(false\); setPersonaName\(''\); setPersonaArt\(null\)/)
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

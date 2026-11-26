@@ -1665,9 +1665,13 @@ check('人设插画：宿主路由存在、只服务内置人设名、缺图回�
   const regAt = indexCode.lastIndexOf("path: '/api/soul/persona-art'")
   assert.ok(regAt > 0, '找不到插画路由的注册处')
   const regStart = indexCode.lastIndexOf('register(', regAt)
-  const artRoute = indexCode.slice(Math.max(0, regStart), regAt + 1400)
+  // 路由比早期版本长得多（GET / POST 上传 / DELETE 移除），切片必须够宽 ——
+  // 太窄会让后面的断言在「找不到」上误报成「没实现」。
+  const artRoute = indexCode.slice(Math.max(0, regStart), regAt + 5200)
   assert.match(artRoute, /kind: 'prefix'/, '插画路由应为 prefix（路径含人设名）')
   assert.match(artRoute, /req\.method !== 'GET'/, '插画路由应校验方法')
+  assert.match(artRoute, /req\.method === 'POST'/, '插画路由应支持上传（POST）')
+  assert.match(artRoute, /req\.method === 'DELETE'/, '插画路由应支持移除（DELETE）')
   assert.ok(
     /!isBuiltinPersona\(name\)/.test(indexCode),
     'resolvePersonaArt 必须用 isBuiltinPersona 做白名单校验（防路径穿越的结构手段）'
@@ -3692,7 +3696,12 @@ check('「存为全局预设 / 更新到全局预设」与「保存特质」同�
   assert.match(clientSource, /t\('personas\.saveCovers'\)/, '弹层应说明会保存哪些字段')
   assert.match(clientSource, /t\('personas\.saveExcludes'\)/, '弹层应说明不含「关于你」（这正是困惑来源）')
   // ⑦ 弹层要能关闭：遮罩点击 + 取消按钮 + Esc
-  assert.match(clientSource, /onClick: \(\) => \{ setShowSavePersona\(false\); setPersonaName\(''\) \}/, '弹层应可关闭（遮罩/取消）')
+  // 关闭时必须把三样东西都清掉：弹层、名字、选中的插画（否则下次打开带着上次的图）。
+  assert.match(
+    clientSource,
+    /setShowSavePersona\(false\); setPersonaName\(''\); setPersonaArt\(null\)/,
+    '弹层应可关闭（遮罩/取消），并清掉选中的插画'
+  )
   assert.match(clientSource, /ev\.key === 'Escape'/, '弹层应支持 Esc 关闭')
   // ⑧ 中英文案键齐备
   for (const [k, zh, en] of [
