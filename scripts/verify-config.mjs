@@ -33,6 +33,7 @@ import {
   PROFILE_FIELDS,
   PROMPT_INPUT_FIELDS,
   REPLY_LENGTH_VALUES,
+  RUN_SHAPE_VALUES,
   STYLE_VALUES,
   TRAIT_VALUES,
   clampHistoryMaxEntries,
@@ -59,7 +60,7 @@ import { assertCount, skipNote } from './lib/skip-report.mjs'
 // 注意：本脚本没有环境相关的跳过分支（只读仓库内的文件与纯函数，不依赖浏览器 / DSH /
 // 平台能力），所以链里的 `--strict` 对它是空操作 —— 这是**事实描述**，不是缺陷。
 // 它的数字由这里的 assertCount 守住；需要 --strict 的是那些有跳过能力的脚本。
-const EXPECTED_ASSERTIONS = 189
+const EXPECTED_ASSERTIONS = 190
 
 let passed = 0
 const failures = []
@@ -540,6 +541,17 @@ check('DEFAULT_CONFIG 含光轨默认值', () => {
 // 侧栏运行指示：与光轨是一对开关，默认开启（宿主那个 14px 环太难看到）。
 // 关掉必须真的回到宿主原样，所以默认值只能是布尔，不能是 undefined ——
 // 老的配置文件里没有这个键，走 DEFAULT 时必须是 true，而不是「关」。
+check('DEFAULT_CONFIG：侧栏标记形状默认 arc，非法值回退', () => {
+  // 默认 arc：宿主原样就是缺口环，选它等于「放大 + 染色」，升级时观感最不意外。
+  assert.equal(DEFAULT_CONFIG.runIndicatorShape, 'arc')
+  assert.deepEqual(RUN_SHAPE_VALUES, ['ring', 'arc', 'spark', 'dot'])
+  const { patch } = sanitizeConfig({ runIndicatorShape: 'spark' })
+  assert.equal(patch.runIndicatorShape, 'spark', '合法形状应能写入')
+  const { errors } = sanitizeConfig({ runIndicatorShape: 'star' })
+  assert.ok(errors.runIndicatorShape, '未知形状应报错')
+  assert.equal(migrateConfig({ runIndicatorShape: 'star' }).runIndicatorShape, 'arc', '脏数据回退 arc')
+})
+
 check('DEFAULT_CONFIG：侧栏运行指示默认开启，脏数据回退为 true', () => {
   assert.equal(DEFAULT_CONFIG.runIndicatorEnabled, true)
   const { patch } = sanitizeConfig({ runIndicatorEnabled: false })

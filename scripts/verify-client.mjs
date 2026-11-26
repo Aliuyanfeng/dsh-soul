@@ -6396,7 +6396,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 412, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 417, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -6690,79 +6690,83 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     )
   })
 
-  await check('C137 侧栏运行指示：环放大染色 + wash + 加粗 + 一圈流光边框', async () => {
+  await check('C137 侧栏运行标记：形状可选 + wash + 加粗 + 流光边框', async () => {
     const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
 
-    // ① 环：放大 + 染色 + 光晕，但**静态** —— 唯一允许动的是边框，两处同时动会吵。
-    const ring = source.match(
-      /'\[data-soul-run="on"\] \[data-row-key\] svg\[data-state="ongoing"\],\[data-soul-run-row="on"\] svg\[data-state="ongoing"\]\{([^}]*)\}'/
+    // ① 宿主 svg：藏起来，但不拆 DOM、不用 display:none。
+    const svgRule = source.match(
+      /'\[data-soul-run="on"\] \[data-row-key\^="session:"\] svg\[data-state="ongoing"\],\[data-soul-run-row="on"\] svg\[data-state="ongoing"\]\{([^}]*)\}'/
     )
-    assert.ok(ring, '缺少侧栏运行指示规则')
-    assert.match(ring[1], /width:16px/, '运行中的环应放大到 16px')
-    assert.match(ring[1], /var\(--soul-trail-color,#679EFE\)/, '颜色应跟随光轨并带回退')
-    assert.match(ring[1], /drop-shadow/, '应有一层同色光晕')
-    assert.equal(/animation:/.test(ring[1]), false, '环不再呼吸：动效只能有一处')
+    assert.ok(svgRule, '缺少宿主 svg 的隐藏规则')
+    assert.match(svgRule[1], /width:16px/, '隐藏前先固定 16px 占位')
+    assert.match(svgRule[1], /visibility:hidden/, '用 visibility 隐藏（display:none 会让行内布局跳动）')
+    assert.equal(/display:none/.test(svgRule[1]), false, '不得用 display:none 隐藏宿主环')
 
-    // ② 极淡 wash + 只加粗标题（静态，负责扫读）
+    // ② 极淡 wash + 只加粗标题
     const wash = source.match(
       /'\[data-soul-run="on"\] \[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\),\[data-soul-run-row="on"\]:has\(svg\[data-state="ongoing"\]\)\{([^}]*)\}'/
     )
     assert.ok(wash, '缺少运行中会话行的底色 wash')
     assert.match(wash[1], /background-image:linear-gradient/, 'wash 用 background-image 叠，避免盖掉 hover 背景')
     assert.match(wash[1], /7%,transparent/, 'wash 应很淡（7%）')
-    assert.ok(source.includes('>span:nth-child(2){font-weight:600}'), '应只给标题（行内第二个 span）加粗')
-
-    // ③ 流光边框：伪元素铺满 + 1px padding + mask 抠掉中间，只剩一圈边。
-    // 角度必须由 @property 注册才能插值；整条规则包在 @supports 里，mask 不支持时
-    // 退回「没有边框」，而不是变成一整块渐变盖住文字。
-    assert.ok(source.includes('@property --soul-run-angle'), '角度必须注册 @property 才能做旋转插值')
-    const border = source.match(
-      /'@supports \(mask-composite:exclude\)\{\[data-soul-run="on"\] \[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)::before,\[data-soul-run-row="on"\]:has\(svg\[data-state="ongoing"\]\)::before\{([^}]*)\}\}'/
+    assert.ok(
+      source.includes('>span:nth-child(2),[data-soul-run-row="on"]:has(svg[data-state="ongoing"])>span:nth-child(2){font-weight:600}'),
+      '应只给标题加粗'
     )
-    assert.ok(border, '缺少流光边框规则，或没包在 @supports 里（mask 不支持时会糊住整行）')
-    for (const [pattern, why] of [
-      [/position:absolute/, '伪元素在 flex 行里必须绝对定位，否则会占位'],
-      [/pointer-events:none/, '边框不能挡住行的点击'],
-      [/padding:1px/, '边框厚度由 padding 控制（真 border 会把行撑高、进出运行态时抖动）'],
-      [/conic-gradient\(from var\(--soul-run-angle\)/, '高光角度必须可动画'],
-      [/mask-composite:exclude/, '必须抠掉 content-box，只留一圈边'],
-      [/animation:soul-run-orbit var\(--soul-run-duration,4\.8s\) linear infinite/, '边框应与输入框光轨同节拍（读同一个时长变量）']
-    ]) assert.match(border[1], pattern, why)
-    assert.ok(source.includes('@keyframes soul-run-orbit'), '缺少流光关键帧')
 
-    // 节拍同源：三档时长只有一份定义，输入框光轨与侧栏边框都读它 ——
-    // 否则改了一处忘另一处，两边就会慢慢不同步。
-    assert.match(
-      source,
-      /const TRAIL_DURATIONS = \{ slow: '4\.8s', normal: '3\.6s', fast: '2\.4s' \}/,
-      '三档时长应有唯一来源 TRAIL_DURATIONS'
+    // ③ 行首标记：伪元素 + mask（形状与动画都从变量来）
+    const mark = source.match(/\[data-soul-run-row="on"\]:has\(svg\[data-state="ongoing"\]\)::before\{([^}]*)\}/)
+    assert.ok(mark, '缺少行首标记伪元素')
+    for (const [pattern, why] of [
+      [/position:absolute/, '标记必须绝对定位（行是 flex，否则会占位）'],
+      [/inset-inline-start:calc\(8px \+ var\(--dsh-workspace-indent,0px\)\)/, '标记要对齐宿主的工作区缩进'],
+      [/background-color:var\(--soul-trail-color,#679EFE\)/, '标记颜色应跟随光轨'],
+      [/mask-image:var\(--soul-run-mask\)/, '形状必须由变量提供（换形状 = 换变量）'],
+      [/animation:var\(--soul-run-mark-anim\)/, '动画也必须由变量提供'],
+      [/pointer-events:none/, '标记不能挡住行的点击']
+    ]) assert.match(mark[1], pattern, why)
+
+    // ④ 四种形状：默认 arc 定义在 :root，其余按属性覆盖
+    for (const shape of ['ring', 'arc', 'spark', 'dot']) {
+      assert.ok(source.includes(`'runShape.${shape}'`), `缺少 ${shape} 的选项文案`)
+      if (shape !== 'arc') {
+        assert.ok(
+          source.includes(`:root[data-soul-run-shape="${shape}"]`),
+          `缺少 ${shape} 的形状定义`
+        )
+      }
+    }
+    const masks = source.match(/--soul-run-mask:url\("data:image\/svg\+xml,[^"]+"\)/g) || []
+    assert.equal(masks.length, 4, `形状 mask 应有 4 个，实际 ${masks.length}`)
+    for (const m of masks) {
+      assert.match(m, /%23fff/, 'mask 形状必须是白色（luminance mask 里黑色=透明）')
+    }
+    for (const frame of ['soul-run-mark-spin', 'soul-run-mark-pulse', 'soul-run-mark-spark', 'soul-run-mark-dot']) {
+      assert.ok(source.includes(`@keyframes ${frame}`), `缺少 ${frame} 关键帧`)
+    }
+
+    // ⑤ 边框改用 ::after —— ::before 已经给了标记，两条撞在一起会互相覆盖
+    assert.ok(
+      /\[data-soul-run-row="on"\]:has\(svg\[data-state="ongoing"\]\)::after\{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px/.test(source),
+      '流光边框应画在 ::after 上（::before 已用于标记）'
     )
     assert.equal(
-      /animation-duration:(4\.8s|3\.6s|2\.4s)/.test(source),
+      /::before\{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px/.test(source),
       false,
-      '光轨规则里不得再硬写时长（应引用 TRAIL_DURATIONS）'
+      '边框不得再占用 ::before'
     )
-    assert.match(
-      source,
-      /'--soul-run-duration',\s*\n?\s*TRAIL_DURATIONS\[snapshot\.trailSpeed\] \|\| TRAIL_DURATIONS\.normal/,
-      '应把当前档位时长投射到 --soul-run-duration'
+    assert.ok(source.includes('@keyframes soul-run-orbit'), '缺少流光关键帧')
+    assert.ok(source.includes('@property --soul-run-angle'), '角度必须注册 @property 才能旋转')
+
+    // ⑥ reduced-motion：标记停、边框改成静态描边
+    const reduce = source.split('\n').find(
+      (line) => line.includes('prefers-reduced-motion') && line.includes('data-soul-run-row="on"')
     )
+    assert.ok(reduce, '缺少 reduced-motion 分支')
+    assert.match(reduce, /animation:none/, 'reduced-motion 下应停掉动画')
+    assert.match(reduce, /background-color:color-mix/, '边框应改成静态描边而不是消失')
 
-    // 降级：减少动态效果下不流动，但改成整圈淡描边 —— 仍然看得出「在跑」。
-    const reduce = source
-      .split('\n')
-      .find(
-        (line) =>
-          line.includes('prefers-reduced-motion') &&
-          line.includes('data-soul-run="on"') &&
-          line.includes('data-row-key^="session:"') &&
-          line.includes('::before')
-      )
-    assert.ok(reduce, '缺少边框的 reduced-motion 分支')
-    assert.match(reduce, /animation:none/, 'reduced-motion 下应停掉流动')
-    assert.match(reduce, /background-color:color-mix/, 'reduced-motion 下应改成静态描边，而不是消失')
-
-    // 反向：星 / 左侧光带 / 彗星 / 环呼吸都已撤除，不得回流。
+    // ⑦ 反向：星 / 左侧光带 / 彗星 / 环呼吸都已撤除，不得回流
     assert.equal(
       /soul-run-spark|soul-session-run-scan|soul-session-run-breathe/.test(source),
       false,
@@ -6774,42 +6778,14 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       '不得再给会话行加左侧光带'
     )
 
-    // 总闸：所有运行态样式必须挂在 [data-soul-run="on"] 下，属性由开关投射。
-    // 反向钉住「没有前缀的裸规则」—— 漏一条就等于开关关不掉那一部分。
+    // ⑧ 颜色与形状必须投射到 :root（侧栏不在 React 树里，只能走属性）
+    assert.ok(source.includes("'dsh-soul: sidebar trail color'"), '缺少把配置投射到 :root 的 effect')
+    assert.ok(/setProperty\('--soul-trail-color', color\)/.test(source), '应写入 --soul-trail-color')
     assert.match(
       source,
-      /'\[data-soul-run="on"\] \[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)>span:nth-child\(2\),\[data-soul-run-row="on"\]:has\(svg\[data-state="ongoing"\]\)>span:nth-child\(2\)\{font-weight:600\}'/,
-      '加粗也必须受开关控制'
+      /root\.dataset\.soulRunShape = RUN_SHAPE_VALUES\.includes\(snapshot\.runIndicatorShape\)/,
+      '形状应投射到 data-soul-run-shape'
     )
-    assert.equal(
-      /'\[data-row-key\] svg\[data-state="ongoing"\]\{/.test(source),
-      false,
-      '不得存在不受开关控制的运行态规则（漏一条 = 关不干净）'
-    )
-    assert.match(
-      source,
-      /root\.dataset\.soulRun = snapshot\.runIndicatorEnabled === false \? 'off' : 'on'/,
-      '开关必须投射到 :root 的 data-soul-run 属性'
-    )
-    assert.match(
-      source,
-      /id: 'soul-runIndicatorEnabled'[\s\S]{0,220}checked: runIndicatorEnabled !== false/,
-      '设置页应有一个默认开启的「侧栏运行指示」开关'
-    )
-    // 与光轨开关相邻：中间不许夹其它字段（两个开关是一对，颜色/速度共用一份配置）。
-    const trailSwitchAt = source.indexOf("id: 'soul-trailEnabled'")
-    const runSwitchAt = source.indexOf("id: 'soul-runIndicatorEnabled'")
-    assert.ok(trailSwitchAt > 0 && runSwitchAt > trailSwitchAt, '新开关应排在光轨开关之后')
-    const between = source.slice(trailSwitchAt + "id: 'soul-trailEnabled'".length, runSwitchAt)
-    assert.equal(
-      (between.match(/id: 'soul-[a-zA-Z]+'/g) || []).length,
-      0,
-      '两个开关之间不得夹其它控件'
-    )
-
-    // 颜色投射：CSS 变量只能从 documentElement 取，缺这段则侧栏永远是默认色
-    assert.ok(source.includes("'dsh-soul: sidebar trail color'"), '缺少把 trailColor 投射到 :root 的 effect')
-    assert.ok(/setProperty\('--soul-trail-color', color\)/.test(source), '应通过 setProperty 写入 --soul-trail-color')
   })
 
   await check('C138 「侧栏运行指示」开关：默认开启，点击只提交该字段', async () => {

@@ -193,6 +193,7 @@ window.__ModuleLoader__.load({
       // 侧栏「人设总览」入口开关（Issue #3）：默认关，不强制占用侧栏位置
       showOverviewInSidebar: false,
       runIndicatorEnabled: true,
+      runIndicatorShape: 'arc',
       // 输入框光轨（v0.6.0）：Agent 回复中时输入框边框的流光动效
       trailEnabled: true,
       trailColor: '#679EFE',
@@ -374,6 +375,7 @@ window.__ModuleLoader__.load({
     // 免得两处各写一份 3.6s / 4.8s / 2.4s，改了一处忘另一处。
     const TRAIL_DURATIONS = { slow: '4.8s', normal: '3.6s', fast: '2.4s' }
     const TRAIL_WIDTH_VALUES = ['thin', 'normal', 'thick']
+    const RUN_SHAPE_VALUES = ['ring', 'arc', 'spark', 'dot']
     // 最粗描边（4px）的一半：环的外盒比宿主边框盒每边外扩这么多，
     // 好让描边的外半圈也落在 SVG 自己的盒内（contain:paint 会按盒裁切）。
     // 这样就不需要 overflow:visible —— 墨迹不再外溢，不可能被祖先的 scrollHeight 计入。
@@ -610,6 +612,9 @@ window.__ModuleLoader__.load({
         s.showOverviewInSidebar = config.showOverviewInSidebar === true
         // 默认开启：只有显式 false 才关（老配置里没有这个键 → 保持开启）
         s.runIndicatorEnabled = config.runIndicatorEnabled !== false
+        s.runIndicatorShape = RUN_SHAPE_VALUES.includes(config.runIndicatorShape)
+          ? config.runIndicatorShape
+          : 'arc'
         s.trailEnabled = config.trailEnabled !== false
         s.trailColor = config.trailColor || TRAIL_COLOR_FALLBACK
         s.trailSpeed = config.trailSpeed || 'slow'
@@ -1252,42 +1257,41 @@ window.__ModuleLoader__.load({
       '.soul-session-persona-label-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       // 图标：与文字同色但略淡（图标是标识，文字是主信息）
       '.soul-session-persona-label-icon{flex:none;opacity:.75}',
-      // 运行中的侧栏会话行。三件事，但只有一个「动」的元素（边界流光）。
-      // 全部规则都挂在 [data-soul-run="on"] 下 —— 设置页那个开关关掉后，
-      // 属性变成 off，这一整组规则一条都不匹配，侧栏回到宿主原样（不是「只停动画」）。
+      // 运行中的侧栏会话行。四件事，但只有一个「动」的：
+      //   ① 行首标记：形状可选（ring / arc / spark / dot），单色 mask + 光轨色
+      //   ② 整行 7% wash + 标题加粗 —— 静态，负责扫读
+      //   ③ 一圈 1px 流光边框 —— 唯一在动的东西
       //
-      // 第二个锚点 [data-soul-run-row="on"] 是给设置页里那张对比图的：它**自身**带属性，
-      // 不靠祖先。为什么不能用 [data-row-key]：开关打开时 html 上就是 data-soul-run="on"，
-      // 设置页里任何带 data-row-key 的元素都会被当成「运行中的会话行」——
-      // 对比图的「关闭」栏会跟着亮（真实 bug）。改成自身锚点后，左栏 off 永远不匹配，
-      // 也顺带去掉了「在设置页伪造宿主行键」这个隐患。
-      //   ① 宿主那个 14px 的 ongoing 环放大到 16、染成光轨色、加一层同色光晕 —— 静态
-      //   ② 整行一层 7% 的色 wash + 标题加粗 —— 静态，负责扫读时成片识别
-      //   ③ 一圈 1px 的流光边框 —— 唯一在动的东西，语言与输入框光轨一致
-      // 早先试过的星形 / 左侧光带 / 彗星都已撤除：它们与宿主自己的环语义重复，
-      // 或者把行边缘切出一条不属于宿主语言的东西。
-      '[data-soul-run="on"] [data-row-key] svg[data-state="ongoing"],[data-soul-run-row="on"] svg[data-state="ongoing"]{width:16px;height:16px;color:var(--soul-trail-color,#679EFE);filter:drop-shadow(0 0 4px color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent))}',
-      // wash 用 background-image 叠，而不是 background-color：宿主的 hover / 选中态也是
-      // 背景色，用 image 叠上去不会把它们盖掉。
+      // 宿主那个 14px 的 svg 用 **visibility:hidden** 藏起来：保留它的 16px 占位，
+      // 行内布局不跳。不删 DOM —— 宿主给它挂了 ref（syncSpinner 会把动画相位钉到 0），
+      // 删掉会让那段逻辑指向一个不存在的节点。
+      //
+      // 全部规则挂在 [data-soul-run="on"] 下；第二个锚点 [data-soul-run-row="on"] 是给
+      // 设置页那张对比图的（自身属性，不靠祖先 —— 见 C139 的注释）。
+      '[data-soul-run="on"] [data-row-key^="session:"] svg[data-state="ongoing"],[data-soul-run-row="on"] svg[data-state="ongoing"]{width:16px;height:16px;visibility:hidden}',
       '[data-soul-run="on"] [data-row-key^="session:"]:has(svg[data-state="ongoing"]),[data-soul-run-row="on"]:has(svg[data-state="ongoing"]){position:relative;background-image:linear-gradient(color-mix(in srgb,var(--soul-trail-color,#679EFE) 7%,transparent),color-mix(in srgb,var(--soul-trail-color,#679EFE) 7%,transparent))}',
-      // 标题是行内第二个 span（leading slot / title / time / actions）。只加粗标题，
-      // 时间戳与行尾按钮保持原样 —— 不依赖哈希类名。
       '[data-soul-run="on"] [data-row-key^="session:"]:has(svg[data-state="ongoing"])>span:nth-child(2),[data-soul-run-row="on"]:has(svg[data-state="ongoing"])>span:nth-child(2){font-weight:600}',
-      // —— 流光边框 ——
+      // —— 行首标记 ——
       //
-      // 不用真 border：那会在布局里占 2px，把 32px 的行撑高、进出运行态时抖一下；
-      // 也不用 border-image：它不支持圆角，行是 8px 圆角的。
-      // 做法是伪元素铺满行、自身 padding 1px、mask 抠掉 content-box，只剩那一圈边。
-      // 角度由 @property 注册后插值旋转，conic 里放「一段高光 + 两侧渐隐」，
-      // 就是输入框光轨那种「一段光沿轮廓跑」的语言，而不是一条匀速的色带。
-      //
-      // @supports 包住：mask-composite 不被支持时整条规则不生效（退回无边框），
-      // 否则伪元素会变成一整块渐变盖住文字。
+      // 形状与动画都从两个变量来，所以「换形状」只是换变量，规则只有一条。
+      // 用伪元素而不是 svg 自己的 background：SVG 根元素上画背景在浏览器间行为不一致，
+      // 伪元素则是纯粹的 CSS 盒，可控。位置对齐宿主的缩进（工作区嵌套会变）。
+      '[data-soul-run="on"] [data-row-key^="session:"]:has(svg[data-state="ongoing"])::before,[data-soul-run-row="on"]:has(svg[data-state="ongoing"])::before{content:"";position:absolute;inset-inline-start:calc(8px + var(--dsh-workspace-indent,0px));inset-block-start:50%;width:16px;height:16px;margin-block-start:-8px;background-color:var(--soul-trail-color,#679EFE);filter:drop-shadow(0 0 4px color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent));-webkit-mask-image:var(--soul-run-mask);mask-image:var(--soul-run-mask);-webkit-mask-size:contain;mask-size:contain;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;pointer-events:none;animation:var(--soul-run-mark-anim)}',
+      // 形状定义：默认 arc（宿主原样就是缺口环，选它等于「放大 + 染色」）。
+      ':root{--soul-run-mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2016%2016%27%3E%3Ccircle%20cx=%278%27%20cy=%278%27%20r=%275.5%27%20fill=%27none%27%20stroke=%27%23fff%27%20stroke-width=%272%27%20stroke-dasharray=%2726%209%27%20stroke-linecap=%27round%27/%3E%3C/svg%3E");--soul-run-mark-anim:soul-run-mark-spin 1.5s linear infinite}',
+      ':root[data-soul-run-shape="ring"]{--soul-run-mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2016%2016%27%3E%3Ccircle%20cx=%278%27%20cy=%278%27%20r=%275.5%27%20fill=%27none%27%20stroke=%27%23fff%27%20stroke-width=%272%27/%3E%3C/svg%3E");--soul-run-mark-anim:soul-run-mark-pulse 1.6s ease-in-out infinite}',
+      ':root[data-soul-run-shape="spark"]{--soul-run-mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%2711.6%2011.6%2012.8%2012.8%27%3E%3Cpath%20d=%27M18%2011.6C18.52%2015.15%2020.85%2017.48%2024.4%2018C20.85%2018.52%2018.52%2020.85%2018%2024.4C17.48%2020.85%2015.15%2018.52%2011.6%2018C15.15%2017.48%2017.48%2015.15%2018%2011.6Z%27%20fill=%27%23fff%27/%3E%3C/svg%3E");--soul-run-mark-anim:soul-run-mark-spark 7s linear infinite}',
+      ':root[data-soul-run-shape="dot"]{--soul-run-mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2016%2016%27%3E%3Ccircle%20cx=%278%27%20cy=%278%27%20r=%274%27%20fill=%27%23fff%27/%3E%3C/svg%3E");--soul-run-mark-anim:soul-run-mark-dot 1.6s ease-in-out infinite}',
+      '@keyframes soul-run-mark-spin{to{transform:rotate(360deg)}}',
+      '@keyframes soul-run-mark-spark{to{transform:rotate(360deg)}}',
+      '@keyframes soul-run-mark-pulse{0%,100%{opacity:.55}50%{opacity:1}}',
+      '@keyframes soul-run-mark-dot{0%,100%{transform:scale(.72);opacity:.55}50%{transform:scale(1);opacity:1}}',
+      // —— 流光边框（用 ::after，::before 让给标记）——
       '@property --soul-run-angle{syntax:"<angle>";inherits:false;initial-value:0deg}',
-      '@supports (mask-composite:exclude){[data-soul-run="on"] [data-row-key^="session:"]:has(svg[data-state="ongoing"])::before,[data-soul-run-row="on"]:has(svg[data-state="ongoing"])::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;background:conic-gradient(from var(--soul-run-angle),transparent 0deg,color-mix(in srgb,var(--soul-trail-color,#679EFE) 35%,transparent) 46deg,var(--soul-trail-color,#679EFE) 74deg,color-mix(in srgb,var(--soul-trail-color,#679EFE) 35%,transparent) 102deg,transparent 148deg);-webkit-mask:linear-gradient(rgb(0 0 0) 0 0) content-box,linear-gradient(rgb(0 0 0) 0 0);-webkit-mask-composite:xor;mask:linear-gradient(rgb(0 0 0) 0 0) content-box,linear-gradient(rgb(0 0 0) 0 0);mask-composite:exclude;animation:soul-run-orbit var(--soul-run-duration,4.8s) linear infinite}}',
+      '@supports (mask-composite:exclude){[data-soul-run="on"] [data-row-key^="session:"]:has(svg[data-state="ongoing"])::after,[data-soul-run-row="on"]:has(svg[data-state="ongoing"])::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;background:conic-gradient(from var(--soul-run-angle),transparent 0deg,color-mix(in srgb,var(--soul-trail-color,#679EFE) 35%,transparent) 46deg,var(--soul-trail-color,#679EFE) 74deg,color-mix(in srgb,var(--soul-trail-color,#679EFE) 35%,transparent) 102deg,transparent 148deg);-webkit-mask:linear-gradient(rgb(0 0 0) 0 0) content-box,linear-gradient(rgb(0 0 0) 0 0);-webkit-mask-composite:xor;mask:linear-gradient(rgb(0 0 0) 0 0) content-box,linear-gradient(rgb(0 0 0) 0 0);mask-composite:exclude;animation:soul-run-orbit var(--soul-run-duration,4.8s) linear infinite}}',
       '@keyframes soul-run-orbit{to{--soul-run-angle:360deg}}',
-      // reduced-motion：光不跑，改成整圈淡描边 —— 仍看得出「这行在跑」，但不闪。
-      '@media (prefers-reduced-motion:reduce){[data-soul-run="on"] [data-row-key^="session:"]:has(svg[data-state="ongoing"])::before,[data-soul-run-row="on"]:has(svg[data-state="ongoing"])::before{animation:none;background-image:none;background-color:color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent)}}',
+      // 减少动态效果：标记停、边框改成整圈淡描边（仍看得出「在跑」）。
+      '@media (prefers-reduced-motion:reduce){[data-soul-run="on"] [data-row-key^="session:"]:has(svg[data-state="ongoing"])::before,[data-soul-run-row="on"]:has(svg[data-state="ongoing"])::before{animation:none;opacity:1}[data-soul-run="on"] [data-row-key^="session:"]:has(svg[data-state="ongoing"])::after,[data-soul-run-row="on"]:has(svg[data-state="ongoing"])::after{animation:none;background-image:none;background-color:color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent)}}',
       // 侧栏会话行 hover 面具徽标（0.9.0-ab）：与行内其它 hover 按钮对齐
       '.soul-sidebar-persona-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-sidebar-persona-badge-icon{display:block}',
@@ -2702,6 +2706,11 @@ window.__ModuleLoader__.load({
       'toast.saveFailed': '❌ 保存失败，请检查配置',
       'trail.enable': '启用输入框光轨',
       'field.runIndicator': '启用侧栏光轨',
+      'field.runShape': '形状',
+      'runShape.ring': '整圈',
+      'runShape.arc': '缺口环',
+      'runShape.spark': '四芒星',
+      'runShape.dot': '实心点',
       'hint.runIndicator': '会话跑起来时，侧栏那一行会亮起一圈流光边框、一层淡色底，标题也会加粗；颜色与快慢沿用光轨设置。关掉后完全回到宿主原样。',
       'trail.color': '光轨颜色',
       'trail.speed': '流动速度',
@@ -3139,6 +3148,11 @@ window.__ModuleLoader__.load({
       'toast.saveFailed': '❌ Save failed — please check the config',
       'trail.enable': 'Enable composer light trail',
       'field.runIndicator': 'Enable sidebar trail',
+      'field.runShape': 'Shape',
+      'runShape.ring': 'Full ring',
+      'runShape.arc': 'Arc',
+      'runShape.spark': 'Four-point star',
+      'runShape.dot': 'Dot',
       'hint.runIndicator': 'While a session runs, its sidebar row gets a flowing border, a faint tint and a bolder title; colour and speed follow the trail settings. Turn it off to leave the host untouched.',
       'trail.color': 'Trail color',
       'trail.speed': 'Flow speed',
@@ -3558,6 +3572,11 @@ window.__ModuleLoader__.load({
       'toast.saveFailed': '❌ Не удалось сохранить — проверьте конфигурацию',
       'trail.enable': 'Включить световой след у поля ввода',
       'field.runIndicator': 'Включить световой след в боковой панели',
+      'field.runShape': 'Форма',
+      'runShape.ring': 'Полное кольцо',
+      'runShape.arc': 'Дуга',
+      'runShape.spark': 'Четырёхлучевая звезда',
+      'runShape.dot': 'Точка',
       'hint.runIndicator': 'Пока сессия работает, её строка в боковой панели получает бегущую рамку, лёгкую подсветку и жирный заголовок; цвет и скорость берутся из настроек дорожки. Если выключить, панель вернётся к виду хоста.',
       'trail.color': 'Цвет следа',
       'trail.speed': 'Скорость течения',
@@ -4005,6 +4024,11 @@ window.__ModuleLoader__.load({
       'toast.saveFailed': '❌ 保存に失敗しました。設定を確認してください',
       'trail.enable': '入力欄の光の軌跡を有効にする',
       'field.runIndicator': 'サイドバーの光の軌跡を有効にする',
+      'field.runShape': '形',
+      'runShape.ring': '全周リング',
+      'runShape.arc': '円弧',
+      'runShape.spark': '四つ星',
+      'runShape.dot': 'ドット',
       'hint.runIndicator': 'セッションの実行中は、サイドバーの行に流れる枠線・淡い背景・太字のタイトルが付きます。色と速さは光跡の設定に従います。オフにするとホスト本来の表示に戻ります。',
       'trail.color': '光の軌跡の色',
       'trail.speed': '流れる速さ',
@@ -4449,6 +4473,11 @@ window.__ModuleLoader__.load({
       'toast.saveFailed': '❌ Error al guardar; revisa la configuración',
       'trail.enable': 'Activar la estela luminosa del campo de entrada',
       'field.runIndicator': 'Activar la estela luminosa de la barra lateral',
+      'field.runShape': 'Forma',
+      'runShape.ring': 'Anillo completo',
+      'runShape.arc': 'Arco',
+      'runShape.spark': 'Estrella de cuatro puntas',
+      'runShape.dot': 'Punto',
       'hint.runIndicator': 'Mientras una sesión se ejecuta, su fila muestra un borde en movimiento, un fondo tenue y el título en negrita; el color y la velocidad siguen los ajustes del trazo. Al desactivarlo, todo vuelve al aspecto original del host.',
       'trail.color': 'Color de la estela',
       'trail.speed': 'Velocidad',
@@ -4893,6 +4922,11 @@ window.__ModuleLoader__.load({
       'toast.saveFailed': '❌ Échec de l’enregistrement ; vérifie la configuration',
       'trail.enable': 'Activer la traînée lumineuse du champ de saisie',
       'field.runIndicator': 'Activer la traînée lumineuse de la barre latérale',
+      'field.runShape': 'Forme',
+      'runShape.ring': 'Anneau complet',
+      'runShape.arc': 'Arc',
+      'runShape.spark': 'Étoile à quatre branches',
+      'runShape.dot': 'Point',
       'hint.runIndicator': 'Pendant qu’une session tourne, sa ligne affiche une bordure animée, un fond très léger et un titre en gras ; couleur et vitesse suivent les réglages de la traînée. Désactivé, tout revient à l’aspect d’origine.',
       'trail.color': 'Couleur de la traînée',
       'trail.speed': 'Vitesse',
@@ -5337,6 +5371,11 @@ window.__ModuleLoader__.load({
       'toast.saveFailed': '❌ Speichern fehlgeschlagen; prüfe die Konfiguration',
       'trail.enable': 'Lichtspur am Eingabefeld aktivieren',
       'field.runIndicator': 'Lichtspur in der Seitenleiste aktivieren',
+      'field.runShape': 'Form',
+      'runShape.ring': 'Vollring',
+      'runShape.arc': 'Bogen',
+      'runShape.spark': 'Vierstrahliger Stern',
+      'runShape.dot': 'Punkt',
       'hint.runIndicator': 'Während eine Sitzung läuft, bekommt ihre Zeile einen wandernden Rahmen, einen sehr leichten Hintergrund und einen fetten Titel; Farbe und Tempo folgen den Leuchtspur-Einstellungen. Ausgeschaltet bleibt alles wie im Original des Hosts.',
       'trail.color': 'Farbe der Lichtspur',
       'trail.speed': 'Geschwindigkeit',
@@ -5781,6 +5820,11 @@ window.__ModuleLoader__.load({
       'toast.saveFailed': '❌ Falha ao salvar; confira a configuração',
       'trail.enable': 'Ativar o rastro luminoso do campo de entrada',
       'field.runIndicator': 'Ativar o rastro luminoso da barra lateral',
+      'field.runShape': 'Forma',
+      'runShape.ring': 'Anel completo',
+      'runShape.arc': 'Arco',
+      'runShape.spark': 'Estrela de quatro pontas',
+      'runShape.dot': 'Ponto',
       'hint.runIndicator': 'Enquanto uma sessão roda, a linha mostra uma borda em movimento, um fundo bem claro e o título em negrito; cor e velocidade seguem as configurações do rastro. Ao desativar, tudo volta ao visual original do host.',
       'trail.color': 'Cor do rastro',
       'trail.speed': 'Velocidade',
@@ -5886,7 +5930,7 @@ window.__ModuleLoader__.load({
     //   · EXTERNALLY_MANAGED —— 由别的界面就地管理，这张表单连草稿都不持有。
     const ABOUT_FIELD_KEYS = ['nickname', 'occupation', 'bio']
     const TRAIT_FIELD_KEYS = ['style', 'headingLists', 'emoji', 'tables', 'replyLength', 'customInstructions']
-    const IMMEDIATE_FIELD_KEYS = ['enabled', 'requireToolConfirmation', 'showQuickToggle', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'runIndicatorEnabled', 'trailColor', 'trailSpeed', 'trailWidth', 'subagentInheritPersona', 'subagentPersona', 'language']
+    const IMMEDIATE_FIELD_KEYS = ['enabled', 'requireToolConfirmation', 'showQuickToggle', 'quoteAsContext', 'showOverviewInSidebar', 'trailEnabled', 'runIndicatorEnabled', 'runIndicatorShape', 'trailColor', 'trailSpeed', 'trailWidth', 'subagentInheritPersona', 'subagentPersona', 'language']
     // 表单以草稿持有、需要点保存才落盘的字段（dirty 检测与分区保存载荷共用）。
     const FORM_FIELD_KEYS = [...ABOUT_FIELD_KEYS, ...TRAIT_FIELD_KEYS]
 
@@ -5941,6 +5985,7 @@ window.__ModuleLoader__.load({
       showQuickToggle: 'field.showQuickToggle',
       trailEnabled: 'trail.enable',
       runIndicatorEnabled: 'field.runIndicator',
+      runIndicatorShape: 'field.runShape',
       trailColor: 'trail.color',
       trailSpeed: 'trail.speed',
       trailWidth: 'trail.width',
@@ -9952,7 +9997,7 @@ window.__ModuleLoader__.load({
       // 渲染器按槽位 locale 命名空间注入 t（随语言切换更新）；缺失时回退中文
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const state = useSoulController((state) => state)
-      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, subagentInheritPersona, subagentPersona, trailEnabled, runIndicatorEnabled, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
+      const { enabled, nickname, occupation, bio, style, headingLists, emoji, tables, replyLength, language, customInstructions, requireToolConfirmation, quoteAsContext, showOverviewInSidebar, showQuickToggle, subagentInheritPersona, subagentPersona, trailEnabled, runIndicatorEnabled, runIndicatorShape, trailColor, trailSpeed, trailWidth, historyMaxEntries, personas, activePersona, personasError, history, historyWarning, historyMax, historyError, saving, error, bindings, bindingsMax, bindingsWarning, bindingsError, bindingsInvalid, bindingsDropped, bindingsSessions } = state
 
       // t26: отображаемые имена/инструкции встроенных пресетов при ru-UI.
       // Объявлено в самом начале: сводки группы и тосты выше по коду уже используют
@@ -11266,6 +11311,17 @@ window.__ModuleLoader__.load({
               onChange: (next) => void saveImmediate('runIndicatorEnabled', next)
             }),
 
+            // 形状只属于侧栏：关掉这个开关就没有可画的地方，所以跟着它显示。
+            runIndicatorEnabled && e('div', { className: 'soul-field soul-field-row soul-run-shape' },
+              e('label', { htmlFor: 'soul-runIndicatorShape' }, t('field.runShape')),
+              e(SoulSelect, {
+                id: 'soul-runIndicatorShape',
+                value: runIndicatorShape || 'arc',
+                options: RUN_SHAPE_VALUES.map((v) => ({ value: v, label: t('runShape.' + v) })),
+                onChange: (next) => void saveImmediate('runIndicatorShape', next)
+              })
+            ),
+
             // 紧跟在开关下面：它解释的正是「这个开关打开会怎样」。
             // 左关右开，两侧都是真实规则渲染，不是截图。
             e(SoulRunPreview, {
@@ -11801,6 +11857,10 @@ window.__ModuleLoader__.load({
           // 开关本身也投射到 :root 属性上：侧栏不在 React 树里，只能用属性选择器控制。
           // 用属性而不是 class —— 与光轨的 data-soul-trail 同一套约定。
           root.dataset.soulRun = snapshot.runIndicatorEnabled === false ? 'off' : 'on'
+          // 形状也投射成属性：CSS 按 [data-soul-run-shape="…"] 切换 mask 与动画。
+          root.dataset.soulRunShape = RUN_SHAPE_VALUES.includes(snapshot.runIndicatorShape)
+            ? snapshot.runIndicatorShape
+            : 'arc'
         }
         sync()
         const off = typeof controller.store.subscribe === 'function' ? controller.store.subscribe(sync) : null
@@ -11809,6 +11869,7 @@ window.__ModuleLoader__.load({
           root.style.removeProperty('--soul-trail-color')
           root.style.removeProperty('--soul-run-duration')
           delete root.dataset.soulRun
+          delete root.dataset.soulRunShape
         }
       }, 'dsh-soul: sidebar trail color')
       // 词典注册：**zh/en 一对，其余每门语言各自一个 effect**。
