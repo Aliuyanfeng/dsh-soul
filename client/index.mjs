@@ -1241,7 +1241,7 @@ window.__ModuleLoader__.load({
       // 退回原样，不会坏；限定在行内也避免把别处的同名状态环一起放大。
       '[data-row-key] svg[data-state="ongoing"]{width:16px;height:16px;color:var(--soul-trail-color,#679EFE);filter:drop-shadow(0 0 4px color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent));animation:soul-session-run-breathe 1.6s ease-in-out infinite}',
       '@keyframes soul-session-run-breathe{0%,100%{opacity:.6}50%{opacity:1}}',
-      '@media (prefers-reduced-motion:reduce){[data-row-key] svg[data-state="ongoing"]{animation:none;opacity:1}}',
+      '@media (prefers-reduced-motion:reduce){[data-row-key] svg[data-state="ongoing"]{animation:none;opacity:1}[data-row-key^="session:"]:has(svg[data-state="ongoing"])>span:nth-child(2)::before{animation:none}}',
       // 运行中的会话行：整行一层极淡的色wash + 标题加粗。
       //
       // 不做左边缘的线 —— 实测「更丑」：它把行切出一条不属于宿主语言的东西。
@@ -1251,6 +1251,11 @@ window.__ModuleLoader__.load({
       // 标题是行内第二个 span（slot / title / time / actions）。只加粗标题，
       // 时间戳与行尾按钮保持原样 —— 只用 > span:nth-child(2) 定位，不依赖哈希类名。
       '[data-row-key^="session:"]:has(svg[data-state="ongoing"])>span:nth-child(2){font-weight:600}',
+      // 标题前的四芒星（插件图标同一套几何）：mask 负责形状、background 负责颜色，
+      // 颜色因此跟着光轨走；自转用 transform，不影响排版。不需要 JSX / 槽位，
+      // 也不会像行尾 action 槽位那样只在 hover 时出现。
+      '[data-row-key^="session:"]:has(svg[data-state="ongoing"])>span:nth-child(2)::before{content:"";display:inline-block;width:12px;height:12px;margin-inline-end:5px;vertical-align:-2px;background-color:var(--soul-trail-color,#679EFE);-webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%2711.6%2011.6%2012.8%2012.8%27%3E%3Cpath%20d=%27M18%2011.6C18.52%2015.15%2020.85%2017.48%2024.4%2018C20.85%2018.52%2018.52%2020.85%2018%2024.4C17.48%2020.85%2015.15%2018.52%2011.6%2018C15.15%2017.48%2017.48%2015.15%2018%2011.6Z%27/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%2711.6%2011.6%2012.8%2012.8%27%3E%3Cpath%20d=%27M18%2011.6C18.52%2015.15%2020.85%2017.48%2024.4%2018C20.85%2018.52%2018.52%2020.85%2018%2024.4C17.48%2020.85%2015.15%2018.52%2011.6%2018C15.15%2017.48%2017.48%2015.15%2018%2011.6Z%27/%3E%3C/svg%3E") center/contain no-repeat;animation:soul-run-spark-spin 7s linear infinite;opacity:.95}',
+      '@keyframes soul-run-spark-spin{to{transform:rotate(360deg)}}',
       // 侧栏会话行 hover 面具徽标（0.9.0-ab）：与行内其它 hover 按钮对齐
       '.soul-sidebar-persona-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-sidebar-persona-badge-icon{display:block}',
@@ -9393,8 +9398,11 @@ window.__ModuleLoader__.load({
     function SoulSessionPersonaBadge(props) {
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       const { enabled, persona, label: personaLabel } = useSessionRowPersona(props)
-      // 无会话 / 人设未知 / 个性化关闭 ⇒ 不渲染（不占 hover 位）
-      if (!enabled || !persona) return null
+      // 个性化关闭 ⇒ 这个槽位什么都不放
+      if (!enabled) return null
+
+      // 无会话 / 人设未知 ⇒ 不渲染（不占 hover 位）
+      if (!persona) return null
 
       // Подсказка показывает отображаемое имя (ru-имя встроенного пресета при ru-UI).
       const label = t('sidebar.personaTip', { name: personaLabel || persona })

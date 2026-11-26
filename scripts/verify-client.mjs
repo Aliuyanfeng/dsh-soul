@@ -6701,6 +6701,17 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       source.includes('>span:nth-child(2){font-weight:600}'),
       '应只给标题（行内第二个 span）加粗，不要连时间戳一起加粗'
     )
+
+    // 标题前的四芒星（方案 ③）：必须是 CSS mask 画出来的，且只在运行中出现。
+    // 不放在行尾槽位 —— 那个槽位只在 hover 时渲染，做不到常显。
+    const sparkRule = source.match(/>span:nth-child\(2\)::before\{content:([^}]*)\}/)
+    assert.ok(sparkRule, '缺少标题前的四芒星')
+    assert.match(sparkRule[1], /mask:url\("data:image\/svg\+xml/, '星应由 CSS mask 绘制（形状固定、颜色跟随光轨）')
+    assert.match(sparkRule[1], /background-color:var\(--soul-trail-color,#679EFE\)/, '星的颜色应跟随光轨')
+    assert.match(sparkRule[1], /animation:soul-run-spark-spin/, '星应缓慢自转')
+    assert.ok(source.includes('@keyframes soul-run-spark-spin'), '缺少自转关键帧')
+    assert.match(source, /\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)>span:nth-child\(2\)::before/, '星必须限定在运行中的会话行')
+    assert.equal(source.includes('soul-sidebar-run-spark'), false, '不得回退到行尾槽位方案（只在 hover 可见）')
     // 颜色投射：CSS 变量只能从 documentElement 取，缺这段则侧栏永远是默认色
     assert.ok(source.includes("'dsh-soul: sidebar trail color'"), '缺少把 trailColor 投射到 :root 的 effect')
     assert.ok(/setProperty\('--soul-trail-color', color\)/.test(source), '应通过 setProperty 写入 --soul-trail-color')
