@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 134
+const EXPECTED_ASSERTIONS = 135
 
 // 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
 // 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
@@ -6396,7 +6396,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 417, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 418, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -6942,6 +6942,23 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       findAll(tree, (n) => n.props && n.props.className === 'soul-trail-preview').length,
       0,
       '关掉输入框光轨后，它自己的示例不该还挂着'
+    )
+  })
+
+  await check('C141 保存成功但字段没回显时，必须提示「服务端未接受」', async () => {
+    // 真实场景：浏览器刷新换上了新客户端，`dsh web` 进程没重启还是旧代码 ——
+    // 旧服务端不认识新字段，静默丢弃并 200 返回旧配置，界面看起来「点了没反应」。
+    // 默认桩的 POST 回显固定 CONFIG（不含该字段），正好模拟这个状态。
+    const world = await boot()
+    let tree = await openAccordion(world, 'soul-tools')
+    const select = soulSelect(tree, 'soul-runIndicatorShape')
+    assert.ok(select, '形状下拉应存在（前置条件）')
+    await select.choose('spark')
+    tree = await renderSettingsSettled(world)
+    const notice = noticeOf(tree)
+    assert.ok(
+      String(notice.text).includes(world.dicts.zh['toast.fieldIgnored']),
+      `应提示「服务端未接受这一项」，实际：${JSON.stringify(notice.text)}`
     )
   })
 

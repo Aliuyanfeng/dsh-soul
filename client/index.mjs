@@ -2704,6 +2704,7 @@ window.__ModuleLoader__.load({
       // 会渲染成 `...excluded from this preview: style、tables`（中英混排）。
       'common.listSep': '、',
       'toast.saveFailed': '❌ 保存失败，请检查配置',
+      'toast.fieldIgnored': '服务端没有接受这一项（可能需要重启 dsh web 后再试）',
       'trail.enable': '启用输入框光轨',
       'field.runIndicator': '启用侧栏光轨',
       'field.runShape': '形状',
@@ -3146,6 +3147,7 @@ window.__ModuleLoader__.load({
       // 会渲染成 `...excluded from this preview: style、tables`（中英混排）。
       'common.listSep': ', ',
       'toast.saveFailed': '❌ Save failed — please check the config',
+      'toast.fieldIgnored': 'The server did not accept this field (restarting dsh web may be required)',
       'trail.enable': 'Enable composer light trail',
       'field.runIndicator': 'Enable sidebar trail',
       'field.runShape': 'Shape',
@@ -3570,6 +3572,7 @@ window.__ModuleLoader__.load({
       'prompt.invalid': 'Эти поля не прошли проверку и не вошли в предпросмотр: {fields}',
       'common.listSep': ', ',
       'toast.saveFailed': '❌ Не удалось сохранить — проверьте конфигурацию',
+      'toast.fieldIgnored': 'Сервер не принял это поле (возможно, нужно перезапустить dsh web)',
       'trail.enable': 'Включить световой след у поля ввода',
       'field.runIndicator': 'Включить световой след в боковой панели',
       'field.runShape': 'Форма',
@@ -4022,6 +4025,7 @@ window.__ModuleLoader__.load({
       'prompt.invalid': '次の項目は検証に通らず、このプレビューに含まれていません：{fields}',
       'common.listSep': '、',
       'toast.saveFailed': '❌ 保存に失敗しました。設定を確認してください',
+      'toast.fieldIgnored': 'サーバーがこの項目を受け付けませんでした（dsh web の再起動が必要かもしれません）',
       'trail.enable': '入力欄の光の軌跡を有効にする',
       'field.runIndicator': 'サイドバーの光の軌跡を有効にする',
       'field.runShape': '形',
@@ -4471,6 +4475,7 @@ window.__ModuleLoader__.load({
       'prompt.invalid': 'Estos campos no pasaron la validación y no se incluyen en la vista previa: {fields}',
       'common.listSep': ', ',
       'toast.saveFailed': '❌ Error al guardar; revisa la configuración',
+      'toast.fieldIgnored': 'El servidor no aceptó este campo (puede que haya que reiniciar dsh web)',
       'trail.enable': 'Activar la estela luminosa del campo de entrada',
       'field.runIndicator': 'Activar la estela luminosa de la barra lateral',
       'field.runShape': 'Forma',
@@ -4920,6 +4925,7 @@ window.__ModuleLoader__.load({
       'prompt.invalid': 'Ces champs n’ont pas passé la validation et ne sont pas inclus dans l’aperçu : {fields}',
       'common.listSep': ', ',
       'toast.saveFailed': '❌ Échec de l’enregistrement ; vérifie la configuration',
+      'toast.fieldIgnored': 'Le serveur n’a pas accepté ce champ (un redémarrage de dsh web est peut-être nécessaire)',
       'trail.enable': 'Activer la traînée lumineuse du champ de saisie',
       'field.runIndicator': 'Activer la traînée lumineuse de la barre latérale',
       'field.runShape': 'Forme',
@@ -5369,6 +5375,7 @@ window.__ModuleLoader__.load({
       'prompt.invalid': 'Diese Felder haben die Prüfung nicht bestanden und fehlen in der Vorschau: {fields}',
       'common.listSep': ', ',
       'toast.saveFailed': '❌ Speichern fehlgeschlagen; prüfe die Konfiguration',
+      'toast.fieldIgnored': 'Der Server hat dieses Feld nicht übernommen (möglicherweise muss dsh web neu gestartet werden)',
       'trail.enable': 'Lichtspur am Eingabefeld aktivieren',
       'field.runIndicator': 'Lichtspur in der Seitenleiste aktivieren',
       'field.runShape': 'Form',
@@ -5818,6 +5825,7 @@ window.__ModuleLoader__.load({
       'prompt.invalid': 'Estes campos não passaram na validação e ficaram fora da prévia: {fields}',
       'common.listSep': ', ',
       'toast.saveFailed': '❌ Falha ao salvar; confira a configuração',
+      'toast.fieldIgnored': 'O servidor não aceitou este campo (pode ser preciso reiniciar o dsh web)',
       'trail.enable': 'Ativar o rastro luminoso do campo de entrada',
       'field.runIndicator': 'Ativar o rastro luminoso da barra lateral',
       'field.runShape': 'Forma',
@@ -10349,7 +10357,15 @@ window.__ModuleLoader__.load({
         const result = await controller.saveConfig({ [key]: value })
         // 成功不占绿字（开关自己已经动了，那一行只是重复确认）；
         // 失败必须占 —— 那种情况下屏幕在说谎，而 dirty 永远不会亮（它不在草稿字段里）。
-        if (!result) showError(t('toast.saveFailed'))
+        if (!result) {
+          showError(t('toast.saveFailed'))
+          return
+        }
+        // 写成功但回显里没有这个字段：服务端进程还跑着旧代码（本地开发时最常见——
+        // 浏览器刷新就换了新客户端，`dsh web` 进程不重启还是旧的），旧服务端不认识
+        // 新字段会静默丢弃、200 返回旧配置，界面于是「点了没反应」。
+        // 沉默是最坏的结果：用户会以为是插件坏了。
+        if (result.config && !(key in result.config)) showError(t('toast.fieldIgnored'))
       }
 
       // trailColor 的防抖提交：取色器拖动与十六进制逐字符输入都会连发 onChange，
