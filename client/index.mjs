@@ -1868,6 +1868,7 @@ window.__ModuleLoader__.load({
       // 真实规则提供 —— 开的一侧容器带 data-soul-run="on"，规则原样命中；关的一侧
       // 不带属性，什么都不发生。所以这里不需要复制一份预览专用的光效样式。
       '.soul-run-preview{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}',
+      '.soul-run-preview-hint{grid-column:1 / -1;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-run-preview-pane{display:flex;flex-direction:column;gap:6px;min-width:0}',
       '.soul-run-preview-caption{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-run-preview-frame{padding:6px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-settings-card-fill)}',
@@ -2690,6 +2691,7 @@ window.__ModuleLoader__.load({
       'runPreview.on': '开启',
       'runPreview.off': '关闭',
       'runPreview.title': '调整登录流程',
+      'runPreview.hint': '示意图：左侧为关闭、右侧为开启，不随上方开关变化',
       'trail.preview': '效果示例',
       'trail.previewText': 'Agent 回复时，输入框边框会出现流动的光轨',
       'hint.trail': 'Agent 回复期间，输入框边框显示沿边流动的光轨。点击色块、使用取色器，或直接填写十六进制色值（如 #679EFE）。',
@@ -3125,6 +3127,7 @@ window.__ModuleLoader__.load({
       'runPreview.on': 'On',
       'runPreview.off': 'Off',
       'runPreview.title': 'Refactor the login flow',
+      'runPreview.hint': 'Illustration only: left is off, right is on; it does not follow the switch above',
       'trail.preview': 'Preview',
       'trail.previewText': 'While the agent is replying, a light trail runs along the composer border',
       'hint.trail': 'While the agent is replying, a light trail runs along the composer border. Pick a swatch, use the color picker, or type a hex value (e.g. #679EFE).',
@@ -3542,6 +3545,7 @@ window.__ModuleLoader__.load({
       'runPreview.on': 'Вкл.',
       'runPreview.off': 'Выкл.',
       'runPreview.title': 'Переработка входа',
+      'runPreview.hint': 'Только схема: слева выключено, справа включено; переключатель выше на неё не влияет',
       'trail.preview': 'Предпросмотр',
       'trail.previewText': 'Пока агент отвечает, по рамке поля ввода бежит световой след',
       'hint.trail': 'Пока агент отвечает, по рамке поля ввода бежит световой след. Выберите образец цвета, воспользуйтесь пипеткой или введите hex-значение (например #679EFE).',
@@ -3987,6 +3991,7 @@ window.__ModuleLoader__.load({
       'runPreview.on': 'オン',
       'runPreview.off': 'オフ',
       'runPreview.title': 'ログイン処理の見直し',
+      'runPreview.hint': 'イメージ図：左がオフ、右がオン。上のスイッチには連動しません',
       'trail.preview': '表示例',
       'trail.previewText': 'Agent が返答している間、入力欄の枠に光の軌跡が流れます',
       'hint.trail': 'Agent が返信している間、入力欄の枠に沿って光の軌跡が流れます。色見本を押すか、カラーピッカーを使うか、16 進数の色（例：#679EFE）を直接入力してください。',
@@ -4429,6 +4434,7 @@ window.__ModuleLoader__.load({
       'runPreview.on': 'Activado',
       'runPreview.off': 'Desactivado',
       'runPreview.title': 'Revisar el flujo de acceso',
+      'runPreview.hint': 'Solo ilustración: izquierda desactivado, derecha activado; no cambia con el interruptor de arriba',
       'trail.preview': 'Ejemplo',
       'trail.previewText': 'Mientras el agente responde, el borde del campo de entrada muestra una estela luminosa',
       'hint.trail': 'Mientras el agente responde, el borde del campo de entrada muestra una estela en movimiento. Pulsa una muestra de color, usa el cuentagotas o escribe un valor hexadecimal (p. ej. #679EFE).',
@@ -4871,6 +4877,7 @@ window.__ModuleLoader__.load({
       'runPreview.on': 'Activé',
       'runPreview.off': 'Désactivé',
       'runPreview.title': 'Revoir le parcours de connexion',
+      'runPreview.hint': 'Simple illustration : à gauche désactivé, à droite activé ; ne suit pas l’interrupteur ci-dessus',
       'trail.preview': 'Exemple',
       'trail.previewText': 'Pendant que l’agent répond, le bord du champ de saisie affiche une traînée lumineuse',
       'hint.trail': 'Pendant que l’agent répond, une traînée lumineuse parcourt le bord du champ de saisie. Clique sur un échantillon, utilise la pipette ou saisis une valeur hexadécimale (par ex. #679EFE).',
@@ -5313,6 +5320,7 @@ window.__ModuleLoader__.load({
       'runPreview.on': 'An',
       'runPreview.off': 'Aus',
       'runPreview.title': 'Anmeldeablauf überarbeiten',
+      'runPreview.hint': 'Nur zur Veranschaulichung: links aus, rechts an; folgt nicht dem Schalter oben',
       'trail.preview': 'Beispiel',
       'trail.previewText': 'Während der Agent antwortet, zeigt der Rand des Eingabefelds eine Lichtspur',
       'hint.trail': 'Während der Agent antwortet, läuft eine Lichtspur am Rand des Eingabefelds entlang. Klicke ein Farbmuster, nutze die Pipette oder gib einen Hex-Wert ein (z. B. #679EFE).',
@@ -5755,6 +5763,7 @@ window.__ModuleLoader__.load({
       'runPreview.on': 'Ativado',
       'runPreview.off': 'Desativado',
       'runPreview.title': 'Revisar o fluxo de login',
+      'runPreview.hint': 'Apenas ilustração: à esquerda desativado, à direita ativado; não acompanha o interruptor acima',
       'trail.preview': 'Exemplo',
       'trail.previewText': 'Enquanto o agente responde, a borda do campo de entrada mostra um rastro luminoso',
       'hint.trail': 'Enquanto o agente responde, um rastro luminoso corre pela borda do campo de entrada. Clique em uma amostra, use o conta-gotas ou digite um valor hexadecimal (por ex. #679EFE).',
@@ -11569,7 +11578,10 @@ window.__ModuleLoader__.load({
         e('span', { className: 'soul-run-preview-caption' }, t(on ? 'runPreview.on' : 'runPreview.off')),
         e('div', {
           className: 'soul-run-preview-frame',
-          'data-soul-run': on ? 'on' : undefined
+          // 写死 off / on：这一栏是**示意**，不读任何 state —— 上方开关怎么拨，
+          // 对比图都保持「左关右开」。曾经用 undefined 表示关闭，虽然也不匹配规则的
+          // "on"，但读代码的人会以为它随渲染状态变化；显式写出来就没有歧义。
+          'data-soul-run': on ? 'on' : 'off'
         },
           e('div', {
             className: 'soul-run-preview-row',
@@ -11598,7 +11610,11 @@ window.__ModuleLoader__.load({
           )
         )
       )
-      return e('div', { className: 'soul-run-preview' }, pane(false), pane(true))
+      return e('div', { className: 'soul-run-preview' },
+        pane(false),
+        pane(true),
+        e('div', { className: 'soul-run-preview-hint' }, t('runPreview.hint'))
+      )
     }
 
     // 输入框光轨运行时：注册在 conversation.input.overlay（输入框卡片内部）。

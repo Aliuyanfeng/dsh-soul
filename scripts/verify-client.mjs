@@ -6385,7 +6385,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 410, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 411, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -6828,9 +6828,19 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 静态：开的一侧靠容器属性触发真实规则，关的一侧不设属性。
     assert.match(
       source,
-      /'data-soul-run': on \? 'on' : undefined/,
-      '只有「开」的那一栏带 data-soul-run，关的一栏必须不设属性'
+      /'data-soul-run': on \? 'on' : 'off'/,
+      '两栏必须显式写 off / on —— 用 undefined 会让读代码的人以为它随状态变化'
     )
+    // 反向：对比图是**示意**，不得读开关或配置。任何一处引用都会让它变成「跟着开关动」，
+    // 而用户要的是固定对照（「那个对比图就是死的，不能控制」）。
+    const previewFn = source.slice(
+      source.indexOf('function SoulRunPreview'),
+      source.indexOf('// 输入框光轨运行时：注册在 conversation.input.overlay')
+    )
+    assert.ok(previewFn.includes('runPreview.hint'), '应有「不随开关变化」的说明行')
+    for (const banned of ['runIndicatorEnabled', 'trailEnabled', 'getSnapshot', 'useSoulStore']) {
+      assert.equal(previewFn.includes(banned), false, `对比图不得引用 ${banned}（它是固定示意）`)
+    }
     // 两栏都必须带行键与 ongoing 环，否则那四条规则根本不会命中，预览就成了假图。
     const rows = source.match(/'data-row-key': on \? 'session:[^']+' : 'session:[^']+'/g) || []
     assert.equal(rows.length, 1, '对比行必须带 session: 前缀的 data-row-key')
