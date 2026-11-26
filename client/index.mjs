@@ -1242,6 +1242,15 @@ window.__ModuleLoader__.load({
       '[data-row-key] svg[data-state="ongoing"]{width:16px;height:16px;color:var(--soul-trail-color,#679EFE);filter:drop-shadow(0 0 4px color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent));animation:soul-session-run-breathe 1.6s ease-in-out infinite}',
       '@keyframes soul-session-run-breathe{0%,100%{opacity:.6}50%{opacity:1}}',
       '@media (prefers-reduced-motion:reduce){[data-row-key] svg[data-state="ongoing"]{animation:none;opacity:1}}',
+      // 运行中的会话行：整行一层极淡的色wash + 标题加粗。
+      //
+      // 不做左边缘的线 —— 实测「更丑」：它把行切出一条不属于宿主语言的东西。
+      // wash 用 background-image 叠一层 7% 的纯色，而不是 background-color：
+      // 宿主的 hover / 选中态也是背景色，用 image 叠上去不会把它们盖掉。
+      '[data-row-key^="session:"]:has(svg[data-state="ongoing"]){background-image:linear-gradient(color-mix(in srgb,var(--soul-trail-color,#679EFE) 7%,transparent),color-mix(in srgb,var(--soul-trail-color,#679EFE) 7%,transparent))}',
+      // 标题是行内第二个 span（slot / title / time / actions）。只加粗标题，
+      // 时间戳与行尾按钮保持原样 —— 只用 > span:nth-child(2) 定位，不依赖哈希类名。
+      '[data-row-key^="session:"]:has(svg[data-state="ongoing"])>span:nth-child(2){font-weight:600}',
       // 侧栏会话行 hover 面具徽标（0.9.0-ab）：与行内其它 hover 按钮对齐
       '.soul-sidebar-persona-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-sidebar-persona-badge-icon{display:block}',

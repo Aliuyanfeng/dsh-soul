@@ -6687,11 +6687,19 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.match(rule[1], /var\(--soul-trail-color,#679EFE\)/, '颜色应跟随光轨并带回退')
     assert.match(rule[1], /drop-shadow/, '应有一层同色光晕（不加光带时的辨识度来源）')
     assert.match(rule[1], /soul-session-run-breathe/, '保持轻微呼吸')
-    // 反向：左侧光带 / 彗星已被实测否掉（「更丑了」），不得回流。
+    // 运行中的行：极淡 wash + 标题加粗（不做左边缘的线 —— 实测更丑）。
+    const washRule = source.match(/'\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)\{([^}]*)\}'/)
+    assert.ok(washRule, '缺少运行中会话行的底色 wash')
+    assert.match(washRule[1], /background-image:linear-gradient/, 'wash 用 background-image 叠，避免盖掉 hover 背景')
+    assert.match(washRule[1], /7%,transparent/, 'wash 应很淡（7%）')
     assert.equal(
-      /\[data-row-key\^="session:"\]/.test(source),
+      /\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)\{[^}]*box-shadow:inset 2px 0/.test(source),
       false,
-      '不得再给会话行加左侧光带或彗星'
+      '不得再给会话行加左侧光带'
+    )
+    assert.ok(
+      source.includes('>span:nth-child(2){font-weight:600}'),
+      '应只给标题（行内第二个 span）加粗，不要连时间戳一起加粗'
     )
     // 颜色投射：CSS 变量只能从 documentElement 取，缺这段则侧栏永远是默认色
     assert.ok(source.includes("'dsh-soul: sidebar trail color'"), '缺少把 trailColor 投射到 :root 的 effect')
