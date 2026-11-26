@@ -94,6 +94,9 @@ peerDependencies（DSH 在装载插件前校验，**比较对象是 DSH 运行�
 
 - 会话行内的 ongoing 状态环放大到 16px，颜色跟随输入框光轨（`--soul-trail-color`，默认 `#679EFE`），
   并叠一层 1.6s 呼吸；`prefers-reduced-motion` 下只保留静态高亮。
+- 只靠环仍不够抓眼（实测反馈），再给运行中的会话行加一条 2px 左侧光带（同色）。
+  用 inset box-shadow 而不是伪元素 —— 宿主已经占用了行的 `::before` / `::after`；
+  选择器限定 `[data-row-key^="session:"]`，工作区分组行不会被点亮。
 - 选择器限定在 `[data-row-key]` 内的 `svg[data-state="ongoing"]`，不碰连接状态等别处的环；
   宿主哪天改掉这两个属性，规则自然失效、退回原版观感，不会坏。
 - 新增 C137：规则必须限定作用域、颜色必须带回退，且必须存在把 `trailColor` 投射到 `:root`

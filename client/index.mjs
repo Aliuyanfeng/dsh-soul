@@ -1242,6 +1242,11 @@ window.__ModuleLoader__.load({
       '[data-row-key] svg[data-state="ongoing"]{width:16px;height:16px;color:var(--soul-trail-color,#679EFE);animation:soul-session-run-breathe 1.6s ease-in-out infinite}',
       '@keyframes soul-session-run-breathe{0%,100%{opacity:.6}50%{opacity:1}}',
       '@media (prefers-reduced-motion:reduce){[data-row-key] svg[data-state="ongoing"]{animation:none;opacity:1}}',
+      // 只靠那个环还是不够抓眼（用户实测「不是太明显」）：给运行中的会话行加一条
+      // 左侧光带。用 inset box-shadow 而不是伪元素 —— 行本身已经被宿主用了 ::before /
+      // ::after（hover 背景、选中态），再加一个占位会打架；inset 阴影跟着行的圆角走，
+      // 也不会改变布局盒。^="session:" 把工作区分组行排除在外，避免「组在跑」的误读。
+      '[data-row-key^="session:"]:has(svg[data-state="ongoing"]){box-shadow:inset 2px 0 var(--soul-trail-color,#679EFE)}',
       // 侧栏会话行 hover 面具徽标（0.9.0-ab）：与行内其它 hover 按钮对齐
       '.soul-sidebar-persona-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-sidebar-persona-badge-icon{display:block}',

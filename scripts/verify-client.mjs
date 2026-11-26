@@ -6700,6 +6700,16 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       /setProperty\('--soul-trail-color', color\)/.test(source),
       '应通过 setProperty 写入 --soul-trail-color'
     )
+
+    // 左侧光带：只给会话行，不能命中工作区分组行（否则「组在跑」会误导）。
+    const bar = source.match(/'\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)\{([^}]*)\}'/)
+    assert.ok(bar, '缺少运行中会话行的左侧光带')
+    assert.match(bar[1], /inset 2px 0 var\(--soul-trail-color,#679EFE\)/, '光带应为 2px 并跟随光轨色')
+    assert.equal(
+      /\[data-row-key\]:has\(svg\[data-state="ongoing"\]\)\{/.test(source),
+      false,
+      '光带不得作用于工作区分组行'
+    )
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
