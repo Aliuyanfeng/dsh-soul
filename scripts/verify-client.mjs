@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 131
+const EXPECTED_ASSERTIONS = 132
 
 // 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
 // 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
@@ -6793,6 +6793,33 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 颜色投射：CSS 变量只能从 documentElement 取，缺这段则侧栏永远是默认色
     assert.ok(source.includes("'dsh-soul: sidebar trail color'"), '缺少把 trailColor 投射到 :root 的 effect')
     assert.ok(/setProperty\('--soul-trail-color', color\)/.test(source), '应通过 setProperty 写入 --soul-trail-color')
+  })
+
+  await check('C138 「侧栏运行指示」开关：默认开启，点击只提交该字段', async () => {
+    // 用户实测「点了没反应」。这条把前端这一段钉住：控件存在、默认开、
+    // 点击只发一次 POST 且只带 runIndicatorEnabled —— 剩下的只能是服务端未重启。
+    const world = await boot()
+    let tree = await renderSettings(world)
+    const groupBtn = findAll(tree, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.tool']))[0]
+    assert.ok(groupBtn, '前置条件：应存在「交互与界面」分组')
+    await groupBtn.props.onClick()
+    tree = await renderSettingsSettled(world)
+
+    // 宿主 Switch 分支不接收 id，按 label 找（两种分支都覆盖）。
+    const label = world.dicts.zh['field.runIndicator']
+    const box = findAll(
+      tree,
+      (n) => n.props && (n.props.id === 'soul-runIndicatorEnabled' || n.props.label === label)
+    )[0]
+    assert.ok(box, '设置页应有「侧栏运行指示」开关')
+    assert.equal(box.props.checked, true, '默认应为开启')
+    assert.equal(typeof box.props.onChange, 'function', '开关必须可交互')
+
+    await box.props.onChange({ target: { checked: false } })
+    for (let i = 0; i < 8; i++) await new Promise((r) => drainTick(r))
+    const posts = fetchCalls.filter((c) => c.path === '/api/soul/config' && c.method === 'POST')
+    assert.equal(posts.length, 1, '点击应只发一次保存请求')
+    assert.deepEqual(posts[0].body, { runIndicatorEnabled: false }, '只提交 runIndicatorEnabled')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
