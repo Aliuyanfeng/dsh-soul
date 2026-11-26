@@ -1674,8 +1674,15 @@ check('光轨参数组与上方开关行之间有间距', () => {
   // 分隔线。开关行只有自己的 padding，不负责它与下方参数组之间的距离，
   // 所以要一层容器补 margin-top。
   const cssBlock = clientCode.match(/const css = \[([\s\S]*?)\]\.join/)?.[1] ?? ''
-  assert.match(cssBlock, /\.soul-trail-detail\{margin-top:\d+px\}/, '缺 .soul-trail-detail 的上间距规则')
-  assert.match(clientSource, /className: 'soul-trail-detail'/, '光轨参数组必须包在这层容器里（Fragment 挂不了 class）')
+  // 输入框示例紧跟它自己的开关：靠 .soul-trail-preview-wrap 的 margin-top 拉开。
+  assert.match(cssBlock, /\.soul-trail-preview-wrap\{margin-top:\d+px\}/, '输入框示例与开关之间缺上间距')
+  // 共用外观独立成一节：上方一条细线 + padding-top，视觉上不属于任何一个开关。
+  assert.match(
+    cssBlock,
+    /\.soul-trail-appearance\{margin-top:\d+px;padding-top:\d+px;border-top:/,
+    '共用外观小节应有上间距与分隔线'
+  )
+  assert.match(clientSource, /className: 'soul-trail-appearance'/, '光轨参数组必须包在这层容器里（Fragment 挂不了 class）')
   // 不能用裸 Fragment：Fragment 没有 DOM 节点，样式无处可挂
   assert.equal(
     /localTrailEnabled && e\(Fragment/.test(clientSource),

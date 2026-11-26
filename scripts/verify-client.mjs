@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 133
+const EXPECTED_ASSERTIONS = 134
 
 // 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
 // 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
@@ -6385,7 +6385,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 411, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 412, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -6873,6 +6873,27 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       assert.equal(pattern.test(skeleton[1]), false, `对比行骨架不得自带光效：${pattern}`)
     }
 
+    // 环必须转，且周期与宿主 StateDot 一致（1.5s）——真实侧栏靠宿主类名在转，
+    // 对比图里的假环不补这段就会僵着，看起来「不像正常的」。
+    const ring = source.match(/'\.soul-run-preview-ring\{([^}]*)\}'/)
+    assert.ok(ring, '缺少对比图环样式')
+    assert.match(ring[1], /animation:soul-run-preview-spin 1\.5s linear infinite/, '环应以 1.5s 匀速自转（与宿主同周期）')
+    assert.equal(/dasharray/.test(ring[1]), false, '弧长呼吸属于 arc 层，不该写在整体上')
+    assert.ok(source.includes("'.soul-run-preview-track{opacity:.25}'"), '应有 25% 的整圈轨道（宿主同款）')
+    assert.match(
+      source,
+      /'\.soul-run-preview-arc\{stroke-dasharray:12 150;animation:soul-run-preview-dash 1\.5s ease-in-out infinite\}'/,
+      '弧层应与宿主同款 dasharray 与呼吸'
+    )
+    const reduceLine = source.split('\n').find((line) => line.includes('prefers-reduced-motion') && line.includes('soul-run-preview'))
+    assert.ok(reduceLine, '缺少对比图环的 reduced-motion 分支')
+
+    // 外观块：任一位置开启就必须可调 —— 只看 trailEnabled 会让「只开侧栏」时失去调色入口。
+    assert.ok(
+      source.includes('(trailEnabled || runIndicatorEnabled) && e(\'div\', { className: \'soul-trail-appearance\' }'),
+      '共用外观的显示条件必须是「任一位置开启」'
+    )
+
     // 运行时：渲染出来确实是两栏，且只有一栏带开关属性。
     const world = await boot()
     let tree = await renderSettings(world)
@@ -6886,6 +6907,25 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.equal(withOn.length, 1, '恰好一栏带 data-soul-run="on"')
     // 两栏都在设置页里渲染出来（不是只在开关打开时才挂载）。
     assert.ok(textOf(tree).includes(world.dicts.zh['trail.appearance']), '应有「光轨外观」小标题')
+  })
+
+  await check('C140 只开侧栏时共用外观仍可调（关掉输入框光轨不藏掉调色入口）', async () => {
+    const world = await boot({ config: { ...CONFIG, trailEnabled: false, runIndicatorEnabled: true } }, personaFixture())
+    let tree = await renderSettings(world)
+    const groupBtn = findAll(tree, (n) => n.type === 'button' && textOf(n).includes(world.dicts.zh['group.tool']))[0]
+    assert.ok(groupBtn, '前置条件：应存在「交互与界面」分组')
+    await groupBtn.props.onClick()
+    tree = await renderSettingsSettled(world)
+
+    assert.ok(
+      findAll(tree, (n) => n.props && n.props.id === 'soul-trailColor')[0],
+      '只开侧栏时仍应能调颜色 —— 侧栏的流光用的就是这份配置'
+    )
+    assert.equal(
+      findAll(tree, (n) => n.props && n.props.className === 'soul-trail-preview').length,
+      0,
+      '关掉输入框光轨后，它自己的示例不该还挂着'
+    )
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

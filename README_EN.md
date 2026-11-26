@@ -28,7 +28,7 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
   - Tables: `default`, `more` (prefer tables for comparisons and multi-field data), `less` (avoid tables; use lists or paragraphs)
 - Reply length preference: `concise` (key points only), `normal` (no extra constraint, default), `detailed` (expand background, steps and reasoning)
 - Output language (agent reply language + `/soul` command output language): Chinese, English, Russian, Japanese, Spanish, French, German or Portuguese. It is a **global switch**, not a persona trait — so presets do not store it, and subagents follow it too (turning off inheritance does not change the language). It localizes the **prompt and the replies**
-  - **UI text is a separate layer, unrelated to the output language:** the host UI supports zh / en / ja / es / fr / de / ru / pt since DSH 0.2.2 (the last six are appended via `addLanguage`); this plugin's own strings (settings page, sidebar, 411 keys) ship in **all eight** languages the host supports, applied as soon as you switch the host UI, with no extra plugin and no fallback to Chinese / English left. The Russian strings were merged from the MIT pack `dsh-soul-ru-lang` (see [UI language](#ui-language))
+  - **UI text is a separate layer, unrelated to the output language:** the host UI supports zh / en / ja / es / fr / de / ru / pt since DSH 0.2.2 (the last six are appended via `addLanguage`); this plugin's own strings (settings page, sidebar, 412 keys) ship in **all eight** languages the host supports, applied as soon as you switch the host UI, with no extra plugin and no fallback to Chinese / English left. The Russian strings were merged from the MIT pack `dsh-soul-ru-lang` (see [UI language](#ui-language))
 - The compiled system prompt follows the output language (English / Russian / Japanese descriptions when `language=en` / `ru` / `ja`)
 - Custom instructions
 - Agent-callable tool `set_persona` to let the model adjust persona during a conversation
@@ -53,6 +53,8 @@ A personalization plugin for DeepSeek Harness (DSH). Configure your agent's nick
   - Colour and speed read the same light-trail settings; the two switches sit next to each other on the settings page
   - Turning it off returns the row completely to the host's own look (tint, weight and border all disappear); the host's 14px status ring stays as it is
   - Under "reduce motion" the border becomes a static outline
+  - Each switch carries its own sample: the composer trail switch shows a composer-shaped sample, the sidebar switch shows the "Off / On" pair (the ring spins like the host's: 1.5s rotation plus a breathing arc)
+  - Colour / speed / thickness live in their own "Trail appearance" section after both switches, separated by a rule and labelled as shared; it stays available as long as either position is on, so turning the composer trail off does not take away the only colour control
   - Directly under the switch there is an "Off / On" two-pane comparison; both panes are really rendered (the "On" pane hard-codes `data-soul-run-row="on"` on the row itself, so the same four sidebar rules apply), sharing one stylesheet with the live UI. It is a **fixed illustration**: it reads neither the switch nor any config state, so toggling the switch does not change it; colour and speed still follow, because it reads the same theme variables. It uses its own attribute rather than `data-row-key`: with the switch on, the page-level `[data-soul-run="on"]` would also match a `data-row-key` row and light up the "Off" pane
 - `/soul set` key=value field updates
 - Configuration persisted to disk
@@ -121,7 +123,7 @@ The plugin is registered via `cordis.patch.yml`:
 
 ### UI language
 
-The host UI has supported zh / en / ja / es / fr / de / ru / pt since DSH **0.2.2** (it appends the last six via `addLanguage` at runtime). **This plugin's own** UI strings (settings page, sidebar and friends, 411 keys) ship in all eight languages — **Chinese / English / Русский / 日本語 / Español / Français / Deutsch / Português** — i.e. every UI language DSH supports: switch to one and it applies immediately, with **no extra plugin to install** and no language falling back to Chinese / English.
+The host UI has supported zh / en / ja / es / fr / de / ru / pt since DSH **0.2.2** (it appends the last six via `addLanguage` at runtime). **This plugin's own** UI strings (settings page, sidebar and friends, 412 keys) ship in all eight languages — **Chinese / English / Русский / 日本語 / Español / Français / Deutsch / Português** — i.e. every UI language DSH supports: switch to one and it applies immediately, with **no extra plugin to install** and no language falling back to Chinese / English.
 
 > **Where the Russian strings come from**: the ru dictionary was merged from the third-party language pack [`dsh-soul-ru-lang`](https://github.com/zznobzz/dsh-soul-ru-lang) (MIT, Copyright (c) 2026 dsh-soul-ru-lang contributors) with the translations unchanged. Since 0.16.0 that pack is no longer needed; if you installed it, uninstalling is recommended — leaving it in place does no harm either, because registration is per language and the first registrant wins for that language.
 >

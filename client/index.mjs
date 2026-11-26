@@ -1068,8 +1068,12 @@ window.__ModuleLoader__.load({
       // 开关行（.soul-toggle）只负责自己那一行的 padding 与分隔线；紧跟在它后面的
       // 参数组（光轨的颜色 / 速度 / 粗细 / 示例）如果贴住分隔线会显得挤。
       // 这里补 16px —— 与开关行自身的 padding 同一节奏，不另立一套间距。
-      '.soul-trail-detail{margin-top:16px}',
-      '.soul-trail-detail .soul-field-row{border-bottom:none;padding:8px 0}',
+      '.soul-trail-preview-wrap{margin-top:10px}',
+      // 共用外观独立成一节：上方细线把它和「两个开关 + 各自示例」分开，
+      // 一眼能看出它不属于其中任何一个开关。
+      '.soul-trail-appearance{margin-top:18px;padding-top:14px;border-top:.5px solid var(--dsw-alias-settings-card-stroke)}',
+      '.soul-trail-appearance-hint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);margin:2px 0 10px}',
+      '.soul-trail-appearance .soul-field-row{border-bottom:none;padding:8px 0}',
       // 子代理下拉紧跟在开关行之后，与光轨参数组同一节奏
       '.soul-field label{display:block;margin-bottom:8px;font-size:12px;font-weight:500;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       // 与上面的 label 同形，但用于「没有对应控件」的分组标题（如光轨示例预览）：
@@ -1879,7 +1883,15 @@ window.__ModuleLoader__.load({
       '.soul-run-preview-caption{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-run-preview-frame{padding:6px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-settings-card-fill)}',
       '.soul-run-preview-row{position:relative;display:flex;align-items:center;gap:6px;height:32px;padding:0 8px;border-radius:var(--dsw-radius-md);color:var(--dsw-alias-label-primary);font-size:13px;line-height:1}',
-      '.soul-run-preview-ring{width:14px;height:14px;flex:none;color:var(--dsw-alias-label-tertiary)}',
+      // 环的动效照搬宿主 StateDot：整体 1.5s 匀速自转，弧长 1.5s 呼吸。
+      // 周期必须与宿主相同，否则「开启」那一栏的转速会和真实侧栏不一样。
+      '.soul-run-preview-ring{width:14px;height:14px;flex:none;color:var(--dsw-alias-label-tertiary);transform-origin:center;animation:soul-run-preview-spin 1.5s linear infinite}',
+      '.soul-run-preview-track,.soul-run-preview-arc{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}',
+      '.soul-run-preview-track{opacity:.25}',
+      '.soul-run-preview-arc{stroke-dasharray:12 150;animation:soul-run-preview-dash 1.5s ease-in-out infinite}',
+      '@keyframes soul-run-preview-spin{to{transform:rotate(360deg)}}',
+      '@keyframes soul-run-preview-dash{0%{stroke-dasharray:12 150;stroke-dashoffset:0}50%{stroke-dasharray:24 150;stroke-dashoffset:-6}100%{stroke-dasharray:12 150;stroke-dashoffset:0}}',
+      '@media (prefers-reduced-motion:reduce){.soul-run-preview-ring,.soul-run-preview-arc{animation:none}.soul-run-preview-arc{stroke-dasharray:18 150;stroke-dashoffset:-3}}',
       '.soul-run-preview-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       // —— 变更记录（0.8.0）——
       // 顶部状态行 + 右侧「清空记录」：与 .soul-drift 同款（space-between），
@@ -2694,6 +2706,7 @@ window.__ModuleLoader__.load({
       'trail.width.normal': '中',
       'trail.width.thick': '粗',
       'trail.appearance': '光轨外观',
+      'hint.trailShared': '输入框与侧栏共用这份颜色与速度。',
       'runPreview.on': '开启',
       'runPreview.off': '关闭',
       'runPreview.title': '调整登录流程',
@@ -3130,6 +3143,7 @@ window.__ModuleLoader__.load({
       'trail.width.normal': 'Normal',
       'trail.width.thick': 'Thick',
       'trail.appearance': 'Trail appearance',
+      'hint.trailShared': 'The composer and the sidebar share this colour and speed.',
       'runPreview.on': 'On',
       'runPreview.off': 'Off',
       'runPreview.title': 'Refactor the login flow',
@@ -3548,6 +3562,7 @@ window.__ModuleLoader__.load({
       'trail.width.normal': 'Обычный',
       'trail.width.thick': 'Толстый',
       'trail.appearance': 'Внешний вид дорожки',
+      'hint.trailShared': 'Поле ввода и боковая панель используют эти цвет и скорость.',
       'runPreview.on': 'Вкл.',
       'runPreview.off': 'Выкл.',
       'runPreview.title': 'Переработка входа',
@@ -3994,6 +4009,7 @@ window.__ModuleLoader__.load({
       'trail.width.normal': '標準',
       'trail.width.thick': '太い',
       'trail.appearance': '光跡の外観',
+      'hint.trailShared': '入力欄とサイドバーはこの色と速さを共有します。',
       'runPreview.on': 'オン',
       'runPreview.off': 'オフ',
       'runPreview.title': 'ログイン処理の見直し',
@@ -4437,6 +4453,7 @@ window.__ModuleLoader__.load({
       'trail.width.normal': 'Medio',
       'trail.width.thick': 'Grueso',
       'trail.appearance': 'Aspecto del trazo',
+      'hint.trailShared': 'El cuadro de texto y la barra lateral comparten este color y esta velocidad.',
       'runPreview.on': 'Activado',
       'runPreview.off': 'Desactivado',
       'runPreview.title': 'Revisar el flujo de acceso',
@@ -4880,6 +4897,7 @@ window.__ModuleLoader__.load({
       'trail.width.normal': 'Moyenne',
       'trail.width.thick': 'Épaisse',
       'trail.appearance': 'Apparence de la traînée',
+      'hint.trailShared': 'Le champ de saisie et la barre latérale partagent cette couleur et cette vitesse.',
       'runPreview.on': 'Activé',
       'runPreview.off': 'Désactivé',
       'runPreview.title': 'Revoir le parcours de connexion',
@@ -5323,6 +5341,7 @@ window.__ModuleLoader__.load({
       'trail.width.normal': 'Mittel',
       'trail.width.thick': 'Dick',
       'trail.appearance': 'Aussehen der Leuchtspur',
+      'hint.trailShared': 'Eingabefeld und Seitenleiste teilen diese Farbe und Geschwindigkeit.',
       'runPreview.on': 'An',
       'runPreview.off': 'Aus',
       'runPreview.title': 'Anmeldeablauf überarbeiten',
@@ -5766,6 +5785,7 @@ window.__ModuleLoader__.load({
       'trail.width.normal': 'Média',
       'trail.width.thick': 'Grossa',
       'trail.appearance': 'Aparência do rastro',
+      'hint.trailShared': 'O campo de entrada e a barra lateral compartilham esta cor e velocidade.',
       'runPreview.on': 'Ativado',
       'runPreview.off': 'Desativado',
       'runPreview.title': 'Revisar o fluxo de login',
@@ -11213,6 +11233,18 @@ window.__ModuleLoader__.load({
               onChange: (next) => void saveImmediate('trailEnabled', next)
             }),
 
+            // 它自己的示例，紧跟自己的开关：说明「这个开关打开会怎样」。
+            // 颜色取本地值（拖动中就要看到效果，落盘有 600ms 防抖）；
+            // 速度 / 粗细取 store（点击即写，示例与线上必然一致）。
+            trailEnabled && e('div', { className: 'soul-trail-preview-wrap' },
+              e(SoulTrailPreview, {
+                color: localTrailColor,
+                speed: trailSpeed || 'slow',
+                width: trailWidth || 'thin',
+                t
+              })
+            ),
+
             // 与光轨是一对：颜色与速度都读同一份光轨配置，所以紧挨着放。
             // 关掉后侧栏完全回到宿主原样 —— 淡底、加粗、描边一并消失，
             // 不是「只关动画」那种半开状态。
@@ -11228,12 +11260,16 @@ window.__ModuleLoader__.load({
             // 左关右开，两侧都是真实规则渲染，不是截图。
             e(SoulRunPreview, { t }),
 
-            // 用 div 而不是 Fragment：碎片没法挂 class，而这段需要一层容器来补上
-            // 与上方开关行之间的间距（.soul-trail-detail 的 margin-top）。
-            trailEnabled && e('div', { className: 'soul-trail-detail' },
-              // 一行小标题把下面四项明确归给「输入框光轨」—— 否则它们紧跟在
-              // 侧栏运行开关下面，看起来像是那个开关的选项。
+            // —— 共用外观 ——
+            //
+            // 颜色 / 速度 / 粗细同时服务两个位置，所以不挂在任何单个开关下面，
+            // 单独成一节（上方一条细线分隔），标题写明「两个位置共用」。
+            //
+            // 条件是「任一位置开启」而不是只看 trailEnabled：只开侧栏时也要能调色 ——
+            // 否则把输入框光轨关掉，侧栏那圈流光就失去了唯一的调色入口。
+            (trailEnabled || runIndicatorEnabled) && e('div', { className: 'soul-trail-appearance' },
               e('div', { className: 'soul-field-label' }, t('trail.appearance')),
+              e('div', { className: 'soul-trail-appearance-hint' }, t('hint.trailShared')),
               e('div', { className: 'soul-field' },
                 e('label', { htmlFor: 'soul-trailColor' }, t('trail.color')),
                 e('div', { className: 'soul-trail-colors' },
@@ -11286,19 +11322,6 @@ window.__ModuleLoader__.load({
                   value: trailWidth || 'thin',
                   options: TRAIL_WIDTH_VALUES.map((v) => ({ value: v, label: t('trail.width.' + v) })),
                   onChange: (next) => void saveImmediate('trailWidth', next)
-                })
-              ),
-              e('div', { className: 'soul-field' },
-                // 预览示例不是表单控件，没有可关联的 id —— 用 label 会是「指向空的标签」，
-                // 所以改用同风格的 div（样式见 .soul-field-label）
-                e('div', { className: 'soul-field-label' }, t('trail.preview')),
-                // 颜色取本地值：拖动中就该看到效果，而它 600ms 后才落盘；
-                // 速度/粗细取 store：它们点击即写，示例与线上必然一致。
-                e(SoulTrailPreview, {
-                  color: localTrailColor,
-                  speed: trailSpeed || 'slow',
-                  width: trailWidth || 'thin',
-                  t
                 })
               )
             )
@@ -11595,24 +11618,30 @@ window.__ModuleLoader__.load({
             'data-soul-run-row': on ? 'on' : 'off',
             'aria-hidden': 'true'
           },
-            // 环画成宿主 StateDot 那种带缺口的圆：开的一侧会被我们的规则放大染色，
-            // 关的一侧停在骨架给的 14px 灰。
+            // 与宿主 StateDot 同构：一整圈 25% 的轨道 + 一段弧，弧长呼吸、整体自转
+            // 1.5s 一圈。**必须自己动**：真实侧栏那圈转起来靠的是宿主的 CSS Modules 类，
+            // 我们拿不到；对比图里不补这段，两边就会「真的一直转、示意的却僵着」。
+            // 开的一侧仍会被我们的规则放大染色（尺寸 / 颜色 / 光晕），动画不受影响。
             e('svg', {
               className: 'soul-run-preview-ring',
               viewBox: '0 0 16 16',
               'data-state': 'ongoing',
               'aria-hidden': 'true',
               focusable: 'false'
-            }, e('circle', {
-              cx: 8,
-              cy: 8,
-              r: 6,
-              fill: 'none',
-              stroke: 'currentColor',
-              strokeWidth: 1.5,
-              strokeDasharray: '30 8',
-              strokeLinecap: 'round'
-            })),
+            },
+              e('circle', {
+                className: 'soul-run-preview-track',
+                cx: 8,
+                cy: 8,
+                r: 6
+              }),
+              e('circle', {
+                className: 'soul-run-preview-arc',
+                cx: 8,
+                cy: 8,
+                r: 6
+              })
+            ),
             e('span', { className: 'soul-run-preview-title' }, t('runPreview.title'))
           )
         )
