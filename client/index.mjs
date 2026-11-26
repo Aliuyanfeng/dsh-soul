@@ -1247,8 +1247,8 @@ window.__ModuleLoader__.load({
       // 高光用 background-image 而不是伪元素：宿主已占用行的 ::before / ::after。
       // 百分比位移在「背景尺寸小于容器」时就是沿纵向移动，alternate 让它来回扫，
       // 避免线性循环到顶那一下硬跳。^="session:" 排除工作区分组行，避免「组在跑」的误读。
-      '[data-row-key^="session:"]:has(svg[data-state="ongoing"]){box-shadow:inset 2px 0 color-mix(in srgb,var(--soul-trail-color,#679EFE) 30%,transparent);background-image:linear-gradient(180deg,transparent 0%,var(--soul-trail-color,#679EFE) 50%,transparent 100%);background-size:2px 45%;background-repeat:no-repeat;animation:soul-session-run-scan 2.6s ease-in-out infinite alternate}',
-      '@keyframes soul-session-run-scan{0%{background-position:0 0}100%{background-position:0 100%}}',
+      '[data-row-key^="session:"]:has(svg[data-state="ongoing"]){box-shadow:inset 2px 0 color-mix(in srgb,var(--soul-trail-color,#679EFE) 28%,transparent);background-image:linear-gradient(180deg,transparent 0%,color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent) 18%,var(--soul-trail-color,#679EFE) 40%,color-mix(in srgb,var(--soul-trail-color,#679EFE) 35%,var(--dsw-alias-label-primary-foreground)) 50%,var(--soul-trail-color,#679EFE) 58%,transparent 72%);background-size:3px 58%;background-repeat:no-repeat;background-position:0 0;animation:soul-session-run-scan 2.6s cubic-bezier(.4,0,.6,1) infinite alternate}',
+      '@keyframes soul-session-run-scan{0%{background-position:0 0;box-shadow:inset 2px 0 color-mix(in srgb,var(--soul-trail-color,#679EFE) 16%,transparent)}50%{box-shadow:inset 2px 0 color-mix(in srgb,var(--soul-trail-color,#679EFE) 42%,transparent)}100%{background-position:0 100%;box-shadow:inset 2px 0 color-mix(in srgb,var(--soul-trail-color,#679EFE) 16%,transparent)}}',
       // 侧栏会话行 hover 面具徽标（0.9.0-ab）：与行内其它 hover 按钮对齐
       '.soul-sidebar-persona-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-sidebar-persona-badge-icon{display:block}',
