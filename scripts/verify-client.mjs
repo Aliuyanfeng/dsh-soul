@@ -6679,50 +6679,23 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     )
   })
 
-  await check('C137 侧栏运行指示只放大行内状态环，且颜色跟随光轨', async () => {
+  await check('C137 侧栏运行指示：光环放大 + 同色光晕，不加左侧光带', async () => {
     const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
     const rule = source.match(/'\[data-row-key\] svg\[data-state="ongoing"\]\{([^}]*)\}'/)
     assert.ok(rule, '缺少侧栏运行指示规则')
     assert.match(rule[1], /width:16px/, '运行中的环应放大到 16px')
-    assert.match(rule[1], /var\(--soul-trail-color,#679EFE\)/, '颜色应跟随光轨并带默认色回退')
-    // 反向：不得出现不限作用域的全局放大（会把连接状态等别处的环一起放大）
+    assert.match(rule[1], /var\(--soul-trail-color,#679EFE\)/, '颜色应跟随光轨并带回退')
+    assert.match(rule[1], /drop-shadow/, '应有一层同色光晕（不加光带时的辨识度来源）')
+    assert.match(rule[1], /soul-session-run-breathe/, '保持轻微呼吸')
+    // 反向：左侧光带 / 彗星已被实测否掉（「更丑了」），不得回流。
     assert.equal(
-      /(^|\n)\s*'svg\[data-state="ongoing"\]\{/.test(source),
+      /\[data-row-key\^="session:"\]/.test(source),
       false,
-      '不得全局放大状态环'
+      '不得再给会话行加左侧光带或彗星'
     )
     // 颜色投射：CSS 变量只能从 documentElement 取，缺这段则侧栏永远是默认色
-    assert.ok(
-      source.includes("'dsh-soul: sidebar trail color'"),
-      '缺少把 trailColor 投射到 :root 的 effect'
-    )
-    assert.ok(
-      /setProperty\('--soul-trail-color', color\)/.test(source),
-      '应通过 setProperty 写入 --soul-trail-color'
-    )
-
-    // 左侧光带：轨道 + 沿轨道扫动的高光；只给会话行，不能命中工作区分组行。
-    const bar = source.match(/'\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)\{([^}]*)\}'/)
-    assert.ok(bar, '缺少运行中会话行的左侧光带')
-    assert.match(bar[1], /background-image:linear-gradient/, '光带应是渐隐高光，不是死线')
-    assert.match(bar[1], /background-size:3px 58%/, '彗星宽 3px、占行高 58%')
-    assert.match(bar[1], /label-primary-foreground\)\) 50%/, '光核必须取宿主前景 token 提亮，不能用硬编码白色')
-    assert.match(bar[1], /cubic-bezier/, '扫动应带缓动，匀速往返太机械')
-    assert.match(bar[1], /animation:soul-session-run-scan/, '高光应沿轨道扫动')
-    assert.ok(source.includes('@keyframes soul-session-run-scan'), '缺少扫动关键帧')
-    assert.equal(
-      /\[data-row-key\]:has\(svg\[data-state="ongoing"\]\)\{/.test(source),
-      false,
-      '光带不得作用于工作区分组行'
-    )
-    // 减少动态效果时：环停、高光关掉、只留一条静态轨道 —— 不能靠 animation:none 糊过去，
-    // 那样高光会停在半空。
-    const NEWLINE = String.fromCharCode(10)
-    const reduceLine = source.split(NEWLINE).find(
-      (line) => line.includes('@media (prefers-reduced-motion:reduce)') && line.includes('session:')
-    )
-    assert.ok(reduceLine, '缺少会话行的 reduced-motion 分支')
-    assert.match(reduceLine, /background-image:none/, 'reduced-motion 下必须去掉高光')
+    assert.ok(source.includes("'dsh-soul: sidebar trail color'"), '缺少把 trailColor 投射到 :root 的 effect')
+    assert.ok(/setProperty\('--soul-trail-color', color\)/.test(source), '应通过 setProperty 写入 --soul-trail-color')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

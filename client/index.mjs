@@ -1239,16 +1239,9 @@ window.__ModuleLoader__.load({
       // 只改视觉、不改结构：放大到 16、染成光轨色、叠一层呼吸。选择器依赖宿主的
       // data-row-key 与 StateDot 的 data-state —— 宿主哪天改掉这两个，规则自然失效、
       // 退回原样，不会坏；限定在行内也避免把别处的同名状态环一起放大。
-      '[data-row-key] svg[data-state="ongoing"]{width:16px;height:16px;color:var(--soul-trail-color,#679EFE);animation:soul-session-run-breathe 1.6s ease-in-out infinite}',
+      '[data-row-key] svg[data-state="ongoing"]{width:16px;height:16px;color:var(--soul-trail-color,#679EFE);filter:drop-shadow(0 0 4px color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent));animation:soul-session-run-breathe 1.6s ease-in-out infinite}',
       '@keyframes soul-session-run-breathe{0%,100%{opacity:.6}50%{opacity:1}}',
-      '@media (prefers-reduced-motion:reduce){[data-row-key] svg[data-state="ongoing"]{animation:none;opacity:1}[data-row-key^="session:"]:has(svg[data-state="ongoing"]){animation:none;background-image:none;box-shadow:inset 2px 0 var(--soul-trail-color,#679EFE)}}',
-      // 只靠那个环还是不够抓眼（实测反馈）：运行中的会话行左侧一条 2px 轨道，
-      // 上面还有一段高光沿轨道来回扫 —— 与输入框光轨同一套语言，而不是一条死线。
-      // 高光用 background-image 而不是伪元素：宿主已占用行的 ::before / ::after。
-      // 百分比位移在「背景尺寸小于容器」时就是沿纵向移动，alternate 让它来回扫，
-      // 避免线性循环到顶那一下硬跳。^="session:" 排除工作区分组行，避免「组在跑」的误读。
-      '[data-row-key^="session:"]:has(svg[data-state="ongoing"]){box-shadow:inset 2px 0 color-mix(in srgb,var(--soul-trail-color,#679EFE) 28%,transparent);background-image:linear-gradient(180deg,transparent 0%,color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent) 18%,var(--soul-trail-color,#679EFE) 40%,color-mix(in srgb,var(--soul-trail-color,#679EFE) 35%,var(--dsw-alias-label-primary-foreground)) 50%,var(--soul-trail-color,#679EFE) 58%,transparent 72%);background-size:3px 58%;background-repeat:no-repeat;background-position:0 0;animation:soul-session-run-scan 2.6s cubic-bezier(.4,0,.6,1) infinite alternate}',
-      '@keyframes soul-session-run-scan{0%{background-position:0 0;box-shadow:inset 2px 0 color-mix(in srgb,var(--soul-trail-color,#679EFE) 16%,transparent)}50%{box-shadow:inset 2px 0 color-mix(in srgb,var(--soul-trail-color,#679EFE) 42%,transparent)}100%{background-position:0 100%;box-shadow:inset 2px 0 color-mix(in srgb,var(--soul-trail-color,#679EFE) 16%,transparent)}}',
+      '@media (prefers-reduced-motion:reduce){[data-row-key] svg[data-state="ongoing"]{animation:none;opacity:1}}',
       // 侧栏会话行 hover 面具徽标（0.9.0-ab）：与行内其它 hover 按钮对齐
       '.soul-sidebar-persona-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-sidebar-persona-badge-icon{display:block}',
