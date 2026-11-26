@@ -1241,12 +1241,14 @@ window.__ModuleLoader__.load({
       // 退回原样，不会坏；限定在行内也避免把别处的同名状态环一起放大。
       '[data-row-key] svg[data-state="ongoing"]{width:16px;height:16px;color:var(--soul-trail-color,#679EFE);animation:soul-session-run-breathe 1.6s ease-in-out infinite}',
       '@keyframes soul-session-run-breathe{0%,100%{opacity:.6}50%{opacity:1}}',
-      '@media (prefers-reduced-motion:reduce){[data-row-key] svg[data-state="ongoing"]{animation:none;opacity:1}}',
-      // 只靠那个环还是不够抓眼（用户实测「不是太明显」）：给运行中的会话行加一条
-      // 左侧光带。用 inset box-shadow 而不是伪元素 —— 行本身已经被宿主用了 ::before /
-      // ::after（hover 背景、选中态），再加一个占位会打架；inset 阴影跟着行的圆角走，
-      // 也不会改变布局盒。^="session:" 把工作区分组行排除在外，避免「组在跑」的误读。
-      '[data-row-key^="session:"]:has(svg[data-state="ongoing"]){box-shadow:inset 2px 0 var(--soul-trail-color,#679EFE)}',
+      '@media (prefers-reduced-motion:reduce){[data-row-key] svg[data-state="ongoing"]{animation:none;opacity:1}[data-row-key^="session:"]:has(svg[data-state="ongoing"]){animation:none;background-image:none;box-shadow:inset 2px 0 var(--soul-trail-color,#679EFE)}}',
+      // 只靠那个环还是不够抓眼（实测反馈）：运行中的会话行左侧一条 2px 轨道，
+      // 上面还有一段高光沿轨道来回扫 —— 与输入框光轨同一套语言，而不是一条死线。
+      // 高光用 background-image 而不是伪元素：宿主已占用行的 ::before / ::after。
+      // 百分比位移在「背景尺寸小于容器」时就是沿纵向移动，alternate 让它来回扫，
+      // 避免线性循环到顶那一下硬跳。^="session:" 排除工作区分组行，避免「组在跑」的误读。
+      '[data-row-key^="session:"]:has(svg[data-state="ongoing"]){box-shadow:inset 2px 0 color-mix(in srgb,var(--soul-trail-color,#679EFE) 30%,transparent);background-image:linear-gradient(180deg,transparent 0%,var(--soul-trail-color,#679EFE) 50%,transparent 100%);background-size:2px 45%;background-repeat:no-repeat;animation:soul-session-run-scan 2.6s ease-in-out infinite alternate}',
+      '@keyframes soul-session-run-scan{0%{background-position:0 0}100%{background-position:0 100%}}',
       // 侧栏会话行 hover 面具徽标（0.9.0-ab）：与行内其它 hover 按钮对齐
       '.soul-sidebar-persona-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-sidebar-persona-badge-icon{display:block}',

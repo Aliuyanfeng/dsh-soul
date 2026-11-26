@@ -6701,15 +6701,26 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       '应通过 setProperty 写入 --soul-trail-color'
     )
 
-    // 左侧光带：只给会话行，不能命中工作区分组行（否则「组在跑」会误导）。
+    // 左侧光带：轨道 + 沿轨道扫动的高光；只给会话行，不能命中工作区分组行。
     const bar = source.match(/'\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)\{([^}]*)\}'/)
     assert.ok(bar, '缺少运行中会话行的左侧光带')
-    assert.match(bar[1], /inset 2px 0 var\(--soul-trail-color,#679EFE\)/, '光带应为 2px 并跟随光轨色')
+    assert.match(bar[1], /background-image:linear-gradient/, '光带应是渐隐高光，不是死线')
+    assert.match(bar[1], /background-size:2px 45%/, '高光宽度 2px')
+    assert.match(bar[1], /animation:soul-session-run-scan/, '高光应沿轨道扫动')
+    assert.ok(source.includes('@keyframes soul-session-run-scan'), '缺少扫动关键帧')
     assert.equal(
       /\[data-row-key\]:has\(svg\[data-state="ongoing"\]\)\{/.test(source),
       false,
       '光带不得作用于工作区分组行'
     )
+    // 减少动态效果时：环停、高光关掉、只留一条静态轨道 —— 不能靠 animation:none 糊过去，
+    // 那样高光会停在半空。
+    const NEWLINE = String.fromCharCode(10)
+    const reduceLine = source.split(NEWLINE).find(
+      (line) => line.includes('@media (prefers-reduced-motion:reduce)') && line.includes('session:')
+    )
+    assert.ok(reduceLine, '缺少会话行的 reduced-motion 分支')
+    assert.match(reduceLine, /background-image:none/, 'reduced-motion 下必须去掉高光')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
