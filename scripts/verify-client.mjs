@@ -6396,7 +6396,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 426, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 430, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -7002,6 +7002,20 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     )
     // 关闭弹层必须清掉选中的图，否则下次打开会带着上一次的选择
     assert.match(source, /setShowSavePersona\(false\); setPersonaName\(''\); setPersonaArt\(null\)/)
+
+    // 已保存的预设也要能换图 / 移除：入口在卡背，且只对自建卡。
+    assert.match(source, /const pickArtFor = \(name\) => \{/, '缺少给已保存预设换图的入口')
+    assert.match(source, /const clearArtFor = async \(name\) => \{/, '缺少移除已上传插画的入口')
+    assert.match(
+      source,
+      /!builtin && e\('button', \{\s*type: 'button',\s*className: 'soul-persona-action soul-persona-back-mini',/,
+      '换图按钮只能出现在自建卡的卡背（内置卡插画在包内，服务端也会拒绝）'
+    )
+    assert.equal(
+      (source.match(/!builtin && e\('button', \{[^}]{0,120}soul-persona-back-mini/g) || []).length >= 2,
+      true,
+      '换图与移除两个按钮都必须带 !builtin'
+    )
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

@@ -1716,7 +1716,8 @@ window.__ModuleLoader__.load({
       // vs 长文本 21px）。加前缀后权重更高，与声明顺序无关。
       // 卡背底部按钮行：返回（弹性占满）+ 删除（自建卡才有，定宽）。
       // .soul-persona-back-btn 的 margin-top:auto 移到本行容器上 —— 按钮行整体贴底。
-      '.soul-persona-back-actions{display:flex;align-items:center;gap:8px;flex:none;margin-top:auto}',
+      '.soul-persona-back-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none;margin-top:auto}',
+      '.soul-persona-action.soul-persona-back-mini{flex:none;height:32px;padding:0 10px;font-size:13px;background:transparent;color:var(--dsw-alias-label-secondary);border:.5px solid var(--dsw-alias-settings-card-stroke)}',
       '.soul-persona-back-btn{flex:1 1 auto}',
       // 删除在卡背是「次要管理操作」：定宽描边（armed 态复用正面同款变实心样式）
       '.soul-persona-back-del{flex:0 0 64px}',
@@ -2350,6 +2351,10 @@ window.__ModuleLoader__.load({
       'notice.personaUpdated': '已更新预设「{name}」。',
       'personas.saveNameLabel': '新预设名称',
       'personas.artLabel': '插画（可选）',
+      'personas.artReplace': '换图',
+      'personas.artClear': '移除插画',
+      'personas.artUpdated': '已更新插画',
+      'personas.artCleared': '已恢复默认插画',
       'personas.artNone': '未选择',
       'personas.artRemove': '移除',
       'personas.artHint': 'PNG / JPEG / WebP，建议正方形，不超过 1.5 MB。',
@@ -2828,6 +2833,10 @@ window.__ModuleLoader__.load({
       'notice.personaUpdated': 'Updated preset "{name}".',
       'personas.saveNameLabel': 'New persona name',
       'personas.artLabel': 'Artwork (optional)',
+      'personas.artReplace': 'Change image',
+      'personas.artClear': 'Remove artwork',
+      'personas.artUpdated': 'Artwork updated',
+      'personas.artCleared': 'Reverted to the default artwork',
       'personas.artNone': 'None selected',
       'personas.artRemove': 'Remove',
       'personas.artHint': 'PNG / JPEG / WebP, square preferred, up to 1.5 MB.',
@@ -3281,6 +3290,10 @@ window.__ModuleLoader__.load({
       'notice.personaUpdated': 'Пресет «{name}» обновлён.',
       'personas.saveNameLabel': 'Имя нового пресета',
       'personas.artLabel': 'Иллюстрация (необязательно)',
+      'personas.artReplace': 'Сменить',
+      'personas.artClear': 'Убрать иллюстрацию',
+      'personas.artUpdated': 'Иллюстрация обновлена',
+      'personas.artCleared': 'Возвращена стандартная иллюстрация',
       'personas.artNone': 'Не выбрана',
       'personas.artRemove': 'Убрать',
       'personas.artHint': 'PNG / JPEG / WebP, лучше квадрат, до 1,5 МБ.',
@@ -3718,6 +3731,10 @@ window.__ModuleLoader__.load({
       'notice.personaUpdated': 'プリセット「{name}」を更新しました。',
       'personas.saveNameLabel': '新しいプリセット名',
       'personas.artLabel': 'イラスト（任意）',
+      'personas.artReplace': '画像を変更',
+      'personas.artClear': 'イラストを削除',
+      'personas.artUpdated': 'イラストを更新しました',
+      'personas.artCleared': '既定のイラストに戻しました',
       'personas.artNone': '未選択',
       'personas.artRemove': '削除',
       'personas.artHint': 'PNG / JPEG / WebP、正方形推奨、1.5 MB まで。',
@@ -4176,6 +4193,10 @@ window.__ModuleLoader__.load({
       'notice.personaUpdated': 'Preajuste «{name}» actualizado.',
       'personas.saveNameLabel': 'Nombre del nuevo preajuste',
       'personas.artLabel': 'Ilustración (opcional)',
+      'personas.artReplace': 'Cambiar imagen',
+      'personas.artClear': 'Quitar ilustración',
+      'personas.artUpdated': 'Ilustración actualizada',
+      'personas.artCleared': 'Se restauró la ilustración predeterminada',
       'personas.artNone': 'Sin seleccionar',
       'personas.artRemove': 'Quitar',
       'personas.artHint': 'PNG / JPEG / WebP, preferiblemente cuadrada, hasta 1,5 MB.',
@@ -4634,6 +4655,10 @@ window.__ModuleLoader__.load({
       'notice.personaUpdated': 'Préréglage « {name} » mis à jour.',
       'personas.saveNameLabel': 'Nom du nouveau préréglage',
       'personas.artLabel': 'Illustration (facultatif)',
+      'personas.artReplace': 'Changer l’image',
+      'personas.artClear': 'Retirer l’illustration',
+      'personas.artUpdated': 'Illustration mise à jour',
+      'personas.artCleared': 'Illustration par défaut restaurée',
       'personas.artNone': 'Aucune',
       'personas.artRemove': 'Retirer',
       'personas.artHint': 'PNG / JPEG / WebP, de préférence carrée, jusqu’à 1,5 Mo.',
@@ -5092,6 +5117,10 @@ window.__ModuleLoader__.load({
       'notice.personaUpdated': 'Voreinstellung „{name}“ aktualisiert.',
       'personas.saveNameLabel': 'Name der neuen Voreinstellung',
       'personas.artLabel': 'Illustration (optional)',
+      'personas.artReplace': 'Bild ändern',
+      'personas.artClear': 'Illustration entfernen',
+      'personas.artUpdated': 'Illustration aktualisiert',
+      'personas.artCleared': 'Standardillustration wiederhergestellt',
       'personas.artNone': 'Keine ausgewählt',
       'personas.artRemove': 'Entfernen',
       'personas.artHint': 'PNG / JPEG / WebP, möglichst quadratisch, bis 1,5 MB.',
@@ -5550,6 +5579,10 @@ window.__ModuleLoader__.load({
       'notice.personaUpdated': 'Predefinição “{name}” atualizada.',
       'personas.saveNameLabel': 'Nome da nova predefinição',
       'personas.artLabel': 'Ilustração (opcional)',
+      'personas.artReplace': 'Trocar imagem',
+      'personas.artClear': 'Remover ilustração',
+      'personas.artUpdated': 'Ilustração atualizada',
+      'personas.artCleared': 'Ilustração padrão restaurada',
       'personas.artNone': 'Nenhuma selecionada',
       'personas.artRemove': 'Remover',
       'personas.artHint': 'PNG / JPEG / WebP, de preferência quadrada, até 1,5 MB.',
@@ -10536,14 +10569,13 @@ window.__ModuleLoader__.load({
       // 只传人设字段：预设不含「关于你」（昵称 / 职业 / 介绍），它们不属于预设。
       // 选图：只做「读成 data URL + 客户端预检」，真正的格式/大小校验在服务端
       // （客户端说的 MIME 不可信，服务端的 magic bytes 才是判据）。
-      const handlePickArt = async (ev) => {
-        const file = ev && ev.target && ev.target.files ? ev.target.files[0] : null
-        // 允许重复选同一个文件：不清空 value 的话第二次选同一张不会触发 change
-        if (ev && ev.target) ev.target.value = ''
-        if (!file) return
+      // 读文件为 data URL + 客户端预检。真正的格式/大小校验在服务端
+      // （客户端说的 MIME 不可信，magic bytes 才是判据）。
+      const readArtFile = async (file) => {
+        if (!file) return null
         if (file.size > 1.5 * 1024 * 1024) {
           showError(t('personas.artTooLarge'))
-          return
+          return null
         }
         const dataUrl = await new Promise((resolve) => {
           try {
@@ -10557,13 +10589,54 @@ window.__ModuleLoader__.load({
         })
         if (!dataUrl) {
           showError(t('personas.artReadFailed'))
-          return
+          return null
         }
         if (!/^data:image\/(png|jpeg|webp);base64,/.test(dataUrl)) {
           showError(t('personas.artType'))
-          return
+          return null
         }
-        setPersonaArt(dataUrl)
+        return dataUrl
+      }
+
+      const handlePickArt = async (ev) => {
+        const file = ev && ev.target && ev.target.files ? ev.target.files[0] : null
+        // 允许重复选同一个文件：不清空 value 的话第二次选同一张不会触发 change
+        if (ev && ev.target) ev.target.value = ''
+        const dataUrl = await readArtFile(file)
+        if (dataUrl) setPersonaArt(dataUrl)
+      }
+
+      // 给**已保存**的自建预设换图：动态建一个 file input，选完即弃。
+      // 不用常驻的隐藏 input —— 卡背是按卡渲染的，常驻会重复 id。
+      const pickArtFor = (name) => {
+        if (typeof document === 'undefined') return
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.accept = 'image/png,image/jpeg,image/webp'
+        input.onchange = async () => {
+          const file = input.files && input.files[0]
+          const dataUrl = await readArtFile(file)
+          if (!dataUrl) return
+          try {
+            await controller.uploadPersonaArt(name, dataUrl)
+            setArtVersion((prev) => prev + 1)
+            setNotice(t('personas.artUpdated'))
+          } catch {
+            showError(t('personas.artUploadFailed'))
+          }
+        }
+        input.click()
+      }
+
+      // 移除已上传的图，回到内置插画 / 默认贴图。
+      const clearArtFor = async (name) => {
+        try {
+          await controller.removePersonaArt(name)
+          setArtVersion((prev) => prev + 1)
+          setNotice(t('personas.artCleared'))
+        } catch {
+          showError(t('personas.artUploadFailed'))
+        }
       }
 
       const handleSavePersona = async () => {
@@ -11205,6 +11278,18 @@ window.__ModuleLoader__.load({
                                 setFlippedName(null)
                               }
                             }, t('personas.flipBack')),
+                            // 换图 / 移除只在自建卡上出现：内置卡的插画在包内，
+                            // 服务端也会拒绝覆盖。
+                            !builtin && e('button', {
+                              type: 'button',
+                              className: 'soul-persona-action soul-persona-back-mini',
+                              onClick: (ev) => { ev?.stopPropagation(); pickArtFor(name) }
+                            }, t('personas.artReplace')),
+                            !builtin && e('button', {
+                              type: 'button',
+                              className: 'soul-persona-action soul-persona-back-mini',
+                              onClick: (ev) => { ev?.stopPropagation(); void clearArtFor(name) }
+                            }, t('personas.artClear')),
                             !builtin && e('button', {
                               type: 'button',
                               className: pendingDelete === name
