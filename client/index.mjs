@@ -1235,27 +1235,34 @@ window.__ModuleLoader__.load({
       '.soul-session-persona-label-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       // 图标：与文字同色但略淡（图标是标识，文字是主信息）
       '.soul-session-persona-label-icon{flex:none;opacity:.75}',
-      // 运行中的侧栏会话行：宿主那个 14px 的 ongoing 环太淡（用户反馈「很不明显」）。
-      // 只改视觉、不改结构：放大到 16、染成光轨色、叠一层呼吸。选择器依赖宿主的
-      // data-row-key 与 StateDot 的 data-state —— 宿主哪天改掉这两个，规则自然失效、
-      // 退回原样，不会坏；限定在行内也避免把别处的同名状态环一起放大。
-      '[data-row-key] svg[data-state="ongoing"]{width:16px;height:16px;color:var(--soul-trail-color,#679EFE);filter:drop-shadow(0 0 4px color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent));animation:soul-session-run-breathe 1.6s ease-in-out infinite}',
-      '@keyframes soul-session-run-breathe{0%,100%{opacity:.6}50%{opacity:1}}',
-      '@media (prefers-reduced-motion:reduce){[data-row-key] svg[data-state="ongoing"]{animation:none;opacity:1}[data-row-key^="session:"]:has(svg[data-state="ongoing"])>span:nth-child(2)::before{animation:none}}',
-      // 运行中的会话行：整行一层极淡的色wash + 标题加粗。
-      //
-      // 不做左边缘的线 —— 实测「更丑」：它把行切出一条不属于宿主语言的东西。
-      // wash 用 background-image 叠一层 7% 的纯色，而不是 background-color：
-      // 宿主的 hover / 选中态也是背景色，用 image 叠上去不会把它们盖掉。
-      '[data-row-key^="session:"]:has(svg[data-state="ongoing"]){background-image:linear-gradient(color-mix(in srgb,var(--soul-trail-color,#679EFE) 7%,transparent),color-mix(in srgb,var(--soul-trail-color,#679EFE) 7%,transparent))}',
-      // 标题是行内第二个 span（slot / title / time / actions）。只加粗标题，
-      // 时间戳与行尾按钮保持原样 —— 只用 > span:nth-child(2) 定位，不依赖哈希类名。
+      // 运行中的侧栏会话行。三件事，但只有一个「动」的元素（边界流光）：
+      //   ① 宿主那个 14px 的 ongoing 环放大到 16、染成光轨色、加一层同色光晕 —— 静态
+      //   ② 整行一层 7% 的色 wash + 标题加粗 —— 静态，负责扫读时成片识别
+      //   ③ 一圈 1px 的流光边框 —— 唯一在动的东西，语言与输入框光轨一致
+      // 早先试过的星形 / 左侧光带 / 彗星都已撤除：它们与宿主自己的环语义重复，
+      // 或者把行边缘切出一条不属于宿主语言的东西。
+      '[data-row-key] svg[data-state="ongoing"]{width:16px;height:16px;color:var(--soul-trail-color,#679EFE);filter:drop-shadow(0 0 4px color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent))}',
+      // wash 用 background-image 叠，而不是 background-color：宿主的 hover / 选中态也是
+      // 背景色，用 image 叠上去不会把它们盖掉。
+      '[data-row-key^="session:"]:has(svg[data-state="ongoing"]){position:relative;background-image:linear-gradient(color-mix(in srgb,var(--soul-trail-color,#679EFE) 7%,transparent),color-mix(in srgb,var(--soul-trail-color,#679EFE) 7%,transparent))}',
+      // 标题是行内第二个 span（leading slot / title / time / actions）。只加粗标题，
+      // 时间戳与行尾按钮保持原样 —— 不依赖哈希类名。
       '[data-row-key^="session:"]:has(svg[data-state="ongoing"])>span:nth-child(2){font-weight:600}',
-      // 标题前的四芒星（插件图标同一套几何）：mask 负责形状、background 负责颜色，
-      // 颜色因此跟着光轨走；自转用 transform，不影响排版。不需要 JSX / 槽位，
-      // 也不会像行尾 action 槽位那样只在 hover 时出现。
-      '[data-row-key^="session:"]:has(svg[data-state="ongoing"])>span:nth-child(2)::before{content:"";display:inline-block;width:12px;height:12px;margin-inline-end:5px;vertical-align:-2px;background-color:var(--soul-trail-color,#679EFE);-webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%2711.6%2011.6%2012.8%2012.8%27%3E%3Cpath%20d=%27M18%2011.6C18.52%2015.15%2020.85%2017.48%2024.4%2018C20.85%2018.52%2018.52%2020.85%2018%2024.4C17.48%2020.85%2015.15%2018.52%2011.6%2018C15.15%2017.48%2017.48%2015.15%2018%2011.6Z%27/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%2711.6%2011.6%2012.8%2012.8%27%3E%3Cpath%20d=%27M18%2011.6C18.52%2015.15%2020.85%2017.48%2024.4%2018C20.85%2018.52%2018.52%2020.85%2018%2024.4C17.48%2020.85%2015.15%2018.52%2011.6%2018C15.15%2017.48%2017.48%2015.15%2018%2011.6Z%27/%3E%3C/svg%3E") center/contain no-repeat;animation:soul-run-spark-spin 7s linear infinite;opacity:.95}',
-      '@keyframes soul-run-spark-spin{to{transform:rotate(360deg)}}',
+      // —— 流光边框 ——
+      //
+      // 不用真 border：那会在布局里占 2px，把 32px 的行撑高、进出运行态时抖一下；
+      // 也不用 border-image：它不支持圆角，行是 8px 圆角的。
+      // 做法是伪元素铺满行、自身 padding 1px、mask 抠掉 content-box，只剩那一圈边。
+      // 角度由 @property 注册后插值旋转，conic 里放「一段高光 + 两侧渐隐」，
+      // 就是输入框光轨那种「一段光沿轮廓跑」的语言，而不是一条匀速的色带。
+      //
+      // @supports 包住：mask-composite 不被支持时整条规则不生效（退回无边框），
+      // 否则伪元素会变成一整块渐变盖住文字。
+      '@property --soul-run-angle{syntax:"<angle>";inherits:false;initial-value:0deg}',
+      '@supports (mask-composite:exclude){[data-row-key^="session:"]:has(svg[data-state="ongoing"])::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;background:conic-gradient(from var(--soul-run-angle),transparent 0deg,color-mix(in srgb,var(--soul-trail-color,#679EFE) 35%,transparent) 46deg,var(--soul-trail-color,#679EFE) 74deg,color-mix(in srgb,var(--soul-trail-color,#679EFE) 35%,transparent) 102deg,transparent 148deg);-webkit-mask:linear-gradient(rgb(0 0 0) 0 0) content-box,linear-gradient(rgb(0 0 0) 0 0);-webkit-mask-composite:xor;mask:linear-gradient(rgb(0 0 0) 0 0) content-box,linear-gradient(rgb(0 0 0) 0 0);mask-composite:exclude;animation:soul-run-orbit 3.2s linear infinite}}',
+      '@keyframes soul-run-orbit{to{--soul-run-angle:360deg}}',
+      // reduced-motion：光不跑，改成整圈淡描边 —— 仍看得出「这行在跑」，但不闪。
+      '@media (prefers-reduced-motion:reduce){[data-row-key^="session:"]:has(svg[data-state="ongoing"])::before{animation:none;background-image:none;background-color:color-mix(in srgb,var(--soul-trail-color,#679EFE) 55%,transparent)}}',
       // 侧栏会话行 hover 面具徽标（0.9.0-ab）：与行内其它 hover 按钮对齐
       '.soul-sidebar-persona-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-sidebar-persona-badge-icon{display:block}',

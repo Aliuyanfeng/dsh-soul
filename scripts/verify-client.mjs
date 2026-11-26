@@ -6679,39 +6679,65 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     )
   })
 
-  await check('C137 侧栏运行指示：光环放大 + 同色光晕，不加左侧光带', async () => {
+  await check('C137 侧栏运行指示：环放大染色 + wash + 加粗 + 一圈流光边框', async () => {
     const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
-    const rule = source.match(/'\[data-row-key\] svg\[data-state="ongoing"\]\{([^}]*)\}'/)
-    assert.ok(rule, '缺少侧栏运行指示规则')
-    assert.match(rule[1], /width:16px/, '运行中的环应放大到 16px')
-    assert.match(rule[1], /var\(--soul-trail-color,#679EFE\)/, '颜色应跟随光轨并带回退')
-    assert.match(rule[1], /drop-shadow/, '应有一层同色光晕（不加光带时的辨识度来源）')
-    assert.match(rule[1], /soul-session-run-breathe/, '保持轻微呼吸')
-    // 运行中的行：极淡 wash + 标题加粗（不做左边缘的线 —— 实测更丑）。
-    const washRule = source.match(/'\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)\{([^}]*)\}'/)
-    assert.ok(washRule, '缺少运行中会话行的底色 wash')
-    assert.match(washRule[1], /background-image:linear-gradient/, 'wash 用 background-image 叠，避免盖掉 hover 背景')
-    assert.match(washRule[1], /7%,transparent/, 'wash 应很淡（7%）')
+
+    // ① 环：放大 + 染色 + 光晕，但**静态** —— 唯一允许动的是边框，两处同时动会吵。
+    const ring = source.match(/'\[data-row-key\] svg\[data-state="ongoing"\]\{([^}]*)\}'/)
+    assert.ok(ring, '缺少侧栏运行指示规则')
+    assert.match(ring[1], /width:16px/, '运行中的环应放大到 16px')
+    assert.match(ring[1], /var\(--soul-trail-color,#679EFE\)/, '颜色应跟随光轨并带回退')
+    assert.match(ring[1], /drop-shadow/, '应有一层同色光晕')
+    assert.equal(/animation:/.test(ring[1]), false, '环不再呼吸：动效只能有一处')
+
+    // ② 极淡 wash + 只加粗标题（静态，负责扫读）
+    const wash = source.match(/'\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)\{([^}]*)\}'/)
+    assert.ok(wash, '缺少运行中会话行的底色 wash')
+    assert.match(wash[1], /background-image:linear-gradient/, 'wash 用 background-image 叠，避免盖掉 hover 背景')
+    assert.match(wash[1], /7%,transparent/, 'wash 应很淡（7%）')
+    assert.ok(source.includes('>span:nth-child(2){font-weight:600}'), '应只给标题（行内第二个 span）加粗')
+
+    // ③ 流光边框：伪元素铺满 + 1px padding + mask 抠掉中间，只剩一圈边。
+    // 角度必须由 @property 注册才能插值；整条规则包在 @supports 里，mask 不支持时
+    // 退回「没有边框」，而不是变成一整块渐变盖住文字。
+    assert.ok(source.includes('@property --soul-run-angle'), '角度必须注册 @property 才能做旋转插值')
+    const border = source.match(/'@supports \(mask-composite:exclude\)\{\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)::before\{([^}]*)\}\}'/)
+    assert.ok(border, '缺少流光边框规则，或没包在 @supports 里（mask 不支持时会糊住整行）')
+    for (const [pattern, why] of [
+      [/position:absolute/, '伪元素在 flex 行里必须绝对定位，否则会占位'],
+      [/pointer-events:none/, '边框不能挡住行的点击'],
+      [/padding:1px/, '边框厚度由 padding 控制（真 border 会把行撑高、进出运行态时抖动）'],
+      [/conic-gradient\(from var\(--soul-run-angle\)/, '高光角度必须可动画'],
+      [/mask-composite:exclude/, '必须抠掉 content-box，只留一圈边'],
+      [/animation:soul-run-orbit/, '边框应持续流动']
+    ]) assert.match(border[1], pattern, why)
+    assert.ok(source.includes('@keyframes soul-run-orbit'), '缺少流光关键帧')
+
+    // 降级：减少动态效果下不流动，但改成整圈淡描边 —— 仍然看得出「在跑」。
+    const reduce = source
+      .split('\n')
+      .find(
+        (line) =>
+          line.includes('prefers-reduced-motion') &&
+          line.includes('data-row-key^="session:"') &&
+          line.includes('::before')
+      )
+    assert.ok(reduce, '缺少边框的 reduced-motion 分支')
+    assert.match(reduce, /animation:none/, 'reduced-motion 下应停掉流动')
+    assert.match(reduce, /background-color:color-mix/, 'reduced-motion 下应改成静态描边，而不是消失')
+
+    // 反向：星 / 左侧光带 / 彗星 / 环呼吸都已撤除，不得回流。
+    assert.equal(
+      /soul-run-spark|soul-session-run-scan|soul-session-run-breathe/.test(source),
+      false,
+      '不得回流到星 / 光带 / 彗星 / 呼吸'
+    )
     assert.equal(
       /\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)\{[^}]*box-shadow:inset 2px 0/.test(source),
       false,
       '不得再给会话行加左侧光带'
     )
-    assert.ok(
-      source.includes('>span:nth-child(2){font-weight:600}'),
-      '应只给标题（行内第二个 span）加粗，不要连时间戳一起加粗'
-    )
 
-    // 标题前的四芒星（方案 ③）：必须是 CSS mask 画出来的，且只在运行中出现。
-    // 不放在行尾槽位 —— 那个槽位只在 hover 时渲染，做不到常显。
-    const sparkRule = source.match(/>span:nth-child\(2\)::before\{content:([^}]*)\}/)
-    assert.ok(sparkRule, '缺少标题前的四芒星')
-    assert.match(sparkRule[1], /mask:url\("data:image\/svg\+xml/, '星应由 CSS mask 绘制（形状固定、颜色跟随光轨）')
-    assert.match(sparkRule[1], /background-color:var\(--soul-trail-color,#679EFE\)/, '星的颜色应跟随光轨')
-    assert.match(sparkRule[1], /animation:soul-run-spark-spin/, '星应缓慢自转')
-    assert.ok(source.includes('@keyframes soul-run-spark-spin'), '缺少自转关键帧')
-    assert.match(source, /\[data-row-key\^="session:"\]:has\(svg\[data-state="ongoing"\]\)>span:nth-child\(2\)::before/, '星必须限定在运行中的会话行')
-    assert.equal(source.includes('soul-sidebar-run-spark'), false, '不得回退到行尾槽位方案（只在 hover 可见）')
     // 颜色投射：CSS 变量只能从 documentElement 取，缺这段则侧栏永远是默认色
     assert.ok(source.includes("'dsh-soul: sidebar trail color'"), '缺少把 trailColor 投射到 :root 的 effect')
     assert.ok(/setProperty\('--soul-trail-color', color\)/.test(source), '应通过 setProperty 写入 --soul-trail-color')
