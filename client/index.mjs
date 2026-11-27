@@ -2374,6 +2374,7 @@ window.__ModuleLoader__.load({
       'personas.artPromptManualTitle': '手动复制提示词',
       'personas.artPromptManual': '浏览器拦住了自动复制。下面的文本已全选，按 Ctrl+C（Mac 上 ⌘C）复制即可。',
       'personas.artTooLarge': '图片超过 1.5 MB',
+      'personas.artUnsupported': '这张图打不开，请先转成 PNG / JPEG / WebP。',
       'personas.artType': '只支持 PNG / JPEG / WebP',
       'personas.artReadFailed': '读取图片失败',
       'personas.artUploadFailed': '插画没有上传成功（预设已保存）',
@@ -2863,6 +2864,7 @@ window.__ModuleLoader__.load({
       'personas.artPromptManualTitle': 'Copy the prompt manually',
       'personas.artPromptManual': 'The browser blocked automatic copying. The text below is already selected — press Ctrl+C (⌘C on a Mac).',
       'personas.artTooLarge': 'Image is larger than 1.5 MB',
+      'personas.artUnsupported': 'This image could not be opened — convert it to PNG / JPEG / WebP first.',
       'personas.artType': 'Only PNG / JPEG / WebP are supported',
       'personas.artReadFailed': 'Could not read the image',
       'personas.artUploadFailed': 'Artwork was not uploaded (the persona was saved)',
@@ -3327,6 +3329,7 @@ window.__ModuleLoader__.load({
       'personas.artPromptManualTitle': 'Скопируйте промпт вручную',
       'personas.artPromptManual': 'Браузер заблокировал автоматическое копирование. Текст ниже уже выделен — нажмите Ctrl+C (⌘C на Mac).',
       'personas.artTooLarge': 'Изображение больше 1,5 МБ',
+      'personas.artUnsupported': 'Не удалось открыть изображение — сначала конвертируйте его в PNG / JPEG / WebP.',
       'personas.artType': 'Поддерживаются только PNG / JPEG / WebP',
       'personas.artReadFailed': 'Не удалось прочитать изображение',
       'personas.artUploadFailed': 'Иллюстрация не загрузилась (пресет сохранён)',
@@ -3775,6 +3778,7 @@ window.__ModuleLoader__.load({
       'personas.artPromptManualTitle': 'プロンプトを手動でコピー',
       'personas.artPromptManual': 'ブラウザが自動コピーをブロックしました。下のテキストは選択済みです。Ctrl+C（Mac は ⌘C）でコピーしてください。',
       'personas.artTooLarge': '画像が 1.5 MB を超えています',
+      'personas.artUnsupported': 'この画像を開けませんでした。PNG / JPEG / WebP に変換してからお試しください。',
       'personas.artType': 'PNG / JPEG / WebP のみ対応しています',
       'personas.artReadFailed': '画像を読み込めませんでした',
       'personas.artUploadFailed': 'イラストはアップロードされませんでした（プリセットは保存済み）',
@@ -4244,6 +4248,7 @@ window.__ModuleLoader__.load({
       'personas.artPromptManualTitle': 'Copiar el prompt manualmente',
       'personas.artPromptManual': 'El navegador bloqueó la copia automática. El texto de abajo ya está seleccionado: pulsa Ctrl+C (⌘C en Mac).',
       'personas.artTooLarge': 'La imagen supera 1,5 MB',
+      'personas.artUnsupported': 'No se pudo abrir la imagen: conviértela antes a PNG / JPEG / WebP.',
       'personas.artType': 'Solo se admiten PNG / JPEG / WebP',
       'personas.artReadFailed': 'No se pudo leer la imagen',
       'personas.artUploadFailed': 'La ilustración no se subió (el preajuste sí se guardó)',
@@ -4713,6 +4718,7 @@ window.__ModuleLoader__.load({
       'personas.artPromptManualTitle': 'Copier le prompt manuellement',
       'personas.artPromptManual': 'Le navigateur a bloqué la copie automatique. Le texte ci-dessous est déjà sélectionné : appuie sur Ctrl+C (⌘C sur Mac).',
       'personas.artTooLarge': 'L’image dépasse 1,5 Mo',
+      'personas.artUnsupported': 'Impossible d’ouvrir cette image — convertis-la d’abord en PNG / JPEG / WebP.',
       'personas.artType': 'Seuls PNG / JPEG / WebP sont acceptés',
       'personas.artReadFailed': 'Impossible de lire l’image',
       'personas.artUploadFailed': 'L’illustration n’a pas été envoyée (le préset est enregistré)',
@@ -5182,6 +5188,7 @@ window.__ModuleLoader__.load({
       'personas.artPromptManualTitle': 'Prompt manuell kopieren',
       'personas.artPromptManual': 'Der Browser hat das automatische Kopieren blockiert. Der Text unten ist bereits markiert – drücke Strg+C (⌘C am Mac).',
       'personas.artTooLarge': 'Das Bild ist größer als 1,5 MB',
+      'personas.artUnsupported': 'Das Bild ließ sich nicht öffnen – wandle es zuerst in PNG / JPEG / WebP um.',
       'personas.artType': 'Nur PNG / JPEG / WebP werden unterstützt',
       'personas.artReadFailed': 'Das Bild konnte nicht gelesen werden',
       'personas.artUploadFailed': 'Die Illustration wurde nicht hochgeladen (das Preset ist gespeichert)',
@@ -5651,6 +5658,7 @@ window.__ModuleLoader__.load({
       'personas.artPromptManualTitle': 'Copiar o prompt manualmente',
       'personas.artPromptManual': 'O navegador bloqueou a cópia automática. O texto abaixo já está selecionado: pressione Ctrl+C (⌘C no Mac).',
       'personas.artTooLarge': 'A imagem passa de 1,5 MB',
+      'personas.artUnsupported': 'Não foi possível abrir a imagem — converta antes para PNG / JPEG / WebP.',
       'personas.artType': 'Só PNG / JPEG / WebP são aceitos',
       'personas.artReadFailed': 'Não foi possível ler a imagem',
       'personas.artUploadFailed': 'A ilustração não foi enviada (o predefinido foi salvo)',
@@ -10240,6 +10248,8 @@ window.__ModuleLoader__.load({
       const [artPromptCopied, setArtPromptCopied] = React.useState(false)
       // 自动复制被拦时的兜底：把提示词原文摊出来，让用户自己 Ctrl+C。
       const [artPromptFull, setArtPromptFull] = React.useState(null)
+      // 弹层里的插画错误。不能只走 showError：那个提示在页面底部，被弹层盖住。
+      const [artError, setArtError] = React.useState(null)
       // 「存为预设」的命名弹层是否打开。
       //
       // 方案 A：把「保存当前为预设」从预设列表里**移出来**，做成「保存设置」旁的同级动作，
@@ -10638,41 +10648,75 @@ window.__ModuleLoader__.load({
       // 只传人设字段：预设不含「关于你」（昵称 / 职业 / 介绍），它们不属于预设。
       // 选图：只做「读成 data URL + 客户端预检」，真正的格式/大小校验在服务端
       // （客户端说的 MIME 不可信，服务端的 magic bytes 才是判据）。
-      // 读文件为 data URL + 客户端预检。真正的格式/大小校验在服务端
-      // （客户端说的 MIME 不可信，magic bytes 才是判据）。
+      // 读成 data URL。返回 { dataUrl } 或 { errorText } —— 错误交给调用方决定挂在哪：
+      // 弹层里挂在弹层内（页面底部的提示会被弹层盖住，用户什么都看不到），
+      // 卡牌遮罩那边才用页面级提示。
+      const readAsDataUrl = (file) => new Promise((resolve) => {
+        try {
+          const reader = new FileReader()
+          reader.onload = () => resolve(String(reader.result || ''))
+          reader.onerror = () => resolve(null)
+          reader.readAsDataURL(file)
+        } catch {
+          resolve(null)
+        }
+      })
+
+      // 超大或格式不在白名单时，交给浏览器解码后重画一张：缩到长边 1024、转 WebP。
+      // 用户拍张 4000px 的照片或从设计稿导出的 PNG 都能直接用，
+      // 而不是被「超过 1.5 MB」挡回去 —— 那条提示对普通用户没有任何可操作性。
+      const shrinkArtFile = async (file) => {
+        if (typeof document === 'undefined' || typeof createImageBitmap !== 'function') return null
+        try {
+          const bitmap = await createImageBitmap(file)
+          const scale = Math.min(1, 1024 / Math.max(bitmap.width || 1, bitmap.height || 1))
+          const width = Math.max(1, Math.round((bitmap.width || 1) * scale))
+          const height = Math.max(1, Math.round((bitmap.height || 1) * scale))
+          const canvas = document.createElement('canvas')
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext('2d')
+          if (!ctx) return null
+          // 转 JPEG 时透明区域会变黑，先铺白底；WebP 支持透明，这里铺了也无妨。
+          ctx.fillStyle = 'rgba(255,255,255,1)'
+          ctx.fillRect(0, 0, width, height)
+          ctx.drawImage(bitmap, 0, 0, width, height)
+          const webp = canvas.toDataURL('image/webp', 0.86)
+          if (/^data:image\/webp;base64,/.test(webp)) return webp
+          const jpeg = canvas.toDataURL('image/jpeg', 0.9)
+          return /^data:image\/jpeg;base64,/.test(jpeg) ? jpeg : null
+        } catch {
+          return null
+        }
+      }
+
       const readArtFile = async (file) => {
         if (!file) return null
-        if (file.size > 1.5 * 1024 * 1024) {
-          showError(t('personas.artTooLarge'))
-          return null
+        const overLimit = file.size > 1.5 * 1024 * 1024
+        if (!overLimit) {
+          const dataUrl = await readAsDataUrl(file)
+          if (!dataUrl) return { errorText: t('personas.artReadFailed') }
+          if (/^data:image\/(png|jpeg|webp);base64,/.test(dataUrl)) return { dataUrl }
         }
-        const dataUrl = await new Promise((resolve) => {
-          try {
-            const reader = new FileReader()
-            reader.onload = () => resolve(String(reader.result || ''))
-            reader.onerror = () => resolve(null)
-            reader.readAsDataURL(file)
-          } catch {
-            resolve(null)
-          }
-        })
-        if (!dataUrl) {
-          showError(t('personas.artReadFailed'))
-          return null
-        }
-        if (!/^data:image\/(png|jpeg|webp);base64,/.test(dataUrl)) {
-          showError(t('personas.artType'))
-          return null
-        }
-        return dataUrl
+        // 超限，或扩展名/编码不在白名单（AVIF、HEIC 这类下载图很常见）。
+        const shrunk = await shrinkArtFile(file)
+        if (shrunk) return { dataUrl: shrunk }
+        return { errorText: overLimit ? t('personas.artTooLarge') : t('personas.artUnsupported') }
       }
 
       const handlePickArt = async (ev) => {
         const file = ev && ev.target && ev.target.files ? ev.target.files[0] : null
         // 允许重复选同一个文件：不清空 value 的话第二次选同一张不会触发 change
         if (ev && ev.target) ev.target.value = ''
-        const dataUrl = await readArtFile(file)
-        if (dataUrl) setPersonaArt(dataUrl)
+        const result = await readArtFile(file)
+        if (!result) return
+        if (result.errorText) {
+          // 挂在弹层里 —— 页面底部的提示会被弹层盖住（这就是「点了没反应」的成因）
+          setArtError(result.errorText)
+          return
+        }
+        setArtError(null)
+        setPersonaArt(result.dataUrl)
       }
 
       // 复制生图提示词。localhost 是安全上下文，navigator.clipboard 可用；
@@ -10755,8 +10799,10 @@ window.__ModuleLoader__.load({
         input.accept = 'image/png,image/jpeg,image/webp'
         input.onchange = async () => {
           const file = input.files && input.files[0]
-          const dataUrl = await readArtFile(file)
-          if (!dataUrl) return
+          const result = await readArtFile(file)
+          if (!result) return
+          if (result.errorText) { showError(result.errorText); return }
+          const dataUrl = result.dataUrl
           try {
             await controller.uploadPersonaArt(name, dataUrl)
             setArtVersion((prev) => prev + 1)
@@ -11921,7 +11967,7 @@ window.__ModuleLoader__.load({
         showSavePersona && e('div', {
           className: 'soul-modal-mask',
           role: 'presentation',
-          onClick: () => { setShowSavePersona(false); setPersonaName(''); setPersonaArt(null) }
+          onClick: () => { setShowSavePersona(false); setPersonaName(''); setPersonaArt(null); setArtError(null) }
         },
           e('div', {
             className: 'soul-modal',
@@ -11954,7 +12000,7 @@ ${t('personas.saveExcludes')}`
                 onChange: (ev) => setPersonaName(ev.target.value),
                 onKeyDown: (ev) => {
                   if (ev.key === 'Enter' && personaName.trim() && !saving) void handleSavePersona()
-                  if (ev.key === 'Escape') { setShowSavePersona(false); setPersonaName(''); setPersonaArt(null) }
+                  if (ev.key === 'Escape') { setShowSavePersona(false); setPersonaName(''); setPersonaArt(null); setArtError(null) }
                 }
               })
             ),
@@ -11988,6 +12034,7 @@ ${t('personas.saveExcludes')}`
                   onClick: () => setPersonaArt(null)
                 }, t('personas.artRemove'))
               ),
+              artError ? e('div', { className: 'soul-field-warn' }, artError) : null,
               e('div', { className: 'soul-modal-note' }, t('personas.artHint'))
             ),
             // 「保存后立即应用」（0.9.0-t）：显式让用户选「存完要不要切过去」。
@@ -12004,7 +12051,7 @@ ${t('personas.saveExcludes')}`
             }),
             e('div', { className: 'soul-modal-actions' },
               e(ui.Button, {
-                onClick: () => { setShowSavePersona(false); setPersonaName(''); setPersonaArt(null); setApplyAfterSave(false) }
+                onClick: () => { setShowSavePersona(false); setPersonaName(''); setPersonaArt(null); setArtError(null); setApplyAfterSave(false) }
               }, t('button.cancel')),
               e(ui.Button, {
                 variant: 'primary',

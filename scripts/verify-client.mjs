@@ -6396,7 +6396,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 437, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 438, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -6982,8 +6982,21 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       '未选图时不应出现「移除」'
     )
 
+
     // 取图必须能按版本重新拉：blob 缓存按 URL 存，URL 不变就永远是旧图。
     const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+
+    // 超限 / 格式不在白名单时先尝试自动压缩（缩到长边 1024 并转 WebP），
+    // 而不是把「超过 1.5 MB」丢回给用户 —— 那张图大概率就是一张普通照片。
+    assert.match(source, /const shrinkArtFile = async \(file\) =>/, '缺少自动压缩')
+    assert.match(source, /canvas\.toDataURL\('image\/webp', 0\.86\)/, '压缩应输出 WebP')
+    assert.match(source, /const overLimit = file\.size > 1\.5 \* 1024 \* 1024/, '应有大小判定')
+    // 错误必须挂在弹层里：页面底部的提示会被弹层盖住，用户看到的就是「点了没反应」。
+    assert.match(
+      source,
+      /artError \? e\('div', \{ className: 'soul-field-warn' \}, artError\) : null/,
+      '插画错误必须显示在弹层内'
+    )
     assert.match(
       source,
       /function personaArtSrc\(name, version\)/,
