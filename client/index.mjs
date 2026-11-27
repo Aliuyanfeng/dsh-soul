@@ -12177,12 +12177,15 @@ ${t('personas.saveExcludes')}`
     // 而这段文字的读者是模型，不是用户 —— 界面上按钮的说明仍是本地语言。
     // 自定义指令可能两千字，这里只摘前 240 字：生图模型读不完长文，
     // 而且真正影响画面的通常是「做什么、什么气质」这几句。
+    // 画风是**固定**的（内置插画全是 3D 拟人蓝鲸：圆润、光泽、浅蓝底、配道具），
+    // 风格枚举只决定这只鲸鱼的**气质**。两张卡并排放时，「像同一个系列」靠前者，
+    // 「性格不同」靠后者 —— 把画风也交给枚举，系列感立刻就散了。
     const ART_STYLE_HINTS = {
-      professional: 'refined and editorial, muted palette, precise shapes',
-      casual: 'relaxed and friendly, soft rounded shapes, warm light palette',
-      humorous: 'playful and light-hearted, rounded shapes, a hint of whimsy',
-      roast: 'sharp and confident, high contrast, slightly bold and edgy',
-      efficient: 'minimal and geometric, high contrast, generous negative space'
+      professional: 'calm, composed and precise',
+      casual: 'relaxed and friendly',
+      humorous: 'playful and light-hearted',
+      roast: 'confident with a sharp, slightly cheeky edge',
+      efficient: 'focused and uncluttered'
     }
 
     function buildArtPromptText(input) {
@@ -12193,11 +12196,16 @@ ${t('personas.saveExcludes')}`
         'Square 1:1 illustration for an AI persona card, 1024 x 1024 px.',
         'Export as PNG, JPEG or WebP, under 1.5 MB.',
         '',
-        'Style: ' + style + '.',
+        'Subject: a cute 3D-rendered anthropomorphic blue whale — rounded body, glossy',
+        'clay-like material, big friendly eyes, small fins, holding one or two props that',
+        "suggest the persona's role (books, scroll, mug, gears, etc.).",
+        'Art direction: soft studio lighting, smooth gradients, light blue background with a',
+        'few subtle floating shapes; same visual family as the DeepSeek whale mascot.',
+        'Palette: DeepSeek blue, white and soft sky blue.',
+        'Mood: ' + style + '.',
         'Persona: ' + (name ? '"' + name + '"' : 'an AI assistant') + (summary ? ' — ' + summary : '') + '.',
         '',
-        'Composition: a single centered subject (head-and-shoulders or an abstract emblem),',
-        'soft even lighting, clean neutral background, generous margins.',
+        'Composition: single centered character, generous margins.',
         'No text, no watermark, no logo, no border.'
       ].join('\n')
     }

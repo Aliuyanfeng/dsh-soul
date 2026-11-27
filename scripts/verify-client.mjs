@@ -7032,6 +7032,17 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.match(source, /1024 x 1024 px/, '提示词必须写清尺寸')
     assert.match(source, /PNG, JPEG or WebP, under 1\.5 MB/, '提示词必须写清格式与大小上限')
     assert.match(source, /ART_STYLE_HINTS\[input && input\.style\]/, '风格要映射成视觉描述，不是直接塞枚举名')
+
+    // 画风必须锁定成内置插画那一套（3D 拟人蓝鲸），否则用户生成的图摆在卡列里
+    // 和内置卡不是同一个系列。风格枚举只负责「这只鲸鱼的气质」。
+    assert.match(source, /anthropomorphic blue whale/, '提示词必须锁定 3D 拟人蓝鲸画风')
+    assert.match(source, /DeepSeek whale mascot/, '应点明与内置插画同一视觉家族')
+    assert.match(source, /glossy[\s\S]{0,40}clay-like material/, '应写明材质（内置图是光泽黏土感的 3D 渲染）')
+    assert.equal(
+      /refined and editorial/.test(source),
+      false,
+      '风格枚举不应再描述画风（画风已固定，混进去会让系列感散掉）'
+    )
     assert.match(
       source,
       /slice\(0, 240\)/,
