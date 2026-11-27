@@ -7003,18 +7003,26 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     // 关闭弹层必须清掉选中的图，否则下次打开会带着上一次的选择
     assert.match(source, /setShowSavePersona\(false\); setPersonaName\(''\); setPersonaArt\(null\)/)
 
-    // 已保存的预设也要能换图 / 移除：入口在卡背，且只对自建卡。
+    // 已保存的预设也要能换图 / 移除：入口是**插画上的 hover 遮罩**，
+    // 且只挂在当前的自建卡上（露边卡只露出窄条，误触代价高）。
     assert.match(source, /const pickArtFor = \(name\) => \{/, '缺少给已保存预设换图的入口')
     assert.match(source, /const clearArtFor = async \(name\) => \{/, '缺少移除已上传插画的入口')
     assert.match(
       source,
-      /!builtin && e\('button', \{\s*type: 'button',\s*className: 'soul-persona-action soul-persona-back-mini',/,
-      '换图按钮只能出现在自建卡的卡背（内置卡插画在包内，服务端也会拒绝）'
+      /current && !builtin && e\('div', \{ className: 'soul-persona-art-hover' \}/,
+      '遮罩必须同时受「当前卡」与「自建卡」两个条件约束'
     )
     assert.equal(
-      (source.match(/!builtin && e\('button', \{[^}]{0,120}soul-persona-back-mini/g) || []).length >= 2,
+      (source.match(/soul-persona-art-hover-btn/g) || []).length >= 4,
       true,
-      '换图与移除两个按钮都必须带 !builtin'
+      '遮罩里应有换图与移除两个按钮（结构 + 样式各出现一次以上）'
+    )
+    // 卡背不再放插画按钮：那里的语境是「查看 / 删除预设」，四个按钮挤在一起
+    // 既难看，也让「换图」和「移除」这两个同族动作离得太远。
+    assert.equal(
+      /soul-persona-back-mini/.test(source),
+      false,
+      '卡背不应再有插画按钮（已移到插画遮罩上）'
     )
   })
 

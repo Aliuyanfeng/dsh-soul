@@ -1717,7 +1717,6 @@ window.__ModuleLoader__.load({
       // 卡背底部按钮行：返回（弹性占满）+ 删除（自建卡才有，定宽）。
       // .soul-persona-back-btn 的 margin-top:auto 移到本行容器上 —— 按钮行整体贴底。
       '.soul-persona-back-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none;margin-top:auto}',
-      '.soul-persona-action.soul-persona-back-mini{flex:none;height:32px;padding:0 10px;font-size:13px;background:transparent;color:var(--dsw-alias-label-secondary);border:.5px solid var(--dsw-alias-settings-card-stroke)}',
       '.soul-persona-back-btn{flex:1 1 auto}',
       // 删除在卡背是「次要管理操作」：定宽描边（armed 态复用正面同款变实心样式）
       '.soul-persona-back-del{flex:0 0 64px}',
@@ -1727,6 +1726,10 @@ window.__ModuleLoader__.load({
       // 所有卡片都出图（自建预设由宿主返回专用默认贴图）；图未就绪时露出渐变底。
       '.soul-persona-art{position:relative;width:100%;aspect-ratio:1/1;flex:none;overflow:hidden;background:linear-gradient(150deg,color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,var(--dsw-alias-bg-module-platform)),var(--dsw-alias-bg-module-platform))}',
       '.soul-persona-art-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;user-select:none}',
+      '.soul-persona-art-hover{position:absolute;inset:0;z-index:3;display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(10,14,35,.55);opacity:0;pointer-events:none;transition:opacity .15s var(--ds-ease-in-out)}',
+      '.soul-persona-art:hover .soul-persona-art-hover,.soul-persona-art-hover:focus-within{opacity:1;pointer-events:auto}',
+      '.soul-persona-art-hover-btn{height:28px;padding:0 12px;border-radius:8px;border:.5px solid rgba(255,255,255,.45);background:rgba(15,20,40,.5);color:rgba(255,255,255,.95);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
+      '.soul-persona-art-hover-btn:hover{background:rgba(15,20,40,.72)}',
       '.soul-persona-art-pick{display:flex;align-items:center;gap:10px;flex-wrap:wrap}',
       '.soul-persona-art-pick-thumb{width:56px;height:56px;flex:none;border-radius:var(--dsw-radius-md);overflow:hidden;background:var(--dsw-alias-bg-layer-2);display:flex;align-items:center;justify-content:center}',
       '.soul-persona-art-pick-thumb img{width:100%;height:100%;object-fit:cover;display:block}',
@@ -11191,6 +11194,21 @@ window.__ModuleLoader__.load({
                                 e('span', { className: 'soul-persona-scope-tag' }, t('personas.scopeGlobal'))
                               ),
                               e('div', { className: 'soul-persona-meta' }, personaRowMeta(entry))
+                            ),
+                            // 插画操作放这里而不是卡背：换图 / 移除本来就是「对这张图」的动作，
+                            // 挂在图上比挂在文字详情里顺；卡背也就不用挤四个按钮。
+                            // 只在**当前卡**上出现 —— 左右露边的卡只露出窄条，误触代价高。
+                            current && !builtin && e('div', { className: 'soul-persona-art-hover' },
+                              e('button', {
+                                type: 'button',
+                                className: 'soul-persona-art-hover-btn',
+                                onClick: (ev) => { ev?.stopPropagation(); pickArtFor(name) }
+                              }, t('personas.artReplace')),
+                              e('button', {
+                                type: 'button',
+                                className: 'soul-persona-art-hover-btn',
+                                onClick: (ev) => { ev?.stopPropagation(); void clearArtFor(name) }
+                              }, t('personas.artClear'))
                             )
                           ),
                           e('div', { className: 'soul-persona-body' },
@@ -11278,18 +11296,6 @@ window.__ModuleLoader__.load({
                                 setFlippedName(null)
                               }
                             }, t('personas.flipBack')),
-                            // 换图 / 移除只在自建卡上出现：内置卡的插画在包内，
-                            // 服务端也会拒绝覆盖。
-                            !builtin && e('button', {
-                              type: 'button',
-                              className: 'soul-persona-action soul-persona-back-mini',
-                              onClick: (ev) => { ev?.stopPropagation(); pickArtFor(name) }
-                            }, t('personas.artReplace')),
-                            !builtin && e('button', {
-                              type: 'button',
-                              className: 'soul-persona-action soul-persona-back-mini',
-                              onClick: (ev) => { ev?.stopPropagation(); void clearArtFor(name) }
-                            }, t('personas.artClear')),
                             !builtin && e('button', {
                               type: 'button',
                               className: pendingDelete === name
