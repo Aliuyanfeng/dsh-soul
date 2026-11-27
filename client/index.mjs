@@ -12628,8 +12628,13 @@ ${t('personas.saveExcludes')}`
           }
         }
 
-        // 延迟执行初始同步，等待设置页面渲染完成
-        let timer = setTimeout(sync, 500)
+        // 首次同步：立刻试一次（插件可能在设置页已打开时才装载），
+        // 再留一个短兜底给「面板还没挂载」的情况。
+        //
+        // 原来这里只有 `setTimeout(sync, 500)`：设置面板早在 50ms 内就渲染完了，
+        // 用户先看到宿主那个设置齿轮，半秒后才被换成插件图标 —— 那一闪就是它。
+        sync()
+        let timer = setTimeout(sync, 120)
         // 最长等待：防抖只该合并「一连串变化」，不该被无限推迟 —— 会话流式输出时
         // body 每帧都在变，纯 100ms 防抖会让 sync 永远排不到（图标一直不替换）。
         const MAX_WAIT_MS = 600
@@ -12637,6 +12642,19 @@ ${t('personas.saveExcludes')}`
 
         // 监听 DOM 变化（只监听子节点添加，不监听所有变化）
         const observer = new MutationObserver(() => {
+          // 设置面板刚挂载的那一帧：页面上还没有我们的标记（或 React 重建按钮把标记
+          // 冲掉了），但导航按钮已经出现 —— 立刻重画，不等防抖。
+          // 这一条把「先显示齿轮、再变成插件图标」的窗口压到同一帧。
+          //
+          // 判断分两步是为了不牺牲流式输出下的开销：没有 [role=dialog] nav 时
+          // 直接落到下面的防抖，不会每来一帧就跑一次全量 sync。
+          if (
+            !document.querySelector(`[${SOUL_NAV_MARKER}]`) &&
+            document.querySelector('[role="dialog"] nav button')
+          ) {
+            sync()
+            return
+          }
           // 防抖：每次变化都重置计时器，停止变化 100ms 后执行
           // （修复：此前新计时器未赋回 timer，clearTimeout 永远只清除首个 500ms
           // 计时器，防抖实际失效，每次 DOM 变化都会调度一次 sync）

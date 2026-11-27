@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 137
+const EXPECTED_ASSERTIONS = 138
 
 // 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
 // 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
@@ -7099,6 +7099,21 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     assert.match(source, /setArtPromptFull\(text\)/, '自动复制失败时应把原文摊出来，而不是只报错')
     assert.match(source, /className: 'soul-prompt-text'/, '兜底弹层应有可全选的 textarea')
     assert.match(source, /readOnly: true/, '兜底 textarea 应只读（避免用户改坏提示词）')
+  })
+
+  await check('C144 设置导航图标：首帧替换，不留「先齿轮、后换图」的闪烁', async () => {
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    // 原来只有一个 setTimeout(sync, 500)：面板 50ms 内就渲染完了，用户先看到宿主
+    // 那个设置齿轮，半秒后才被换成插件图标 —— 就是那一闪。
+    // 注释里会提到那个旧值，所以只钉赋值形式。
+    assert.equal(/let timer = setTimeout\(sync, 500\)/.test(source), false, '不应再有 500ms 的首同步')
+    assert.match(source, /sync\(\)\n\s*let timer = setTimeout\(sync, \d+\)/, '首同步必须立刻执行，只留短兜底')
+    // 面板刚挂载 / React 重建按钮时，标记会被冲掉 —— 必须绕过防抖当场重画。
+    assert.match(
+      source,
+      /!document\.querySelector\(`\[\$\{SOUL_NAV_MARKER\}\]`\) &&\s*document\.querySelector\('\[role="dialog"\] nav button'\)/,
+      '面板首帧应绕过防抖立即重画'
+    )
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
