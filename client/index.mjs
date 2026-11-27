@@ -1726,7 +1726,7 @@ window.__ModuleLoader__.load({
       // 所有卡片都出图（自建预设由宿主返回专用默认贴图）；图未就绪时露出渐变底。
       '.soul-persona-art{position:relative;width:100%;aspect-ratio:1/1;flex:none;overflow:hidden;background:linear-gradient(150deg,color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,var(--dsw-alias-bg-module-platform)),var(--dsw-alias-bg-module-platform))}',
       '.soul-persona-art-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;user-select:none}',
-      '.soul-persona-art-hover{position:absolute;inset:0;z-index:3;display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(10,14,35,.55);opacity:0;pointer-events:none;transition:opacity .15s var(--ds-ease-in-out)}',
+      '.soul-persona-art-hover{position:absolute;inset:0;z-index:3;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;padding:0 10px;background:rgba(10,14,35,.55);opacity:0;pointer-events:none;transition:opacity .15s var(--ds-ease-in-out)}',
       '.soul-persona-art:hover .soul-persona-art-hover,.soul-persona-art-hover:focus-within{opacity:1;pointer-events:auto}',
       '.soul-persona-art-hover-btn{height:28px;padding:0 12px;border-radius:8px;border:.5px solid rgba(255,255,255,.45);background:rgba(15,20,40,.5);color:rgba(255,255,255,.95);font:inherit;font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
       '.soul-persona-art-hover-btn:hover{background:rgba(15,20,40,.72)}',
@@ -1823,7 +1823,9 @@ window.__ModuleLoader__.load({
       // 因为保存成功后 toast 要能盖在弹层之上被看到。
       '.soul-modal-mask{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;background:rgba(10,14,35,.42);padding:24px}',
       '.soul-modal{box-sizing:border-box;width:100%;max-width:380px;display:flex;flex-direction:column;gap:14px;padding:18px;border-radius:var(--dsw-radius-xl);border:.5px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);box-shadow:var(--dsw-shadow-lv3,0 12px 32px rgba(0,0,0,.18))}',
-      '.soul-modal-title{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:22px}',
+      '.soul-modal-title{display:flex;align-items:center;gap:6px;color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:22px}',
+      '.soul-help-dot{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;border:.5px solid var(--dsw-alias-label-tertiary);color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1;cursor:help;flex:none}',
+      '.soul-persona-art-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}',
       '.soul-modal .soul-field{margin-bottom:0}',
       // 「将保存 / 不含」两行说明：这是消除「不知道存了哪些值」的关键，用弱化样式但仍可读
       '.soul-modal-note{display:flex;flex-direction:column;gap:4px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
@@ -2364,6 +2366,8 @@ window.__ModuleLoader__.load({
       'personas.artRemove': '移除',
       'personas.artHint': 'PNG / JPEG / WebP，建议正方形，不超过 1.5 MB。',
       'personas.artPromptCopy': '复制生图提示词',
+      'personas.artPromptDone': '已复制',
+      'personas.artPromptShort': '提示词',
       'personas.artPromptCopied': '提示词已复制，粘给生图模型即可',
       'personas.artPromptFailed': '复制失败，请手动选择文本',
       'personas.artTooLarge': '图片超过 1.5 MB',
@@ -2849,6 +2853,8 @@ window.__ModuleLoader__.load({
       'personas.artRemove': 'Remove',
       'personas.artHint': 'PNG / JPEG / WebP, square preferred, up to 1.5 MB.',
       'personas.artPromptCopy': 'Copy image prompt',
+      'personas.artPromptDone': 'Copied',
+      'personas.artPromptShort': 'Prompt',
       'personas.artPromptCopied': 'Prompt copied — paste it into your image generator',
       'personas.artPromptFailed': 'Could not copy the prompt',
       'personas.artTooLarge': 'Image is larger than 1.5 MB',
@@ -3309,6 +3315,8 @@ window.__ModuleLoader__.load({
       'personas.artRemove': 'Убрать',
       'personas.artHint': 'PNG / JPEG / WebP, лучше квадрат, до 1,5 МБ.',
       'personas.artPromptCopy': 'Скопировать промпт',
+      'personas.artPromptDone': 'Скопировано',
+      'personas.artPromptShort': 'Промпт',
       'personas.artPromptCopied': 'Промпт скопирован — вставьте его в генератор изображений',
       'personas.artPromptFailed': 'Не удалось скопировать промпт',
       'personas.artTooLarge': 'Изображение больше 1,5 МБ',
@@ -3753,6 +3761,8 @@ window.__ModuleLoader__.load({
       'personas.artRemove': '削除',
       'personas.artHint': 'PNG / JPEG / WebP、正方形推奨、1.5 MB まで。',
       'personas.artPromptCopy': '画像プロンプトをコピー',
+      'personas.artPromptDone': 'コピー済み',
+      'personas.artPromptShort': 'プロンプト',
       'personas.artPromptCopied': 'プロンプトをコピーしました — 画像生成ツールに貼り付けてください',
       'personas.artPromptFailed': 'プロンプトをコピーできませんでした',
       'personas.artTooLarge': '画像が 1.5 MB を超えています',
@@ -4218,6 +4228,8 @@ window.__ModuleLoader__.load({
       'personas.artRemove': 'Quitar',
       'personas.artHint': 'PNG / JPEG / WebP, preferiblemente cuadrada, hasta 1,5 MB.',
       'personas.artPromptCopy': 'Copiar prompt de imagen',
+      'personas.artPromptDone': 'Copiado',
+      'personas.artPromptShort': 'Prompt',
       'personas.artPromptCopied': 'Prompt copiado: pégalo en tu generador de imágenes',
       'personas.artPromptFailed': 'No se pudo copiar el prompt',
       'personas.artTooLarge': 'La imagen supera 1,5 MB',
@@ -4683,6 +4695,8 @@ window.__ModuleLoader__.load({
       'personas.artRemove': 'Retirer',
       'personas.artHint': 'PNG / JPEG / WebP, de préférence carrée, jusqu’à 1,5 Mo.',
       'personas.artPromptCopy': 'Copier le prompt d’image',
+      'personas.artPromptDone': 'Copié',
+      'personas.artPromptShort': 'Prompt',
       'personas.artPromptCopied': 'Prompt copié — colle-le dans ton générateur d’images',
       'personas.artPromptFailed': 'Impossible de copier le prompt',
       'personas.artTooLarge': 'L’image dépasse 1,5 Mo',
@@ -5148,6 +5162,8 @@ window.__ModuleLoader__.load({
       'personas.artRemove': 'Entfernen',
       'personas.artHint': 'PNG / JPEG / WebP, möglichst quadratisch, bis 1,5 MB.',
       'personas.artPromptCopy': 'Bild-Prompt kopieren',
+      'personas.artPromptDone': 'Kopiert',
+      'personas.artPromptShort': 'Prompt',
       'personas.artPromptCopied': 'Prompt kopiert – füge ihn in deinen Bildgenerator ein',
       'personas.artPromptFailed': 'Der Prompt konnte nicht kopiert werden',
       'personas.artTooLarge': 'Das Bild ist größer als 1,5 MB',
@@ -5613,6 +5629,8 @@ window.__ModuleLoader__.load({
       'personas.artRemove': 'Remover',
       'personas.artHint': 'PNG / JPEG / WebP, de preferência quadrada, até 1,5 MB.',
       'personas.artPromptCopy': 'Copiar prompt de imagem',
+      'personas.artPromptDone': 'Copiado',
+      'personas.artPromptShort': 'Prompt',
       'personas.artPromptCopied': 'Prompt copiado — cole no seu gerador de imagens',
       'personas.artPromptFailed': 'Não foi possível copiar o prompt',
       'personas.artTooLarge': 'A imagem passa de 1,5 MB',
@@ -10200,6 +10218,9 @@ window.__ModuleLoader__.load({
       const [personaArt, setPersonaArt] = React.useState(null)
       // 换图后要重新取图：blob 缓存按 URL 存，URL 不变就永远是旧图。
       const [artVersion, setArtVersion] = React.useState(0)
+      // 复制成功的反馈放在**按钮自己**上：弹层盖住了页面底部的 notice 行，
+      // 走 notice 的话用户根本看不见。
+      const [artPromptCopied, setArtPromptCopied] = React.useState(false)
       // 「存为预设」的命名弹层是否打开。
       //
       // 方案 A：把「保存当前为预设」从预设列表里**移出来**，做成「保存设置」旁的同级动作，
@@ -10637,6 +10658,13 @@ window.__ModuleLoader__.load({
 
       // 复制生图提示词。localhost 是安全上下文，navigator.clipboard 可用；
       // 拿不到就说明失败（而不是假装成功 —— 用户会去粘一段空白）。
+      const writeClipboard = async (text) => {
+        if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+          throw new Error('clipboard unavailable')
+        }
+        await navigator.clipboard.writeText(text)
+      }
+
       const copyArtPrompt = async () => {
         const text = buildArtPromptText({
           name: personaName.trim(),
@@ -10644,10 +10672,25 @@ window.__ModuleLoader__.load({
           instructions: localMap.customInstructions
         })
         try {
-          if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
-            throw new Error('clipboard unavailable')
-          }
-          await navigator.clipboard.writeText(text)
+          await writeClipboard(text)
+          setArtPromptCopied(true)
+          setTimeout(() => setArtPromptCopied(false), 1800)
+        } catch {
+          showError(t('personas.artPromptFailed'))
+        }
+      }
+
+      // 卡牌遮罩上的那个入口：用**这个预设自己**的风格与指令，而不是表单草稿。
+      // 这里没有弹层挡着，用页面底部的 notice 就够。
+      const copyArtPromptFor = async (name) => {
+        const entry = personas ? personas[name] : null
+        const text = buildArtPromptText({
+          name,
+          style: entry && entry.style,
+          instructions: entry && entry.customInstructions
+        })
+        try {
+          await writeClipboard(text)
           setNotice(t('personas.artPromptCopied'))
         } catch {
           showError(t('personas.artPromptFailed'))
@@ -11253,7 +11296,13 @@ window.__ModuleLoader__.load({
                                 type: 'button',
                                 className: 'soul-persona-art-hover-btn',
                                 onClick: (ev) => { ev?.stopPropagation(); void clearArtFor(name) }
-                              }, t('personas.artClear'))
+                              }, t('personas.artClear')),
+                              // 没传过图的人也能从这里拿提示词：不必先点开「存为预设」。
+                              e('button', {
+                                type: 'button',
+                                className: 'soul-persona-art-hover-btn',
+                                onClick: (ev) => { ev?.stopPropagation(); void copyArtPromptFor(name) }
+                              }, t('personas.artPromptShort'))
                             )
                           ),
                           e('div', { className: 'soul-persona-body' },
@@ -11800,7 +11849,19 @@ window.__ModuleLoader__.load({
             'aria-label': t('personas.saveAs'),
             onClick: (ev) => ev.stopPropagation()
           },
-            e('div', { className: 'soul-modal-title' }, t('personas.saveAs')),
+            e('div', { className: 'soul-modal-title' },
+              t('personas.saveAs'),
+              // 两段说明（保存什么 / 不保存什么）原来各占一行，弹层被撑得很长。
+              // 收进问号：需要时 hover 看，不需要时不占地方。
+              e('span', {
+                className: 'soul-help-dot',
+                role: 'img',
+                'aria-label': `${t('personas.saveCovers')} ${t('personas.saveExcludes')}`,
+                title: `${t('personas.saveCovers')}
+
+${t('personas.saveExcludes')}`
+              }, '?')
+            ),
             e('div', { className: 'soul-field' },
               e('label', { htmlFor: 'soul-new-persona-name' }, t('personas.saveNameLabel')),
               e('input', {
@@ -11819,7 +11880,15 @@ window.__ModuleLoader__.load({
             // 插画（可选）：只对自建预设有效 —— 内置预设的图在包内，
             // 服务端会拒绝覆盖（不然用户能把内置插画改掉且不知道从哪恢复）。
             e('div', { className: 'soul-field soul-persona-art-field' },
-              e('label', { htmlFor: 'soul-persona-art-input' }, t('personas.artLabel')),
+              e('div', { className: 'soul-persona-art-head' },
+                e('label', { htmlFor: 'soul-persona-art-input' }, t('personas.artLabel')),
+                // 和「插画（可选）」同一行：不额外占一行高度，也不会觉得它是另一个动作区。
+                e('button', {
+                  type: 'button',
+                  className: 'soul-persona-art-prompt',
+                  onClick: () => void copyArtPrompt()
+                }, artPromptCopied ? t('personas.artPromptDone') : t('personas.artPromptCopy'))
+              ),
               e('div', { className: 'soul-persona-art-pick' },
                 e('div', { className: 'soul-persona-art-pick-thumb' },
                   personaArt
@@ -11838,17 +11907,7 @@ window.__ModuleLoader__.load({
                   onClick: () => setPersonaArt(null)
                 }, t('personas.artRemove'))
               ),
-              e('div', { className: 'soul-modal-note' }, t('personas.artHint')),
-              // 不知道怎么画？把这段提示词粘给生图模型，回来再上传。
-              e('button', {
-                type: 'button',
-                className: 'soul-persona-art-prompt',
-                onClick: () => void copyArtPrompt()
-              }, t('personas.artPromptCopy'))
-            ),
-            e('div', { className: 'soul-modal-note' },
-              e('div', null, t('personas.saveCovers')),
-              e('div', { className: 'soul-modal-note-excl' }, t('personas.saveExcludes'))
+              e('div', { className: 'soul-modal-note' }, t('personas.artHint'))
             ),
             // 「保存后立即应用」（0.9.0-t）：显式让用户选「存完要不要切过去」。
             //

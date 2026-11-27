@@ -6396,7 +6396,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 433, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 435, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -7048,6 +7048,26 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       findAll(tree, (n) => textOf(n) === world.dicts.zh['personas.artPromptCopy']).length >= 1,
       '「存为预设」弹层里必须能看到复制入口'
     )
+
+    // 复制成功必须在**按钮自己**上反馈：弹层盖住了页面底部的 notice 行，
+    // 走 notice 的话用户根本看不见（这是第一版的实际问题）。
+    assert.match(source, /setArtPromptCopied\(true\)/, '复制成功后要在按钮上给反馈')
+    assert.match(
+      source,
+      /artPromptCopied \? t\('personas\.artPromptDone'\) : t\('personas\.artPromptCopy'\)/,
+      '按钮文案应随复制状态切换'
+    )
+    // 「将保存 / 不含」收进问号：弹层原来被这两段说明撑得很长
+    assert.match(source, /className: 'soul-help-dot'/, '弹层标题应带一个问号提示')
+    // 原来这两段是两行正文（`e('div', null, t('personas.saveCovers'))` + …Excludes）。
+    // `soul-modal-note-excl` 这个类还用在别的弹层上，所以只钉这一段结构。
+    assert.equal(
+      /e\('div', null, t\('personas\.saveCovers'\)\)/.test(source),
+      false,
+      '「将保存 / 不含」不应再各占一行（已收进问号）'
+    )
+    // 卡牌遮罩也要有提示词入口（没上传过图的人同样能用）
+    assert.match(source, /void copyArtPromptFor\(name\)/, '插画遮罩里应有复制提示词的入口')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)
