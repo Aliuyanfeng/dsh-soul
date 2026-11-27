@@ -27,7 +27,7 @@ import { findHookOrderViolations } from './lib/hook-order.mjs'
 
 // 基线运行应跑出的断言数。本脚本没有环境相关跳过（客户端源码与 Node 都在），
 // 所以链里的 `--strict` 对它无额外语义；数字由下面的 assertCount 守住。
-const EXPECTED_ASSERTIONS = 136
+const EXPECTED_ASSERTIONS = 137
 
 // 内置的界面语言词典（按书写顺序）。这是加语言时唯一需要手改的清单：
 // 少写一门，C134 就不会检查它；多写一门而没有对应词典，C134 会直接报「找不到词典」。
@@ -6396,7 +6396,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 430, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 433, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -7023,6 +7023,30 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
       /soul-persona-back-mini/.test(source),
       false,
       '卡背不应再有插画按钮（已移到插画遮罩上）'
+    )
+  })
+
+  await check('C143 生图提示词：尺寸 / 格式 / 风格 / 指令摘要，可一键复制', async () => {
+    const source = readFileSync(new URL('../client/index.mjs', import.meta.url), 'utf8')
+    assert.match(source, /function buildArtPromptText\(input\)/, '缺少提示词组装函数')
+    assert.match(source, /1024 x 1024 px/, '提示词必须写清尺寸')
+    assert.match(source, /PNG, JPEG or WebP, under 1\.5 MB/, '提示词必须写清格式与大小上限')
+    assert.match(source, /ART_STYLE_HINTS\[input && input\.style\]/, '风格要映射成视觉描述，不是直接塞枚举名')
+    assert.match(
+      source,
+      /slice\(0, 240\)/,
+      '自定义指令必须截断 —— 生图模型读不完两千字，而且真正影响画面的是前几句'
+    )
+    assert.match(source, /navigator\.clipboard\.writeText\(text\)/, '应写入剪贴板')
+    assert.match(source, /personas\.artPromptCopy/, '弹层里应有复制入口')
+
+    const world = await boot()
+    const tree0 = await openAccordion(world, 'soul-traits')
+    await findAll(tree0, (n) => textOf(n) === world.dicts.zh['personas.saveAs'])[0].props.onClick()
+    const tree = await renderSettings(world)
+    assert.ok(
+      findAll(tree, (n) => textOf(n) === world.dicts.zh['personas.artPromptCopy']).length >= 1,
+      '「存为预设」弹层里必须能看到复制入口'
     )
   })
 

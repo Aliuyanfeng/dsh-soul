@@ -1736,6 +1736,8 @@ window.__ModuleLoader__.load({
       '.soul-persona-art-pick-empty{font-size:11px;color:var(--dsw-alias-label-tertiary)}',
       '.soul-persona-art-pick input[type="file"]{font:inherit;font-size:12px;color:var(--dsw-alias-label-secondary);max-width:220px}',
       '.soul-persona-art-pick-clear{padding:2px 8px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;cursor:pointer}',
+      '.soul-persona-art-prompt{display:inline-flex;align-items:center;height:28px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;text-align:start}',
+      '.soul-persona-art-prompt:hover{text-decoration:underline}',
       // 底部渐变：让压在图上的名称/摘要有足够对比度（浅色插画上白字会糊）
       '.soul-persona-art-veil{position:absolute;inset:auto 0 0 0;height:62%;background:linear-gradient(180deg,rgba(10,14,35,0),rgba(10,14,35,.62) 55%,rgba(10,14,35,.86));pointer-events:none}',
       // 名称 + 摘要压在图底部
@@ -2361,6 +2363,9 @@ window.__ModuleLoader__.load({
       'personas.artNone': '未选择',
       'personas.artRemove': '移除',
       'personas.artHint': 'PNG / JPEG / WebP，建议正方形，不超过 1.5 MB。',
+      'personas.artPromptCopy': '复制生图提示词',
+      'personas.artPromptCopied': '提示词已复制，粘给生图模型即可',
+      'personas.artPromptFailed': '复制失败，请手动选择文本',
       'personas.artTooLarge': '图片超过 1.5 MB',
       'personas.artType': '只支持 PNG / JPEG / WebP',
       'personas.artReadFailed': '读取图片失败',
@@ -2843,6 +2848,9 @@ window.__ModuleLoader__.load({
       'personas.artNone': 'None selected',
       'personas.artRemove': 'Remove',
       'personas.artHint': 'PNG / JPEG / WebP, square preferred, up to 1.5 MB.',
+      'personas.artPromptCopy': 'Copy image prompt',
+      'personas.artPromptCopied': 'Prompt copied — paste it into your image generator',
+      'personas.artPromptFailed': 'Could not copy the prompt',
       'personas.artTooLarge': 'Image is larger than 1.5 MB',
       'personas.artType': 'Only PNG / JPEG / WebP are supported',
       'personas.artReadFailed': 'Could not read the image',
@@ -3300,6 +3308,9 @@ window.__ModuleLoader__.load({
       'personas.artNone': 'Не выбрана',
       'personas.artRemove': 'Убрать',
       'personas.artHint': 'PNG / JPEG / WebP, лучше квадрат, до 1,5 МБ.',
+      'personas.artPromptCopy': 'Скопировать промпт',
+      'personas.artPromptCopied': 'Промпт скопирован — вставьте его в генератор изображений',
+      'personas.artPromptFailed': 'Не удалось скопировать промпт',
       'personas.artTooLarge': 'Изображение больше 1,5 МБ',
       'personas.artType': 'Поддерживаются только PNG / JPEG / WebP',
       'personas.artReadFailed': 'Не удалось прочитать изображение',
@@ -3741,6 +3752,9 @@ window.__ModuleLoader__.load({
       'personas.artNone': '未選択',
       'personas.artRemove': '削除',
       'personas.artHint': 'PNG / JPEG / WebP、正方形推奨、1.5 MB まで。',
+      'personas.artPromptCopy': '画像プロンプトをコピー',
+      'personas.artPromptCopied': 'プロンプトをコピーしました — 画像生成ツールに貼り付けてください',
+      'personas.artPromptFailed': 'プロンプトをコピーできませんでした',
       'personas.artTooLarge': '画像が 1.5 MB を超えています',
       'personas.artType': 'PNG / JPEG / WebP のみ対応しています',
       'personas.artReadFailed': '画像を読み込めませんでした',
@@ -4203,6 +4217,9 @@ window.__ModuleLoader__.load({
       'personas.artNone': 'Sin seleccionar',
       'personas.artRemove': 'Quitar',
       'personas.artHint': 'PNG / JPEG / WebP, preferiblemente cuadrada, hasta 1,5 MB.',
+      'personas.artPromptCopy': 'Copiar prompt de imagen',
+      'personas.artPromptCopied': 'Prompt copiado: pégalo en tu generador de imágenes',
+      'personas.artPromptFailed': 'No se pudo copiar el prompt',
       'personas.artTooLarge': 'La imagen supera 1,5 MB',
       'personas.artType': 'Solo se admiten PNG / JPEG / WebP',
       'personas.artReadFailed': 'No se pudo leer la imagen',
@@ -4665,6 +4682,9 @@ window.__ModuleLoader__.load({
       'personas.artNone': 'Aucune',
       'personas.artRemove': 'Retirer',
       'personas.artHint': 'PNG / JPEG / WebP, de préférence carrée, jusqu’à 1,5 Mo.',
+      'personas.artPromptCopy': 'Copier le prompt d’image',
+      'personas.artPromptCopied': 'Prompt copié — colle-le dans ton générateur d’images',
+      'personas.artPromptFailed': 'Impossible de copier le prompt',
       'personas.artTooLarge': 'L’image dépasse 1,5 Mo',
       'personas.artType': 'Seuls PNG / JPEG / WebP sont acceptés',
       'personas.artReadFailed': 'Impossible de lire l’image',
@@ -5127,6 +5147,9 @@ window.__ModuleLoader__.load({
       'personas.artNone': 'Keine ausgewählt',
       'personas.artRemove': 'Entfernen',
       'personas.artHint': 'PNG / JPEG / WebP, möglichst quadratisch, bis 1,5 MB.',
+      'personas.artPromptCopy': 'Bild-Prompt kopieren',
+      'personas.artPromptCopied': 'Prompt kopiert – füge ihn in deinen Bildgenerator ein',
+      'personas.artPromptFailed': 'Der Prompt konnte nicht kopiert werden',
       'personas.artTooLarge': 'Das Bild ist größer als 1,5 MB',
       'personas.artType': 'Nur PNG / JPEG / WebP werden unterstützt',
       'personas.artReadFailed': 'Das Bild konnte nicht gelesen werden',
@@ -5589,6 +5612,9 @@ window.__ModuleLoader__.load({
       'personas.artNone': 'Nenhuma selecionada',
       'personas.artRemove': 'Remover',
       'personas.artHint': 'PNG / JPEG / WebP, de preferência quadrada, até 1,5 MB.',
+      'personas.artPromptCopy': 'Copiar prompt de imagem',
+      'personas.artPromptCopied': 'Prompt copiado — cole no seu gerador de imagens',
+      'personas.artPromptFailed': 'Não foi possível copiar o prompt',
       'personas.artTooLarge': 'A imagem passa de 1,5 MB',
       'personas.artType': 'Só PNG / JPEG / WebP são aceitos',
       'personas.artReadFailed': 'Não foi possível ler a imagem',
@@ -10609,6 +10635,25 @@ window.__ModuleLoader__.load({
         if (dataUrl) setPersonaArt(dataUrl)
       }
 
+      // 复制生图提示词。localhost 是安全上下文，navigator.clipboard 可用；
+      // 拿不到就说明失败（而不是假装成功 —— 用户会去粘一段空白）。
+      const copyArtPrompt = async () => {
+        const text = buildArtPromptText({
+          name: personaName.trim(),
+          style: localMap.style,
+          instructions: localMap.customInstructions
+        })
+        try {
+          if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+            throw new Error('clipboard unavailable')
+          }
+          await navigator.clipboard.writeText(text)
+          setNotice(t('personas.artPromptCopied'))
+        } catch {
+          showError(t('personas.artPromptFailed'))
+        }
+      }
+
       // 给**已保存**的自建预设换图：动态建一个 file input，选完即弃。
       // 不用常驻的隐藏 input —— 卡背是按卡渲染的，常驻会重复 id。
       const pickArtFor = (name) => {
@@ -11793,7 +11838,13 @@ window.__ModuleLoader__.load({
                   onClick: () => setPersonaArt(null)
                 }, t('personas.artRemove'))
               ),
-              e('div', { className: 'soul-modal-note' }, t('personas.artHint'))
+              e('div', { className: 'soul-modal-note' }, t('personas.artHint')),
+              // 不知道怎么画？把这段提示词粘给生图模型，回来再上传。
+              e('button', {
+                type: 'button',
+                className: 'soul-persona-art-prompt',
+                onClick: () => void copyArtPrompt()
+              }, t('personas.artPromptCopy'))
             ),
             e('div', { className: 'soul-modal-note' },
               e('div', null, t('personas.saveCovers')),
@@ -11980,6 +12031,37 @@ window.__ModuleLoader__.load({
     // [data-row-key^="session:"] + svg[data-state="ongoing"]，侧栏那四条规则会原样命中；
     // 关的一侧不加属性，于是什么都不发生 —— 这就是宿主原样的近似（环由本地骨架画成灰色）。
     // 颜色与速度从 props 来（本地色 + 当前档位），不读 :root —— 全局那份要等落盘，会慢半拍。
+    // 生图提示词：把「尺寸 / 大小 / 风格 / 这个助手是什么」拼成一段给生图模型的话。
+    //
+    // 用英文：主流生图模型（MJ / DALL·E / Flux / 即梦）对英文提示理解更稳，
+    // 而这段文字的读者是模型，不是用户 —— 界面上按钮的说明仍是本地语言。
+    // 自定义指令可能两千字，这里只摘前 240 字：生图模型读不完长文，
+    // 而且真正影响画面的通常是「做什么、什么气质」这几句。
+    const ART_STYLE_HINTS = {
+      professional: 'refined and editorial, muted palette, precise shapes',
+      casual: 'relaxed and friendly, soft rounded shapes, warm light palette',
+      humorous: 'playful and light-hearted, rounded shapes, a hint of whimsy',
+      roast: 'sharp and confident, high contrast, slightly bold and edgy',
+      efficient: 'minimal and geometric, high contrast, generous negative space'
+    }
+
+    function buildArtPromptText(input) {
+      const style = ART_STYLE_HINTS[input && input.style] || ART_STYLE_HINTS.professional
+      const summary = String((input && input.instructions) || '').replace(/\s+/g, ' ').trim().slice(0, 240)
+      const name = String((input && input.name) || '').trim()
+      return [
+        'Square 1:1 illustration for an AI persona card, 1024 x 1024 px.',
+        'Export as PNG, JPEG or WebP, under 1.5 MB.',
+        '',
+        'Style: ' + style + '.',
+        'Persona: ' + (name ? '"' + name + '"' : 'an AI assistant') + (summary ? ' — ' + summary : '') + '.',
+        '',
+        'Composition: a single centered subject (head-and-shoulders or an abstract emblem),',
+        'soft even lighting, clean neutral background, generous margins.',
+        'No text, no watermark, no logo, no border.'
+      ].join('\n')
+    }
+
     function SoulRunPreview(props) {
       const t = typeof props.t === 'function' ? props.t : FALLBACK_T
       // 颜色 / 速度**用传进来的值，不读 :root 上的全局变量**：全局那份是落盘之后
