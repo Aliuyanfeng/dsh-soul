@@ -28,7 +28,7 @@ DeepSeek Harness 个性化设置插件，用于配置 Agent 的昵称、回复�
   - 表格：`default`（默认）、`more`（增强，呈现对比或多字段信息时优先使用表格）、`less`（减弱，避免表格、改用列表或段落）
 - 回复长度偏好：`concise`（简洁，只讲要点、不展开）、`normal`（适中，不额外约束，默认）、`detailed`（详尽，充分展开背景、步骤与推理）
 - 选择输出语言（Agent 回复语言 + `/soul` 命令输出语言）：中文 / English / Русский / 日本語 / Español / Français / Deutsch / Português。它是**全局开关**，不属于角色特征：不进预设，子代理同样遵守它（关掉继承也不会改语言）。它决定**提示词与回复**用哪种语言
-  - **界面文案是另一层，与输出语言无关**：宿主 DSH ≥ 0.2.2 支持 zh / en / ja / es / fr / de / ru / pt 界面（运行时经 `addLanguage` 追加后六个）；本插件自己的文案（设置页、侧栏，435 个键）内置 **八份**（宿主支持的全部界面语言），切到哪种界面语言就用哪种，无需额外插件、无需回退。俄语词条并入自 MIT 语言包 `dsh-soul-ru-lang`（见[界面语言](#界面语言)）
+  - **界面文案是另一层，与输出语言无关**：宿主 DSH ≥ 0.2.2 支持 zh / en / ja / es / fr / de / ru / pt 界面（运行时经 `addLanguage` 追加后六个）；本插件自己的文案（设置页、侧栏，437 个键）内置 **八份**（宿主支持的全部界面语言），切到哪种界面语言就用哪种，无需额外插件、无需回退。俄语词条并入自 MIT 语言包 `dsh-soul-ru-lang`（见[界面语言](#界面语言)）
 - 提示词随输出语言本地化：`language=en` / `language=ru` / `language=ja` 时 system prompt 使用英文 / 俄文 / 日文描述
 - 输入自定义指令
 - Agent 可调用工具 `set_persona`，让模型在对话中直接调整人设
@@ -123,7 +123,7 @@ dsh plugin --profile <profile> update dsh-soul
 
 ### 界面语言
 
-宿主的界面语言从 DSH **0.2.2** 起支持 zh / en / ja / es / fr / de / ru / pt（运行时经 `addLanguage` 追加后六个）。**本插件自己的**界面文案（设置页、侧栏等，435 个键）内置 **中文 / English / Русский / 日本語 / Español / Français / Deutsch / Português** 八份 —— 宿主 DSH 支持的界面语言**全部覆盖**：切到哪种就生效，**不需要额外安装任何插件**，也不再有任何语言回退中文 / 英文。
+宿主的界面语言从 DSH **0.2.2** 起支持 zh / en / ja / es / fr / de / ru / pt（运行时经 `addLanguage` 追加后六个）。**本插件自己的**界面文案（设置页、侧栏等，437 个键）内置 **中文 / English / Русский / 日本語 / Español / Français / Deutsch / Português** 八份 —— 宿主 DSH 支持的界面语言**全部覆盖**：切到哪种就生效，**不需要额外安装任何插件**，也不再有任何语言回退中文 / 英文。
 
 > **俄语词条的来源**：ru 词典并入自第三方语言包 [`dsh-soul-ru-lang`](https://github.com/zznobzz/dsh-soul-ru-lang)（MIT，Copyright (c) 2026 dsh-soul-ru-lang contributors），译文未改动。0.16.0 起该包不再是必需品；之前装过的话建议卸载 —— 不卸载也不会坏：词典注册按语言隔离，同一语言谁先注册谁生效。
 >

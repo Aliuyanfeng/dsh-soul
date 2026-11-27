@@ -6396,7 +6396,7 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     const zh = dicts.zh
     const ja = dicts.ja
     const keys = Object.keys(zh)
-    assert.equal(keys.length, 435, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
+    assert.equal(keys.length, 437, '中文词典的键数变了：新键要同步到每门语言并更新这里的基线')
 
     // 键集与键序：顺序一致不是洁癖 —— 顺序对齐时 review diff 才能一眼看出「少了一条」。
     for (const name of EXPECTED_DICT_LOCALES.filter((locale) => locale !== 'zh')) {
@@ -7068,6 +7068,13 @@ assert.match(body, /setInterval\(refresh, 2000\)/, '必须有兜底轮询')
     )
     // 卡牌遮罩也要有提示词入口（没上传过图的人同样能用）
     assert.match(source, /void copyArtPromptFor\(name\)/, '插画遮罩里应有复制提示词的入口')
+
+    // 复制必须有兜底：局域网 IP 访问时不是安全上下文，`navigator.clipboard` 直接不存在
+    //（用户实际遇到的就是这个）。execCommand 是第二层，摊开原文是第三层。
+    assert.match(source, /document\.execCommand\('copy'\)/, '应有 execCommand 兜底')
+    assert.match(source, /setArtPromptFull\(text\)/, '自动复制失败时应把原文摊出来，而不是只报错')
+    assert.match(source, /className: 'soul-prompt-text'/, '兜底弹层应有可全选的 textarea')
+    assert.match(source, /readOnly: true/, '兜底 textarea 应只读（避免用户改坏提示词）')
   })
 
 if (!assertCount('verify-client', passed, EXPECTED_ASSERTIONS)) process.exit(1)

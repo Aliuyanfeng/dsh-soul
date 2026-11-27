@@ -1826,6 +1826,7 @@ window.__ModuleLoader__.load({
       '.soul-modal-title{display:flex;align-items:center;gap:6px;color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:22px}',
       '.soul-help-dot{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;border:.5px solid var(--dsw-alias-label-tertiary);color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1;cursor:help;flex:none}',
       '.soul-persona-art-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}',
+      '.soul-prompt-text{width:100%;box-sizing:border-box;margin-top:8px;padding:10px;border:.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-family:Consolas,Menlo,monospace;font-size:12px;line-height:18px;resize:vertical}',
       '.soul-modal .soul-field{margin-bottom:0}',
       // 「将保存 / 不含」两行说明：这是消除「不知道存了哪些值」的关键，用弱化样式但仍可读
       '.soul-modal-note{display:flex;flex-direction:column;gap:4px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
@@ -2370,6 +2371,8 @@ window.__ModuleLoader__.load({
       'personas.artPromptShort': '提示词',
       'personas.artPromptCopied': '提示词已复制，粘给生图模型即可',
       'personas.artPromptFailed': '复制失败，请手动选择文本',
+      'personas.artPromptManualTitle': '手动复制提示词',
+      'personas.artPromptManual': '浏览器拦住了自动复制。下面的文本已全选，按 Ctrl+C（Mac 上 ⌘C）复制即可。',
       'personas.artTooLarge': '图片超过 1.5 MB',
       'personas.artType': '只支持 PNG / JPEG / WebP',
       'personas.artReadFailed': '读取图片失败',
@@ -2857,6 +2860,8 @@ window.__ModuleLoader__.load({
       'personas.artPromptShort': 'Prompt',
       'personas.artPromptCopied': 'Prompt copied — paste it into your image generator',
       'personas.artPromptFailed': 'Could not copy the prompt',
+      'personas.artPromptManualTitle': 'Copy the prompt manually',
+      'personas.artPromptManual': 'The browser blocked automatic copying. The text below is already selected — press Ctrl+C (⌘C on a Mac).',
       'personas.artTooLarge': 'Image is larger than 1.5 MB',
       'personas.artType': 'Only PNG / JPEG / WebP are supported',
       'personas.artReadFailed': 'Could not read the image',
@@ -3319,6 +3324,8 @@ window.__ModuleLoader__.load({
       'personas.artPromptShort': 'Промпт',
       'personas.artPromptCopied': 'Промпт скопирован — вставьте его в генератор изображений',
       'personas.artPromptFailed': 'Не удалось скопировать промпт',
+      'personas.artPromptManualTitle': 'Скопируйте промпт вручную',
+      'personas.artPromptManual': 'Браузер заблокировал автоматическое копирование. Текст ниже уже выделен — нажмите Ctrl+C (⌘C на Mac).',
       'personas.artTooLarge': 'Изображение больше 1,5 МБ',
       'personas.artType': 'Поддерживаются только PNG / JPEG / WebP',
       'personas.artReadFailed': 'Не удалось прочитать изображение',
@@ -3765,6 +3772,8 @@ window.__ModuleLoader__.load({
       'personas.artPromptShort': 'プロンプト',
       'personas.artPromptCopied': 'プロンプトをコピーしました — 画像生成ツールに貼り付けてください',
       'personas.artPromptFailed': 'プロンプトをコピーできませんでした',
+      'personas.artPromptManualTitle': 'プロンプトを手動でコピー',
+      'personas.artPromptManual': 'ブラウザが自動コピーをブロックしました。下のテキストは選択済みです。Ctrl+C（Mac は ⌘C）でコピーしてください。',
       'personas.artTooLarge': '画像が 1.5 MB を超えています',
       'personas.artType': 'PNG / JPEG / WebP のみ対応しています',
       'personas.artReadFailed': '画像を読み込めませんでした',
@@ -4232,6 +4241,8 @@ window.__ModuleLoader__.load({
       'personas.artPromptShort': 'Prompt',
       'personas.artPromptCopied': 'Prompt copiado: pégalo en tu generador de imágenes',
       'personas.artPromptFailed': 'No se pudo copiar el prompt',
+      'personas.artPromptManualTitle': 'Copiar el prompt manualmente',
+      'personas.artPromptManual': 'El navegador bloqueó la copia automática. El texto de abajo ya está seleccionado: pulsa Ctrl+C (⌘C en Mac).',
       'personas.artTooLarge': 'La imagen supera 1,5 MB',
       'personas.artType': 'Solo se admiten PNG / JPEG / WebP',
       'personas.artReadFailed': 'No se pudo leer la imagen',
@@ -4699,6 +4710,8 @@ window.__ModuleLoader__.load({
       'personas.artPromptShort': 'Prompt',
       'personas.artPromptCopied': 'Prompt copié — colle-le dans ton générateur d’images',
       'personas.artPromptFailed': 'Impossible de copier le prompt',
+      'personas.artPromptManualTitle': 'Copier le prompt manuellement',
+      'personas.artPromptManual': 'Le navigateur a bloqué la copie automatique. Le texte ci-dessous est déjà sélectionné : appuie sur Ctrl+C (⌘C sur Mac).',
       'personas.artTooLarge': 'L’image dépasse 1,5 Mo',
       'personas.artType': 'Seuls PNG / JPEG / WebP sont acceptés',
       'personas.artReadFailed': 'Impossible de lire l’image',
@@ -5166,6 +5179,8 @@ window.__ModuleLoader__.load({
       'personas.artPromptShort': 'Prompt',
       'personas.artPromptCopied': 'Prompt kopiert – füge ihn in deinen Bildgenerator ein',
       'personas.artPromptFailed': 'Der Prompt konnte nicht kopiert werden',
+      'personas.artPromptManualTitle': 'Prompt manuell kopieren',
+      'personas.artPromptManual': 'Der Browser hat das automatische Kopieren blockiert. Der Text unten ist bereits markiert – drücke Strg+C (⌘C am Mac).',
       'personas.artTooLarge': 'Das Bild ist größer als 1,5 MB',
       'personas.artType': 'Nur PNG / JPEG / WebP werden unterstützt',
       'personas.artReadFailed': 'Das Bild konnte nicht gelesen werden',
@@ -5633,6 +5648,8 @@ window.__ModuleLoader__.load({
       'personas.artPromptShort': 'Prompt',
       'personas.artPromptCopied': 'Prompt copiado — cole no seu gerador de imagens',
       'personas.artPromptFailed': 'Não foi possível copiar o prompt',
+      'personas.artPromptManualTitle': 'Copiar o prompt manualmente',
+      'personas.artPromptManual': 'O navegador bloqueou a cópia automática. O texto abaixo já está selecionado: pressione Ctrl+C (⌘C no Mac).',
       'personas.artTooLarge': 'A imagem passa de 1,5 MB',
       'personas.artType': 'Só PNG / JPEG / WebP são aceitos',
       'personas.artReadFailed': 'Não foi possível ler a imagem',
@@ -10221,6 +10238,8 @@ window.__ModuleLoader__.load({
       // 复制成功的反馈放在**按钮自己**上：弹层盖住了页面底部的 notice 行，
       // 走 notice 的话用户根本看不见。
       const [artPromptCopied, setArtPromptCopied] = React.useState(false)
+      // 自动复制被拦时的兜底：把提示词原文摊出来，让用户自己 Ctrl+C。
+      const [artPromptFull, setArtPromptFull] = React.useState(null)
       // 「存为预设」的命名弹层是否打开。
       //
       // 方案 A：把「保存当前为预设」从预设列表里**移出来**，做成「保存设置」旁的同级动作，
@@ -10658,11 +10677,41 @@ window.__ModuleLoader__.load({
 
       // 复制生图提示词。localhost 是安全上下文，navigator.clipboard 可用；
       // 拿不到就说明失败（而不是假装成功 —— 用户会去粘一段空白）。
+      // 复制文本。两层：
+      //   ① navigator.clipboard —— 首选，但要求安全上下文（https / localhost）且没被
+      //      权限策略拦；用局域网 IP 访问 DSH web 时它直接不存在。
+      //   ② document.execCommand('copy') + 临时 textarea —— 老 API，不要求安全上下文，
+      //      只在用户手势内有效（我们的调用链是同步的）。
+      // 都不行就抛错，由调用方把文本摊出来让用户自己复制 —— 只报「复制失败」最没用。
       const writeClipboard = async (text) => {
-        if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+        if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          try {
+            await navigator.clipboard.writeText(text)
+            return
+          } catch {
+            // 落到下面的兜底（权限被拒 / 文档未聚焦都会走到这里）
+          }
+        }
+        if (typeof document === 'undefined' || typeof document.execCommand !== 'function') {
           throw new Error('clipboard unavailable')
         }
-        await navigator.clipboard.writeText(text)
+        const area = document.createElement('textarea')
+        area.value = text
+        area.setAttribute('readonly', '')
+        area.style.position = 'fixed'
+        area.style.top = '-1000px'
+        area.style.opacity = '0'
+        document.body.appendChild(area)
+        let ok = false
+        try {
+          area.select()
+          ok = document.execCommand('copy') === true
+        } catch {
+          ok = false
+        } finally {
+          document.body.removeChild(area)
+        }
+        if (!ok) throw new Error('copy failed')
       }
 
       const copyArtPrompt = async () => {
@@ -10676,7 +10725,7 @@ window.__ModuleLoader__.load({
           setArtPromptCopied(true)
           setTimeout(() => setArtPromptCopied(false), 1800)
         } catch {
-          showError(t('personas.artPromptFailed'))
+          setArtPromptFull(text)
         }
       }
 
@@ -10693,7 +10742,7 @@ window.__ModuleLoader__.load({
           await writeClipboard(text)
           setNotice(t('personas.artPromptCopied'))
         } catch {
-          showError(t('personas.artPromptFailed'))
+          setArtPromptFull(text)
         }
       }
 
@@ -11773,6 +11822,38 @@ window.__ModuleLoader__.load({
                 })
               )
               )
+            )
+          )
+        ),
+
+        // —— 自动复制被拦时的兜底 ——
+        // 只报「复制失败」等于把活推回给用户；这里把原文摊出来并全选，
+        // 用户按一次 Ctrl+C 就完事。
+        artPromptFull !== null && e('div', {
+          className: 'soul-modal-mask',
+          role: 'presentation',
+          onClick: () => setArtPromptFull(null)
+        },
+          e('div', {
+            className: 'soul-modal',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': t('personas.artPromptManualTitle'),
+            onClick: (ev) => ev.stopPropagation()
+          },
+            e('div', { className: 'soul-modal-title' }, t('personas.artPromptManualTitle')),
+            e('div', { className: 'soul-modal-note' }, t('personas.artPromptManual')),
+            e('textarea', {
+              className: 'soul-prompt-text',
+              value: artPromptFull,
+              readOnly: true,
+              rows: 8,
+              spellCheck: false,
+              autoFocus: true,
+              onFocus: (ev) => { try { ev.target.select() } catch { /* 选中失败也不影响手动复制 */ } }
+            }),
+            e('div', { className: 'soul-modal-actions' },
+              e(ui.Button, { onClick: () => setArtPromptFull(null) }, t('button.cancel'))
             )
           )
         ),
